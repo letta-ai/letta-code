@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { ApiRequestError } from "@/backend/api/request";
+import { experimentManager } from "@/experiments/manager";
 import { monitor } from "./monitor";
 import {
   isCloudMonitorId,
@@ -190,26 +191,29 @@ describe("Monitor url source", () => {
     expect(calls).toEqual([]);
   });
 
-  test("Monitor routes url to Cloud and keeps interval_seconds url-only", async () => {
-    await expect(
-      monitor({ description: "Status", url: "ftp://example.com/" }),
-    ).rejects.toThrow("absolute http or https URL");
-    await expect(
-      monitor({
-        description: "Lines",
-        command: "echo hi",
-        interval_seconds: 60,
-      }),
-    ).rejects.toThrow("interval_seconds is only supported with url");
-    await expect(
-      monitor({
-        description: "Lines",
-        command: "echo hi",
-        headers: { Accept: "text/plain" },
-      }),
-    ).rejects.toThrow(
-      "headers, select, match and stop_on_match are only supported with url",
-    );
+  test("Monitor routes url to Cloud and rejects local arguments", async () => {
+    const flag = spyOn(experimentManager, "isEnabled").mockReturnValue(true);
+    try {
+      await expect(
+        monitor({ description: "Status", url: "ftp://example.com/" }),
+      ).rejects.toThrow("absolute http or https URL");
+      await expect(
+        monitor({
+          description: "Lines",
+          command: "echo hi",
+          interval_seconds: 60,
+        }),
+      ).rejects.toThrow("command is not supported in Cloud mode");
+      await expect(
+        monitor({
+          description: "Lines",
+          command: "echo hi",
+          headers: { Accept: "text/plain" },
+        }),
+      ).rejects.toThrow("command is not supported in Cloud mode");
+    } finally {
+      flag.mockRestore();
+    }
   });
 });
 

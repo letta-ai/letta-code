@@ -1,0 +1,69 @@
+{
+  "type": "object",
+  "properties": {
+    "description": {
+      "type": "string",
+      "description": "Clear, concise user-facing description of the update you are waiting for. This may be shown directly in chat, so make it grammatical by itself. Describe the expected event, not the polling command or monitor implementation. Prefer `CI results and review comments for the auth fix`, `Deployment completion or failure`, or `New errors in the API logs` over internal labels like `PR checks and state transitions`."
+    },
+    "url": {
+      "type": "string",
+      "description": "Public http(s) URL that Letta Cloud polls with GET. By default it notifies only when the HTTP status or body changes; use select and match to narrow that. timeout_ms defaults to 24 hours here, up to 7 days."
+    },
+    "interval_seconds": {
+      "type": "integer",
+      "minimum": 60,
+      "default": 60,
+      "description": "Seconds between polls of url."
+    },
+    "headers": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Request headers for url, at most 10. Reference agent secrets as $NAME, as in shell commands, e.g. {\"PRIVATE-TOKEN\": \"$GITLAB_TOKEN\"} or {\"Authorization\": \"Bearer $CI_TOKEN\"}. Cloud fills them in on every poll; the value is never sent from here. Credential headers must use a secret reference. Headers are dropped if a redirect leaves the URL's origin."
+    },
+    "select": {
+      "type": "string",
+      "description": "For url: a dot-separated path into the JSON response (numbers index arrays), e.g. 0.status. Only that value is compared and reported, so unrelated fields changing does not notify."
+    },
+    "match": {
+      "type": "object",
+      "properties": {
+        "equals": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Matches when the value is one of these."
+        },
+        "contains": {
+          "type": "string",
+          "description": "Matches when the value contains this text."
+        },
+        "gt": {
+          "type": "number",
+          "description": "Matches when the value is a number greater than this."
+        },
+        "lt": {
+          "type": "number",
+          "description": "Matches when the value is a number less than this."
+        }
+      },
+      "additionalProperties": false,
+      "description": "For url: notify when the compared value starts to meet every given test, instead of on every change. The first response is checked too, and a value that keeps matching does not notify again. List every terminal state, e.g. equals [\"success\", \"failed\", \"canceled\"]."
+    },
+    "stop_on_match": {
+      "type": "boolean",
+      "description": "For url with match: stop after the first match notice."
+    },
+    "timeout_ms": {
+      "type": "integer",
+      "minimum": 1000,
+      "default": 86400000,
+      "description": "Stop the monitor after this deadline. Defaults to 24 hours, up to 7 days."
+    }
+  },
+  "required": ["description", "url"],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

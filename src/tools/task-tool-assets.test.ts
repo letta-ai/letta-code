@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import TaskDescriptionRaw from "./descriptions/Task.md";
 import { TASK_HARNESSES } from "./impl/task-agent-selection";
 import type { JsonSchema } from "./model-facing-tool";
@@ -120,5 +120,92 @@ describe("resolveBackendSpecificToolAssets Task dispatch", () => {
     );
     expect(resolved.inputSchema.properties?.computer).toBeDefined();
     expect(resolved.description).toBe(taskDescription);
+  });
+});
+
+describe("Monitor experiment assets", () => {
+  test("selects mutually exclusive schemas and rejects inactive arguments", async () => {
+    const { experimentManager } = await import("@/experiments/manager");
+    const { resolveBackendSpecificToolAssets } = await import(
+      "./task-tool-assets"
+    );
+    const { default: schema } = await import("./schemas/Monitor.json");
+    const { default: description } = await import("./descriptions/Monitor.md");
+    const { monitor } = await import("./impl/monitor");
+    const flag = spyOn(experimentManager, "isEnabled");
+    try {
+      flag.mockReturnValue(false);
+      const local = await resolveBackendSpecificToolAssets(
+        "Monitor",
+        description,
+        schema,
+      );
+      expect(local).toEqual({ description, inputSchema: schema });
+      expect(Object.keys(local.inputSchema.properties ?? {}).sort()).toEqual(
+        [
+          "description",
+          "timeout_ms",
+          "persistent",
+          "backup_after_seconds",
+          "backup_prompt",
+          "command",
+          "ws",
+          "script",
+          "args",
+        ].sort(),
+      );
+      for (const key of [
+        "url",
+        "interval_seconds",
+        "headers",
+        "select",
+        "match",
+        "stop_on_match",
+      ]) {
+        await expect(
+          monitor({ description: "Status", [key]: "unused" }),
+        ).rejects.toThrow(`${key} is not supported in local mode`);
+      }
+      flag.mockReturnValue(true);
+      const cloud = await resolveBackendSpecificToolAssets(
+        "Monitor",
+        description,
+        schema,
+      );
+      expect(Object.keys(cloud.inputSchema.properties ?? {}).sort()).toEqual(
+        [
+          "description",
+          "timeout_ms",
+          "url",
+          "interval_seconds",
+          "headers",
+          "select",
+          "match",
+          "stop_on_match",
+        ].sort(),
+      );
+      expect(cloud.inputSchema.required).toEqual(["description", "url"]);
+      expect(cloud.inputSchema.additionalProperties).toBe(false);
+      expect(cloud.description).not.toBe(local.description);
+      for (const key of [
+        "command",
+        "ws",
+        "script",
+        "args",
+        "persistent",
+        "backup_after_seconds",
+        "backup_prompt",
+      ]) {
+        await expect(
+          monitor({
+            description: "Status",
+            url: "https://example.com",
+            [key]: "unused",
+          }),
+        ).rejects.toThrow(`${key} is not supported in Cloud mode`);
+      }
+    } finally {
+      flag.mockRestore();
+    }
   });
 });
