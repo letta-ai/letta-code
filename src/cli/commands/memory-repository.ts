@@ -1,9 +1,10 @@
 /**
  * /memory-repository command handler.
  *
- * Configures an additional git remote that the memfs repo pushes to after
- * every commit. Backed by per-repo git config (`letta.memoryRepository.url`)
- * and a post-commit hook installed by src/agent/memoryGit.ts.
+ * Configures an additional git remote that the memfs repo pushes to whenever
+ * `main` advances. Backed by per-repo git config (`letta.memoryRepository.url`)
+ * and post-commit/post-merge/post-rewrite hooks installed by
+ * src/agent/memory-git-hooks.ts.
  *
  * Usage:
  *   /memory-repository set <url>    Configure a remote URL
