@@ -59,6 +59,44 @@ function initAndCommitMemory(memoryDir: string, message = "initial memory") {
 }
 
 describe("local system prompt compilation", () => {
+  for (const memory of [
+    "$`",
+    "$'",
+    "$$",
+    "$&",
+    "$` | $' | $$ | $& | {CORE_MEMORY}  \n",
+  ]) {
+    test(`inserts literal core memory ${JSON.stringify(memory)}`, async () => {
+      const memoryDir = await mkdtemp(join(tmpdir(), "local-prompt-literal-"));
+      try {
+        await writeFile(join(memoryDir, "MEMORY.md"), memory, "utf8");
+        initAndCommitMemory(memoryDir);
+        const expectedMemory = `<memory>\n${memory.trimEnd()}\n</memory>`;
+        for (const [raw, expected] of [
+          [
+            "before {CORE_MEMORY} after  \n",
+            `before ${expectedMemory} after  \n`,
+          ],
+          ["plain base  \n", `plain base\n\n${expectedMemory}`],
+          [
+            "A{CORE_MEMORY}B{CORE_MEMORY}C",
+            `A${expectedMemory}B${expectedMemory}C`,
+          ],
+        ] as const) {
+          const compiled = compileLocalSystemPrompt({
+            agent: agent(raw),
+            conversationId: "local-conv-test",
+            memoryDir,
+          });
+          expect(compiled.coreMemory).toBe(expectedMemory);
+          expect(compiled.content).toBe(expected);
+        }
+      } finally {
+        await rm(memoryDir, { recursive: true, force: true });
+      }
+    });
+  }
+
   test("loads root core memory and defers indexed children and skills", async () => {
     const memoryDir = await mkdtemp(join(tmpdir(), "local-prompt-root-memfs-"));
     try {
