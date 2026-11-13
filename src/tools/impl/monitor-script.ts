@@ -62,7 +62,7 @@ export interface ScriptMonitorHooks {
   markFinished(
     taskId: string,
     processState: BackgroundProcess,
-    status: "completed" | "failed",
+    status: "completed" | "failed" | "expired",
     exitCode: number | null,
   ): void;
   timeoutEvent(timeoutMs: number): string;
@@ -171,7 +171,12 @@ export async function startScriptMonitor(
     if (processState.status !== "running") return;
     processState.completionNotificationSuppressed = true;
     if (note) output.append(note);
-    hooks.markFinished(taskId, processState, "failed", null);
+    hooks.markFinished(
+      taskId,
+      processState,
+      reason === "timeout" ? "expired" : "failed",
+      null,
+    );
     controller.abort(new Error(reason));
   };
 

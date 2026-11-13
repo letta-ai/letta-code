@@ -8,6 +8,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { updateMonitorState } from "@/backend/api/monitors";
 import { isManagedCloudRuntime } from "@/managed-cloud-runtime";
 import {
   getCurrentWorkingDirectory,
@@ -40,7 +41,6 @@ import {
   parseGitHubWorkflowRunUrl,
 } from "./github-workflow-run";
 import {
-  getMonitorTimeoutEvent,
   installMonitorProcessExitCleanup,
   MonitorOutputWriter,
   markMonitorFinished,
@@ -51,8 +51,12 @@ import {
   MONITOR_EVENT_BATCH_CHARS,
   MONITOR_EVENT_LINE_CHARS,
 } from "./monitor-event-stream";
+import { readResumableMonitor } from "./monitor-resume";
 import { withMonitorState } from "./monitor-state";
-import { getMonitorMaxTimeoutMs } from "./monitor-timeout";
+import {
+  getMonitorMaxTimeoutMs,
+  getMonitorTimeoutEvent,
+} from "./monitor-timeout";
 import {
   assertBackgroundProcessCapacity,
   type BackgroundProcess,
@@ -68,7 +72,8 @@ const WATCH_REFRESH_ERROR_NOTIFY_AFTER_MS = 5 * 60_000;
 const WATCH_FRESH_SNAPSHOT_NOTIFY_AFTER_MS = 30 * 60_000;
 
 interface WatchPullRequestArgs {
-  url: string;
+  resume?: string;
+  url?: string;
   notify_on?: PullRequestEventKind[];
   parentScope?: { agentId: string; conversationId: string };
   signal?: AbortSignal;
@@ -205,6 +210,19 @@ export async function watch_pr(
   args: WatchPullRequestArgs,
   deps: WatchPullRequestDeps = {},
 ): Promise<WatchPullRequestResult> {
+  const resumeRecord = args.resume
+    ? await readResumableMonitor(args.resume, args.parentScope)
+    : undefined;
+  if (resumeRecord) {
+    if (resumeRecord.kind !== "github_pull_request")
+      throw new Error("Use Monitor to resume this monitor.");
+    args = {
+      ...resumeRecord.args,
+      resume: resumeRecord.monitor_id,
+      parentScope: args.parentScope,
+      signal: args.signal,
+    };
+  }
   args.signal?.throwIfAborted();
   if (typeof args.url !== "string") {
     throw new Error("WatchPR url is required");
@@ -263,10 +281,16 @@ export async function watch_pr(
     initial,
     args.notify_on,
   );
-  if (isRun && initial.state !== "OPEN") {
+  if ((isRun || resumeRecord) && initial.state !== "OPEN") {
+    if (resumeRecord)
+      await updateMonitorState(resumeRecord.monitor_id, {
+        status: "completed",
+        exit_code: 0,
+        output_file: resumeRecord.output_file,
+      });
     return {
       content: [{ type: "text", text: describe(initial) }],
-      taskId: "",
+      taskId: resumeRecord?.monitor_id ?? "",
       url: ref.url,
       headSha: initial.headSha,
       persistent: false,
@@ -284,11 +308,17 @@ export async function watch_pr(
   const description = isRun
     ? `Workflow run ${ref.owner}/${ref.repo}#${ref.number}`
     : `PR ${ref.owner}/${ref.repo}#${ref.number} checks, reviews, and mergeability`;
-  const persistent = !isManagedCloudRuntime();
+  const persistent = !resumeRecord?.expires_at && !isManagedCloudRuntime();
   return withMonitorState<WatchPullRequestResult>(
     {
       description,
       persistent,
+      resumeRecord,
+      timeoutMs: persistent ? 0 : getMonitorMaxTimeoutMs(),
+      args: {
+        url: args.url,
+        ...(args.notify_on ? { notify_on: args.notify_on } : {}),
+      },
       command: ref.url,
       kind: "github_pull_request",
       parentScope,
@@ -314,7 +344,9 @@ export async function watch_pr(
       const controller = new AbortController();
       const secrets: Readonly<Record<string, string>> = {};
       let processState: BackgroundProcess;
-      const maxTimeoutMs = getMonitorMaxTimeoutMs();
+      const maxTimeoutMs = resumeRecord?.expires_at
+        ? Math.max(1, Date.parse(resumeRecord.expires_at) - Date.now())
+        : getMonitorMaxTimeoutMs();
       let timeout: ReturnType<typeof setTimeout> | undefined;
 
       const events = createMonitorEventStream({
@@ -381,7 +413,7 @@ export async function watch_pr(
           output.append(`\n${event}\n`);
           queueMonitorEvent({ taskId, event, scope, actingUserId, secrets });
           processState.completionNotificationSuppressed = true;
-          markMonitorFinished(taskId, processState, "failed", null);
+          markMonitorFinished(taskId, processState, "expired", null);
           processState.process.kill();
         }, maxTimeoutMs);
         unrefTimer(timeout);

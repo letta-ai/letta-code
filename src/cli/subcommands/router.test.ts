@@ -5,6 +5,11 @@ import {
 } from "@/cli/subcommands/router";
 
 describe("subcommand router", () => {
+  test("routes monitors help before TUI startup", async () => {
+    expect(subcommandNeedsEarlyBackendMode("monitors")).toBe(true);
+    expect(await runSubcommand(["monitors", "--help"])).toBe(0);
+  });
+
   test("routes version subcommand before TUI startup", async () => {
     const messages: string[] = [];
     const originalLog = console.log;

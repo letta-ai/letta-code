@@ -16,6 +16,7 @@ import {
   clearBackgroundProcessCleanup,
 } from "./process_manager";
 import { task_stop } from "./task-stop";
+import { watch_pr } from "./watch-pr";
 
 const originalMode = resolveBackendMode();
 const originalHome = process.env.HOME;
@@ -23,6 +24,7 @@ const originalUrl = process.env.LETTA_BASE_URL;
 let home: string;
 let server: ReturnType<typeof Bun.serve>;
 let rejectCreate: boolean;
+let legacyServer: boolean;
 let rejectFirstPatch: boolean;
 let rejectUpdates: boolean;
 let requests: Array<{ method: string; actor: string | null; body: unknown }>;
@@ -37,6 +39,7 @@ beforeEach(async () => {
   await settingsManager.initialize();
   setConfiguredBackendMode("api");
   rejectCreate = false;
+  legacyServer = false;
   rejectFirstPatch = false;
   rejectUpdates = false;
   requests = [];
@@ -45,7 +48,18 @@ beforeEach(async () => {
   server = Bun.serve({
     port: 0,
     async fetch(request) {
+      if (request.method === "GET")
+        return Response.json(record ?? { detail: "Not found" }, {
+          status: record ? 200 : 404,
+        });
       const body = (await request.json()) as Partial<MonitorState>;
+      if (
+        legacyServer &&
+        (body.args ||
+          body.expires_at !== undefined ||
+          ["stopped", "expired", "paused"].includes(body.status ?? ""))
+      )
+        return Response.json({ detail: "Invalid request" }, { status: 400 });
       requests.push({
         method: request.method,
         actor: request.headers.get("X-Letta-Acting-User-Id"),
@@ -125,9 +139,9 @@ test("server ID, captured actor and redacted metadata survive a stop in another 
     },
     () =>
       monitor({
-        description: "Wait for sentinel-secret",
+        description: 'Wait for sentinel-"secret',
         command: source,
-        secretEnv: { SENTINEL: "sentinel-secret" },
+        secretEnv: { SENTINEL: 'sentinel-"secret' },
         persistent: true,
         parentScope: scope,
       }),
@@ -139,11 +153,14 @@ test("server ID, captured actor and redacted metadata survive a stop in another 
     device_id: "device-test",
     status: "running",
   });
-  expect(record?.description).not.toContain("sentinel-secret");
+  expect(record?.description).not.toContain('sentinel-"secret');
+  expect(record?.args).not.toHaveProperty("secretEnv");
+  expect(record?.args?.description).not.toContain('sentinel-"secret');
+
   await runWithRuntimeContext({ actingUserId: "user-stopper" }, () =>
     task_stop({ task_id: result.taskId }),
   );
-  expect(record?.status).toBe("failed");
+  expect(record?.status).toBe("stopped");
   expect(requests.every((request) => request.actor === "user-starter")).toBe(
     true,
   );
@@ -246,4 +263,106 @@ test("a failed status write does not report a stopped process as still running",
   } finally {
     rejectUpdates = false;
   }
+});
+
+test("resume restores saved arguments under the same id without creating a row", async () => {
+  const started = await monitor({
+    description: "Resume saved command",
+    command: `"${process.execPath}" -e "setInterval(() => {}, 1000)"`,
+    persistent: true,
+    parentScope: scope,
+  });
+  await task_stop({ task_id: started.taskId });
+  if (!record) throw new Error("Missing saved monitor");
+  record.status = "paused";
+  record.expires_at = new Date(Date.now() + 60000).toISOString();
+  const resumed = await monitor({ resume: started.taskId, parentScope: scope });
+  expect(resumed.taskId).toBe(started.taskId);
+  expect(String(record.status)).toBe("running");
+  expect(record.description).toBe("Resume saved command");
+  expect(requests.filter((request) => request.method === "POST")).toHaveLength(
+    1,
+  );
+  await task_stop({ task_id: resumed.taskId });
+  expect(String(record.status)).toBe("stopped");
+});
+
+test("expired resumes never start a process and timeout persists expired", async () => {
+  const started = await monitor({
+    description: "Short watch",
+    command: `"${process.execPath}" -e "setInterval(() => {}, 1000)"`,
+    timeout_ms: 1000,
+    parentScope: scope,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 1300));
+  await backgroundProcesses.get(started.taskId)?.persistState?.();
+  expect(record?.status).toBe("expired");
+  if (!record) throw new Error("Missing saved monitor");
+  record.status = "paused";
+  record.expires_at = new Date(Date.now() - 1000).toISOString();
+  await expect(
+    monitor({ resume: started.taskId, parentScope: scope }),
+  ).rejects.toThrow("has expired");
+  expect(String(record.status)).toBe("expired");
+  expect(backgroundProcesses.get(started.taskId)?.status).toBe("failed");
+});
+
+test("strict older servers still create and stop monitors", async () => {
+  legacyServer = true;
+  const started = await monitor({
+    description: "Legacy compatibility",
+    command: `"${process.execPath}" -e "setInterval(() => {}, 1000)"`,
+    persistent: true,
+    parentScope: scope,
+  });
+  expect(record?.args).toBeUndefined();
+  expect((await task_stop({ task_id: started.taskId })).killed).toBe(true);
+  expect(record?.status).toBe("failed");
+});
+
+test("WatchPR resume restores filters and the original id", async () => {
+  const url = "https://github.com/example/repo/pull/1";
+  record = {
+    monitor_id: "monitor-saved",
+    agent_id: scope.agentId,
+    conversation_id: scope.conversationId,
+    description: "Saved PR",
+    kind: "github_pull_request",
+    command: url,
+    status: "paused",
+    persistent: false,
+    device_id: null,
+    started_at: new Date().toISOString(),
+    output_file: null,
+    exit_code: null,
+    expires_at: new Date(Date.now() + 60000).toISOString(),
+    args: { url, notify_on: ["merged"] },
+  };
+  const result = await watch_pr(
+    { resume: record.monitor_id, parentScope: scope },
+    {
+      fetchSnapshot: async () => ({
+        ref: { owner: "example", repo: "repo", number: 1, url },
+        headSha: "a".repeat(40),
+        state: "OPEN",
+        isDraft: false,
+        mergeable: "MERGEABLE",
+        mergeStateStatus: "CLEAN",
+        reviewDecision: "APPROVED",
+        readinessConfirmed: true,
+        checks: [],
+        checkAttempts: [],
+        comments: [],
+        reviews: [],
+        reviewThreads: [],
+      }),
+    },
+  );
+  expect(result.taskId).toBe("monitor-saved");
+  expect(record.status).toBe("running");
+  expect(result.content[0]?.text).toContain("merged");
+  expect(requests.filter((request) => request.method === "POST")).toHaveLength(
+    0,
+  );
+  await task_stop({ task_id: result.taskId });
 });
