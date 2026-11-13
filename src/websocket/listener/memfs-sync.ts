@@ -42,8 +42,9 @@ async function syncMemfsForAgent(agentId: string): Promise<void> {
   const { GIT_MEMORY_ENABLED_TAG, isStatelessSubagentTags } = await import(
     "@/agent/agent-tags"
   );
-  const { applyMemfsFlags, ensureLocalMemfsCheckout, isLettaCloud } =
-    await import("@/agent/memory-filesystem");
+  const { applyMemfsFlags, isLettaCloud } = await import(
+    "@/agent/memory-filesystem"
+  );
 
   if (!agent.tags?.includes(GIT_MEMORY_ENABLED_TAG)) {
     if (isStatelessSubagentTags(agent.tags)) {
@@ -62,13 +63,13 @@ async function syncMemfsForAgent(agentId: string): Promise<void> {
       );
       return;
     }
-    await ensureLocalMemfsCheckout(agentId, { pullOnExistingRepo: true });
     debugWarn(
       "memfs-sync",
       `Agent ${agentId} is missing the memfs tag on Letta Cloud — repairing (auto-enabling memfs).`,
     );
     await applyMemfsFlags(agentId, true, {
-      pullOnExistingRepo: false,
+      pullOnExistingRepo: true,
+      throwOnPullFailure: true,
       agentTags: agent.tags ?? [],
     });
     debugLog("memfs-sync", `Memfs repair complete for agent ${agentId}`);
@@ -77,9 +78,9 @@ async function syncMemfsForAgent(agentId: string): Promise<void> {
 
   debugLog("memfs-sync", `Syncing memfs for agent ${agentId}`);
 
-  await ensureLocalMemfsCheckout(agentId, { pullOnExistingRepo: true });
   await applyMemfsFlags(agentId, undefined, {
-    pullOnExistingRepo: false,
+    pullOnExistingRepo: true,
+    throwOnPullFailure: true,
     agentTags: agent.tags,
     skipPromptUpdate: true,
   });
