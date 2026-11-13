@@ -1,4 +1,8 @@
-import { createMonitorState, updateMonitorState } from "@/backend/api/monitors";
+import {
+  createMonitorState,
+  type MonitorState,
+  updateMonitorState,
+} from "@/backend/api/monitors";
 import { resolveBackendMode } from "@/backend/backend-mode";
 import {
   getRuntimeActingUserAttribution,
@@ -24,6 +28,9 @@ export async function withMonitorState<T>(
     command: string;
     kind: NonNullable<BackgroundProcess["monitorSource"]>;
     persistent: boolean;
+    args?: Record<string, unknown>;
+    timeoutMs?: number;
+    resumeRecord?: MonitorState;
     parentScope?: { agentId: string; conversationId: string };
     signal?: AbortSignal;
     secretEnv?: Record<string, string>;
@@ -43,32 +50,68 @@ export async function withMonitorState<T>(
     ...captureSecretRedactions(scope.agentId ?? undefined),
     ...input.secretEnv,
   };
-  const record = await createMonitorState(
-    {
-      agent_id: scope.agentId || null,
-      conversation_id: scope.conversationId,
-      description: scrubSecretsFromString(input.description, secrets),
-      command: scrubSecretsFromString(input.command, secrets),
-      kind: input.kind,
-      persistent: input.persistent,
-      status: "running",
-      device_id: getRuntimeContext()?.environmentDeviceId ?? null,
-      started_at: new Date().toISOString(),
-      output_file: null,
-      exit_code: null,
-    },
-    actingUserId,
-  );
+  const startedAt = new Date().toISOString();
+  const record =
+    input.resumeRecord ??
+    (await createMonitorState(
+      {
+        agent_id: scope.agentId || null,
+        conversation_id: scope.conversationId,
+        description: scrubSecretsFromString(input.description, secrets),
+        command: scrubSecretsFromString(input.command, secrets),
+        kind: input.kind,
+        persistent: input.persistent,
+        status: "running",
+        device_id: getRuntimeContext()?.environmentDeviceId ?? null,
+        started_at: startedAt,
+        expires_at: input.timeoutMs
+          ? new Date(Date.now() + input.timeoutMs).toISOString()
+          : null,
+        // Credentials and execution context never belong in durable tool args.
+        args: JSON.parse(
+          JSON.stringify(input.args ?? {}, (_key, value) =>
+            typeof value === "string"
+              ? scrubSecretsFromString(value, secrets)
+              : value,
+          ),
+        ),
+        output_file: null,
+        exit_code: null,
+      },
+      actingUserId,
+    ));
   const id = record.monitor_id;
+  if (backgroundProcesses.get(id)?.status === "running")
+    throw new Error(`Monitor ${id} is already running on this host`);
   try {
+    if (input.resumeRecord) {
+      await updateMonitorState(
+        id,
+        {
+          status: "running",
+          exit_code: null,
+          output_file: record.output_file,
+          device_id:
+            getRuntimeContext()?.environmentDeviceId ?? record.device_id,
+        },
+        actingUserId,
+      );
+    }
     input.signal?.throwIfAborted();
     const result = await start(id);
     const process = backgroundProcesses.get(id);
     if (!process) throw new Error("Monitor did not register its process");
     let pending = Promise.resolve();
     process.persistState = () => {
+      let status = process.monitorEndStatus ?? process.status;
+      // A strict legacy create response has no saved-args capability.
+      if (
+        record.args === undefined &&
+        ["expired", "stopped", "paused"].includes(status)
+      )
+        status = "failed";
       const state = {
-        status: process.status,
+        status,
         exit_code: process.exitCode,
         output_file: process.outputFile ?? null,
       };

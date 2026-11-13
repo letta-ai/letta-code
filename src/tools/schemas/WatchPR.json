@@ -23,9 +23,13 @@
         ]
       },
       "description": "PR events to report; omitted reports all. checks_done reports when no checks remain pending, including pass/fail. Workflow runs always report status and completion."
+    },
+    "resume": {
+      "type": "string",
+      "description": "Resume a paused monitor by its saved monitor id."
     }
   },
-  "required": ["url"],
   "additionalProperties": false,
-  "$schema": "http://json-schema.org/draft-07/schema#"
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "required": []
 }

@@ -1,3 +1,5 @@
+import { isManagedCloudRuntime } from "@/managed-cloud-runtime";
+
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
 const DEFAULT_MAX_TIMEOUT_MS = HOUR_MS;
@@ -44,4 +46,13 @@ export function applyMonitorMaxTimeout(
     "{{MONITOR_MAX_TIMEOUT}}",
     formatMonitorMaxTimeout(timeoutMs),
   );
+}
+
+export function getMonitorTimeoutEvent(
+  timeoutMs: number,
+  tool = "Monitor",
+): string {
+  return isManagedCloudRuntime() && timeoutMs === getMonitorMaxTimeoutMs()
+    ? `${tool} stopped at the ${timeoutMs / 3_600_000}-hour Cloud sandbox limit. If you still need to watch, simply re-arm it by calling ${tool} again. For much longer waits, schedule a Wake or cron, which does not keep the sandbox running between turns.`
+    : "[Monitor timed out — re-arm if needed.]";
 }
