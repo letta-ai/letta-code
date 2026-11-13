@@ -1,6 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { ApiRequestError } from "@/backend/api/request";
 import { experimentManager } from "@/experiments/manager";
+import { runWithRuntimeContext } from "@/runtime-context";
 import { monitor } from "./monitor";
 import {
   isCloudMonitorId,
@@ -34,11 +35,15 @@ describe("Monitor url source", () => {
     const flag = spyOn(experimentManager, "isEnabled").mockReturnValue(false);
     let localId: string | undefined;
     try {
-      const local = await monitor({
-        description: "Status",
-        command: "sleep 60",
-        timeout_ms: 5000,
-      });
+      const local = await runWithRuntimeContext(
+        { sessionSource: "interactive-cli" },
+        () =>
+          monitor({
+            description: "Status",
+            command: "sleep 60",
+            timeout_ms: 5000,
+          }),
+      );
       localId = local.taskId;
       const cloud = await startCloudUrlMonitor(
         {
