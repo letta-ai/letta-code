@@ -1,5 +1,8 @@
 import { afterEach, expect, mock, spyOn, test } from "bun:test";
-import type { AppServerClient } from "@/app-server-client";
+import type {
+  AppServerClient,
+  AppServerMessageHandler,
+} from "@/app-server-client";
 import type { EnvironmentConnection } from "@/backend/api/environments";
 import { telemetry } from "@/telemetry";
 import type {
@@ -9,6 +12,7 @@ import type {
 import { toSubagentLaunchArgs } from "@/websocket/listener/subagent-protocol-inbound";
 import {
   launchRemoteExternalCodingAgent,
+  type SpawnRemoteFollowTask,
   sendRemoteExternalCodingAgentMessage,
 } from "./remote-external-coding-agent";
 import { shouldForkTaskContext } from "./task-agent-selection";
@@ -237,3 +241,167 @@ test("a refused follow-up is reported and still rejects", async () => {
     tool_call_id: "follow-call",
   });
 });
+
+test.each([
+  "reconnected",
+  "unchanged",
+  "offline",
+  "outdated",
+  "retry fails",
+] as const)(
+  "a lost launch retries only on a replacement listener: %s",
+  async (outcome) => {
+    const trackError = captureTelemetry();
+    const first = refusingComputer();
+    const second = refusingComputer();
+    let onReplacementMessage: AppServerMessageHandler | undefined;
+    spyOn(second.client, "onMessage").mockImplementation((handler) => {
+      onReplacementMessage = handler;
+      return () => {
+        onReplacementMessage = undefined;
+      };
+    });
+    const timeout = new Error("Timed out waiting for launch-subagent");
+    spyOn(first.client, "launchSubagent").mockImplementation(
+      async (command) => {
+        first.launches.push({
+          ...command,
+          type: "launch_subagent",
+          request_id: command.request_id ?? "",
+        });
+        throw timeout;
+      },
+    );
+    spyOn(second.client, "launchSubagent").mockImplementation(
+      async (command) => {
+        second.launches.push({
+          ...command,
+          type: "launch_subagent",
+          request_id: command.request_id ?? "",
+        });
+        if (outcome === "retry fails") throw timeout;
+        return {
+          type: "launch_subagent_response",
+          request_id: command.request_id ?? "",
+          runtime: command.runtime,
+          success: true,
+          task_id: "remote-task",
+          output_file: "/remote/out",
+          agent_id: null,
+          conversation_id: null,
+        };
+      },
+    );
+    const closeFirst = spyOn(first.client, "close");
+    const closeSecond = spyOn(second.client, "close");
+    const resolveComputer = mock(async () => {
+      if (resolveComputer.mock.calls.length > 1 && outcome === "offline")
+        throw new Error('Computer "worker" is offline');
+      const replacement =
+        resolveComputer.mock.calls.length > 1 && outcome !== "unchanged";
+      const env = environment(replacement);
+      env.metadata = {
+        ...env.metadata,
+        subagent_message: false,
+        launch_subagent_notify_caller: !(replacement && outcome === "outdated"),
+      };
+      return {
+        connectionId: replacement ? "conn-b" : "conn-a",
+        environment: env,
+      };
+    });
+    const connect = mock(async (id: string) =>
+      id === "conn-a" ? first.client : second.client,
+    );
+    const spawn = mock((_args: Parameters<SpawnRemoteFollowTask>[0]) => ({
+      taskId: "follow-task",
+      outputFile: "/follow/out",
+      subagentId: "follow-subagent",
+    }));
+    const result = await launchRemoteExternalCodingAgent(
+      {
+        type: "claude-code",
+        computer: "worker",
+        prompt: "Fix the bug",
+        description: "Fix the bug",
+        toolCallId: "call-1",
+        parentScope,
+      },
+      { resolveComputer, connect, spawn },
+    );
+    expect(resolveComputer).toHaveBeenCalledTimes(2);
+    expect(first.launches).toHaveLength(1);
+    expect(closeFirst).toHaveBeenCalled();
+    const retries = outcome === "reconnected" || outcome === "retry fails";
+    expect(second.launches).toHaveLength(retries ? 1 : 0);
+    expect(connect.mock.calls.map(([id]) => id)).toEqual(
+      retries ? ["conn-a", "conn-b"] : ["conn-a"],
+    );
+    if (outcome === "reconnected") {
+      expect(result.success).toBe(true);
+      expect(spawn).toHaveBeenCalledTimes(1);
+      expect(trackError).not.toHaveBeenCalled();
+      expect(closeSecond).not.toHaveBeenCalled();
+      expect(second.launches[0]?.request_id).not.toBe(
+        first.launches[0]?.request_id,
+      );
+      expect(second.launches[0]?.tool_call_id).toBe(
+        first.launches[0]?.tool_call_id,
+      );
+      // The replacement's capabilities determine the wire format.
+      expect(first.launches[0]?.args.subagent_type).toBe("claude-code");
+      expect(second.launches[0]?.args.fork_context).toBe(false);
+      onReplacementMessage?.(
+        {
+          type: "update_subagent_state",
+          event_seq: 1,
+          emitted_at: new Date().toISOString(),
+          idempotency_key: "replacement-completed",
+          runtime: {
+            agent_id: parentScope.agentId,
+            conversation_id: parentScope.conversationId,
+          },
+          subagents: [
+            {
+              subagent_id: "remote-worker",
+              subagent_type: "claude-code",
+              description: "Fix the bug",
+              status: "completed",
+              agent_url: null,
+              tool_call_id: "call-1",
+              start_time: 0,
+              tool_calls: [],
+              total_tokens: 0,
+              duration_ms: 1,
+              result: "Replacement worker finished",
+            },
+          ],
+        },
+        "control",
+      );
+      const follow = spawn.mock.calls[0]?.[0].deps.spawnSubagentImpl;
+      if (!follow) throw new Error("No follower spawned");
+      const completed = await follow(
+        "claude-code",
+        "Fix the bug",
+        undefined,
+        "follow-subagent",
+      );
+      expect(completed).toMatchObject({
+        success: true,
+        report: "Replacement worker finished",
+      });
+      expect(closeSecond).toHaveBeenCalled();
+    } else {
+      expect(result.success).toBe(false);
+      expect(spawn).not.toHaveBeenCalled();
+      expect(trackError).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(trackError.mock.calls[0]?.[2] ?? "")).toMatchObject({
+        stage: "launch_request",
+      });
+      if (!result.success && outcome === "offline")
+        expect(result.error).toContain("worker disconnected during the launch");
+      if (outcome === "retry fails") expect(closeSecond).toHaveBeenCalled();
+    }
+  },
+);
