@@ -19,7 +19,7 @@ import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { getConversationId } from "@/agent/context";
 import { resolveModel } from "@/agent/model-catalog";
-import { getPrimaryAgentModelHandle } from "@/agent/subagents/subagent-model";
+import { resolveParentModelLimits } from "@/agent/subagents/parent-model-limits";
 import { getBackend } from "@/backend";
 import { resolveBackendMode } from "@/backend/backend-mode";
 import { permissionMode } from "@/permissions/mode";
@@ -129,34 +129,35 @@ export async function createSdkSpawnerHandle(
     throw new Error("Workflow requires an invoking parent agent.");
   }
   setStage("resolving model");
-  let model: string | null;
-  if (args.model) {
-    model = resolveModel(args.model);
-    if (!model) {
-      throw new Error(
-        `Unknown model "${args.model}". Run \`letta model list\` for valid handles.`,
-      );
-    }
-  } else {
-    model = (
-      await getPrimaryAgentModelHandle({
-        agentId: parentAgentId,
-        conversationId: args.parentScope?.conversationId ?? getConversationId(),
-      })
-    ).handle;
-    if (!model) {
-      throw new Error(
-        "Could not resolve the invoking conversation's model; pass `model` explicitly.",
-      );
-    }
+  let model = args.model ? resolveModel(args.model) : null;
+  if (args.model && !model) {
+    throw new Error(
+      `Unknown model "${args.model}". Run \`letta model list\` for valid handles.`,
+    );
   }
   const backendMode = resolveBackendMode();
-  let parentModelSettings: Record<string, unknown> | undefined;
-  let parentContextWindowLimit: number | null | undefined;
+  const conversationId =
+    args.parentScope?.conversationId ?? getConversationId();
+  const parentSnapshot = await resolveParentModelLimits(
+    parentAgentId,
+    conversationId,
+  );
+  const parentModelHandle = parentSnapshot?.model ?? null;
+  const apiParent = backendMode === "api" ? parentSnapshot : null;
+  if (!args.model) {
+    model = parentModelHandle ?? null;
+  }
+  if (!model) {
+    throw new Error(
+      "Could not resolve the invoking conversation's model; pass `model` explicitly.",
+    );
+  }
+  let parentModelSettings: Record<string, unknown> | undefined =
+    apiParent?.modelSettings;
+  let parentContextWindowLimit: number | null | undefined =
+    apiParent?.contextWindowLimit;
   if (backendMode === "local") {
     setStage("snapshotting local parent settings");
-    const conversationId =
-      args.parentScope?.conversationId ?? getConversationId();
     const source =
       conversationId && conversationId !== "default"
         ? await getBackend().retrieveConversation(conversationId)
@@ -195,6 +196,7 @@ export async function createSdkSpawnerHandle(
     spawner = createSdkSpawner(client, {
       parentAgentId,
       model,
+      parentModelHandle,
       resolveModel,
       allowedTools: args.allowedTools,
       parentToolNames: runtime?.clientToolNames,
