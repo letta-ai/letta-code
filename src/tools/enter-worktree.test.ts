@@ -31,7 +31,11 @@ import {
 } from "@/utils/worktree-lock";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
 import { resetRemoteSettingsCache } from "@/websocket/listener/remote-settings";
-import { setActiveRuntime } from "@/websocket/listener/runtime";
+import {
+  getConversationRuntime,
+  setActiveRuntime,
+} from "@/websocket/listener/runtime";
+import { __worktreeWatcherTestUtils } from "@/websocket/listener/worktree-watcher";
 
 function git(args: string[], cwd: string): string {
   return execFileSync("git", args, {
@@ -156,6 +160,57 @@ describe("EnterWorktree tool", () => {
         git(["rev-parse", "--show-toplevel"], result.worktree_path),
       ),
     ).toBe(result.worktree_path);
+  });
+
+  test("does not let the watcher switch cwd when switch_cwd is false", async () => {
+    const repo = await trackRepo();
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    listener.bootWorkingDirectory = repo;
+    __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-1",
+    );
+    setActiveRuntime(listener);
+
+    const result = await runWithRuntimeContext(
+      {
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        workingDirectory: repo,
+      },
+      () =>
+        enter_worktree({
+          name: "Watcher Regression",
+          refresh_base: false,
+          switch_cwd: false,
+        }),
+    );
+
+    if (!result.worktree_path) {
+      throw new Error("Expected EnterWorktree to return a worktree path");
+    }
+    const conversationRuntime = getConversationRuntime(
+      listener,
+      "agent-1",
+      "conv-1",
+    );
+    await __worktreeWatcherTestUtils.handleNewWorktree({
+      worktreesDir: path.join(repo, ".letta", "worktrees"),
+      filename: path.basename(result.worktree_path),
+      runtime: listener,
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    });
+
+    expect(conversationRuntime?.expectedWorktreePath).toBeNull();
+    expect(
+      __listenClientTestUtils.getConversationWorkingDirectory(
+        listener,
+        "agent-1",
+        "conv-1",
+      ),
+    ).toBe(repo);
   });
 
   test("loads root AGENTS.md into a new worktree result", async () => {
