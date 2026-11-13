@@ -2410,9 +2410,9 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               category: "transient_provider",
               attempt,
               detail: detailFromRun ?? fallbackError,
+              retryAfterMs: runErrorInfo?.retry_after_ms,
             });
 
-            // Log the error that triggered the retry
             telemetry.trackError(
               "retry_post_stream_error",
               formatTelemetryErrorMessage(

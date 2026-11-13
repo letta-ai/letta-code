@@ -45,6 +45,7 @@ import {
   extractConflictDetail,
   extractConversationBusyRunId,
   fetchRunErrorInfo,
+  type RunErrorInfo,
   getPreStreamErrorAction,
   getRetryDelayMs,
   isApprovalPendingError,
@@ -2650,6 +2651,7 @@ export async function handleHeadlessCommand(
             category: "transient_provider",
             attempt,
             detail: detailFromRun,
+            retryAfterMs: runErrorInfo?.retry_after_ms,
           });
 
           if (outputFormat === "stream-json") {
@@ -2749,22 +2751,12 @@ export async function handleHeadlessCommand(
           let errorType: string | undefined;
           let detail = detailFromRun ?? latestErrorText ?? "";
           let explicitRetryable: boolean | undefined;
+          let retryAfterMs = runErrorInfo?.retry_after_ms;
 
           if (lastRunId) {
             const run = await getBackend().retrieveRun(lastRunId);
             const metaError = run.metadata?.error as
-              | {
-                  error_type?: string;
-                  message?: string;
-                  detail?: string;
-                  retryable?: boolean;
-                  // Handle nested error structure (error.error) that can occur in some edge cases
-                  error?: {
-                    error_type?: string;
-                    detail?: string;
-                    retryable?: boolean;
-                  };
-                }
+              | (RunErrorInfo & { error?: RunErrorInfo })
               | undefined;
 
             // Check for llm_error at top level or nested (handles error.error nesting)
@@ -2772,6 +2764,10 @@ export async function handleHeadlessCommand(
             detail = metaError?.detail ?? metaError?.error?.detail ?? detail;
             explicitRetryable =
               metaError?.retryable ?? metaError?.error?.retryable;
+            retryAfterMs =
+              metaError?.retry_after_ms ??
+              metaError?.error?.retry_after_ms ??
+              retryAfterMs;
           }
 
           // Empty LLM response retry (Opus 4.6 SADs): retry 1 sends the same
@@ -2836,6 +2832,7 @@ export async function handleHeadlessCommand(
               category: "transient_provider",
               attempt,
               detail,
+              retryAfterMs,
             });
 
             llmApiErrorRetries = attempt;

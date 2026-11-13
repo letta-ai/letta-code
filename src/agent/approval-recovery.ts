@@ -55,6 +55,7 @@ export interface RunErrorInfo {
   error_code?: string;
   status_code?: number;
   retryable?: boolean;
+  retry_after_ms?: number;
   message?: string;
   detail?: string;
   raw?: unknown;
@@ -282,6 +283,7 @@ type RunErrorMetadata =
       error_code?: string;
       status_code?: number;
       retryable?: boolean;
+      retry_after_ms?: number;
       message?: string;
       detail?: string;
       raw?: unknown;
@@ -293,6 +295,7 @@ type RunErrorMetadata =
         error_code?: string;
         status_code?: number;
         retryable?: boolean;
+        retry_after_ms?: number;
         message?: string;
         detail?: string;
         raw?: unknown;
@@ -323,6 +326,7 @@ export async function fetchRunErrorInfo(
         nestedError?.error_code,
       status_code: metaError?.status_code ?? nestedError?.status_code,
       retryable: metaError?.retryable ?? nestedError?.retryable,
+      retry_after_ms: metaError?.retry_after_ms ?? nestedError?.retry_after_ms,
       message: metaError?.message ?? nestedError?.message,
       detail: metaError?.detail ?? nestedError?.detail,
       raw: metaError?.raw ?? nestedError?.raw,

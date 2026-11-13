@@ -501,6 +501,30 @@ describe("getRetryDelayMs", () => {
     ).toBe(7000);
   });
 
+  test("bounds server retry delays and falls back for invalid values", () => {
+    expect(
+      getRetryDelayMs({
+        category: "transient_provider",
+        attempt: 1,
+        retryAfterMs: 900_000,
+      }),
+    ).toBe(60_000);
+    expect(
+      getRetryDelayMs({
+        category: "transient_provider",
+        attempt: 1,
+        retryAfterMs: -1,
+      }),
+    ).toBe(1000);
+    expect(
+      getRetryDelayMs({
+        category: "transient_provider",
+        attempt: 1,
+        retryAfterMs: Number.NaN,
+      }),
+    ).toBe(1000);
+  });
+
   test("uses exponential conversation_busy profile", () => {
     expect(getRetryDelayMs({ category: "conversation_busy", attempt: 1 })).toBe(
       10000,

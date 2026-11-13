@@ -691,6 +691,7 @@ async function handleIncomingMessageInner(
               input: turnInput,
               errorDetail,
               attempt: llmApiErrorRetries,
+              retryAfterMs: runErrorInfo?.retry_after_ms,
               socket,
               runtime,
               turnLease,
@@ -738,7 +739,6 @@ async function handleIncomingMessageInner(
           );
           continue;
         }
-
         const effectiveStopReason: StopReasonType = turnAbortSignal.aborted
           ? "cancelled"
           : (stopReason as StopReasonType) || "error";

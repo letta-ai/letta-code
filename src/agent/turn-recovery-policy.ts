@@ -331,7 +331,13 @@ export function getRetryDelayMs(opts: {
   const { category, attempt, detail, retryAfterMs = null } = opts;
 
   if (category === "transient_provider") {
-    if (retryAfterMs !== null) return retryAfterMs;
+    if (
+      retryAfterMs !== null &&
+      Number.isFinite(retryAfterMs) &&
+      retryAfterMs >= 0
+    ) {
+      return Math.min(60_000, Math.round(retryAfterMs));
+    }
     const baseDelayMs = isCloudflareEdge52xDetail(detail)
       ? CLOUDFLARE_EDGE_52X_RETRY_BASE_DELAY_MS
       : DEFAULT_TRANSIENT_RETRY_BASE_DELAY_MS;
