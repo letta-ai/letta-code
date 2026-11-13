@@ -60,7 +60,7 @@ test("cloud monitors persist their real lifecycle through the monitor API", asyn
           const result = await monitor({
             description: "Command lifecycle",
             parentScope: scope,
-            command: `"${process.execPath}" -e "process.exit(${exitCode})"`,
+            command: `exit ${exitCode}`,
           });
           ids.push(result.taskId);
           expect(await terminal(result.taskId)).toMatchObject({
