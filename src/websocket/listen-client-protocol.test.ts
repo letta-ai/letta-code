@@ -49,6 +49,7 @@ import {
   handleExecuteCommand,
   SUPPORTED_REMOTE_COMMANDS,
 } from "@/websocket/listener/commands";
+import { deviceGitContextCache } from "@/websocket/listener/device-git-context";
 import { createIncomingMessage } from "@/websocket/listener/inbound-dispatch";
 import { ensureListenerModAdapter } from "@/websocket/listener/mod-adapter";
 import { isEditFileCommand } from "@/websocket/listener/protocol-inbound";
@@ -587,7 +588,6 @@ describe("listen-client parseServerMessage", () => {
         __testSetBackend(backend);
         const listener = __listenClientTestUtils.createListenerRuntime();
         const socket = new MockSocket(WebSocket.OPEN);
-
         await __listenClientTestUtils.handleRuntimeStartCommand(
           {
             type: "runtime_start",
@@ -609,7 +609,6 @@ describe("listen-client parseServerMessage", () => {
           socket as unknown as WebSocket,
           listener,
         );
-
         const messages = socket.sentPayloads.map((payload) =>
           JSON.parse(payload),
         );
@@ -656,11 +655,12 @@ describe("listen-client parseServerMessage", () => {
           ]),
         );
       } finally {
+        // Join the replay's in-flight git refresh before deleting its cwd (Windows).
+        await deviceGitContextCache.refresh(cwdDir);
         await rm(storageDir, { recursive: true, force: true });
         await rm(cwdDir, { recursive: true, force: true });
       }
     });
-
     test("resumes an existing agent and conversation", async () => {
       const storageDir = await mkdtemp(
         join(os.tmpdir(), "ws-runtime-start-resume-"),
