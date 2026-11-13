@@ -21,7 +21,10 @@ import {
   createGitHubPullRequestSnapshotFetcher,
   GitHubPullRequestSnapshotPending,
 } from "./github-pull-request-cloud";
-import { diffGitHubPullRequestSnapshots } from "./github-pull-request-diff";
+import {
+  diffGitHubPullRequestSnapshots,
+  type PullRequestEventKind,
+} from "./github-pull-request-diff";
 import {
   describeGitHubPullRequestSnapshot,
   hasGitHubPullRequestReadyConditions,
@@ -31,6 +34,11 @@ import type {
   GitHubPullRequestSnapshot,
 } from "./github-pull-request-types";
 import { parseGitHubPullRequestUrl } from "./github-pull-request-watch";
+import {
+  createGitHubWorkflowRunFetcher,
+  describeWorkflowRun,
+  parseGitHubWorkflowRunUrl,
+} from "./github-workflow-run";
 import {
   getMonitorTimeoutEvent,
   installMonitorProcessExitCleanup,
@@ -61,6 +69,7 @@ const WATCH_FRESH_SNAPSHOT_NOTIFY_AFTER_MS = 30 * 60_000;
 
 interface WatchPullRequestArgs {
   url: string;
+  notify_on?: PullRequestEventKind[];
   parentScope?: { agentId: string; conversationId: string };
   signal?: AbortSignal;
 }
@@ -163,6 +172,7 @@ function saveSnapshot(
 function resumedChanges(
   path: string | undefined,
   initial: GitHubPullRequestSnapshot,
+  notifyOn?: readonly PullRequestEventKind[],
 ): string {
   if (!path) return "";
   try {
@@ -172,6 +182,7 @@ function resumedChanges(
     const changes = diffGitHubPullRequestSnapshots(
       saved.snapshot,
       initial,
+      notifyOn,
     ).events;
     if (!changes.length) return "";
     // Use the same line and notification limits as live monitor events.
@@ -198,10 +209,19 @@ export async function watch_pr(
   if (typeof args.url !== "string") {
     throw new Error("WatchPR url is required");
   }
-  const ref = parseGitHubPullRequestUrl(args.url);
+  const isRun = args.url.includes("/actions/runs/");
+  const ref = isRun
+    ? parseGitHubWorkflowRunUrl(args.url)
+    : parseGitHubPullRequestUrl(args.url);
+  const describe = isRun
+    ? describeWorkflowRun
+    : describeGitHubPullRequestSnapshot;
   const cwd = getCurrentWorkingDirectory();
   const fetchSnapshot =
-    deps.fetchSnapshot ?? createGitHubPullRequestSnapshotFetcher();
+    deps.fetchSnapshot ??
+    (isRun
+      ? createGitHubWorkflowRunFetcher()
+      : createGitHubPullRequestSnapshotFetcher());
   const runtimeContext = getRuntimeContext();
   const parentScope =
     args.parentScope ??
@@ -214,30 +234,44 @@ export async function watch_pr(
   const scope = resolveNotificationScope(parentScope);
   let snapshotPath: string | undefined;
   try {
-    snapshotPath = scope
-      ? join(
-          resolveGlobalConfigDir(),
-          "cache",
-          "watch-pr",
-          `${createHash("sha256")
-            .update(
-              JSON.stringify([
-                scope.agentId,
-                scope.conversationId,
-                ref.owner.toLowerCase(),
-                ref.repo.toLowerCase(),
-                ref.number,
-              ]),
-            )
-            .digest("hex")}.json`,
-        )
-      : undefined;
+    snapshotPath =
+      scope && !isRun
+        ? join(
+            resolveGlobalConfigDir(),
+            "cache",
+            "watch-pr",
+            `${createHash("sha256")
+              .update(
+                JSON.stringify([
+                  scope.agentId,
+                  scope.conversationId,
+                  ref.owner.toLowerCase(),
+                  ref.repo.toLowerCase(),
+                  ref.number,
+                ]),
+              )
+              .digest("hex")}.json`,
+          )
+        : undefined;
   } catch {
     // Invalid config paths disable persistence, not the watch.
   }
   const initial = await fetchSnapshot(ref, { cwd, signal: args.signal });
   args.signal?.throwIfAborted();
-  const changesSincePreviousWatch = resumedChanges(snapshotPath, initial);
+  const changesSincePreviousWatch = resumedChanges(
+    snapshotPath,
+    initial,
+    args.notify_on,
+  );
+  if (isRun && initial.state !== "OPEN") {
+    return {
+      content: [{ type: "text", text: describe(initial) }],
+      taskId: "",
+      url: ref.url,
+      headSha: initial.headSha,
+      persistent: false,
+    };
+  }
   if (initial.state !== "OPEN") {
     saveSnapshot(snapshotPath, initial);
     throw new Error(
@@ -254,7 +288,7 @@ export async function watch_pr(
     new MonitorOutputWriter(outputFile);
   if (
     !output.append(
-      `[initial snapshot]\n${describeGitHubPullRequestSnapshot(initial)}${changesSincePreviousWatch}\n`,
+      `[initial snapshot]\n${describe(initial)}${changesSincePreviousWatch}\n`,
     )
   ) {
     rmSync(outputFile, { force: true });
@@ -262,7 +296,9 @@ export async function watch_pr(
   }
   saveSnapshot(snapshotPath, initial);
   const actingUserId = getRuntimeActingUserAttribution();
-  const description = `PR ${ref.owner}/${ref.repo}#${ref.number} checks, reviews, and mergeability`;
+  const description = isRun
+    ? `Workflow run ${ref.owner}/${ref.repo}#${ref.number}`
+    : `PR ${ref.owner}/${ref.repo}#${ref.number} checks, reviews, and mergeability`;
   const controller = new AbortController();
   const secrets: Readonly<Record<string, string>> = {};
   let processState: BackgroundProcess;
@@ -381,7 +417,21 @@ export async function watch_pr(
             hasGitHubPullRequestReadyConditions(stableCurrent),
         );
         saveSnapshot(snapshotPath, stableCurrent);
-        const diff = diffGitHubPullRequestSnapshots(previous, stableCurrent);
+        const diff = isRun
+          ? {
+              events:
+                previous.workflowRun?.status !== current.workflowRun?.status ||
+                previous.workflowRun?.conclusion !==
+                  current.workflowRun?.conclusion
+                  ? [describe(current)]
+                  : [],
+              terminal: current.state !== "OPEN",
+            }
+          : diffGitHubPullRequestSnapshots(
+              previous,
+              stableCurrent,
+              args.notify_on,
+            );
         emit(diff.events);
         previous = stableCurrent;
         if (diff.terminal) {
@@ -448,7 +498,9 @@ export async function watch_pr(
     content: [
       {
         type: "text",
-        text: `WatchPR started (task ${taskId}). It will keep watching after CI finishes and report new failures, reviews, comments, conflicts, head changes, merge-state changes, and watcher errors. It stops when the PR merges/closes, on TaskStop, or when this session ends.${persistent ? "" : ` A hard ${maxTimeoutMs / 3_600_000}-hour limit applies in this Cloud sandbox; call WatchPR again to re-arm it, or use Wake or cron for much longer waits.`}\n\nCurrent state:\n${describeGitHubPullRequestSnapshot(initial)}${changesSincePreviousWatch}\n\nOutput file: ${outputFile}`,
+        text: isRun
+          ? `WatchPR started (task ${taskId}). It reports workflow run status changes and completion with conclusion and failed jobs/steps.\n\n${describe(initial)}\n\nOutput file: ${outputFile}`
+          : `WatchPR started (task ${taskId}). ${args.notify_on ? `It will report ${args.notify_on.join(", ")} and watcher errors.` : "It will keep watching after CI finishes and report new failures, reviews, comments, conflicts, head changes, merge-state changes, and watcher errors."} It stops when the PR merges/closes, on TaskStop, or when this session ends.${persistent ? "" : ` A hard ${maxTimeoutMs / 3_600_000}-hour limit applies in this Cloud sandbox; call WatchPR again to re-arm it, or use Wake or cron for much longer waits.`}\n\nCurrent state:\n${describe(initial)}${changesSincePreviousWatch}\n\nOutput file: ${outputFile}`,
       },
     ],
     taskId,

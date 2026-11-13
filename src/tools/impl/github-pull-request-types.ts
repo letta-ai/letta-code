@@ -1,3 +1,14 @@
+export interface WorkflowRun {
+  status: string;
+  conclusion: string | null;
+  headSha: string;
+  jobs: Array<{
+    name: string;
+    conclusion: string | null;
+    steps?: Array<{ name: string; conclusion: string | null }>;
+  }>;
+}
+
 export interface GitHubPullRequestRef {
   owner: string;
   repo: string;
@@ -47,6 +58,7 @@ export interface PullRequestReviewThread {
 }
 
 export interface GitHubPullRequestSnapshot {
+  workflowRun?: WorkflowRun;
   ref: GitHubPullRequestRef;
   headSha: string;
   state: PullRequestState;

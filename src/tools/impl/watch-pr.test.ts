@@ -566,3 +566,39 @@ describe("WatchPR background lifecycle", () => {
     });
   });
 });
+
+test("workflow completion stops the background task and records failed jobs and steps", async () => {
+  const { workflowRunSnapshot, parseGitHubWorkflowRunUrl } = await import(
+    "./github-workflow-run"
+  );
+  const ref = parseGitHubWorkflowRunUrl(
+    "https://github.com/owner/repo/actions/runs/42",
+  );
+  let reads = 0;
+  const result = await watch_pr(
+    { url: ref.url },
+    {
+      fetchSnapshot: async () =>
+        workflowRunSnapshot(ref, {
+          headSha: "abc",
+          status: ++reads === 1 ? "in_progress" : "completed",
+          conclusion: reads === 1 ? null : "failure",
+          jobs: [
+            {
+              name: "build",
+              conclusion: "failure",
+              steps: [{ name: "compile", conclusion: "failure" }],
+            },
+          ],
+        }),
+      wait: async () => {},
+    },
+  );
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const task = backgroundProcesses.get(result.taskId);
+  expect(task?.status).toBe("completed");
+  expect(reads).toBe(2);
+  expect(readFileSync(task?.outputFile ?? "", "utf8")).toContain(
+    "Failed jobs/steps: build (compile)",
+  );
+});
