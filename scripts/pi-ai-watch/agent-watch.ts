@@ -18,6 +18,8 @@ import {
 } from "./release-analysis.ts";
 import {
   getPendingPrForCursor,
+  getRetryableReviewForCursor,
+  getUnresolvedReviewForCursor,
   hasCompletedRange,
   initialTrackerState,
   parseTrackerState,
@@ -85,51 +87,88 @@ async function main(): Promise<void> {
   let previousVersion = args.previousVersion;
   let currentVersion = args.currentVersion;
   const isScheduledSelection = !previousVersion && !currentVersion;
+  const explicitReview = !isScheduledSelection
+    ? getUnresolvedReviewForCursor(state)
+    : null;
+  let isReplay =
+    explicitReview?.outcome === "needs_human_review" &&
+    explicitReview.previous_version === previousVersion &&
+    explicitReview.version === currentVersion;
 
   if (isScheduledSelection) {
     const pending = getPendingPrForCursor(state);
     if (pending?.pr_url) {
       const status = getPullRequestStatus(pending.pr_url);
       if (status.state === "OPEN") {
-        console.log(`Waiting for pending pi-ai upgrade PR: ${status.url}`);
-        writeCommonOutputs(tracker, {
-          installedVersion,
-          previousVersion: pending.previous_version,
-          currentVersion: pending.version,
-        });
+        console.log(`Resuming pending pi-ai upgrade PR: ${status.url}`);
+        previousVersion = pending.previous_version;
+        currentVersion = pending.version;
+        isReplay = true;
         writeOutput("pending_pr_url", status.url);
-        writeOutput("should_run_agent", "false");
-        return;
-      }
-      if (status.state === "MERGED") {
+      } else if (status.state === "MERGED") {
         if (compareStableVersions(installedVersion, pending.version) < 0) {
           throw new Error(
             `Merged pi-ai PR ${status.url} targets ${pending.version}, but main still declares ${installedVersion}`,
           );
         }
       } else {
-        console.log(`Prior pi-ai PR ${status.url} was closed unmerged.`);
+        console.log(
+          `Prior pi-ai PR ${status.url} was closed unmerged; human decision required.`,
+        );
+        writeCommonOutputs(tracker, {
+          installedVersion,
+          previousVersion: pending.previous_version,
+          currentVersion: pending.version,
+        });
+        writeOutput("should_run_agent", "false");
+        return;
       }
     }
 
-    const latest = findLatestStableReleaseAfter(
-      releases,
-      state.audit_cursor_version,
-    );
-    if (!latest) {
-      console.log(
-        `No stable pi-ai release after ${state.audit_cursor_version}.`,
-      );
-      writeCommonOutputs(tracker, {
-        installedVersion,
-        previousVersion: state.audit_cursor_version,
-        currentVersion: state.audit_cursor_version,
-      });
-      writeOutput("should_run_agent", "false");
-      return;
+    if (!isReplay) {
+      const retryable = getRetryableReviewForCursor(state);
+      const unresolved = getUnresolvedReviewForCursor(state);
+      if (unresolved && !retryable) {
+        console.log(
+          `Waiting for human review of pi-ai ${unresolved.previous_version}...${unresolved.version}.`,
+        );
+        writeCommonOutputs(tracker, {
+          installedVersion,
+          previousVersion: unresolved.previous_version,
+          currentVersion: unresolved.version,
+        });
+        writeOutput("should_run_agent", "false");
+        return;
+      }
+      if (retryable) {
+        previousVersion = retryable.previous_version;
+        currentVersion = retryable.version;
+        isReplay = true;
+        console.log(
+          `Retrying pi-ai review ${previousVersion}...${currentVersion} under the current review policy.`,
+        );
+      }
+
+      const latest = isReplay
+        ? null
+        : findLatestStableReleaseAfter(releases, state.audit_cursor_version);
+      if (!isReplay && !latest) {
+        console.log(
+          `No stable pi-ai release after ${state.audit_cursor_version}.`,
+        );
+        writeCommonOutputs(tracker, {
+          installedVersion,
+          previousVersion: state.audit_cursor_version,
+          currentVersion: state.audit_cursor_version,
+        });
+        writeOutput("should_run_agent", "false");
+        return;
+      }
+      if (latest) {
+        previousVersion = state.audit_cursor_version;
+        currentVersion = latest.version;
+      }
     }
-    previousVersion = state.audit_cursor_version;
-    currentVersion = latest.version;
   }
 
   const analysis = await analyzePiAiRelease({
@@ -148,6 +187,7 @@ async function main(): Promise<void> {
 
   if (
     !args.dryRun &&
+    !isReplay &&
     hasCompletedRange(
       state,
       analysis.previous_version,
