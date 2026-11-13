@@ -1,4 +1,4 @@
-import { expect, mock, test } from "bun:test";
+import { expect, mock, spyOn, test } from "bun:test";
 import {
   closeListenerConnection,
   markListenerConnectionInitialized,
@@ -10,6 +10,7 @@ import {
   replaySubscribedConnectionState,
 } from "./connection-state-sync";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
+import { deviceGitContextCache } from "./device-git-context";
 import {
   createRuntime,
   startConnectedListenerRuntime,
@@ -252,8 +253,13 @@ test("replays state without waiting for Git and sends fresh device status afterw
   const gitReady = new Promise<void>((resolve) => {
     releaseGit = resolve;
   });
+  const gitContext = { branch: "feature", recent_branches: ["main"] };
+  const readGitContext = spyOn(deviceGitContextCache, "read").mockReturnValue(
+    null,
+  );
   const refreshGitContext = async (): Promise<void> => {
     await gitReady;
+    readGitContext.mockReturnValue(gitContext);
   };
 
   const replay = replaySubscribedConnectionState(
@@ -275,14 +281,29 @@ test("replays state without waiting for Git and sends fresh device status afterw
       "update_queue",
       "update_subagent_state",
     ]);
+    expect(
+      JSON.parse(transport.sent[0] as string).device_status.git_context,
+    ).toBeNull();
     releaseGit();
     await new Promise((resolve) => setImmediate(resolve));
-    expect(JSON.parse(transport.sent.at(-1) as string).type).toBe(
-      "update_device_status",
-    );
+    const followUp = JSON.parse(transport.sent.at(-1) as string);
+    expect(followUp.type).toBe("update_device_status");
+    expect(followUp.device_status.git_context).toEqual(gitContext);
     expect(transport.sent).toHaveLength(5);
+
+    transport.sent.length = 0;
+    await replaySubscribedConnectionState(
+      listener,
+      transport,
+      runtime,
+      { agent_id: "agent-1", conversation_id: "conv-1" },
+      { forceDeviceStatus: true, refreshGitContext },
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(transport.sent).toHaveLength(4);
   } finally {
     releaseGit();
+    readGitContext.mockRestore();
     stopRuntime(listener, true);
   }
 });

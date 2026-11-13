@@ -7,6 +7,7 @@ import {
   toListenerConnection,
 } from "./connection";
 import {
+  buildDeviceStatus,
   emitDeviceStatusUpdate,
   emitLoopStatusUpdate,
   emitStateSync,
@@ -144,6 +145,9 @@ export async function replaySubscribedConnectionState(
     replayPendingTurnFinishedToConnection(transport, runtime, connection.id);
     if (!isCurrent()) return;
   }
+  const gitContextBefore = JSON.stringify(
+    buildDeviceStatus(listener, scope).git_context,
+  );
   emitStateSync(transport, listener, scope, {
     forceDeviceStatus: options.forceDeviceStatus,
     ...(connection ? { routing: toListenerConnection(connection.id) } : {}),
@@ -155,6 +159,11 @@ export async function replaySubscribedConnectionState(
       scope,
     );
     if (!isCurrent()) return;
+    if (
+      JSON.stringify(buildDeviceStatus(listener, scope).git_context) ===
+      gitContextBefore
+    )
+      return;
     emitDeviceStatusUpdate(
       transport,
       listener,
