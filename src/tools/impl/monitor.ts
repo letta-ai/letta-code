@@ -33,10 +33,6 @@ import {
 import { startScriptMonitor } from "./monitor-script.js";
 import { getMonitorMaxTimeoutMs } from "./monitor-timeout";
 import {
-  startCloudUrlMonitor,
-  type UrlMonitorMatch,
-} from "./monitor-url-cloud";
-import {
   assertBackgroundProcessCapacity,
   type BackgroundProcess,
   backgroundProcesses,
@@ -81,13 +77,6 @@ interface MonitorArgs {
   ws?: MonitorWebSocketSource;
   script?: string;
   args?: unknown;
-  url?: string;
-  interval_seconds?: number;
-  headers?: Record<string, string>;
-  select?: string;
-  match?: UrlMonitorMatch;
-  stop_on_match?: boolean;
-  toolCallId?: string;
   backup_after_seconds?: number;
   backup_prompt?: string;
   secretEnv?: Record<string, string>;
@@ -298,24 +287,8 @@ function normalizeMonitorArgs(args: MonitorArgs): NormalizedMonitorArgs {
       normalized.ws.url === ""
     );
   if (Number(hasCommand) + Number(hasWebSocket) + Number(hasScript) !== 1) {
-    throw new Error(
-      "Monitor requires exactly one of command, ws, or script, or url",
-    );
+    throw new Error("Monitor requires exactly one of command, ws, or script");
   }
-  if (normalized.interval_seconds !== undefined) {
-    throw new Error("Monitor interval_seconds is only supported with url");
-  }
-  if (
-    normalized.headers !== undefined ||
-    normalized.select !== undefined ||
-    normalized.match !== undefined ||
-    normalized.stop_on_match !== undefined
-  ) {
-    throw new Error(
-      "Monitor headers, select, match and stop_on_match are only supported with url",
-    );
-  }
-  delete normalized.url;
   if (!hasScript) {
     delete normalized.script;
     delete normalized.args;
@@ -898,10 +871,6 @@ function backupScopeFor(taskId: string) {
 export async function monitor(args: MonitorArgs): Promise<MonitorResult> {
   // Hooks may have yielded since approval execution checked cancellation.
   args.signal?.throwIfAborted();
-  // A url monitor runs in Letta Cloud; nothing is started or retained here.
-  if (typeof args.url === "string" && args.url !== "") {
-    return startCloudUrlMonitor(args);
-  }
   const normalized = normalizeMonitorArgs(args);
   installMonitorProcessExitCleanup();
   const result =

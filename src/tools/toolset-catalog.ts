@@ -29,6 +29,7 @@ export const TOOLSET_CATALOG: Readonly<Record<ToolsetName, ToolsetDefinition>> =
         "Task",
         "SendAgentMessage",
         "Monitor",
+        "CloudMonitor",
         "WatchPR",
         "Wake",
         "TaskStop",
@@ -61,6 +62,7 @@ export const TOOLSET_CATALOG: Readonly<Record<ToolsetName, ToolsetDefinition>> =
       tools: [
         "Bash",
         "Monitor",
+        "CloudMonitor",
         "WatchPR",
         "Wake",
         "EnterWorktree",
@@ -94,6 +96,7 @@ export const TOOLSET_CATALOG: Readonly<Record<ToolsetName, ToolsetDefinition>> =
         "Task",
         "SendAgentMessage",
         "Monitor",
+        "CloudMonitor",
         "WatchPR",
         "Wake",
         "TaskStop",

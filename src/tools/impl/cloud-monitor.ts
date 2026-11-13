@@ -5,37 +5,31 @@ import { resolveBackendMode } from "@/backend/backend-mode";
 import { getRuntimeActingUserAttribution } from "@/runtime-context";
 import { resolveNotificationScope } from "@/utils/task-notifications.js";
 
-export const URL_MONITOR_MIN_INTERVAL_SECONDS = 60;
-const DEFAULT_URL_MONITOR_TIMEOUT_MS = 86_400_000;
+export const CLOUD_MONITOR_MIN_INTERVAL_SECONDS = 60;
+const DEFAULT_CLOUD_MONITOR_TIMEOUT_MS = 86_400_000;
 
 /** Compared-value condition; every given test must hold. */
-export interface UrlMonitorMatch {
+export interface CloudMonitorMatch {
   equals?: string[];
   contains?: string;
   gt?: number;
   lt?: number;
 }
 
-export interface UrlMonitorArgs {
+export interface CloudMonitorArgs {
   description: string;
-  url?: string;
+  url: string;
   interval_seconds?: number;
   headers?: Record<string, string>;
   select?: string;
-  match?: UrlMonitorMatch;
+  match?: CloudMonitorMatch;
   stop_on_match?: boolean;
   timeout_ms?: number;
-  persistent?: boolean;
-  command?: string;
-  ws?: { url: string };
-  script?: string;
-  backup_after_seconds?: number;
-  backup_prompt?: string;
   toolCallId?: string;
   parentScope?: { agentId: string; conversationId: string };
 }
 
-export interface UrlMonitorResult {
+export interface CloudMonitorResult {
   content: Array<{ type: "text"; text: string }>;
   taskId: string;
   timeoutMs: number;
@@ -44,7 +38,7 @@ export interface UrlMonitorResult {
 
 type Request = typeof apiRequest;
 
-export interface CloudUrlMonitorDeps {
+export interface CloudMonitorDeps {
   isCloud?: () => boolean;
   request?: Request;
   /** The conversation TaskStop runs in. */
@@ -81,7 +75,7 @@ interface CloudUrlSource {
   interval_seconds: number;
   headers?: Record<string, string>;
   select?: { type: "json"; path: string };
-  notify_when?: { type: "match" } & UrlMonitorMatch;
+  notify_when?: { type: "match" } & CloudMonitorMatch;
   stop_on_match?: boolean;
 }
 
@@ -93,35 +87,35 @@ function validateHeaders(headers: unknown): Record<string, string> | undefined {
     Array.isArray(headers) ||
     !Object.values(headers).every((value) => typeof value === "string")
   ) {
-    throw new Error("Monitor headers must map header names to strings");
+    throw new Error("CloudMonitor headers must map header names to strings");
   }
   const entries = Object.entries(headers as Record<string, string>);
   for (const [name, value] of entries) {
     if (CREDENTIAL_HEADER.test(name) && !SECRET_REFERENCE.test(value)) {
       throw new Error(
-        `Monitor header ${name} carries a credential, so its value must reference an agent secret ($NAME) instead of containing it`,
+        `CloudMonitor header ${name} carries a credential, so its value must reference an agent secret ($NAME) instead of containing it`,
       );
     }
   }
   return entries.length > 0 ? (headers as Record<string, string>) : undefined;
 }
 
-function validateMatch(match: unknown): UrlMonitorMatch | undefined {
+function validateMatch(match: unknown): CloudMonitorMatch | undefined {
   if (match === undefined) return undefined;
   if (typeof match !== "object" || match === null || Array.isArray(match)) {
-    throw new Error("Monitor match must be an object");
+    throw new Error("CloudMonitor match must be an object");
   }
-  const { equals, contains, gt, lt } = match as UrlMonitorMatch;
-  const result: UrlMonitorMatch = {};
+  const { equals, contains, gt, lt } = match as CloudMonitorMatch;
+  const result: CloudMonitorMatch = {};
   if (equals !== undefined) {
     if (!Array.isArray(equals) || !equals.every((v) => typeof v === "string")) {
-      throw new Error("Monitor match.equals must be an array of strings");
+      throw new Error("CloudMonitor match.equals must be an array of strings");
     }
     if (equals.length > 0) result.equals = equals;
   }
   if (contains !== undefined) {
     if (typeof contains !== "string" || contains === "") {
-      throw new Error("Monitor match.contains must be a non-empty string");
+      throw new Error("CloudMonitor match.contains must be a non-empty string");
     }
     result.contains = contains;
   }
@@ -131,24 +125,24 @@ function validateMatch(match: unknown): UrlMonitorMatch | undefined {
   ] as const) {
     if (value === undefined) continue;
     if (typeof value !== "number" || !Number.isFinite(value)) {
-      throw new Error(`Monitor match.${key} must be a number`);
+      throw new Error(`CloudMonitor match.${key} must be a number`);
     }
     result[key] = value;
   }
   if (Object.keys(result).length === 0) {
     throw new Error(
-      "Monitor match needs at least one of equals, contains, gt or lt",
+      "CloudMonitor match needs at least one of equals, contains, gt or lt",
     );
   }
   return result;
 }
 
 /** The Cloud source for validated url arguments. */
-function buildCloudSource(args: UrlMonitorArgs, url: string): CloudUrlSource {
+function buildCloudSource(args: CloudMonitorArgs, url: string): CloudUrlSource {
   const source: CloudUrlSource = {
     type: "url",
     url,
-    interval_seconds: args.interval_seconds ?? URL_MONITOR_MIN_INTERVAL_SECONDS,
+    interval_seconds: args.interval_seconds ?? CLOUD_MONITOR_MIN_INTERVAL_SECONDS,
   };
   const headers = validateHeaders(args.headers);
   if (headers) source.headers = headers;
@@ -158,7 +152,7 @@ function buildCloudSource(args: UrlMonitorArgs, url: string): CloudUrlSource {
       args.select.split(".").some((segment) => segment === "")
     ) {
       throw new Error(
-        "Monitor select must be a dot-separated path into the JSON response, such as 0.status",
+        "CloudMonitor select must be a dot-separated path into the JSON response, such as 0.status",
       );
     }
     source.select = { type: "json", path: args.select };
@@ -167,10 +161,10 @@ function buildCloudSource(args: UrlMonitorArgs, url: string): CloudUrlSource {
   if (match) source.notify_when = { type: "match", ...match };
   if (args.stop_on_match !== undefined) {
     if (typeof args.stop_on_match !== "boolean") {
-      throw new Error("Monitor stop_on_match must be a boolean");
+      throw new Error("CloudMonitor stop_on_match must be a boolean");
     }
     if (args.stop_on_match && !match) {
-      throw new Error("Monitor stop_on_match needs match");
+      throw new Error("CloudMonitor stop_on_match needs match");
     }
     if (args.stop_on_match) source.stop_on_match = true;
   }
@@ -191,87 +185,64 @@ function notifyDescription(source: CloudUrlSource): string {
   return `You will be notified when ${what} first matches, including on the first poll${then}`;
 }
 
-function validateUrlMonitorArgs(args: UrlMonitorArgs): string {
+function validateCloudMonitorArgs(args: CloudMonitorArgs): string {
   if (typeof args.description !== "string") {
-    throw new Error("Monitor description is required");
-  }
-  // Empty unused source fields count as absent, as for the local sources.
-  const otherSource =
-    (typeof args.command === "string" && args.command.length > 0) ||
-    (typeof args.script === "string" && args.script.trim() !== "") ||
-    (args.ws !== undefined && args.ws?.url !== "");
-  if (otherSource) {
-    throw new Error(
-      "Monitor requires exactly one of command, ws, or script, or url",
-    );
-  }
-  if (args.persistent) {
-    throw new Error(
-      "Monitor url does not support persistent; set timeout_ms instead",
-    );
-  }
-  if (
-    args.backup_after_seconds !== undefined ||
-    args.backup_prompt !== undefined
-  ) {
-    throw new Error(
-      "Monitor url does not support backup_after_seconds or backup_prompt",
-    );
+    throw new Error("CloudMonitor description is required");
   }
   let parsed: URL;
   try {
     parsed = new URL(String(args.url));
   } catch {
-    throw new Error("Monitor url must be an absolute http or https URL");
+    throw new Error("CloudMonitor url must be an absolute http or https URL");
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error("Monitor url must be an absolute http or https URL");
+    throw new Error("CloudMonitor url must be an absolute http or https URL");
   }
   const interval = args.interval_seconds;
   if (
     interval !== undefined &&
-    (!Number.isInteger(interval) || interval < URL_MONITOR_MIN_INTERVAL_SECONDS)
+    (!Number.isInteger(interval) || interval < CLOUD_MONITOR_MIN_INTERVAL_SECONDS)
   ) {
     throw new Error(
-      `Monitor interval_seconds must be an integer of at least ${URL_MONITOR_MIN_INTERVAL_SECONDS}`,
+      `CloudMonitor interval_seconds must be an integer of at least ${CLOUD_MONITOR_MIN_INTERVAL_SECONDS}`,
     );
   }
   if (
     args.timeout_ms !== undefined &&
     (!Number.isInteger(args.timeout_ms) || args.timeout_ms < 1000)
   ) {
-    throw new Error("Monitor timeout_ms must be an integer of at least 1000");
+    throw new Error("CloudMonitor timeout_ms must be an integer of at least 1000");
   }
   return parsed.toString();
 }
 
 /**
- * Registers a url monitor with Letta Cloud, which polls the URL itself and
- * notifies this conversation when the HTTP status or body changes. Nothing
- * runs locally: there is no background process, timer, or output file.
+ * CloudMonitor: registers a url monitor with Letta Cloud, which polls the URL
+ * itself and notifies this conversation when the HTTP status or body changes.
+ * Nothing runs locally: there is no background process, timer, or output file.
  */
-export async function startCloudUrlMonitor(
-  args: UrlMonitorArgs,
-  deps: CloudUrlMonitorDeps = {},
-): Promise<UrlMonitorResult> {
-  const url = validateUrlMonitorArgs(args);
+export async function cloud_monitor(
+  args: CloudMonitorArgs,
+  deps: CloudMonitorDeps = {},
+): Promise<CloudMonitorResult> {
+  const url = validateCloudMonitorArgs(args);
   const source = buildCloudSource(args, url);
   if (!(deps.isCloud ?? isLettaCloud)()) {
     throw new Error(
-      "Monitor url runs in Letta Cloud and is only available when connected to Letta Cloud. Use command with a polling loop instead.",
+      "CloudMonitor runs in Letta Cloud and is only available when connected to Letta Cloud. Use Monitor with a polling command instead.",
     );
   }
   const scope = resolveNotificationScope(args.parentScope);
   if (!scope) {
-    throw new Error("Monitor url needs an agent conversation to notify");
+    throw new Error("CloudMonitor needs an agent conversation to notify");
   }
   if (!isSavedConversation(scope.conversationId)) {
     throw new Error(
-      "Monitor url needs a saved conversation and is not available in the agent's default conversation. Use command with a polling loop instead.",
+      "CloudMonitor needs a saved conversation and is not available in the agent's default conversation. Use Monitor with a polling command instead.",
     );
   }
   const intervalSeconds = source.interval_seconds;
-  const timeoutMs = args.timeout_ms ?? DEFAULT_URL_MONITOR_TIMEOUT_MS;
+  const timeoutMs = args.timeout_ms ?? DEFAULT_CLOUD_MONITOR_TIMEOUT_MS;
   const request = deps.request ?? apiRequest;
   const created = await request<{ id: string }>(
     "POST",
@@ -305,7 +276,7 @@ export async function startCloudUrlMonitor(
  */
 export async function stopCloudUrlMonitor(
   taskId: string,
-  deps: CloudUrlMonitorDeps = {},
+  deps: CloudMonitorDeps = {},
 ): Promise<{ killed: boolean; output: string }> {
   if (!(deps.isCloud ?? isLettaCloud)()) {
     return {

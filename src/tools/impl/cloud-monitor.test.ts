@@ -1,11 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { ApiRequestError } from "@/backend/api/request";
-import { monitor } from "./monitor";
 import {
+  cloud_monitor,
   isCloudMonitorId,
-  startCloudUrlMonitor,
   stopCloudUrlMonitor,
-} from "./monitor-url-cloud";
+} from "./cloud-monitor";
 import { backgroundProcesses } from "./process_manager";
 import { task_stop } from "./task-stop";
 
@@ -25,11 +24,11 @@ function fakeRequest(response: unknown, calls: Call[]) {
 
 const scope = { agentId: "agent-1", conversationId: "conv-1" };
 
-describe("Monitor url source", () => {
+describe("CloudMonitor", () => {
   test("registers with Cloud and returns the Cloud monitor id without local state", async () => {
     const calls: Call[] = [];
     const before = backgroundProcesses.size;
-    const result = await startCloudUrlMonitor(
+    const result = await cloud_monitor(
       {
         description: "Deployment status changes",
         url: "https://example.com/status",
@@ -66,7 +65,7 @@ describe("Monitor url source", () => {
 
   test("sends the interval and the default timeout", async () => {
     const calls: Call[] = [];
-    await startCloudUrlMonitor(
+    await cloud_monitor(
       {
         description: "Status",
         url: "https://example.com/",
@@ -87,7 +86,7 @@ describe("Monitor url source", () => {
 
   test("sends secret header templates, the selected field and the match as written", async () => {
     const calls: Call[] = [];
-    const result = await startCloudUrlMonitor(
+    const result = await cloud_monitor(
       {
         description: "Pipeline result",
         url: "https://gitlab.example.com/api/v4/projects/1/pipelines?ref=main",
@@ -127,7 +126,7 @@ describe("Monitor url source", () => {
   test("needs a saved conversation, not the default one", async () => {
     const calls: Call[] = [];
     await expect(
-      startCloudUrlMonitor(
+      cloud_monitor(
         {
           description: "Status",
           url: "https://example.com/",
@@ -139,10 +138,10 @@ describe("Monitor url source", () => {
     expect(calls).toEqual([]);
   });
 
-  test("explains that url mode needs Letta Cloud", async () => {
+  test("explains that CloudMonitor needs Letta Cloud", async () => {
     const calls: Call[] = [];
     await expect(
-      startCloudUrlMonitor(
+      cloud_monitor(
         {
           description: "Status",
           url: "https://example.com/",
@@ -155,10 +154,6 @@ describe("Monitor url source", () => {
   });
 
   test.each([
-    [{ command: "curl example.com" }, "exactly one of command, ws, or script"],
-    [{ ws: { url: "wss://example.com" } }, "exactly one of command, ws"],
-    [{ persistent: true }, "does not support persistent"],
-    [{ backup_after_seconds: 900 }, "does not support backup_after_seconds"],
     [{ interval_seconds: 30 }, "interval_seconds must be an integer"],
     [{ url: "ftp://example.com/" }, "absolute http or https URL"],
     [{ url: "not a url" }, "absolute http or https URL"],
@@ -174,10 +169,10 @@ describe("Monitor url source", () => {
     [{ select: "" }, "select must be a dot-separated path"],
     [{ match: {} }, "match needs at least one of equals, contains, gt or lt"],
     [{ stop_on_match: true }, "stop_on_match needs match"],
-  ])("rejects invalid url monitor arguments %#", async (extra, message) => {
+  ])("rejects invalid CloudMonitor arguments %#", async (extra, message) => {
     const calls: Call[] = [];
     await expect(
-      startCloudUrlMonitor(
+      cloud_monitor(
         {
           description: "Status",
           url: "https://example.com/",
@@ -188,28 +183,6 @@ describe("Monitor url source", () => {
       ),
     ).rejects.toThrow(message);
     expect(calls).toEqual([]);
-  });
-
-  test("Monitor routes url to Cloud and keeps interval_seconds url-only", async () => {
-    await expect(
-      monitor({ description: "Status", url: "ftp://example.com/" }),
-    ).rejects.toThrow("absolute http or https URL");
-    await expect(
-      monitor({
-        description: "Lines",
-        command: "echo hi",
-        interval_seconds: 60,
-      }),
-    ).rejects.toThrow("interval_seconds is only supported with url");
-    await expect(
-      monitor({
-        description: "Lines",
-        command: "echo hi",
-        headers: { Accept: "text/plain" },
-      }),
-    ).rejects.toThrow(
-      "headers, select, match and stop_on_match are only supported with url",
-    );
   });
 });
 

@@ -12,6 +12,7 @@ import GlobDescription from "./descriptions/Glob.md";
 import GrepDescription from "./descriptions/Grep.md";
 import LSDescription from "./descriptions/LS.md";
 import MemoryDescription from "./descriptions/Memory.md";
+import CloudMonitorDescription from "./descriptions/CloudMonitor.md";
 import MonitorDescription from "./descriptions/Monitor.md";
 import ReadDescription from "./descriptions/Read.md";
 import ReadArtifactFileDescription from "./descriptions/ReadArtifactFile.md";
@@ -37,6 +38,7 @@ import { apply_patch } from "./impl/apply-patch";
 import { read_artifact_file, write_artifact_file } from "./impl/artifact-files";
 import { ask_user_question_async } from "./impl/ask-user-question";
 import { bash } from "./impl/bash";
+import { cloud_monitor } from "./impl/cloud-monitor";
 import { code_mode } from "./impl/code-mode";
 import { edit } from "./impl/edit";
 import { enter_worktree } from "./impl/enter-worktree";
@@ -78,6 +80,7 @@ import GlobSchema from "./schemas/Glob.json";
 import GrepSchema from "./schemas/Grep.json";
 import LSSchema from "./schemas/LS.json";
 import MemorySchema from "./schemas/Memory.json";
+import CloudMonitorSchema from "./schemas/CloudMonitor.json";
 import MonitorSchema from "./schemas/Monitor.json";
 import ReadSchema from "./schemas/Read.json";
 import ReadArtifactFileSchema from "./schemas/ReadArtifactFile.json";
@@ -180,6 +183,11 @@ const toolDefinitions = {
     ) as typeof MonitorSchema,
     description: applyMonitorMaxTimeout(MonitorDescription.trim()),
     impl: monitor,
+  }),
+  CloudMonitor: defineTool({
+    schema: CloudMonitorSchema,
+    description: CloudMonitorDescription.trim(),
+    impl: cloud_monitor,
   }),
   WatchPR: defineTool({
     schema: WatchPRSchema,

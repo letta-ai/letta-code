@@ -1,0 +1,69 @@
+{
+  "type": "object",
+  "properties": {
+    "description": {
+      "type": "string",
+      "description": "Clear, concise user-facing description of the update you are waiting for. This may be shown directly in chat, so make it grammatical by itself. Describe the expected event, not the URL or monitor implementation. Prefer `Deployment completion or failure` or `CI result for the auth fix` over internal labels like `status endpoint changes`."
+    },
+    "url": {
+      "type": "string",
+      "description": "Public http(s) URL that Letta Cloud polls with GET. By default it notifies only when the HTTP status or body changes; use select and match to narrow that."
+    },
+    "interval_seconds": {
+      "type": "integer",
+      "minimum": 60,
+      "default": 60,
+      "description": "Seconds between polls of url."
+    },
+    "timeout_ms": {
+      "type": "integer",
+      "minimum": 1000,
+      "default": 86400000,
+      "description": "Stop the monitor after this deadline. Default 24 hours, up to 7 days."
+    },
+    "headers": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Request headers, at most 10. Reference agent secrets as $NAME, as in shell commands, e.g. {\"PRIVATE-TOKEN\": \"$GITLAB_TOKEN\"} or {\"Authorization\": \"Bearer $CI_TOKEN\"}. Cloud fills them in on every poll; the value is never sent from here. Credential headers must use a secret reference. Headers are dropped if a redirect leaves the URL's origin."
+    },
+    "select": {
+      "type": "string",
+      "description": "A dot-separated path into the JSON response (numbers index arrays), e.g. 0.status. Only that value is compared and reported, so unrelated fields changing does not notify."
+    },
+    "match": {
+      "type": "object",
+      "properties": {
+        "equals": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Matches when the value is one of these."
+        },
+        "contains": {
+          "type": "string",
+          "description": "Matches when the value contains this text."
+        },
+        "gt": {
+          "type": "number",
+          "description": "Matches when the value is a number greater than this."
+        },
+        "lt": {
+          "type": "number",
+          "description": "Matches when the value is a number less than this."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Notify when the compared value starts to meet every given test, instead of on every change. The first response is checked too, and a value that keeps matching does not notify again. List every terminal state, e.g. equals [\"success\", \"failed\", \"canceled\"]."
+    },
+    "stop_on_match": {
+      "type": "boolean",
+      "description": "With match: stop after the first match notice."
+    }
+  },
+  "required": ["description", "url"],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}
