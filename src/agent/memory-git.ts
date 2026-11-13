@@ -1416,13 +1416,13 @@ async function syncAttachedRepository(args: {
 export async function syncAttachedAgentRepositories(
   agentId: string,
 ): Promise<SyncAgentRepositoriesResult> {
-  let repositories: Awaited<ReturnType<typeof listAttachedAgentRepositories>> = [];
+  let repositories: Awaited<ReturnType<typeof listAttachedAgentRepositories>> =
+    [];
   let jobs: Promise<string>[] = [];
   try {
     const registered = trackCheckoutDiscovery(agentId, async () => {
-      repositories = await listAttachedAgentRepositories(
-        resolveEffectiveAgentId(agentId),
-      );
+      const effectiveAgentId = resolveEffectiveAgentId(agentId);
+      repositories = await listAttachedAgentRepositories(effectiveAgentId);
       retainCheckouts(
         agentId,
         repositories.map((repository) =>

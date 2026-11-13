@@ -81,7 +81,9 @@ async function getAttachedRepositories(
 
   const promise = import("./attached-repositories").then(
     async ({ listAttachedAgentRepositories }) =>
-      (await listAttachedAgentRepositories(resolveEffectiveAgentId(agentId))).sort(
+      (
+        await listAttachedAgentRepositories(resolveEffectiveAgentId(agentId))
+      ).sort(
         (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
       ),
   );
