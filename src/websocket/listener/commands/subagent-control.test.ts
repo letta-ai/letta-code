@@ -103,6 +103,38 @@ describe("remote external subagent control", () => {
     expect(response).toMatchObject({ success: false });
   });
 
+  test("reports a session missing from this computer for message and stop", async () => {
+    const { parent } = fixture();
+    const agentId = "claude_22222222-2222-4222-8222-222222222222";
+    const expected = {
+      success: false,
+      error: `Subagent ${agentId} was not found on this computer`,
+    };
+    expect(
+      await handleSubagentMessageCommand(
+        {
+          type: "subagent_message",
+          request_id: "missing-message",
+          runtime,
+          agent_id: agentId,
+          message: "Continue",
+        },
+        parent,
+      ),
+    ).toMatchObject(expected);
+    expect(
+      await handleSubagentStopCommand(
+        {
+          type: "subagent_stop",
+          request_id: "missing-stop",
+          runtime,
+          agent_id: agentId,
+        },
+        parent,
+      ),
+    ).toMatchObject(expected);
+  });
+
   for (const evicted of [false, true]) {
     test(`accepts a same-agent handoff and rejects another agent (${evicted ? "persisted session" : "live task"})`, async () => {
       if (evicted) evictedFixture();
