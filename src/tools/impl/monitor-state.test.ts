@@ -319,8 +319,10 @@ test("expired resumes never start a process and timeout persists expired", async
     timeout_ms: 1000,
     parentScope: scope,
   });
-  await new Promise((resolve) => setTimeout(resolve, 1300));
-  await backgroundProcesses.get(started.taskId)?.persistState?.();
+  const deadline = Date.now() + 6000;
+  while (record?.status !== "expired" && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
   expect(record?.status).toBe("expired");
   if (!record) throw new Error("Missing saved monitor");
   record.status = "paused";
@@ -330,7 +332,7 @@ test("expired resumes never start a process and timeout persists expired", async
   ).rejects.toThrow("has expired");
   expect(String(record.status)).toBe("expired");
   expect(backgroundProcesses.get(started.taskId)?.status).toBe("failed");
-});
+}, 10000);
 
 test.each(["generic", "zod"] as const)(
   "strict older servers still create and stop monitors (%s)",
