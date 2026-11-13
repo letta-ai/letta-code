@@ -505,7 +505,7 @@ In addition to the [common fields](#common-fields), HTTP hooks accept these fiel
 | `url` | yes | URL to send the POST request to |
 | `headers` | no | Additional HTTP headers as key-value pairs. Values support environment variable interpolation using `$VAR_NAME` or `${VAR_NAME}` syntax. Only variables listed in `allowedEnvVars` are resolved |
 | `allowedEnvVars` | no | List of environment variable names that may be interpolated into header values. References to unlisted variables are replaced with empty strings. Required for any env var interpolation to work |
-| `onFailure` | no | What happens to the action when the hook fails: `"continue"`, the default, or `"block"`. See [Block the action when a hook fails](#block-the-action-when-a-hook-fails). Requires Claude Code v2.1.295 or later |
+| `onFailure` | no | Whether the action that triggered the hook goes ahead when the hook fails: `"continue"` or `"block"`. See [Block the action when a hook fails](#block-the-action-when-a-hook-fails) for `"block"` and for leaving the field unset. Requires Claude Code v2.1.295 or later |
 
 Claude Code sends the hook's [JSON input](#hook-input-and-output) as the POST request body with `Content-Type: application/json`. The response body uses the same [JSON output format](#json-output) as command hooks.
 
@@ -901,6 +901,10 @@ Apart from a command hook you run with [`async: true`](#run-hooks-in-the-backgro
 
 On `PreToolUse`, a timed-out `command`, `http`, or `mcp_tool` hook doesn't block the tool call, except for hooks [whose failure blocks the action](#block-the-action-when-a-hook-fails). The call continues through the normal [permission flow](https://code.claude.com/docs/en/permissions.md), so don't count on a stalled hook to act as a gate. To block the call when a `command` or `http` hook times out, set [`onFailure: "block"`](#block-the-action-when-a-hook-fails). An [Agent SDK callback hook](https://code.claude.com/docs/en/agent-sdk/hooks.md) that exceeds its timeout [blocks the tool call](#pretooluse).
 
+> [!NOTE]
+>
+> If you use Code Mode, timeouts on `PreToolUse` work differently. See [Tool call refused by a hook](https://code.claude.com/docs/en/code-mode.md#tool-call-refused-by-a-hook).
+
 #### Hooks that start a background process
 
 A hook can start a long-running program, such as a dev server, and leave it running while the session continues. In the hook's script or [shell form](#exec-form-and-shell-form) command:
@@ -980,6 +984,10 @@ The field has no effect on these hooks:
 
 * **`Stop`, `SubagentStop`, `TaskCompleted`, and `TeammateIdle` hooks**: exit code 2 on these events sends Claude back to keep working, and Claude can't repair a hook that won't run
 * **Background command hooks**: command hooks that set [`async` or `asyncRewake`](#run-hooks-in-the-background)
+
+> [!NOTE]
+>
+> If you use Code Mode, failures on `PreToolUse` work differently. See [Tool call refused by a hook](https://code.claude.com/docs/en/code-mode.md#tool-call-refused-by-a-hook).
 
 #### Failed hooks on Windows without Git Bash
 
@@ -1512,6 +1520,7 @@ block certain types of prompts.
 * A [session-scoped scheduled task](https://code.claude.com/docs/en/scheduled-tasks.md) firing, including a `/loop` iteration
 * A [background subagent](https://code.claude.com/docs/en/sub-agents.md#run-subagents-in-foreground-or-background) reporting back to the session that started it
 * A [message another session sends](https://code.claude.com/docs/en/cross-session-messaging.md) to your main conversation
+* The output of Claude's code in a [Code Mode](https://code.claude.com/docs/en/code-mode.md#code-output-withheld-by-a-hook) session, for `command`, `http`, and `mcp_tool` hooks, when code can run in the background
 
 `UserPromptSubmit` hooks have a default timeout of 30 seconds for `command`, `http`, and `mcp_tool` types, shorter than the 600-second default for those types on most other events. Because this hook runs before every prompt and blocks model processing until it completes, a stuck hook stalls the session. If your hook needs more time, set the `timeout` field in the hook entry.
 
@@ -1560,12 +1569,12 @@ To block a prompt, return a JSON object with `decision` set to `"block"`:
 | Field | Description |
 | :- | :- |
 | `decision` | `"block"` stops the prompt before it reaches Claude. Omit to allow the prompt to proceed |
-| `reason` | Shown to the user when `decision` is `"block"`. Not added to context |
+| `reason` | Shown to the user when `decision` is `"block"`. Not added to context, except when the hook blocks [Code Mode output](https://code.claude.com/docs/en/code-mode.md#code-output-withheld-by-a-hook) |
 | `additionalContext` | String added to Claude's context alongside the submitted prompt. See [Add context for Claude](#add-context-for-claude) |
 | `sessionTitle` | Sets the session title. Use to name sessions automatically based on the prompt content |
 | `suppressOriginalPrompt` | If `true` when the hook blocks the prompt, leaves the prompt text out of the block message. See [What a blocked prompt leaves behind](#what-a-blocked-prompt-leaves-behind) |
 
-A hook that blocks by exiting 2 routes the same way as `reason`: the block message shows the stderr text to the user, and it isn't added to context.
+If your hook blocks by exiting 2, its stderr text is treated the same way as `reason`.
 
 ```json theme={null}
 {

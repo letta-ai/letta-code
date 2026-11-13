@@ -16,7 +16,7 @@ November 12, 2026
 
 **Added**
 
-* Added Code Mode, an experimental opt-in in which Claude writes JavaScript to call its tools; see [https://code.claude.com/docs/en/code-mode](https://code.claude.com/docs/en/code-mode) to turn it on, or to turn it off for an organization
+* Added Code Mode, an experimental opt-in in which Claude writes JavaScript to call its tools; see [https://code.claude.com/docs/en/code-mode](https://code.claude.com/docs/en/code-mode.md) to turn it on, or to turn it off for an organization
 * Added `engines["claude-code"]` to `plugin.json`: plugins outside their stated Claude Code version range are not installed, updated or loaded, and install and update pick the newest version that fits
 * Added type checking of a plugin's TypeScript hooks module to `claude plugin validate`; each finding is a warning, and `--strict` fails on it
 * Added to `claude plugin validate` the `$` nouns a mod's `engine.create` hook adds, withholds or replaces

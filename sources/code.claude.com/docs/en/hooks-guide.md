@@ -925,7 +925,7 @@ This example posts every tool use to a local logging service:
 Your endpoint responds with a JSON body in the same [output format](https://code.claude.com/docs/en/hooks.md#json-output) as command hooks, and Claude Code also checks the response status:
 
 * **2xx status**: to block a tool call, return the appropriate `hookSpecificOutput` fields in the body.
-* **Any other status, or the request fails**: Claude Code reports a [non-blocking error](https://code.claude.com/docs/en/hooks.md#exit-code-output) and lets the action continue. To make a failed endpoint block the action, set [`onFailure: "block"`](https://code.claude.com/docs/en/hooks#block-the-action-when-a-hook-fails) on the hook.
+* **Any other status, or the request fails**: Claude Code reports a [non-blocking error](https://code.claude.com/docs/en/hooks.md#exit-code-output) and lets the action continue, unless the hook is one [whose failure blocks the action](https://code.claude.com/docs/en/hooks.md#block-the-action-when-a-hook-fails). To make a failed endpoint block the action, set [`onFailure: "block"`](https://code.claude.com/docs/en/hooks#block-the-action-when-a-hook-fails) on the hook.
 
 Header values support environment variable interpolation using `$VAR_NAME` or `${VAR_NAME}` syntax. Only variables listed in the `allowedEnvVars` array are resolved; all other `$VAR` references remain empty.
 

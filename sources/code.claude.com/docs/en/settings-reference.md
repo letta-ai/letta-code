@@ -884,7 +884,7 @@ Send every Bash and PowerShell command through the auto mode classifier while au
 }
 ```
 
-See [Route all shell commands through the classifier](https://code.claude.com/docs/en/auto-mode-config.md#route-all-shell-commands-through-the-classifier).
+This key works differently in a Code Mode session. See [Route all shell commands through the classifier](https://code.claude.com/docs/en/auto-mode-config.md#route-all-shell-commands-through-the-classifier).
 
 ### `disableAutoMode`
 
@@ -2454,7 +2454,7 @@ This example turns off automatic compaction and routes API requests through a pr
 
 #### How `env` values interact with your shell
 
-* A value here overwrites the same variable exported in your shell, and when more than one settings file sets a variable, the [highest-precedence](https://code.claude.com/docs/en/settings.md#settings-precedence) one applies. [Variables Claude Code ignores in `env`](#variables-claude-code-ignores-in-env) lists the exceptions for project and local settings.
+* A value here overwrites the same variable exported in your shell, and when more than one settings file sets a variable, the [highest-precedence](https://code.claude.com/docs/en/settings.md#settings-precedence) one applies. [Variables Claude Code ignores in `env`](#variables-claude-code-ignores-in-env) lists the exceptions.
 * When the Claude Desktop app or a [self-hosted environment](https://code.claude.com/docs/en/self-hosted-environments) runner starts the session, the launch environment it builds takes precedence instead: Claude Code ignores an `env` value from any settings file for a variable the launch environment already sets. The [debug log](https://code.claude.com/docs/en/debug-your-config.md) names each ignored variable.
 * To cancel a shell export, set the variable to `""`. Claude Code treats an empty value as unset for provider selection, and subprocesses inherit the empty value.
 * `NO_COLOR` and `FORCE_COLOR` set here reach only subprocesses. To change Claude Code's own interface colors, set them in your shell before launching `claude`.
@@ -2495,6 +2495,7 @@ This example turns off automatic compaction and routes API requests through a pr
   * [`CLAUDE_CODE_DISABLE_FILE_MENTIONS`](https://code.claude.com/docs/en/env-vars#variables), which stops Claude Code from expanding `@` mentions of files and directories.
 
   Before v2.1.251, project and local settings could also set the variables in this list that choose where Claude Code writes its files or that export session content, except `HOME` and `XDG_CONFIG_HOME`. Before v2.1.290, they could also set the dialog timer variables and `CLAUDE_CODE_DISABLE_ATTACHMENTS`.
+* You can turn on [Code Mode](https://code.claude.com/docs/en/code-mode.md) with [`CLAUDE_CODE_EXPERIMENTAL_CODE_MODE`](https://code.claude.com/docs/en/env-vars#variables) from your shell, user settings, or a `--settings` file, and not from managed, project, or local settings. With a `0` in any of the first three or in managed settings, Code Mode stays off whatever you set elsewhere. When managed settings contain a `1`, set your own `1` in user settings, because a `1` in your shell is ignored
 * Identity variables that Claude Code's hosting environments own, such as `CLAUDE_CODE_REMOTE` and `CLAUDE_CODE_ACCOUNT_UUID`, are ignored from every file.
 * [`CLAUDE_CODE_MESSAGING_SOCKET` and `CLAUDE_CODE_MESSAGING_TOKEN`](https://code.claude.com/docs/en/env-vars#variables), which Claude Code exports itself, are ignored from every file. Ignoring the socket variable requires Claude Code v2.1.224 or later, and ignoring the token requires v2.1.228 or later.
 * [`CLAUDE_CODE_PROJECT_DIR_NAME`](https://code.claude.com/docs/en/sessions#name-the-project-directory-yourself), which Claude Code reads from the launch environment only, is ignored from every file; requires v2.1.234 or later.
@@ -5187,7 +5188,7 @@ List the services a machine may reach Claude through, such as the Anthropic API,
 
 * **Scope**: [`Managed`](#scopes). A list that the machine's own admin sources set, MDM policies and managed settings files, keeps applying when server-managed settings also deliver one: a session may then use only the providers on both lists, so a server-managed list can narrow what the machine allows but never widen it. Which machine source's `allowedProviders` counts follows [how Claude Code combines managed sources](https://code.claude.com/docs/en/managed-settings.md#how-claude-code-combines-managed-sources). A list delivered through server-managed settings alone reaches only the sessions that [fetch server-managed settings](https://code.claude.com/docs/en/server-managed-settings.md#platform-availability).
 * **Type**: array of strings, each one of:
-  * `"anthropic"`: the Anthropic API on Anthropic's own host, through a claude.ai or Console sign-in or an API key. Pair it with [`forceLoginMethod`](#forceloginmethod) or [`forceLoginOrgUUID`](#forceloginorguuid) to also restrict the sign-in
+  * `"anthropic"`: the Anthropic API on Anthropic's own host, through a claude.ai or Console sign-in or an API key. Pair it with [`forceLoginMethod`](#forceloginmethod) or [`forceLoginOrgUUID`](#forceloginorguuid) to also restrict the sign-in. Desktop's Cowork [on the user's machine](https://code.claude.com/docs/en/managed-settings.md#where-and-when-a-policy-applies) counts as `"anthropic"` when signed in to claude.ai, so without it in the machine's list, Cowork [is refused at start](https://code.claude.com/docs/en/errors.md#managed-settings-dont-allow-this-api-provider). To let Cowork start, add it, which also opens this list to direct Anthropic sessions.
   * `"bedrock"`: [Amazon Bedrock](https://code.claude.com/docs/en/amazon-bedrock.md)
   * `"vertex"`: [Google Cloud's Agent Platform](https://code.claude.com/docs/en/google-vertex-ai.md), formerly Vertex AI
   * `"foundry"`: [Microsoft Foundry](https://code.claude.com/docs/en/microsoft-foundry.md)
