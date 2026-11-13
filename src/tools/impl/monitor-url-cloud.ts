@@ -4,6 +4,7 @@ import { isCloudServerUrl } from "@/backend/api/server-url";
 import { resolveBackendMode } from "@/backend/backend-mode";
 import { getRuntimeActingUserAttribution } from "@/runtime-context";
 import { resolveNotificationScope } from "@/utils/task-notifications.js";
+import { buildMonitorResult } from "./monitor-result";
 
 export const URL_MONITOR_MIN_INTERVAL_SECONDS = 60;
 const DEFAULT_URL_MONITOR_TIMEOUT_MS = 86_400_000;
@@ -177,20 +178,6 @@ function buildCloudSource(args: UrlMonitorArgs, url: string): CloudUrlSource {
   return source;
 }
 
-/** What the agent will be told, so it knows when to expect a notice. */
-function notifyDescription(source: CloudUrlSource): string {
-  const what = source.select
-    ? `the value at ${source.select.path}`
-    : "the HTTP status or body";
-  if (!source.notify_when) {
-    return `The first response is the baseline; you will be notified only when ${what} changes`;
-  }
-  const then = source.stop_on_match
-    ? ", and then it stops"
-    : "; it notifies again each time a match begins";
-  return `You will be notified when ${what} first matches, including on the first poll${then}`;
-}
-
 function validateUrlMonitorArgs(args: UrlMonitorArgs): string {
   if (typeof args.description !== "string") {
     throw new Error("Monitor description is required");
@@ -270,7 +257,6 @@ export async function startCloudUrlMonitor(
       "Monitor url needs a saved conversation and is not available in the agent's default conversation. Use command with a polling loop instead.",
     );
   }
-  const intervalSeconds = source.interval_seconds;
   const timeoutMs = args.timeout_ms ?? DEFAULT_URL_MONITOR_TIMEOUT_MS;
   const request = deps.request ?? apiRequest;
   const created = await request<{ id: string }>(
@@ -285,17 +271,7 @@ export async function startCloudUrlMonitor(
     actingUserRequestOptions(scope.actingUserId),
   );
   const taskId = created.id;
-  return {
-    content: [
-      {
-        type: "text",
-        text: `Cloud monitor started (task ${taskId}, polls every ${intervalSeconds}s, timeout ${timeoutMs}ms). ${notifyDescription(source)}, even if this sandbox stops. Keep working — do not poll or sleep. Stop it with TaskStop.`,
-      },
-    ],
-    taskId,
-    timeoutMs,
-    persistent: false,
-  };
+  return buildMonitorResult(taskId, timeoutMs, false);
 }
 
 /**
@@ -306,11 +282,10 @@ export async function startCloudUrlMonitor(
 export async function stopCloudUrlMonitor(
   taskId: string,
   deps: CloudUrlMonitorDeps = {},
-): Promise<{ killed: boolean; output: string }> {
+): Promise<{ killed: boolean }> {
   if (!(deps.isCloud ?? isLettaCloud)()) {
     return {
       killed: false,
-      output: `No task ${taskId} is running here, and Cloud monitors can only be stopped when connected to Letta Cloud.`,
     };
   }
   const conversationId = (deps.scope ?? resolveNotificationScope)()
@@ -318,7 +293,6 @@ export async function stopCloudUrlMonitor(
   if (!conversationId || !isSavedConversation(conversationId)) {
     return {
       killed: false,
-      output: `No Cloud monitor ${taskId} was found in this conversation.`,
     };
   }
   const request = deps.request ?? apiRequest;
@@ -334,17 +308,15 @@ export async function stopCloudUrlMonitor(
     if (error instanceof ApiRequestError && error.status === 404) {
       return {
         killed: false,
-        output: `No Cloud monitor ${taskId} was found in this conversation.`,
       };
     }
     throw error;
   }
-  // A monitor that had already ended keeps and reports its final status.
+  // As with a local monitor, only a running monitor can be stopped.
   if (stopped.status !== "cancelled") {
     return {
       killed: false,
-      output: `Cloud monitor ${taskId} had already stopped (${stopped.status}).`,
     };
   }
-  return { killed: true, output: `Stopped Cloud monitor ${taskId}.` };
+  return { killed: true };
 }

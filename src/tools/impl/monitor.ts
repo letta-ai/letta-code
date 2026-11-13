@@ -1,6 +1,7 @@
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import stripAnsi from "strip-ansi";
 import { type RawData, WebSocket } from "ws";
+import { experimentManager } from "@/experiments/manager";
 import { isManagedCloudRuntime } from "@/managed-cloud-runtime";
 import {
   getCurrentWorkingDirectory,
@@ -30,6 +31,7 @@ import {
   createMonitorEventStream,
   MONITOR_EVENT_BUFFER_CHARS,
 } from "./monitor-event-stream.js";
+import { buildMonitorResult } from "./monitor-result";
 import { startScriptMonitor } from "./monitor-script.js";
 import { getMonitorMaxTimeoutMs } from "./monitor-timeout";
 import {
@@ -106,28 +108,6 @@ interface MonitorResult {
   taskId: string;
   timeoutMs: number;
   persistent: boolean;
-}
-
-function buildMonitorResult(
-  taskId: string,
-  timeoutMs: number,
-  persistent: boolean,
-  outputFile: string,
-): MonitorResult {
-  const lifetime = persistent
-    ? "persistent — runs until TaskStop or session end"
-    : `timeout ${timeoutMs}ms`;
-  return {
-    content: [
-      {
-        type: "text",
-        text: `Monitor started (task ${taskId}, ${lifetime}). You will be notified on each event. Keep working — do not poll or sleep. Events may arrive while you are waiting for the user — an event is not their reply.\nOutput file: ${outputFile}`,
-      },
-    ],
-    taskId,
-    timeoutMs,
-    persistent,
-  };
 }
 
 function validUtf8Prefix(buffer: Buffer, maxBytes: number): Buffer {
@@ -298,24 +278,8 @@ function normalizeMonitorArgs(args: MonitorArgs): NormalizedMonitorArgs {
       normalized.ws.url === ""
     );
   if (Number(hasCommand) + Number(hasWebSocket) + Number(hasScript) !== 1) {
-    throw new Error(
-      "Monitor requires exactly one of command, ws, or script, or url",
-    );
+    throw new Error("Monitor requires exactly one of command, ws, or script");
   }
-  if (normalized.interval_seconds !== undefined) {
-    throw new Error("Monitor interval_seconds is only supported with url");
-  }
-  if (
-    normalized.headers !== undefined ||
-    normalized.select !== undefined ||
-    normalized.match !== undefined ||
-    normalized.stop_on_match !== undefined
-  ) {
-    throw new Error(
-      "Monitor headers, select, match and stop_on_match are only supported with url",
-    );
-  }
-  delete normalized.url;
   if (!hasScript) {
     delete normalized.script;
     delete normalized.args;
@@ -899,7 +863,33 @@ export async function monitor(args: MonitorArgs): Promise<MonitorResult> {
   // Hooks may have yielded since approval execution checked cancellation.
   args.signal?.throwIfAborted();
   // A url monitor runs in Letta Cloud; nothing is started or retained here.
-  if (typeof args.url === "string" && args.url !== "") {
+  const cloud = experimentManager.isEnabled("cloud_monitors");
+  const forbidden = cloud
+    ? [
+        "command",
+        "ws",
+        "script",
+        "args",
+        "persistent",
+        "backup_after_seconds",
+        "backup_prompt",
+      ]
+    : [
+        "url",
+        "interval_seconds",
+        "headers",
+        "select",
+        "match",
+        "stop_on_match",
+      ];
+  for (const key of forbidden) {
+    if (args[key as keyof MonitorArgs] !== undefined) {
+      throw new Error(
+        `Monitor ${key} is not supported in ${cloud ? "Cloud" : "local"} mode`,
+      );
+    }
+  }
+  if (cloud) {
     return startCloudUrlMonitor(args);
   }
   const normalized = normalizeMonitorArgs(args);
