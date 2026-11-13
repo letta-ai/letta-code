@@ -10,6 +10,7 @@ import type {
 import type { LocalMessage } from "@/backend/local/local-message";
 import { LocalStore } from "@/backend/local/local-store";
 import {
+  forEachJsonlRow,
   LOCAL_TRANSCRIPT_MESSAGE_FORMAT,
   LOCAL_TRANSCRIPT_PROVIDER_STACK,
   LOCAL_TRANSCRIPT_SCHEMA_VERSION,
@@ -18,6 +19,7 @@ import {
   type LocalTranscriptRowsResult,
   overlayResidentLocalMessageSuffix,
   readJsonlFile,
+  readJsonlFileSuffix,
   readLocalTranscriptTailWindow,
   restrictLocalTranscriptToResidentMessages,
   spliceOutOfContextMessages,
@@ -684,3 +686,73 @@ function inspectResidency(store: LocalStore) {
       0,
   };
 }
+
+// Issue #3580: a crash mid-append leaves a torn last line in messages.jsonl.
+describe("JSONL readers with an interrupted append", () => {
+  const first = { id: "m1" };
+  const second = { id: "m2" };
+  const row = (value: unknown) => `${JSON.stringify(value)}
+`;
+  const torn = '{"id":"unfinished"';
+
+  const readers: Array<[string, (path: string) => unknown[]]> = [
+    ["readJsonlFile", (path) => readJsonlFile<unknown>(path)],
+    [
+      "forEachJsonlRow",
+      (path) => {
+        const rows: unknown[] = [];
+        forEachJsonlRow<unknown>(path, (item) => rows.push(item));
+        return rows;
+      },
+    ],
+    [
+      "readLocalTranscriptRowsForHistory",
+      (path) => readLocalTranscriptRowsForHistory(path, []),
+    ],
+    [
+      "readJsonlFileSuffix",
+      (path) => readJsonlFileSuffix<unknown>(path, 1024).items,
+    ],
+  ];
+
+  async function writeMessages(contents: string): Promise<string> {
+    const path = join(await createStorageDirectory(), "messages.jsonl");
+    await writeFile(path, contents);
+    return path;
+  }
+
+  describe.each(readers)("%s", (_name, read) => {
+    test("skips a torn final line without a newline", async () => {
+      const path = await writeMessages(row(first) + row(second) + torn);
+      expect(read(path)).toEqual([first, second]);
+    });
+
+    test("skips a torn final line that ends in a newline", async () => {
+      const path = await writeMessages(`${row(first)}${torn}
+`);
+      expect(read(path)).toEqual([first]);
+    });
+
+    test("reads a valid final line without a newline", async () => {
+      const path = await writeMessages(row(first) + JSON.stringify(second));
+      expect(read(path)).toEqual([first, second]);
+    });
+
+    test("still throws on a corrupt line in the middle", async () => {
+      const path = await writeMessages(`${row(first)}not json
+${row(second)}`);
+      expect(() => read(path)).toThrow(SyntaxError);
+    });
+  });
+
+  test("readJsonlFileSuffix skips a torn tail when the window skips the head", async () => {
+    const rows = Array.from({ length: 50 }, (_, i) => ({
+      id: `m${i}`,
+      pad: "x".repeat(40),
+    }));
+    const path = await writeMessages(rows.map(row).join("") + torn);
+    const result = readJsonlFileSuffix<{ id: string }>(path, 512);
+    expect(result.reachedStart).toBe(false);
+    expect(result.items.at(-1)?.id).toBe("m49");
+  });
+});
