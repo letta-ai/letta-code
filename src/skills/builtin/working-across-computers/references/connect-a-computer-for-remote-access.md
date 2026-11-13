@@ -4,15 +4,9 @@ Use this guide when the user is connecting a computer for the first time, no sui
 
 Explain that the user must complete setup **on the computer they want to connect**, signed into the same Letta account they use on chat.letta.com. Remote access lets agents run commands and access files on that machine, subject to tool approvals. Local-only / “Skip login” mode is not sufficient.
 
-When the user is talking to you through an organization's Slack workspace and you have a dedicated tool for sending them a computer-link command (for example, a `send_computer_link`-style tool in your tool list), use Option 1. Otherwise, including for chat.letta.com users on any computer (a personal laptop, a terminal-only machine, or a VM), use Option 2. Give the relevant steps below rather than only saying the computer is unavailable. Do not run registration commands in the Cloud sandbox as a substitute for connecting the user's machine.
+This works for any computer, including a personal laptop, a terminal-only machine, or a VM. Give the steps below rather than only saying the computer is unavailable. Do not run registration commands in the Cloud sandbox as a substitute for connecting the user's machine.
 
-## Option 1: Computer-link tool (Slack organization)
-
-Only for requests that arrive through Slack, and only if you have a dedicated tool for it. Call that tool to send the person a one-time command that signs their computer in as them, in that organization, without a browser step. Do not mint connect codes or call Letta environment endpoints yourself, and do not retype or repost the command the tool sends.
-
-If the tool is missing or fails, fall back to Option 2.
-
-## Option 2: CLI server (browser sign-in)
+## Start the CLI server
 
 Ask the user to install [Node.js ^22.23.4, ^24.22.1, or ^26.12.1](https://nodejs.org/en/download), then run these commands in a terminal **on the target computer**:
 
