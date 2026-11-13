@@ -237,6 +237,7 @@ test("a refused follow-up is reported and still rejects", async () => {
   expect(computer.messages).toHaveLength(1);
   expect(JSON.parse(trackError.mock.calls[0]?.[2] ?? "")).toEqual({
     stage: "follow_up",
+    error_code: "other",
     harness: "claude-code",
     computer: "device-test",
     agent_id: "agent-parent",
