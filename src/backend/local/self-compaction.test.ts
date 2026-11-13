@@ -87,8 +87,13 @@ describe("self-compaction", () => {
     messages: LocalMessage[],
     replies: Array<AssistantMessage | Error>,
     overrides: Partial<LocalAllCompactionInput> = {},
-  ): Promise<{ summary: string; contexts: Context[] }> {
+  ): Promise<{
+    summary: string;
+    contexts: Context[];
+    options: Array<Record<string, unknown> | undefined>;
+  }> {
     const contexts: Context[] = [];
+    const options: Array<Record<string, unknown> | undefined> = [];
     const summary = await summarizeLocalMessagesAll({
       conversationId: "conv-self",
       agent: {
@@ -103,8 +108,9 @@ describe("self-compaction", () => {
       messages,
       localProviderAuthStorageDir: storageDir,
       self: { systemPrompt: "compiled agent system", tools: TOOLS },
-      complete: async (_model, context) => {
+      complete: async (_model, context, requestOptions) => {
         contexts.push(context);
+        options.push(requestOptions);
         const reply = replies.shift();
         if (!reply) throw new Error("unexpected summary request");
         if (reply instanceof Error) throw reply;
@@ -112,7 +118,7 @@ describe("self-compaction", () => {
       },
       ...overrides,
     });
-    return { summary, contexts };
+    return { summary, contexts, options };
   }
 
   test("summarizes inside the agent's own context and tools", async () => {
@@ -159,6 +165,35 @@ describe("self-compaction", () => {
     expect(contexts[0]?.messages.at(-1)).toMatchObject({
       content: "Summarize for the next session.",
     });
+  });
+
+  test("sends the agent's sampling settings on the self request only", async () => {
+    const { options } = await summarize(
+      TOOL_TURN,
+      [
+        assistant([{ type: "toolCall", id: "c", name: "Bash", arguments: {} }]),
+        assistant([{ type: "text", text: "Transcript summary." }]),
+      ],
+      {
+        agent: {
+          id: "agent-local-self",
+          name: "Self",
+          description: null,
+          system: "raw system",
+          tags: [],
+          model: "openai/gpt-4.1",
+          model_settings: {
+            provider_type: "openai",
+            max_tokens: 4096,
+            temperature: 0.7,
+          },
+        },
+      },
+    );
+
+    expect(options[0]).toMatchObject({ maxTokens: 4096, temperature: 0.7 });
+    expect(options[1]).not.toHaveProperty("maxTokens");
+    expect(options[1]).not.toHaveProperty("temperature");
   });
 
   test("falls back to a transcript summary when the self request overflows", async () => {

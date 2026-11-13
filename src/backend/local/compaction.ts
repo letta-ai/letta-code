@@ -12,6 +12,7 @@ import {
   applyPiEnvOverrides,
   reasoningForSettings,
   resolvePiModelForAgent,
+  samplingOptionsForSettings,
 } from "@/backend/dev/pi-model-factory";
 import { LocalPiModelsRuntime } from "@/backend/dev/pi-models-runtime";
 import { resolvePiRequestHeaders } from "@/backend/dev/pi-request-headers";
@@ -604,6 +605,7 @@ function fableCompactionSummaryFallbackSettings(
 async function runGenerateText(
   input: LocalAllCompactionInput,
   buildContext: (model: Model<string>) => Context,
+  turnSampling = false,
 ): Promise<{ text: string }> {
   const modelsRuntime =
     input.modelsRuntime ??
@@ -676,6 +678,10 @@ async function runGenerateText(
     // those models reject with a 400 invalid_request_error — breaking every
     // compaction (automatic and manual /compact).
     ...(reasoning ? { reasoning } : {}),
+    // The self request samples as the agent's own turn does.
+    ...(turnSampling
+      ? samplingOptionsForSettings(input.agent.model_settings)
+      : {}),
     maxRetries: 0,
     sessionId: input.conversationId,
   };
@@ -740,8 +746,11 @@ async function summarizeInSelfContext(
 ): Promise<{ text: string } | undefined> {
   const prompt = input.prompt ?? defaultPrompt;
   try {
-    const result = await runGenerateText(input, (model) =>
-      selfCompactionContext(input.self, input.messages, prompt, model),
+    const result = await runGenerateText(
+      input,
+      (model) =>
+        selfCompactionContext(input.self, input.messages, prompt, model),
+      true,
     );
     return result.text.trim() ? result : undefined;
   } catch (error) {

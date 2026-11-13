@@ -32,6 +32,7 @@ import {
   applyPiEnvOverrides,
   reasoningForSettings,
   resolvePiModelForAgent,
+  samplingOptionsForSettings,
 } from "./pi-model-factory";
 import { LocalPiModelsRuntime } from "./pi-models-runtime";
 import { resolvePiRequestHeaders } from "./pi-request-headers";
@@ -279,12 +280,6 @@ function anthropicEffortForSettings(
   );
 }
 
-function finiteNumberValue(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value)
-    ? value
-    : undefined;
-}
-
 function serviceTierForSettings(
   model: Model<string>,
   modelSettings: Record<string, unknown>,
@@ -482,10 +477,6 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       conversationId: input.conversationId,
       requestKind: "turn",
     });
-    const maxTokens = finiteNumberValue(input.agent.model_settings.max_tokens);
-    const temperature = finiteNumberValue(
-      input.agent.model_settings.temperature,
-    );
     const options: SimpleStreamOptions & Record<string, unknown> = {
       ...resolved.providerOptions,
       ...(resolved.apiKey ? { apiKey: resolved.apiKey } : {}),
@@ -494,14 +485,8 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       ...(this.abortSignal ? { signal: this.abortSignal } : {}),
       maxRetries: 0,
       sessionId: input.conversationId,
-      // streamSimple drops provider-specific named options; samplingParams is
-      // pi-ai's supported pass-through for explicit provider request overrides.
-      ...(isRecord(input.agent.model_settings.sampling_params)
-        ? { samplingParams: input.agent.model_settings.sampling_params }
-        : {}),
+      ...samplingOptionsForSettings(input.agent.model_settings),
       ...(reasoning ? { reasoning } : {}),
-      ...(maxTokens ? { maxTokens } : {}),
-      ...(temperature !== undefined ? { temperature } : {}),
       ...(serviceTierForSettings(resolved.model, input.agent.model_settings)
         ? {
             serviceTier: serviceTierForSettings(
