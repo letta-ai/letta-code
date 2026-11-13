@@ -18,6 +18,7 @@ import { telemetry } from "@/telemetry";
 import {
   type CloudSnapshotResponse,
   createGitHubPullRequestSnapshotFetcher,
+  GitHubPullRequestSnapshotPending,
 } from "./github-pull-request-cloud";
 import { diffGitHubPullRequestSnapshots } from "./github-pull-request-diff";
 import type { GitHubPullRequestSnapshot } from "./github-pull-request-types";
@@ -335,31 +336,33 @@ describe("Cloud snapshot fetcher", () => {
     }
   });
 
-  test("persistent cooldown falls back once, then returns later polls to the watch loop", async () => {
-    const request = mock(async () => {
-      if (request.mock.calls.length > 4)
-        throw new Error("unbounded cooldown retries");
-      return rateLimited("2099-01-01T00:00:00Z", false);
+  for (const stale of [true, false]) {
+    test(`persistent ${stale ? "stale snapshot" : "rate limit"} falls back once, then returns pending`, async () => {
+      const request = mock(async () => {
+        if (request.mock.calls.length > 4)
+          throw new Error("unbounded cooldown retries");
+        return rateLimited("2099-01-01T00:00:00Z", stale);
+      });
+      const wait = mock(async (_ms: number) => {});
+      const fetchGh = mock(async () => expected);
+      const fetchSnapshot = createGitHubPullRequestSnapshotFetcher({
+        isCloud: () => true,
+        request,
+        wait,
+        fetchGh,
+      });
+      expect(await fetchSnapshot(ref, options)).toBe(expected);
+      expect(wait).toHaveBeenCalledTimes(1);
+      expect(wait.mock.calls[0]?.[0]).toBeLessThanOrEqual(60_000);
+      expect(request).toHaveBeenCalledTimes(2);
+      await expect(fetchSnapshot(ref, options)).rejects.toThrow(
+        GitHubPullRequestSnapshotPending,
+      );
+      expect(fetchGh).toHaveBeenCalledTimes(1);
+      expect(wait).toHaveBeenCalledTimes(2);
+      expect(request).toHaveBeenCalledTimes(4);
     });
-    const wait = mock(async (_ms: number) => {});
-    const fetchGh = mock(async () => expected);
-    const fetchSnapshot = createGitHubPullRequestSnapshotFetcher({
-      isCloud: () => true,
-      request,
-      wait,
-      fetchGh,
-    });
-    expect(await fetchSnapshot(ref, options)).toBe(expected);
-    expect(wait).toHaveBeenCalledTimes(1);
-    expect(wait.mock.calls[0]?.[0]).toBeLessThanOrEqual(60_000);
-    expect(request).toHaveBeenCalledTimes(2);
-    await expect(fetchSnapshot(ref, options)).rejects.toThrow(
-      "still cooling down",
-    );
-    expect(fetchGh).toHaveBeenCalledTimes(1);
-    expect(wait).toHaveBeenCalledTimes(2);
-    expect(request).toHaveBeenCalledTimes(4);
-  });
+  }
 
   for (const error of [
     new APIConnectionError({}),
