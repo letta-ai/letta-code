@@ -144,6 +144,7 @@ describe("Monitor experiment assets", () => {
       expect(Object.keys(local.inputSchema.properties ?? {}).sort()).toEqual(
         [
           "description",
+          "resume",
           "timeout_ms",
           "persistent",
           "backup_after_seconds",
@@ -210,15 +211,15 @@ describe("Monitor experiment assets", () => {
   });
 });
 
-test("local Monitor assets remain byte-identical to v0.34.56", async () => {
+test("local Monitor assets pin the resume-enabled schema and description", async () => {
   for (const [path, hash] of [
     [
       "./descriptions/Monitor.md",
-      "c86a9f99f14c5c6b1f4688dc8f60583fee7bb6e35c85bc3e1aeb9d67308ecdc4",
+      "912f7f5f8161c44e357fa6d248e5b0af68bb559e9886c41bb453011f10edddae",
     ],
     [
       "./schemas/Monitor.json",
-      "2a24864b9e926634a427bb372a77592ac6d8b957f1fbc8d06a4efaaf58edddd3",
+      "1efbb290eaf43bcb33a333af575fd10ed6cb345a41aee71f88ae232d107a513d",
     ],
   ] as const) {
     const bytes = await Bun.file(new URL(path, import.meta.url)).arrayBuffer();
