@@ -92,36 +92,6 @@ export type ReflectionLaunchSkippedReason =
   | "no_payload"
   | "error";
 
-export function getReflectionLaunchSkippedMessage(
-  reason: ReflectionLaunchSkippedReason,
-  surface: "cli" | "listener" = "cli",
-): string | undefined {
-  switch (reason) {
-    case "cutover":
-      return "Reflection is managed by Letta Cloud for this agent.";
-    case "already_active":
-      return surface === "listener"
-        ? "A reflection agent is already running for this conversation."
-        : "A reflection agent is already running in the background.";
-    case "configuration_error":
-      return "Automatic reflection is paused because its model configuration is invalid. Fix the reflection model or provider, run /reload, then use /reflect to retry.";
-    case "memfs_disabled":
-      return surface === "listener"
-        ? "Reflection needs the memory filesystem to be enabled for this agent."
-        : "Memory filesystem is not enabled.";
-    case "no_payload":
-      return surface === "listener"
-        ? "No new transcript content to reflect on for this conversation."
-        : "No new transcript content to reflect on.";
-    case "parent_dirty":
-      return "Parent memory has uncommitted changes; commit or discard them before reflecting.";
-    case "error":
-    case "windows_disabled":
-    case "retry_backoff":
-      return undefined;
-  }
-}
-
 export function drainReflectionTelemetry(): void {
   telemetry.drain().catch((error) => {
     debugWarn(

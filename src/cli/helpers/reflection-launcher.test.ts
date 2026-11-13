@@ -13,7 +13,6 @@ import * as memoryWorktree from "@/agent/memory-worktree";
 import { launchReflectionArena } from "@/cli/helpers/reflection-arena-launcher";
 import {
   clearAutomaticReflectionSuppression,
-  getReflectionLaunchSkippedMessage,
   isAutomaticReflectionSuppressed,
   launchReflectionSubagent,
   type ReflectionLaunchOptions,
@@ -263,22 +262,5 @@ describe("reflection configuration failure suppression", () => {
       }),
     ).toBe(false);
     expect(isAutomaticReflectionSuppressed(agentId)).toBe(false);
-  });
-});
-
-describe("getReflectionLaunchSkippedMessage", () => {
-  test("formats parent-dirty and listener-specific skipped reasons", () => {
-    expect(getReflectionLaunchSkippedMessage("cutover")).toContain(
-      "managed by Letta Cloud",
-    );
-    expect(getReflectionLaunchSkippedMessage("parent_dirty")).toContain(
-      "uncommitted changes",
-    );
-    expect(getReflectionLaunchSkippedMessage("configuration_error")).toContain(
-      "Automatic reflection is paused",
-    );
-    expect(getReflectionLaunchSkippedMessage("no_payload", "listener")).toBe(
-      "No new transcript content to reflect on for this conversation.",
-    );
   });
 });
