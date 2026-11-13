@@ -31,6 +31,7 @@ import {
 import { resolveEffectiveAgentId } from "@/agent/subagents/ephemeral-subagent";
 import { forkParentConversation } from "@/agent/subagents/fork-conversation";
 import { spawnSubagent } from "@/agent/subagents/manager";
+import { formatSubagentError } from "@/agent/subagents/subagent-refusal";
 import { getBackend } from "@/backend";
 import { runSubagentStopHooks } from "@/hooks";
 import {
@@ -477,7 +478,7 @@ export function spawnBackgroundSubagentTask(
 
         const fullResult = result.success
           ? `${header}\n\n${result.report || ""}`
-          : `${header}\n\nError: ${result.error || "Subagent execution failed"}`;
+          : `${header}\n\n${formatSubagentError(result.error || "Subagent execution failed")}`;
         const userCwd = getCurrentWorkingDirectory();
         const { content: truncatedResult } = truncateByChars(
           fullResult,
@@ -591,7 +592,7 @@ export function spawnBackgroundSubagentTask(
           taskId,
           status: "failed",
           summary,
-          result: `${header}\n\nError: ${errorMessage}`,
+          result: `${header}\n\n${formatSubagentError(errorMessage)}`,
           outputFile,
           usage: {
             toolUses:
@@ -972,7 +973,9 @@ export async function launchSubagent(
 }
 
 /** Agent's text adapter; App Server callers consume launchSubagent directly. */
-export async function task(args: TaskArgs): Promise<string> {
+export async function task(
+  args: TaskArgs,
+): Promise<string | { content: string; status: "error" }> {
   if (args.command === "refresh") {
     clearSubagentConfigCache();
     const { subagents, errors } = await discoverSubagents();
@@ -984,7 +987,8 @@ export async function task(args: TaskArgs): Promise<string> {
     return `Refreshed subagents list: found ${Object.keys(allConfigs).length} total (${subagents.length} custom)${errorSuffix}`;
   }
   const result = await launchSubagent(applySubagentPreset(args));
-  if (!result.success) return `Error: ${result.error}`;
+  if (!result.success)
+    return { content: `Error: ${result.error}`, status: "error" };
   const agentIdLine = result.agent_id ? `\nAgent ID: ${result.agent_id}` : "";
   const conversationIdLine = result.conversation_id
     ? `\nConversation ID: ${result.conversation_id}`

@@ -3,7 +3,7 @@ import { getSessionAccessToken } from "@/auth/org-credentials-session";
 import { settingsManager } from "@/settings-manager";
 import { getLettaCodeHeaders } from "./http-headers";
 
-export type ApiRequestMethod = "GET" | "POST" | "PATCH" | "DELETE";
+export type ApiRequestMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 export interface ApiRequestConfig {
   baseUrl: string;

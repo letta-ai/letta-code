@@ -8,13 +8,20 @@ import {
   test,
 } from "bun:test";
 import { readFileSync, rmSync } from "node:fs";
-import Letta from "@letta-ai/letta-client";
+import Letta, {
+  APIConnectionError,
+  APIConnectionTimeoutError,
+} from "@letta-ai/letta-client";
 import { __testOverrideGetClient } from "@/backend/api/client";
-import { setConfiguredBackendMode } from "@/backend/backend-mode";
+import {
+  resolveBackendMode,
+  setConfiguredBackendMode,
+} from "@/backend/backend-mode";
 import { telemetry } from "@/telemetry";
 import {
   type CloudSnapshotResponse,
   createGitHubPullRequestSnapshotFetcher,
+  GitHubPullRequestSnapshotPending,
 } from "./github-pull-request-cloud";
 import { diffGitHubPullRequestSnapshots } from "./github-pull-request-diff";
 import type { GitHubPullRequestSnapshot } from "./github-pull-request-types";
@@ -169,10 +176,13 @@ function rateLimited(retryAt: string, stale: boolean) {
 }
 
 let trackError: ReturnType<typeof spyOn<typeof telemetry, "trackError">>;
+let previousBackendMode = resolveBackendMode();
 beforeEach(() => {
+  previousBackendMode = resolveBackendMode();
   trackError = spyOn(telemetry, "trackError").mockImplementation(() => {});
 });
 afterEach(() => {
+  setConfiguredBackendMode(previousBackendMode);
   trackError.mockRestore();
   __testOverrideGetClient(null);
 });
@@ -285,13 +295,14 @@ describe("Cloud snapshot fetcher", () => {
         request,
         wait,
         now: () => time,
+        random: () => 0,
         fetchGh,
       });
       const result = await fetchSnapshot(ref, {
         ...options,
         signal: controller.signal,
       });
-      expect(wait).toHaveBeenCalledWith(90_000, controller.signal);
+      expect(wait).toHaveBeenCalledWith(58_000, controller.signal);
       expect(request).toHaveBeenCalledTimes(2);
       expect(result).toEqual(expected);
       expect(trackError).toHaveBeenCalledTimes(1);
@@ -325,10 +336,59 @@ describe("Cloud snapshot fetcher", () => {
         request,
         wait,
         now: () => now,
+        random: () => 0,
       })(ref, options);
       expect(wait).toHaveBeenCalledWith(30_000, undefined);
     }
   });
+
+  for (const stale of [true, false]) {
+    test(`persistent ${stale ? "stale snapshot" : "rate limit"} falls back once, then returns pending`, async () => {
+      const request = mock(async () => {
+        if (request.mock.calls.length > 4)
+          throw new Error("unbounded cooldown retries");
+        return rateLimited("2099-01-01T00:00:00Z", stale);
+      });
+      const wait = mock(async (_ms: number) => {});
+      const fetchGh = mock(async () => expected);
+      const fetchSnapshot = createGitHubPullRequestSnapshotFetcher({
+        isCloud: () => true,
+        request,
+        wait,
+        fetchGh,
+      });
+      expect(await fetchSnapshot(ref, options)).toBe(expected);
+      expect(wait).toHaveBeenCalledTimes(1);
+      expect(wait.mock.calls[0]?.[0]).toBeLessThanOrEqual(60_000);
+      expect(request).toHaveBeenCalledTimes(2);
+      await expect(fetchSnapshot(ref, options)).rejects.toThrow(
+        GitHubPullRequestSnapshotPending,
+      );
+      expect(fetchGh).toHaveBeenCalledTimes(1);
+      expect(wait).toHaveBeenCalledTimes(2);
+      expect(request).toHaveBeenCalledTimes(4);
+    });
+  }
+
+  for (const error of [
+    new APIConnectionError({}),
+    new APIConnectionTimeoutError(),
+  ]) {
+    test(`${error.name} on the initial read falls back without disabling Cloud`, async () => {
+      const request = mock(async () => success());
+      request.mockRejectedValueOnce(error);
+      const fetchGh = mock(async () => expected);
+      const fetchSnapshot = createGitHubPullRequestSnapshotFetcher({
+        isCloud: () => true,
+        request,
+        fetchGh,
+      });
+      expect(await fetchSnapshot(ref, options)).toBe(expected);
+      expect(await fetchSnapshot(ref, options)).toEqual(expected);
+      expect(fetchGh).toHaveBeenCalledTimes(1);
+      expect(request).toHaveBeenCalledTimes(2);
+    });
+  }
 
   test("stopping the watch aborts a quota wait without another request", async () => {
     const controller = new AbortController();
@@ -378,6 +438,7 @@ describe("Cloud snapshot fetcher", () => {
   });
 
   test("a background watch stays running during cooldown without poll-error output", async () => {
+    setConfiguredBackendMode("local");
     let requests = 0;
     let report!: () => void;
     const reported = new Promise<void>((resolve) => {

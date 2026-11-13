@@ -12,7 +12,7 @@ export const TASK_HARNESSES = [
   ...EXTERNAL_CODING_AGENT_TYPES,
 ] as const;
 
-/** A named preset owns launch settings; retain the assignment and harness metadata. */
+/** A named preset owns launch settings; retain the assignment, computer, and harness metadata. */
 export function applySubagentPreset<T extends Partial<SubagentLaunchArgs>>(
   args: T,
 ): T {
@@ -22,7 +22,6 @@ export function applySubagentPreset<T extends Partial<SubagentLaunchArgs>>(
     harness: undefined,
     fork_context: undefined,
     model: undefined,
-    computer: undefined,
     agent_id: undefined,
     conversation_id: undefined,
     mcp: undefined,

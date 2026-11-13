@@ -1,6 +1,7 @@
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import stripAnsi from "strip-ansi";
 import { type RawData, WebSocket } from "ws";
+import { experimentManager } from "@/experiments/manager";
 import { isManagedCloudRuntime } from "@/managed-cloud-runtime";
 import {
   getCurrentWorkingDirectory,
@@ -30,14 +31,19 @@ import {
   createMonitorEventStream,
   MONITOR_EVENT_BUFFER_CHARS,
 } from "./monitor-event-stream.js";
+import { buildMonitorResult } from "./monitor-result";
 import { startScriptMonitor } from "./monitor-script.js";
+import { persistMonitorState, withMonitorState } from "./monitor-state";
 import { getMonitorMaxTimeoutMs } from "./monitor-timeout";
+import {
+  startCloudUrlMonitor,
+  type UrlMonitorMatch,
+} from "./monitor-url-cloud";
 import {
   assertBackgroundProcessCapacity,
   type BackgroundProcess,
   backgroundProcesses,
   createBackgroundOutputFile,
-  getNextMonitorId,
   notifyBackgroundProcessStateChanged,
   scheduleBackgroundProcessCleanup,
   scrubCompletedBackgroundOutput,
@@ -77,9 +83,17 @@ interface MonitorArgs {
   ws?: MonitorWebSocketSource;
   script?: string;
   args?: unknown;
+  url?: string;
+  interval_seconds?: number;
+  headers?: Record<string, string>;
+  select?: string;
+  match?: UrlMonitorMatch;
+  stop_on_match?: boolean;
+  toolCallId?: string;
   backup_after_seconds?: number;
   backup_prompt?: string;
   secretEnv?: Record<string, string>;
+  variableEnv?: Record<string, string>;
   parentScope?: { agentId: string; conversationId: string };
   signal?: AbortSignal;
 }
@@ -88,34 +102,13 @@ type NormalizedMonitorArgs = MonitorArgs & {
   timeout_ms: number;
   persistent: boolean;
 };
+type MonitorSourceArgs = NormalizedMonitorArgs & { taskId: string };
 
 interface MonitorResult {
   content: Array<{ type: "text"; text: string }>;
   taskId: string;
   timeoutMs: number;
   persistent: boolean;
-}
-
-function buildMonitorResult(
-  taskId: string,
-  timeoutMs: number,
-  persistent: boolean,
-  outputFile: string,
-): MonitorResult {
-  const lifetime = persistent
-    ? "persistent — runs until TaskStop or session end"
-    : `timeout ${timeoutMs}ms`;
-  return {
-    content: [
-      {
-        type: "text",
-        text: `Monitor started (task ${taskId}, ${lifetime}). You will be notified on each event. Keep working — do not poll or sleep. Events may arrive while you are waiting for the user — an event is not their reply.\nOutput file: ${outputFile}`,
-      },
-    ],
-    taskId,
-    timeoutMs,
-    persistent,
-  };
 }
 
 function validUtf8Prefix(buffer: Buffer, maxBytes: number): Buffer {
@@ -434,28 +427,30 @@ export function markMonitorFinished(
 ): void {
   processState.status = status;
   processState.exitCode = exitCode;
+  persistMonitorState(processState);
   void cancelMonitorBackup(taskId);
   scrubCompletedBackgroundOutput(processState);
   notifyBackgroundProcessStateChanged(processState.runtimeScope);
   scheduleBackgroundProcessCleanup(taskId);
 }
 
-function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
+function startCommandMonitor(args: MonitorSourceArgs): MonitorResult {
   assertBackgroundProcessCapacity();
   const command = args.command as string;
   const cwd = getCurrentWorkingDirectory();
-  const env = args.secretEnv
-    ? { ...getShellEnv(), ...args.secretEnv }
-    : getShellEnv();
+  const env = { ...getShellEnv(), ...args.variableEnv, ...args.secretEnv };
   assertSafeWindowsCommand(command, { cwd, env });
   const commandToRun = withStrictShellPrelude(command, env);
-  const launcher = getBackgroundLauncher(commandToRun, env, args.secretEnv);
+  const launcher = getBackgroundLauncher(commandToRun, env, {
+    ...args.variableEnv,
+    ...args.secretEnv,
+  });
   if (!launcher[0]) {
     throw new Error("No shell available");
   }
   noteExpectedWorktreeForLauncher(launcher, cwd);
   const sandboxed = applyShellSandbox(launcher, cwd, env);
-  const taskId = getNextMonitorId();
+  const taskId = args.taskId;
   const outputFile = createBackgroundOutputFile(taskId);
   const output = new MonitorOutputWriter(outputFile);
   const scope = resolveNotificationScope(args.parentScope);
@@ -641,10 +636,10 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
   );
 }
 
-function startWebSocketMonitor(args: NormalizedMonitorArgs): MonitorResult {
+function startWebSocketMonitor(args: MonitorSourceArgs): MonitorResult {
   assertBackgroundProcessCapacity();
   const source = args.ws as MonitorWebSocketSource;
-  const taskId = getNextMonitorId();
+  const taskId = args.taskId;
   const outputFile = createBackgroundOutputFile(taskId);
   const output = new MonitorOutputWriter(outputFile);
   const scope = resolveNotificationScope(args.parentScope);
@@ -833,12 +828,13 @@ function startWebSocketMonitor(args: NormalizedMonitorArgs): MonitorResult {
 }
 
 async function startScriptSource(
-  args: NormalizedMonitorArgs,
+  args: MonitorSourceArgs,
 ): Promise<MonitorResult> {
   const { taskId, outputFile } = await startScriptMonitor(
     {
       description: args.description,
       script: args.script as string,
+      taskId: args.taskId,
       args: args.args,
       timeout_ms: args.timeout_ms,
       persistent: args.persistent,
@@ -869,14 +865,61 @@ function backupScopeFor(taskId: string) {
 export async function monitor(args: MonitorArgs): Promise<MonitorResult> {
   // Hooks may have yielded since approval execution checked cancellation.
   args.signal?.throwIfAborted();
+  // A url monitor runs in Letta Cloud; nothing is started or retained here.
+  const cloud = experimentManager.isEnabled("cloud_monitors");
+  const forbidden = cloud
+    ? [
+        "command",
+        "ws",
+        "script",
+        "args",
+        "persistent",
+        "backup_after_seconds",
+        "backup_prompt",
+      ]
+    : [
+        "url",
+        "interval_seconds",
+        "headers",
+        "select",
+        "match",
+        "stop_on_match",
+      ];
+  for (const key of forbidden) {
+    if (args[key as keyof MonitorArgs] !== undefined) {
+      throw new Error(
+        `Monitor ${key} is not supported in ${cloud ? "Cloud" : "local"} mode`,
+      );
+    }
+  }
+  if (cloud) {
+    return startCloudUrlMonitor(args);
+  }
   const normalized = normalizeMonitorArgs(args);
   installMonitorProcessExitCleanup();
-  const result =
-    normalized.script !== undefined
-      ? await startScriptSource(normalized)
-      : normalized.command !== undefined
-        ? startCommandMonitor(normalized)
-        : startWebSocketMonitor(normalized);
+  const result = await withMonitorState(
+    {
+      ...normalized,
+      kind:
+        normalized.script !== undefined
+          ? "script"
+          : normalized.command !== undefined
+            ? "command"
+            : "websocket",
+      command:
+        normalized.command ??
+        normalized.script ??
+        (normalized.ws ? webSocketDisplayUrl(normalized.ws.url) : ""),
+    },
+    (taskId) => {
+      const sourceArgs = { ...normalized, taskId };
+      return normalized.script !== undefined
+        ? startScriptSource(sourceArgs)
+        : normalized.command !== undefined
+          ? startCommandMonitor(sourceArgs)
+          : startWebSocketMonitor(sourceArgs);
+    },
+  );
   if (normalized.backup_after_seconds === undefined) return result;
   const note = await armMonitorBackup({
     taskId: result.taskId,
@@ -907,6 +950,15 @@ export function stopMonitorsForProcessExit(): void {
       // Process exit is already underway.
     }
   }
+}
+
+export async function shutdownMonitors(): Promise<void> {
+  stopMonitorsForProcessExit();
+  await Promise.all(
+    [...backgroundProcesses.values()]
+      .filter((process) => process.kind === "monitor")
+      .map(persistMonitorState),
+  );
 }
 
 let monitorProcessExitCleanupInstalled = false;

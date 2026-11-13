@@ -29,13 +29,13 @@ export interface SharedReminderState {
   hasSentSessionContext: boolean;
   hasSentConversationBootstrap: boolean;
   pendingConversationBootstrap: boolean;
+  hasSentVariablesInfo: boolean;
+  lastSentVariablesKey: string | null;
   hasSentSecretsInfo: boolean;
   pendingSecretsInfoRefresh: boolean;
   lastSentSecretNamesKey: string | null;
   hasSentMcpServersInfo: boolean;
   lastSentMcpServerNamesKey: string | null;
-  /** Counts may be cached, but attachment discovery must run every turn. */
-  mcpToolCounts: Map<string, { toolCount: number | null; fetchedAtMs: number }>;
   lastNotifiedPermissionMode: PermissionMode | null;
   turnCount: number;
   pendingReflectionTrigger: boolean;
@@ -53,12 +53,13 @@ export function createSharedReminderState(): SharedReminderState {
     hasSentSessionContext: false,
     hasSentConversationBootstrap: false,
     pendingConversationBootstrap: false,
+    hasSentVariablesInfo: false,
+    lastSentVariablesKey: null,
     hasSentSecretsInfo: false,
     pendingSecretsInfoRefresh: false,
     lastSentSecretNamesKey: null,
     hasSentMcpServersInfo: false,
     lastSentMcpServerNamesKey: null,
-    mcpToolCounts: new Map(),
     lastNotifiedPermissionMode: null,
     turnCount: 0,
     pendingReflectionTrigger: false,
@@ -82,9 +83,9 @@ export function markPostCompactionContextRemindersPending(
   state.hasSentAgentInfo = false;
   state.hasSentSessionContext = false;
   state.pendingSessionContextReason ??= "post_compaction";
+  state.hasSentVariablesInfo = false;
   state.hasSentSecretsInfo = false;
   state.hasSentMcpServersInfo = false;
-  state.mcpToolCounts.clear();
   state.lastNotifiedPermissionMode = null;
   state.hasNotifiedLowDiskSpace = false;
 }
@@ -125,6 +126,7 @@ export function enqueueToolsetChangeReminder(
 export function markSecretsInfoReminderPending(
   state: SharedReminderState,
 ): void {
+  state.hasSentVariablesInfo = false;
   state.hasSentSecretsInfo = false;
   state.pendingSecretsInfoRefresh = true;
 }

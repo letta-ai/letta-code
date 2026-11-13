@@ -292,6 +292,70 @@ describe("pi model factory", () => {
     );
   });
 
+  test("moves the saved Kimi built-in URL to Chat Completions and keeps custom URLs", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-kimi-url-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "moonshot_coding",
+        providerName: "lc-kimi-code",
+        apiKey: "test-key",
+        baseURL: "https://api.kimi.com/coding",
+      });
+      const old = await resolvePiModelForAgent(
+        "moonshot_coding/kimi-for-coding",
+        { provider_type: "moonshot_coding" },
+        { localProviderAuthStorageDir: storageDir },
+      );
+      expect(old.model).toMatchObject({
+        api: "openai-completions",
+        baseUrl: "https://api.kimi.com/coding/v1",
+      });
+
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "moonshot_coding",
+        providerName: "lc-kimi-code",
+        apiKey: "test-key",
+        baseURL: "https://proxy.example.test/kimi/v1",
+      });
+      const custom = await resolvePiModelForAgent(
+        "moonshot_coding/kimi-for-coding",
+        { provider_type: "moonshot_coding" },
+        { localProviderAuthStorageDir: storageDir },
+      );
+      expect(custom.model.baseUrl).toBe("https://proxy.example.test/kimi/v1");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("legacy Azure handle and credential resolve to canonical provider", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-azure-alias-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "azure-openai-responses",
+        providerName: "azure-openai-responses",
+        apiKey: "test-key",
+      });
+      const resolved = await resolvePiModelForAgent(
+        "azure-openai-responses/gpt-4.1",
+        { provider_type: "azure-openai-responses" },
+        { localProviderAuthStorageDir: storageDir },
+      );
+      expect(resolved.provider).toBe("azure");
+      expect(resolved.apiKey).toBe("test-key");
+      expect(resolved.model).toMatchObject({
+        api: "azure-openai-responses",
+        provider: "azure",
+        id: "gpt-4.1",
+      });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("resolves ChatGPT OAuth through pi OAuth credentials", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "pi-chatgpt-oauth-"));
     try {

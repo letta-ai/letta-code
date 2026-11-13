@@ -122,7 +122,7 @@ const parentMessages = [
   { id: "m2", date: "", message_type: "assistant_message", content: "Ok." },
 ];
 const listConversationMessages = mock(async () => ({
-  getPaginatedItems: () => parentMessages,
+  getPaginatedItems: () => [...parentMessages].reverse(),
 }));
 let scratchpad: string;
 let previousHome: string | undefined;
@@ -175,7 +175,7 @@ afterAll(() => {
 const brief = { description: "Fork contract", prompt: "Do the work" };
 
 describe("fork_context for external coding workers", () => {
-  test("a local codex worker forks by default and gets a transcript file and the task", async () => {
+  test("a local codex worker forks by default and gets recent history and the task", async () => {
     const result = await runWithRuntimeContext(
       { workingDirectory: scratchpad },
       () =>
@@ -193,9 +193,8 @@ describe("fork_context for external coding workers", () => {
     const metadata = JSON.parse(
       prompt.split("<parent_history>\n")[1]?.split("\n")[0] as string,
     );
-    const path = metadata.full_history_path as string;
-    expect(path).toStartWith(join(scratchpad, ".letta", "parent-transcripts"));
-    expect(await Bun.file(path).text()).toContain(olderMessage);
+    expect(metadata.shown).toBe(3);
+    expect(metadata).not.toHaveProperty("full_history_path");
     expect(prompt).toContain("Use Postgres.");
     expect(prompt).toEndWith("Task:\nDo the work");
   });

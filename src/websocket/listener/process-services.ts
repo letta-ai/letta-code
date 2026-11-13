@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import {
   getSubagents,
   subscribe as subscribeToSubagentState,
@@ -11,6 +12,7 @@ import {
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { subscribeToBackgroundProcessState } from "@/tools/impl/process_manager";
 import { setMessageQueueAdder } from "@/utils/message-queue-bridge";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 import { TO_SUBSCRIBERS } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import {
@@ -20,8 +22,14 @@ import {
   emitSubagentStateUpdate,
 } from "./protocol-outbound";
 import { scheduleQueuePump } from "./queue";
-import { clearRuntimeTimers, getActiveRuntime } from "./runtime";
+import {
+  clearRuntimeTimers,
+  evictConversationRuntimeIfIdle,
+  getActiveRuntime,
+  getConversationRuntime,
+} from "./runtime";
 import { clearSubagentSnapshotCache } from "./subagent-state-cache";
+import { isRuntimeTeleportPending } from "./teleport";
 import type { ListenerTransport } from "./transport";
 import { isListenerTransportOpen } from "./transport";
 import type {
@@ -114,6 +122,15 @@ export function installProcessEventRouting(params: {
           agent_id: scope.agentId,
           conversation_id: scope.conversationId,
         });
+        // A conversation held only for its background work can go now.
+        const conversationRuntime = getConversationRuntime(
+          runtime,
+          scope.agentId,
+          scope.conversationId,
+        );
+        if (conversationRuntime) {
+          evictConversationRuntimeIfIdle(conversationRuntime);
+        }
         return;
       }
       if (runtime.conversationRuntimes.size === 0) {
@@ -130,6 +147,14 @@ export function installProcessEventRouting(params: {
 
   setMessageQueueAdder((queuedMessage) => {
     if (!queuedMessage.agentId || !queuedMessage.conversationId) return;
+    if (
+      isRuntimeTeleportPending(
+        runtime,
+        queuedMessage.agentId,
+        queuedMessage.conversationId,
+      )
+    )
+      return;
     const targetRuntime = getOrCreateScopedRuntime(
       runtime,
       queuedMessage.agentId,
@@ -161,6 +186,7 @@ export function installProcessEventRouting(params: {
   runtime._stopDiskSpaceWatch = watchSandboxDiskSpace(
     getCurrentWorkingDirectory,
     (text) => deliverSandboxDiskAlert(runtime, text),
+    { reserveDirectory: join(resolveGlobalConfigDir(), "state") },
   );
 }
 

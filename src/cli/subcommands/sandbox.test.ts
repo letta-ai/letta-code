@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -34,6 +34,14 @@ async function withEnvironment<T>(
 }
 
 describe("sandbox subcommand", () => {
+  const originalSandboxId = process.env.DAYTONA_SANDBOX_ID;
+  beforeEach(() => {
+    delete process.env.DAYTONA_SANDBOX_ID;
+  });
+  afterEach(() => {
+    if (originalSandboxId === undefined) delete process.env.DAYTONA_SANDBOX_ID;
+    else process.env.DAYTONA_SANDBOX_ID = originalSandboxId;
+  });
   const noCurrentSession = () => {
     throw new Error("Must not use the executing conversation");
   };
@@ -186,43 +194,120 @@ describe("sandbox subcommand", () => {
     ).toThrow("requires a Letta Cloud agent");
   });
 
-  test("exposes a port from the current managed sandbox without targeting by ID", async () => {
-    const calls: number[] = [];
-    const output: string[] = [];
-    const originalLog = console.log;
-    console.log = (message?: unknown) => output.push(String(message));
-    try {
-      const exitCode = await runSandboxSubcommand(
-        ["expose", "3000", "--expires-in", "2h"],
-        {
-          initializeSettings: async () => {},
-          isCloud: async () => true,
-          isManagedRuntime: () => true,
-          createPublicExposure: async (port, expiry) => {
-            calls.push(
-              port,
-              "expiresInSeconds" in expiry ? expiry.expiresInSeconds : -1,
-            );
-            return {
-              url: "https://opaque.dream.site",
-              port,
-              expiresAt: "2026-11-04T20:00:00.000Z",
-            };
+  test.each([
+    ["private by default", [], {}, true, 0],
+    ["accepts --private as a compatibility no-op", ["--private"], {}, true, 0],
+    [
+      "public when explicitly requested",
+      ["--public"],
+      { public: true },
+      undefined,
+      0,
+    ],
+    [
+      "fails closed when an old server omits the private marker",
+      [],
+      {},
+      undefined,
+      1,
+    ],
+  ] as const)(
+    "exposes a port from the current managed sandbox: %s",
+    async (
+      _name,
+      visibilityFlags,
+      expectedOptions,
+      privateResponse,
+      expectedCode,
+    ) => {
+      const calls: Array<{
+        port: number;
+        expirySeconds: number;
+        options: object;
+      }> = [];
+      const output: string[] = [];
+      const originalLog = console.log;
+      const originalError = console.error;
+      console.log = (message?: unknown) => output.push(String(message));
+      console.error = () => {};
+      try {
+        const exitCode = await runSandboxSubcommand(
+          ["expose", "3000", ...visibilityFlags, "--expires-in", "2h"],
+          {
+            initializeSettings: async () => {},
+            isCloud: async () => true,
+            isManagedRuntime: () => true,
+            createExposure: async (port, expiry, options) => {
+              calls.push({
+                port,
+                expirySeconds:
+                  "expiresInSeconds" in expiry ? expiry.expiresInSeconds : -1,
+                options: options ?? {},
+              });
+              return {
+                url: "https://opaque.dream.site",
+                port,
+                expiresAt: "2026-11-04T20:00:00.000Z",
+                private: privateResponse,
+              };
+            },
           },
-        },
-      );
+        );
 
-      expect(exitCode).toBe(0);
-      expect(calls).toEqual([3000, 7200]);
-      expect(JSON.parse(output[0] ?? "{}")).toEqual({
-        url: "https://opaque.dream.site",
-        port: 3000,
-        expiresAt: "2026-11-04T20:00:00.000Z",
+        expect(exitCode).toBe(expectedCode);
+        expect(calls).toEqual([
+          { port: 3000, expirySeconds: 7200, options: expectedOptions },
+        ]);
+        if (expectedCode === 0) {
+          expect(JSON.parse(output[0] ?? "{}")).toEqual({
+            url: "https://opaque.dream.site",
+            port: 3000,
+            expiresAt: "2026-11-04T20:00:00.000Z",
+            private: privateResponse,
+          });
+        } else {
+          expect(output).toEqual([]);
+        }
+      } finally {
+        console.log = originalLog;
+        console.error = originalError;
+      }
+    },
+  );
+
+  test.each(["sandbox-current", undefined])(
+    "passes the current sandbox identity when available: %s",
+    async (sandboxId) => {
+      await withEnvironment({ DAYTONA_SANDBOX_ID: sandboxId }, async () => {
+        const originalLog = console.log;
+        console.log = () => {};
+        const calls: object[] = [];
+        try {
+          const code = await runSandboxSubcommand(
+            ["expose", "3000", "--expires-in", "1h"],
+            {
+              initializeSettings: async () => {},
+              isCloud: async () => true,
+              isManagedRuntime: () => true,
+              createExposure: async (port, _expiry, options) => {
+                calls.push(options ?? {});
+                return {
+                  url: "https://app.example.com",
+                  port,
+                  expiresAt: "2026-11-12T20:00:00Z",
+                  private: true,
+                };
+              },
+            },
+          );
+          expect(code).toBe(0);
+          expect(calls).toEqual([sandboxId ? { sandboxId } : {}]);
+        } finally {
+          console.log = originalLog;
+        }
       });
-    } finally {
-      console.log = originalLog;
-    }
-  });
+    },
+  );
 
   test("rejects exposure outside the current managed sandbox", async () => {
     let exposed = false;
@@ -235,7 +320,7 @@ describe("sandbox subcommand", () => {
           initializeSettings: async () => {},
           isCloud: async () => true,
           isManagedRuntime: () => false,
-          createPublicExposure: async () => {
+          createExposure: async () => {
             exposed = true;
             throw new Error("Must not expose");
           },

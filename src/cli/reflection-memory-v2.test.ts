@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildReflectionSubagentPrompt } from "@/cli/helpers/reflection-prompt";
 import { buildParentMemorySnapshot } from "@/cli/helpers/reflection-transcript";
+import { removeTestDir } from "@/test-utils/test-fs";
 
 const SYSTEM_DIRECTORY_PATH = /(^|[^A-Za-z0-9_-])(?:\$MEMORY_DIR\/)?system\//m;
 
@@ -11,7 +12,7 @@ describe("MemFS v2 reflection snapshot", () => {
   let memoryDir = "";
 
   afterEach(async () => {
-    if (memoryDir) await rm(memoryDir, { recursive: true, force: true });
+    if (memoryDir) await removeTestDir(memoryDir);
   });
 
   test("uses only root-layout paths in the reflection prompt", () => {

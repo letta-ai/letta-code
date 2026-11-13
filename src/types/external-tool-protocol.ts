@@ -54,6 +54,8 @@ export interface ExternalToolCallRequestMessage {
   type: "external_tool_call_request";
   request_id: string;
   runtime?: RuntimeScope<string | null>;
+  /** Epoch milliseconds when this turn input arrived, when available. */
+  turn_started_at?: number;
   tool_call_id: string;
   tool_name: string;
   input: Record<string, unknown>;

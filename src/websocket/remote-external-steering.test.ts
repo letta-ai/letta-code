@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import WebSocket from "ws";
@@ -12,6 +12,7 @@ import { __testSetBackend, type AgentCreateBody } from "@/backend";
 import { createAssistantMessageStream } from "@/backend/dev/headless-turn-executor";
 import { LocalBackend } from "@/backend/local";
 import { settingsManager } from "@/settings-manager";
+import { removeTestDir } from "@/test-utils/test-fs";
 import { backgroundTasks } from "@/tools/impl/process_manager";
 import { launchRemoteExternalCodingAgent } from "@/tools/impl/remote-external-coding-agent";
 import { spawnBackgroundSubagentTask } from "@/tools/impl/task";
@@ -47,7 +48,7 @@ afterEach(async () => {
     else process.env[key] = value;
   }
   savedEnv.clear();
-  if (home) await rm(home, { recursive: true, force: true });
+  if (home) await removeTestDir(home);
 });
 
 async function waitFor<T>(
@@ -270,9 +271,13 @@ test.skipIf(process.platform === "win32")(
     }, "fake Claude steering input");
     expect(steeredLog).toBeDefined();
 
-    const wrongRuntime = {
+    const handoffRuntime = {
       ...runtime,
       conversation_id: "different-conversation",
+    };
+    const wrongRuntime = {
+      ...handoffRuntime,
+      agent_id: "different-agent",
     };
     expect(
       await client.sendSubagentMessage({
@@ -297,7 +302,7 @@ test.skipIf(process.platform === "win32")(
     expect(resumed).toMatchObject({ success: true, delivery: "resumed" });
     expect(
       await client.sendSubagentMessage({
-        runtime,
+        runtime: handoffRuntime,
         agent_id: bareAgentId,
         message: "finish resumed run",
       }),
@@ -352,7 +357,7 @@ test.skipIf(process.platform === "win32")(
     const stopTask = backgroundTasks.get(stopLaunch.task_id);
     expect(stopTask?.status).toBe("running");
     const stopped = await client.stopSubagent({
-      runtime,
+      runtime: handoffRuntime,
       agent_id: stopAgentId,
     });
     expect(stopped).toMatchObject({ success: true, stopped: true });

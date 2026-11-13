@@ -6,6 +6,7 @@ import {
   backgroundProcesses,
   createBackgroundOutputFile,
   getNextDownloadId,
+  notifyBackgroundProcessStateChanged,
   scheduleBackgroundProcessCleanup,
 } from "@/tools/impl/process_manager";
 import { addToMessageQueue } from "@/utils/message-queue-bridge";
@@ -101,6 +102,7 @@ export async function runSlackAttachmentDownloadTask(params: {
       appendToOutputFile(outputFile, `${line}\n`);
       scheduleBackgroundProcessCleanup(taskId);
       notifyIfBackgrounded("completed", line);
+      notifyBackgroundProcessStateChanged(processState.runtimeScope);
       return { outcome: "completed" as const, attachment };
     })
     .catch((error: unknown) => {
@@ -111,6 +113,7 @@ export async function runSlackAttachmentDownloadTask(params: {
       appendToOutputFile(outputFile, `${line}\n`);
       scheduleBackgroundProcessCleanup(taskId);
       notifyIfBackgrounded("failed", line);
+      notifyBackgroundProcessStateChanged(processState.runtimeScope);
       return { outcome: "failed" as const, error: message };
     });
 

@@ -43,6 +43,7 @@ import {
   ensureListenerModAdaptersForAgent,
 } from "./mod-adapter";
 import type { ConversationPermissionModeState } from "./permission-mode";
+import { retryApprovalRecoveryRead } from "./recovery-read";
 import { hasInterruptedCacheForScope } from "./runtime";
 import { emitListenerTurnStart } from "./turn-events";
 import {
@@ -365,6 +366,14 @@ export async function prepareListenerTurn(params: {
     toolOwner.toolPolicy,
   );
   const preparedToolContext = await prepareToolExecutionContextForScope({
+    readScopeState: (read) =>
+      retryApprovalRecoveryRead(
+        read,
+        () => {
+          if (isInterrupted()) throw new Error("Cancelled by user");
+        },
+        turnLease.signal,
+      ),
     connectionId: executionConnectionId,
     environmentDeviceId,
     agentId,
@@ -373,6 +382,7 @@ export async function prepareListenerTurn(params: {
     suppressActingUserFallback: msg.suppressActingUserFallback,
     mcpOriginatorSuperRunId: getEffectiveMcpOriginatorId(msg),
     resolveClientMessageIds,
+    turnStartedAt: msg.receivedAt,
     externalToolOwnerConnectionId: toolOwner.connectionId,
     clientToolset: toolSelection.clientToolset,
     clientToolAllowlist: toolSelection.clientToolAllowlist,

@@ -245,6 +245,9 @@ export function installExternalToolBridge(
       type: "external_tool_call_request",
       request_id: requestId,
       ...(requestRuntime ? { runtime: requestRuntime } : {}),
+      ...(context?.turnStartedAt !== undefined
+        ? { turn_started_at: context.turnStartedAt }
+        : {}),
       tool_call_id: toolCallId,
       tool_name: toolName,
       input,

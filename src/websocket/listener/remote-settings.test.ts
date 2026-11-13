@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { removeTestDir } from "@/test-utils/test-fs";
 import {
   flushRemoteSettingsWrites,
   getRemoteSettingsPath,
@@ -38,7 +39,7 @@ describe("remote settings cwd repair", () => {
     if (originalConfigDir === undefined) delete process.env.LETTA_CONFIG_DIR;
     else process.env.LETTA_CONFIG_DIR = originalConfigDir;
     if (tempRoot) {
-      await rm(tempRoot, { recursive: true, force: true });
+      await removeTestDir(tempRoot);
       tempRoot = null;
     }
   });

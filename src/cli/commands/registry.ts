@@ -10,6 +10,7 @@ import { listWorkflowExecutions } from "@/tools/workflow/execution-registry";
 import { handleMemoryRepositoryCommand } from "./memory-repository";
 import { handleSecretCommand } from "./secret";
 import { handleSystemRemindersCommand } from "./system-reminders";
+import { handleVariableCommand } from "./variable";
 
 type CommandHandlerResult =
   | string
@@ -374,6 +375,12 @@ export const commands: Record<string, Command> = {
       // Handled specially in App.tsx to show MCP server selector
       return "Opening MCP server manager...";
     },
+  },
+  "/variable": {
+    desc: "Manage plain variables for shell commands",
+    order: 33.05,
+    args: "<set|list|unset> [key] [value]",
+    handler: (args: string[]) => handleVariableCommand(args),
   },
   "/secret": {
     desc: "Manage secrets for shell commands",

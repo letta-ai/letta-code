@@ -22,6 +22,8 @@ export interface BackgroundRuntimeScope {
 }
 
 export interface BackgroundProcess {
+  /** Serializes durable monitor updates; absent for local processes. */
+  persistState?: () => Promise<void>;
   process: BackgroundProcessHandle;
   completion?: Promise<unknown>;
   terminate?: () => void;

@@ -66,9 +66,14 @@ export function initHeadlessSecrets(
       ? parentAgentId
       : null;
   if (!vaultAgentId) return Promise.resolve();
-  return import("@/utils/secrets-store").then((secrets) => {
-    if (vaultAgentId !== agentId)
+  return import("@/utils/secrets-store").then(async (secrets) => {
+    if (vaultAgentId !== agentId) {
       secrets.linkSecretsVault(agentId, vaultAgentId);
+      (await import("@/utils/variables-store")).linkVariablesVault(
+        agentId,
+        vaultAgentId,
+      );
+    }
     return secrets.initSecretsFromServer(vaultAgentId);
   });
 }

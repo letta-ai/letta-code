@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { removeTestDir } from "@/test-utils/test-fs";
 
 const projectRoot = process.cwd();
 const RESULT_PREFIX = "__CLIENT_SOFT_FAIL_RESULT__";
@@ -106,7 +107,7 @@ describe("getClient soft failures", () => {
 
   afterEach(async () => {
     if (testHomeDir) {
-      await rm(testHomeDir, { recursive: true, force: true });
+      await removeTestDir(testHomeDir);
       testHomeDir = "";
     }
   });

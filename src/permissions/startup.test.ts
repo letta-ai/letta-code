@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { checkPermission } from "@/permissions/checker";
 import { resetPermissionLoaderCacheForTests } from "@/permissions/loader";
 import { permissionMode } from "@/permissions/mode";
 import { applyStartupPermissionMode } from "@/permissions/startup";
+import { removeTestDir } from "@/test-utils/test-fs";
 
 let testDir: string;
 
@@ -17,7 +18,7 @@ beforeEach(async () => {
 afterEach(async () => {
   resetPermissionLoaderCacheForTests();
   permissionMode.reset();
-  await rm(testDir, { recursive: true, force: true });
+  await removeTestDir(testDir);
 });
 
 test("startup applies permissions.mode from settings", async () => {

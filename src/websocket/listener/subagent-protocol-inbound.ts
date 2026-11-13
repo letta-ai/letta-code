@@ -102,7 +102,9 @@ const LEGACY_EXTERNAL_SUBAGENT_TYPES = new Set([
  * client, where that field had its original meaning, so its value is mapped:
  * an external worker name becomes `harness`, `fork` becomes
  * `fork_context: true`, `general-purpose` becomes the default agent, and any
- * other name stays a Letta `subagent_type`.
+ * other name stays a Letta `subagent_type`. Those clients never forked an
+ * external worker or `general-purpose`, so both map to `fork_context: false`
+ * rather than inheriting the current fork-by-default.
  */
 export function toSubagentLaunchArgs(
   args: LaunchSubagentWireArgs,
@@ -116,9 +118,9 @@ export function toSubagentLaunchArgs(
   const { subagent_type: wireType, ...launchArgs } = args;
   const type = wireType.trim();
   if (LEGACY_EXTERNAL_SUBAGENT_TYPES.has(type))
-    return { ...launchArgs, harness: type };
+    return { ...launchArgs, harness: type, fork_context: false };
   if (type === "fork") return { ...launchArgs, fork_context: true };
-  if (type === "general-purpose") return launchArgs;
+  if (type === "general-purpose") return { ...launchArgs, fork_context: false };
   return { ...launchArgs, subagent_type: type };
 }
 

@@ -36,6 +36,8 @@ export type DurableFileLockOptions = {
   waitMs?: number;
   owner?: DurableLockOwner;
   isOwnerAlive?: (owner: DurableLockOwner) => boolean;
+  /** Deterministic identity input; retains the default reachability/reuse check. */
+  readProcessStart?: (pid: number, timeoutMs: number) => string | null;
   /** @deprecated Retained for source compatibility with the former file lock. */
   beforeExactUnlink?: (path: string) => void;
   /** Deterministic race injection used by the lock's adversarial tests. */
@@ -577,16 +579,15 @@ export function acquireDurableFileLock(
   const lockPath = `${path}.lock`;
   const legacyMarkerPath = `${lockPath}.recovery`;
   const legacyOwnersPath = `${lockPath}-owners`;
+  const readProcessStart =
+    options.readProcessStart ??
+    ((pid: number, timeoutMs: number) =>
+      getProcessStart(pid, process.platform, undefined, timeoutMs));
   const isAlive =
     options.isOwnerAlive ??
     ((candidate: DurableLockOwner) =>
       durableLockOwnerIsAlive(candidate, (pid) =>
-        getProcessStart(
-          pid,
-          process.platform,
-          undefined,
-          remainingProbeTimeoutMs(),
-        ),
+        readProcessStart(pid, remainingProbeTimeoutMs()),
       ));
   sweepDeadCandidates(lockPath, parent, isAlive);
   const candidatePath = prepareCandidate(lockPath, parent, owner);

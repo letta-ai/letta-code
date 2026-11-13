@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ApprovalContext } from "@/permissions/analyzer";
 import { loadPermissions } from "@/permissions/loader";
+import { removeTestDir } from "@/test-utils/test-fs";
 import {
   applySuggestedPermissionsForApproval,
   buildApprovalSuggestionPayload,
@@ -16,7 +17,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await rm(testDir, { recursive: true, force: true });
+  await removeTestDir(testDir);
 });
 
 test("buildApprovalSuggestionPayload exposes TUI-equivalent suggestion text", () => {

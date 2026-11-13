@@ -4,6 +4,7 @@
  */
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -61,5 +62,24 @@ export class TestDirectory {
     } catch (error) {
       console.warn(`Failed to cleanup test directory ${this.path}:`, error);
     }
+  }
+}
+
+/**
+ * Remove a temp directory created by a test. Retries briefly on transient
+ * Windows locks and swallows any final error (including Bun's EFAULT on
+ * Windows): a leaked temp dir is harmless, but a failed cleanup must never
+ * fail a passing test.
+ */
+export async function removeTestDir(path: string): Promise<void> {
+  try {
+    await rm(path, {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 50,
+    });
+  } catch {
+    // Best-effort cleanup.
   }
 }
