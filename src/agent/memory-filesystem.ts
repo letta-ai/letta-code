@@ -474,6 +474,8 @@ export interface ApplyMemfsFlagsResult {
 }
 
 export interface ApplyMemfsFlagsOptions {
+  /** Surface pull failures to callers that must not consume stale memory. */
+  throwOnPullFailure?: boolean;
   pullOnExistingRepo?: boolean;
   agentTags?: string[];
   /** Skip the system prompt update (when the agent was created with the correct mode). */
@@ -600,7 +602,9 @@ export async function applyMemfsFlags(
     if (!isGitRepo(agentId)) {
       await cloneMemoryRepo(agentId);
     } else if (options?.pullOnExistingRepo) {
-      const result = await pullMemory(agentId);
+      const result = await pullMemory(agentId, {
+        throwOnFailure: options?.throwOnPullFailure,
+      });
       pullSummary = result.summary;
     } else {
       installMemoryGitHooks(getScopedMemoryFilesystemRoot(agentId));
