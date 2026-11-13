@@ -5,6 +5,12 @@
       "type": "string",
       "description": "Clear, concise user-facing description of the update you are waiting for. This may be shown directly in chat, so make it grammatical by itself. Describe the expected event, not the polling command or monitor implementation. Prefer `CI results and review comments for the auth fix`, `Deployment completion or failure`, or `New errors in the API logs` over internal labels like `PR checks and state transitions`."
     },
+    "timeout_ms": {
+      "type": "integer",
+      "minimum": 1000,
+      "default": 86400000,
+      "description": "Kill the monitor after this deadline. Default 86400000ms. Maximum 7 days."
+    },
     "url": {
       "type": "string",
       "description": "Public http(s) URL that Letta Cloud polls with GET. By default it notifies only when the HTTP status or body changes; use select and match to narrow that. timeout_ms defaults to 24 hours here, up to 7 days."
@@ -55,12 +61,6 @@
     "stop_on_match": {
       "type": "boolean",
       "description": "For url with match: stop after the first match notice."
-    },
-    "timeout_ms": {
-      "type": "integer",
-      "minimum": 1000,
-      "default": 86400000,
-      "description": "Stop the monitor after this deadline. Defaults to 24 hours, up to 7 days."
     }
   },
   "required": ["description", "url"],

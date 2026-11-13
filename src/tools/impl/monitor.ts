@@ -31,6 +31,7 @@ import {
   createMonitorEventStream,
   MONITOR_EVENT_BUFFER_CHARS,
 } from "./monitor-event-stream.js";
+import { buildMonitorResult } from "./monitor-result";
 import { startScriptMonitor } from "./monitor-script.js";
 import { getMonitorMaxTimeoutMs } from "./monitor-timeout";
 import {
@@ -107,28 +108,6 @@ interface MonitorResult {
   taskId: string;
   timeoutMs: number;
   persistent: boolean;
-}
-
-function buildMonitorResult(
-  taskId: string,
-  timeoutMs: number,
-  persistent: boolean,
-  outputFile: string,
-): MonitorResult {
-  const lifetime = persistent
-    ? "persistent — runs until TaskStop or session end"
-    : `timeout ${timeoutMs}ms`;
-  return {
-    content: [
-      {
-        type: "text",
-        text: `Monitor started (task ${taskId}, ${lifetime}). You will be notified on each event. Keep working — do not poll or sleep. Events may arrive while you are waiting for the user — an event is not their reply.\nOutput file: ${outputFile}`,
-      },
-    ],
-    taskId,
-    timeoutMs,
-    persistent,
-  };
 }
 
 function validUtf8Prefix(buffer: Buffer, maxBytes: number): Buffer {

@@ -7,7 +7,10 @@ import {
   startCloudUrlMonitor,
   stopCloudUrlMonitor,
 } from "./monitor-url-cloud";
-import { backgroundProcesses } from "./process_manager";
+import {
+  backgroundProcesses,
+  clearBackgroundProcessCleanup,
+} from "./process_manager";
 import { task_stop } from "./task-stop";
 
 type Call = { method: string; path: string; body?: Record<string, unknown> };
@@ -27,6 +30,57 @@ function fakeRequest(response: unknown, calls: Call[]) {
 const scope = { agentId: "agent-1", conversationId: "conv-1" };
 
 describe("Monitor url source", () => {
+  test("create and stop results use local Monitor wording", async () => {
+    const flag = spyOn(experimentManager, "isEnabled").mockReturnValue(false);
+    let localId: string | undefined;
+    try {
+      const local = await monitor({
+        description: "Status",
+        command: "sleep 60",
+        timeout_ms: 5000,
+      });
+      localId = local.taskId;
+      const cloud = await startCloudUrlMonitor(
+        {
+          description: "Status",
+          url: "https://example.com",
+          timeout_ms: 5000,
+          parentScope: scope,
+        },
+        {
+          isCloud: () => true,
+          request: fakeRequest({ id: "cmon-compare" }, []),
+        },
+      );
+      // Cloud has no output file; the common message is identical apart from the id.
+      expect(cloud.content[0]?.text).toBe(
+        local.content[0]?.text
+          .split("\nOutput file:")[0]
+          ?.replace(local.taskId, cloud.taskId),
+      );
+      expect(
+        await task_stop(
+          { task_id: cloud.taskId },
+          {
+            stopCloudMonitor: (id) =>
+              stopCloudUrlMonitor(id, {
+                isCloud: () => true,
+                scope: () => scope,
+                request: fakeRequest({ status: "cancelled" }, []),
+              }),
+          },
+        ),
+      ).toEqual(await task_stop({ task_id: local.taskId }));
+    } finally {
+      if (localId) {
+        await task_stop({ task_id: localId });
+        clearBackgroundProcessCleanup(localId);
+        backgroundProcesses.delete(localId);
+      }
+      flag.mockRestore();
+    }
+  });
+
   test("registers with Cloud and returns the Cloud monitor id without local state", async () => {
     const calls: Call[] = [];
     const before = backgroundProcesses.size;
@@ -121,7 +175,7 @@ describe("Monitor url source", () => {
       stop_on_match: true,
     });
     expect(result.content[0]?.text).toContain(
-      "notified when the value at 0.status first matches, including on the first poll, and then it stops",
+      "You will be notified on each event.",
     );
   });
 
@@ -264,7 +318,6 @@ describe("TaskStop for Cloud monitors", () => {
     ]);
     expect(stopped).toEqual({
       killed: true,
-      output: "Stopped Cloud monitor cmon-abc.",
     });
   });
 
@@ -276,7 +329,6 @@ describe("TaskStop for Cloud monitors", () => {
     });
     expect(ended).toEqual({
       killed: false,
-      output: "Cloud monitor cmon-abc had already stopped (completed).",
     });
     const gone = await stopCloudUrlMonitor("cmon-abc", {
       isCloud: () => true,
@@ -288,7 +340,6 @@ describe("TaskStop for Cloud monitors", () => {
     });
     expect(gone).toEqual({
       killed: false,
-      output: "No Cloud monitor cmon-abc was found in this conversation.",
     });
     const calls: Call[] = [];
     const inDefault = await stopCloudUrlMonitor("cmon-abc", {

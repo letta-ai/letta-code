@@ -209,3 +209,21 @@ describe("Monitor experiment assets", () => {
     }
   });
 });
+
+test("local Monitor assets remain byte-identical to v0.34.56", async () => {
+  for (const [path, hash] of [
+    [
+      "./descriptions/Monitor.md",
+      "c86a9f99f14c5c6b1f4688dc8f60583fee7bb6e35c85bc3e1aeb9d67308ecdc4",
+    ],
+    [
+      "./schemas/Monitor.json",
+      "2a24864b9e926634a427bb372a77592ac6d8b957f1fbc8d06a4efaaf58edddd3",
+    ],
+  ] as const) {
+    const bytes = await Bun.file(new URL(path, import.meta.url)).arrayBuffer();
+    expect(new Bun.CryptoHasher("sha256").update(bytes).digest("hex")).toBe(
+      hash,
+    );
+  }
+});
