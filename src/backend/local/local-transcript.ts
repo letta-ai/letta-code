@@ -480,6 +480,35 @@ export function readJsonlFileSuffix<T>(
   };
 }
 
+function endsWithNewline(fd: number, size: number): boolean {
+  const last = Buffer.alloc(1);
+  readSync(fd, last, 0, 1, size - 1);
+  return last[0] === 0x0a;
+}
+
+/** Read the bytes that follow the last newline of an open file. */
+function readTrailingFragment(
+  fd: number,
+  size: number,
+): { start: number; text: string } {
+  const chunks: Buffer[] = [];
+  let end = size;
+  while (end > 0) {
+    const start = Math.max(0, end - 64 * 1024);
+    const chunk = Buffer.alloc(end - start);
+    readSync(fd, chunk, 0, chunk.length, start);
+    const newline = chunk.lastIndexOf(0x0a);
+    if (newline >= 0) {
+      chunks.unshift(chunk.subarray(newline + 1));
+      end = start + newline + 1;
+      break;
+    }
+    chunks.unshift(chunk);
+    end = start;
+  }
+  return { start: end, text: Buffer.concat(chunks).toString("utf8") };
+}
+
 /**
  * Prepare a transcript for appending after an interrupted write. If the file
  * does not end in a newline, the trailing fragment is either a complete row
@@ -491,32 +520,14 @@ export function prepareTranscriptAppend(path: string): "" | "\n" {
   const fd = openSync(path, "r+");
   try {
     const size = fstatSync(fd).size;
-    if (size === 0) return "";
-    const last = Buffer.alloc(1);
-    readSync(fd, last, 0, 1, size - 1);
-    if (last[0] === 0x0a) return "";
+    if (size === 0 || endsWithNewline(fd, size)) return "";
 
-    // Read backwards until the newline that precedes the trailing fragment.
-    const chunks: Buffer[] = [];
-    let fragmentStart = 0;
-    for (let end = size; end > 0; ) {
-      const start = Math.max(0, end - 64 * 1024);
-      const chunk = Buffer.alloc(end - start);
-      readSync(fd, chunk, 0, chunk.length, start);
-      const newline = chunk.lastIndexOf(0x0a);
-      if (newline >= 0) {
-        fragmentStart = start + newline + 1;
-        chunks.unshift(chunk.subarray(newline + 1));
-        break;
-      }
-      chunks.unshift(chunk);
-      end = start;
-    }
+    const fragment = readTrailingFragment(fd, size);
     try {
-      JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      JSON.parse(fragment.text);
       return "\n";
     } catch {
-      ftruncateSync(fd, fragmentStart);
+      ftruncateSync(fd, fragment.start);
       return "";
     }
   } finally {
