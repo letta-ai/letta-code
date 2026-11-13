@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,11 +16,15 @@ import {
   openTaskProgressLog,
 } from "@/tools/impl/task-transcript";
 import {
+  clearPendingMessages,
   type QueuedMessage,
   setMessageQueueAdder,
 } from "@/utils/message-queue-bridge";
 import { collectRemoteTurnResult } from "./remote-turn-wait";
 import type { ExecutionState } from "./subagent-stream";
+
+beforeEach(clearPendingMessages);
+afterEach(clearPendingMessages);
 
 const SUBAGENT = "subagent-remote-1";
 
