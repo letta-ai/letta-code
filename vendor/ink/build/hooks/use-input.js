@@ -175,6 +175,15 @@ const useInput = (inputHandler, options = {}) => {
                         seq = String.fromCharCode(keycode + 32);
                     }
                     
+                    // Legacy terminals send Ctrl+H as BS, which parseKeypress maps
+                    // to backspace. Do the same for its CSI u form (ignoring the
+                    // Caps Lock / Num Lock bits) so Ctrl+H keeps deleting.
+                    if (name === 'h' && (modifier & 63) === 4) {
+                        name = 'backspace';
+                        seq = '\b';
+                        modifier = 0;
+                    }
+
                     if (name) {
                         keypress = {
                             name,
