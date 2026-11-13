@@ -320,6 +320,30 @@ function isRunningLocally(): boolean {
   return !resolvedPath.includes("node_modules");
 }
 
+/** Fetch the latest published letta-code version from the update registry. Throws on failure. */
+export async function fetchLatestPublishedVersion(
+  fetchImpl: FetchImpl = fetch,
+  timeoutMs = 5000,
+): Promise<string> {
+  const latestUrl = buildLatestVersionUrl(
+    resolveUpdatePackageName(),
+    resolveUpdateRegistryBaseUrl(),
+  );
+  debugLog("Checking registry for latest version:", latestUrl);
+  const res = await fetchImpl(latestUrl, {
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!res.ok) {
+    throw new Error(`Registry returned ${res.status}`);
+  }
+  const data = (await res.json()) as { version?: string };
+  if (typeof data.version !== "string") {
+    throw new Error("Unexpected registry response shape");
+  }
+  debugLog("Latest version from registry:", data.version);
+  return data.version;
+}
+
 export async function checkForUpdate(
   fetchImpl: FetchImpl = fetch,
 ): Promise<UpdateCheckResult> {
@@ -334,24 +358,8 @@ export async function checkForUpdate(
     return { updateAvailable: false, currentVersion };
   }
 
-  const packageName = resolveUpdatePackageName();
-  const registryBaseUrl = resolveUpdateRegistryBaseUrl();
-  const latestUrl = buildLatestVersionUrl(packageName, registryBaseUrl);
-
   try {
-    debugLog("Checking registry for latest version:", latestUrl);
-    const res = await fetchImpl(latestUrl, {
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!res.ok) {
-      throw new Error(`Registry returned ${res.status}`);
-    }
-    const data = (await res.json()) as { version?: string };
-    if (typeof data.version !== "string") {
-      throw new Error("Unexpected registry response shape");
-    }
-    const latestVersion = data.version;
-    debugLog("Latest version from registry:", latestVersion);
+    const latestVersion = await fetchLatestPublishedVersion(fetchImpl);
 
     if (latestVersion !== currentVersion) {
       debugLog("Update available!");
