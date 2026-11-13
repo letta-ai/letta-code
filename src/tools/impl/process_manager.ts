@@ -127,6 +127,11 @@ export function getNextCodeModeId() {
   return `code_mode_${codeModeIdCounter++}`;
 }
 
+let replCellIdCounter = 1;
+export function getNextReplCellId() {
+  return `repl_cell_${replCellIdCounter++}`;
+}
+
 let execSessionIdCounter = 1;
 export function getNextExecSessionId() {
   return String(execSessionIdCounter++);
