@@ -130,7 +130,7 @@ export async function lookupDetachedConversationParent(
   )?.agentId;
 }
 
-/** Cloud returns the parent agent, but does not expose its conversation ID. */
+/** Recover the parent address, including the conversation on newer servers. */
 export async function lookupDetachedConversationParentAddress(
   conversationId: string,
   backend: DetachedConversationLookup,
@@ -144,5 +144,14 @@ export async function lookupDetachedConversationParentAddress(
   }
   const parentId = Reflect.get(conversation, "parent_agent_id");
   if (typeof parentId !== "string" || !parentId) return undefined;
-  return { agentId: parentId };
+  const parentConversationId = Reflect.get(
+    conversation,
+    "parent_conversation_id",
+  );
+  return {
+    agentId: parentId,
+    ...(typeof parentConversationId === "string" && parentConversationId
+      ? { conversationId: parentConversationId }
+      : {}),
+  };
 }
