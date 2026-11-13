@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/letta-code",
-  "version": "0.34.57",
+  "version": "0.34.58",
   "lockfileVersion": 3,
   "packages": {
     "node_modules/@alcalzone/ansi-tokenize": {
@@ -5083,7 +5083,7 @@
     },
     "": {
       "name": "@letta-ai/letta-code",
-      "version": "0.34.57",
+      "version": "0.34.58",
       "dependencies": {
         "@cursor/sdk": "1.1.0",
         "@earendil-works/pi-ai": "^1.5.2",
