@@ -125,6 +125,7 @@ export type SandboxExposureExpiry =
 
 export interface SandboxExposureOptions {
   public?: boolean;
+  sandboxId?: string;
 }
 
 export async function createSandboxExposure(
