@@ -1,3 +1,4 @@
+import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type { RuntimeScope } from "@/types/protocol_v2";
 import { replayPendingApprovalRequestsToConnection } from "./approval";
 import {
@@ -6,6 +7,7 @@ import {
   toListenerConnection,
 } from "./connection";
 import {
+  buildDeviceStatus,
   emitDeviceStatusUpdate,
   emitLoopStatusUpdate,
   emitStateSync,
@@ -131,7 +133,6 @@ export async function replaySubscribedConnectionState(
       (connection.writer === transport ||
         connection.streamWriter === transport) &&
       !connection.cancellation.signal.aborted);
-  await (options.refreshGitContext ?? refreshDeviceGitContext)(listener, scope);
   if (!isCurrent()) return;
   if (connection) {
     listener.promotePreparedInputTerminals?.();
@@ -144,8 +145,36 @@ export async function replaySubscribedConnectionState(
     replayPendingTurnFinishedToConnection(transport, runtime, connection.id);
     if (!isCurrent()) return;
   }
+  const gitContextBefore = JSON.stringify(
+    buildDeviceStatus(listener, scope).git_context,
+  );
   emitStateSync(transport, listener, scope, {
     forceDeviceStatus: options.forceDeviceStatus,
     ...(connection ? { routing: toListenerConnection(connection.id) } : {}),
+  });
+  // Git is advisory: replay and runtime_start must not wait for git subprocesses.
+  void (async () => {
+    await (options.refreshGitContext ?? refreshDeviceGitContext)(
+      listener,
+      scope,
+    );
+    if (!isCurrent()) return;
+    if (
+      JSON.stringify(buildDeviceStatus(listener, scope).git_context) ===
+      gitContextBefore
+    )
+      return;
+    emitDeviceStatusUpdate(
+      transport,
+      listener,
+      scope,
+      connection ? toListenerConnection(connection.id) : undefined,
+    );
+  })().catch((error) => {
+    trackBoundaryError({
+      errorType: "listener_git_context_refresh_failed",
+      error,
+      context: "listener_state_replay",
+    });
   });
 }
