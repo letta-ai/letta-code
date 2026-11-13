@@ -46,36 +46,57 @@ export function serializeHistoryRecord(record: unknown): string {
     .replace(/>/g, "\\u003e");
 }
 
-/** Page through a conversation oldest-first, skipping reasoning and system rows. */
+/** Read newest in-context messages until the preview budget or context boundary. */
 export async function fetchParentConversationMessages(params: {
   backend: Pick<Backend, "listConversationMessages">;
   agentId: string;
   conversationId: string;
   signal?: AbortSignal;
+  inContextIds?: string[];
+  maxChars?: number;
 }): Promise<Message[]> {
+  const contextIds = params.inContextIds && new Set(params.inContextIds);
+  const oldestId = params.inContextIds?.[0];
+  if (contextIds?.size === 0 || (params.maxChars ?? 1) <= 0) return [];
   const messages: Message[] = [];
   let after: string | undefined;
-  for (;;) {
+  // At most ten API pages, even when context IDs are stale or missing in history.
+  for (let pageIndex = 0; pageIndex < (contextIds ? 10 : 1); pageIndex++) {
     params.signal?.throwIfAborted();
     const page = await params.backend.listConversationMessages(
       params.conversationId,
       {
         agent_id: params.agentId,
-        order: "asc",
+        order: "desc",
         limit: PAGE_SIZE,
         ...(after ? { after } : {}),
       },
       params.signal ? { signal: params.signal } : undefined,
     );
     const items = page.getPaginatedItems();
-    messages.push(...items);
-    if (items.length < PAGE_SIZE) break;
-    const cursor = items[items.length - 1]?.id;
-    // A page whose cursor cannot advance would otherwise be fetched forever.
+    const boundary = items.findIndex((message) => message.id === oldestId);
+    const withinBoundary = boundary >= 0 ? items.slice(0, boundary + 1) : items;
+    messages.push(
+      ...withinBoundary.filter(
+        (message) =>
+          (!contextIds || contextIds.has(message.id)) &&
+          message.message_type !== "summary_message",
+      ),
+    );
+    const preview = previewParentTranscript(
+      renderParentTranscript([...messages].reverse()).messages,
+    ).join("\n");
+    if (
+      boundary >= 0 ||
+      items.length < PAGE_SIZE ||
+      preview.length >= (params.maxChars ?? Infinity)
+    )
+      break;
+    const cursor = items.at(-1)?.id;
     if (!cursor || cursor === after) break;
     after = cursor;
   }
-  return messages;
+  return messages.reverse();
 }
 
 function contentText(content: unknown): string {
@@ -240,14 +261,14 @@ export function renderParentTranscript(messages: Message[]): ParentTranscript {
   };
 }
 
-/** Bound individual preview records; the full JSONL keeps their exact content. */
+/** Bound individual preview records; earlier content is available through the CLI. */
 export function previewParentTranscript(messages: string[]): string[] {
   return messages.map((line) => {
     const event = JSON.parse(line) as HistoryEvent & {
       seq: number;
       truncated?: boolean;
-      content_ref?: { seq: number };
     };
+    if (event.type === "summary") return line;
     for (const field of ["text", "arguments"] as const) {
       const text = event[field];
       if (typeof text !== "string") continue;
@@ -258,13 +279,12 @@ export function previewParentTranscript(messages: string[]): string[] {
           `${text.slice(0, 2_000)}\n[... omitted ...]\n${text.slice(-2_000)}`;
       } else continue;
       event.truncated = true;
-      event.content_ref = { seq: event.seq };
     }
     return serializeHistoryRecord(event);
   });
 }
 
-/** Keep a complete suffix of messages inline; preserve the remainder in a file. */
+/** Keep a complete suffix of messages within the inline character budget. */
 export function selectRecentMessages(
   messages: string[],
   maxChars: number,

@@ -202,3 +202,63 @@ test("upstream aborts retain an incomplete trace without changing delivered byte
     upstream.close();
   }
 });
+
+test.each([undefined, "application/json"])(
+  "captures a Codex SSE response with content-type %s",
+  async (contentType) => {
+    // Recorded Responses event shape; identifiers and model replaced, metadata removed.
+    // The observed successful response had no content-type or content-encoding.
+    const response = await Bun.file(
+      `${import.meta.dir}/__fixtures__/codex-stream.sse`,
+    ).text();
+    const upstream = createServer(async (req, res) => {
+      for await (const _chunk of req) {
+        /* consume request */
+      }
+      res.writeHead(200, contentType ? { "content-type": contentType } : {});
+      res.end(response);
+    }).listen(0, "127.0.0.1");
+    await once(upstream, "listening");
+    const address = upstream.address();
+    if (!address || typeof address === "string")
+      throw new Error("Missing address");
+    const rows: ExternalTraceRow[] = [];
+    const proxy = await startTraceProxy({
+      upstream: `http://127.0.0.1:${address.port}`,
+      harness: "codex",
+      scope: {
+        parent_agent_id: "agent-test",
+        parent_conversation_id: "conv-test",
+        task_id: "task-test",
+        worker_session_id: "session-test",
+      },
+      secrets: [],
+      emit: (row) => rows.push(row),
+    });
+    try {
+      const reply = await fetch(`${proxy.url}/responses`, {
+        method: "POST",
+        body: JSON.stringify({ model: "gpt-5-codex", stream: true }),
+      });
+      expect(reply.status).toBe(200);
+      expect(await reply.text()).toBe(response);
+      await proxy.close();
+      const row = rows[0];
+      if (!row) throw new Error("Missing trace");
+      expect(row.capture_status).toBe("complete");
+      expect(row.prompt_tokens).toBe(16);
+      expect(row.completion_tokens).toBe(5);
+      expect(row.total_tokens).toBe(21);
+      expect(row.cached_input_tokens).toBe(0);
+      expect(row.reasoning_tokens).toBe(0);
+      const captured = JSON.parse(row.response_json);
+      expect(captured.complete).toBe(true);
+      expect(captured.response.status).toBe("completed");
+      expect(captured.response.output[0].content[0].text).toBe("OK");
+      expect(captured.events.at(-1).type).toBe("response.completed");
+    } finally {
+      await proxy.close();
+      upstream.close();
+    }
+  },
+);

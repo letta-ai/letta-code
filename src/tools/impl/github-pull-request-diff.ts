@@ -14,6 +14,17 @@ import type {
 
 const MAX_SUMMARY_BODY_CHARS = 240;
 
+export type PullRequestEventKind =
+  | "merged"
+  | "closed"
+  | "conflict"
+  | "checks_done"
+  | "review"
+  | "comment"
+  | "push"
+  | "state"
+  | "checks";
+
 export interface GitHubPullRequestWatchDiff {
   events: string[];
   terminal: boolean;
@@ -63,12 +74,17 @@ function sameKnownValue(previous: string, current: string): boolean {
 export function diffGitHubPullRequestSnapshots(
   previous: GitHubPullRequestSnapshot,
   current: GitHubPullRequestSnapshot,
+  notifyOn?: readonly PullRequestEventKind[],
 ): GitHubPullRequestWatchDiff {
   const events: string[] = [];
+  const add = (kind: PullRequestEventKind, ...lines: string[]) => {
+    if (!notifyOn || notifyOn.includes(kind)) events.push(...lines);
+  };
   const headChanged = previous.headSha !== current.headSha;
 
   if (headChanged) {
-    events.push(
+    add(
+      "push",
       `PR head changed from ${shortGitHubPullRequestSha(previous.headSha)} to ${shortGitHubPullRequestSha(current.headSha)}. ${githubPullRequestCheckSummary(current)}; ${githubPullRequestBlockerSummary(current)}.`,
     );
     const currentFailures = current.checks.filter(
@@ -79,7 +95,8 @@ export function diffGitHubPullRequestSnapshots(
         attempt.phase === "failure" &&
         !matchesCurrentFailure(attempt, currentFailures)
       ) {
-        events.push(
+        add(
+          "checks",
           `Check attempt failed on new head before the next poll: ${attempt.name} (${attempt.result}).${checkUrl(attempt)}`,
         );
       }
@@ -87,7 +104,8 @@ export function diffGitHubPullRequestSnapshots(
   }
 
   if (previous.state !== current.state) {
-    events.push(
+    add(
+      current.state === "MERGED" ? "merged" : "closed",
       current.state === "MERGED"
         ? `PR merged at ${shortGitHubPullRequestSha(current.headSha)}: ${current.ref.url}`
         : current.state === "CLOSED"
@@ -97,7 +115,8 @@ export function diffGitHubPullRequestSnapshots(
   }
 
   if (previous.isDraft !== current.isDraft) {
-    events.push(
+    add(
+      "state",
       current.isDraft
         ? "PR moved back to draft."
         : "PR marked ready for review.",
@@ -110,9 +129,9 @@ export function diffGitHubPullRequestSnapshots(
   for (const comment of current.comments) {
     const old = previousComments.get(comment.id);
     if (!old) {
-      events.push(commentEvent("New PR comment", comment));
+      add("comment", commentEvent("New PR comment", comment));
     } else if (old.updatedAt !== comment.updatedAt) {
-      events.push(commentEvent("PR comment edited", comment));
+      add("comment", commentEvent("PR comment edited", comment));
     }
   }
 
@@ -122,14 +141,16 @@ export function diffGitHubPullRequestSnapshots(
   for (const review of current.reviews) {
     const old = previousReviews.get(review.id);
     if (!old) {
-      events.push(
+      add(
+        "review",
         commentEvent(`New ${review.state.toLowerCase()} review`, review),
       );
     } else if (
       old.state !== review.state ||
       old.updatedAt !== review.updatedAt
     ) {
-      events.push(
+      add(
+        "review",
         commentEvent(`Review changed to ${review.state.toLowerCase()}`, review),
       );
     }
@@ -142,7 +163,8 @@ export function diffGitHubPullRequestSnapshots(
     const old = previousThreads.get(thread.id);
     if (old && old.isResolved !== thread.isResolved) {
       const url = thread.comments.at(-1)?.url ?? current.ref.url;
-      events.push(
+      add(
+        "review",
         thread.isResolved
           ? `Review thread resolved: ${url}`
           : `Review thread reopened: ${url}`,
@@ -154,15 +176,17 @@ export function diffGitHubPullRequestSnapshots(
     for (const comment of thread.comments) {
       const oldComment = oldComments.get(comment.id);
       if (!oldComment) {
-        events.push(inlineCommentEvent(comment));
+        add("comment", inlineCommentEvent(comment));
       } else {
         if (oldComment.updatedAt !== comment.updatedAt) {
-          events.push(
+          add(
+            "comment",
             inlineCommentEvent(comment, "Inline review comment edited"),
           );
         }
         if (oldComment.outdated !== comment.outdated) {
-          events.push(
+          add(
+            "comment",
             comment.outdated
               ? `Review comment became outdated: ${comment.url}`
               : `Review comment is current again: ${comment.url}`,
@@ -184,23 +208,26 @@ export function diffGitHubPullRequestSnapshots(
     for (const check of current.checks) {
       const old = previousChecks.get(check.key);
       if (check.phase === "pending" && old && old.phase !== "pending") {
-        events.push(`Check rerun started: ${check.name}.${checkUrl(check)}`);
+        add("checks", `Check rerun started: ${check.name}.${checkUrl(check)}`);
       }
       if ((!old || old.phase !== "failure") && check.phase === "failure") {
-        events.push(
+        add(
+          "checks",
           `Check failed: ${check.name} (${check.result}).${checkUrl(check)}`,
         );
       } else if (
         old?.phase === "failure" &&
         (check.phase === "success" || check.phase === "neutral")
       ) {
-        events.push(
+        add(
+          "checks",
           `Check recovered: ${check.name} (${check.result}).${checkUrl(check)}`,
         );
       }
     }
     if (previousPending > 0 && currentPending === 0) {
-      events.push(
+      add(
+        "checks_done",
         `Current-head checks finished: ${githubPullRequestCheckSummary(current)}.`,
       );
     }
@@ -213,7 +240,8 @@ export function diffGitHubPullRequestSnapshots(
         !previousAttempts.has(attempt.key) &&
         !matchesCurrentFailure(attempt, currentFailures)
       ) {
-        events.push(
+        add(
+          "checks",
           `Check attempt failed before the next poll: ${attempt.name} (${attempt.result}).${checkUrl(attempt)}`,
         );
       }
@@ -221,31 +249,47 @@ export function diffGitHubPullRequestSnapshots(
   }
 
   if (!sameKnownValue(previous.mergeable, current.mergeable)) {
-    events.push(
+    add(
+      "conflict",
       current.mergeable === "CONFLICTING"
         ? "PR now has merge conflicts."
         : `PR mergeability changed to ${current.mergeable}.`,
     );
   }
   if (!sameKnownValue(previous.mergeStateStatus, current.mergeStateStatus)) {
-    events.push(
+    add(
+      "state",
       `GitHub merge state changed from ${previous.mergeStateStatus} to ${current.mergeStateStatus}.`,
     );
   }
   if (previous.reviewDecision !== current.reviewDecision) {
-    events.push(
+    add(
+      "review",
       `Review decision changed from ${previous.reviewDecision} to ${current.reviewDecision}.`,
     );
   }
   const wasReady = isGitHubPullRequestReady(previous);
   const isReady = isGitHubPullRequestReady(current);
   if (!wasReady && isReady) {
-    events.push(
+    add(
+      "state",
       `PR is merge-ready on head ${shortGitHubPullRequestSha(current.headSha)} after a fresh read: ${current.ref.url}`,
     );
   } else if (wasReady && !isReady) {
-    events.push(
+    add(
+      "state",
       `PR is no longer merge-ready on head ${shortGitHubPullRequestSha(current.headSha)}: ${githubPullRequestBlockerSummary(current)}; ${githubPullRequestCheckSummary(current)}.`,
+    );
+  }
+
+  if (
+    headChanged &&
+    notifyOn?.includes("checks_done") &&
+    pendingGitHubPullRequestChecks(current).length === 0
+  ) {
+    add(
+      "checks_done",
+      `Current-head checks finished: ${githubPullRequestCheckSummary(current)}.`,
     );
   }
 

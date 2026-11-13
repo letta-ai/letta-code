@@ -23,6 +23,7 @@ import { runStepsSubcommand } from "./steps";
 import { runTeleportSubcommand } from "./teleport";
 import { runTrajectoriesSubcommand } from "./trajectories";
 import { runUsageSubcommand } from "./usage";
+import { runVariableSubcommand } from "./variable";
 
 async function runUpdateSubcommand(): Promise<number> {
   const { manualUpdate } = await import("@/updater/auto-update");
@@ -61,6 +62,7 @@ export function subcommandNeedsEarlyBackendMode(
     case "permissions":
     case "remote":
     case "sandbox":
+    case "variable":
     case "secret":
     case "server":
     case "shared-memory":
@@ -117,6 +119,8 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runModsSubcommand(rest);
     case "sandbox":
       return runSandboxSubcommand(rest);
+    case "variable":
+      return runVariableSubcommand(rest);
     case "secret":
       return runSecretSubcommand(rest);
     case "teleport":

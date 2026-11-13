@@ -2,6 +2,7 @@ import { isAgentIdCompatibleWithBackend } from "@/agent/agent-id";
 import { getCurrentAgentId } from "@/agent/context";
 import { settingsManager } from "@/settings-manager";
 import { cancelBackgroundMemoryTasks } from "@/tools/impl/memory-task-lifecycle";
+import { shutdownMonitors } from "@/tools/impl/monitor";
 
 // Save current agent + conversation as last session before exiting.
 // This ensures subagent overwrites during the session don't persist,
@@ -35,4 +36,5 @@ export async function prepareSessionExit(
 ): Promise<void> {
   saveLastSessionBeforeExit(conversationId);
   await cancelBackgroundMemoryTasks();
+  await shutdownMonitors();
 }

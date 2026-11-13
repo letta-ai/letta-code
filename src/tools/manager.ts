@@ -96,7 +96,7 @@ import {
   createScrubbedOutputStreamer,
   getAmbientRedactionSecrets,
   type InvocationSecretRedactions,
-  resolveSecretEnvFromCommand,
+  resolveShellEnvironment,
   type ScrubbedOutputStreamer,
   sanitizeOutputLines,
   sanitizeToolReturnContent,
@@ -127,6 +127,7 @@ const STREAMING_SHELL_TOOLS = new Set([
 ]);
 /** Background tools whose completion notification targets the invoking scope. */
 const SCOPED_BACKGROUND_TOOLS = new Set(["Monitor", "Workflow", "CodeMode"]);
+const TOOL_CALL_ID_TOOLS = new Set(["Task", "Skill", "Monitor"]); // executor ids, never model-supplied
 // Tools that write files — used to trigger onFileWrite broadcast after execution.
 const FILE_MUTATING_TOOLS = new Set(["Edit", "Write"]);
 
@@ -2209,14 +2210,11 @@ async function executeToolInner(
       if (STREAMING_SHELL_TOOLS.has(internalName)) {
         // Redact only this invocation's secrets.
         const command = enhancedArgs.command ?? enhancedArgs.cmd;
-        invocationSecrets =
-          typeof command === "string" ||
-          (Array.isArray(command) &&
-            command.every((part) => typeof part === "string"))
-            ? await resolveSecretEnvFromCommand(command, scopedAgentId)
-            : {};
-        // Referenced secrets redact regardless of length; merge them over
-        // the always-on vault + ambient set.
+        const environment = await resolveShellEnvironment(
+          command,
+          scopedAgentId,
+        );
+        invocationSecrets = environment.secretEnv;
         invocationRedactions = captureSecretRedactions(
           scopedAgentId,
           invocationSecrets,
@@ -2229,9 +2227,7 @@ async function executeToolInner(
           );
           enhancedArgs = { ...enhancedArgs, onOutput: outputStreamer.onOutput };
         }
-        if (Object.keys(invocationSecrets).length > 0) {
-          enhancedArgs = { ...enhancedArgs, secretEnv: invocationSecrets };
-        }
+        enhancedArgs = { ...enhancedArgs, ...environment };
       }
       const parentScope =
         options?.parentScope ??
@@ -2249,10 +2245,9 @@ async function executeToolInner(
         enhancedArgs = { ...enhancedArgs, parentScope };
       }
 
-      // Correlate receipts with executor identity, never model-supplied fields.
       if (
         internalName === "AskUserQuestionAsync" ||
-        (["Task", "Skill"].includes(internalName) && options?.toolCallId)
+        (TOOL_CALL_ID_TOOLS.has(internalName) && options?.toolCallId)
       ) {
         enhancedArgs = { ...enhancedArgs, toolCallId: options?.toolCallId };
       }

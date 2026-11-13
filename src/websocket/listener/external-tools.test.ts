@@ -147,6 +147,7 @@ describe("listener runtime_start external tool bridge", () => {
         permissionModeState: { mode: "unrestricted" },
         runtimeContext: {
           connectionId: "client-1",
+          turnStartedAt: 1_700_000_000_000,
           agentId: scope.agent_id,
           conversationId: scope.conversation_id,
         },
@@ -169,9 +170,34 @@ describe("listener runtime_start external tool bridge", () => {
     expect(sent[0]).toMatchObject({
       type: "external_tool_call_request",
       runtime: scope,
+      turn_started_at: 1_700_000_000_000,
       tool_name: "fetch_thread",
       input: { id: "123" },
     });
+    await executeTool(
+      "fetch_thread",
+      { id: "456" },
+      { toolContextId: prepared.contextId, toolCallId: "direct-listener" },
+    );
+    expect(sent[1]?.turn_started_at).toBe(1_700_000_000_000);
+    const unscoped = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        clientToolAllowlist: ["fetch_thread"],
+        permissionModeState: { mode: "unrestricted" },
+        runtimeContext: {
+          connectionId: "client-1",
+          agentId: scope.agent_id,
+          conversationId: scope.conversation_id,
+        },
+      },
+    );
+    await executeTool(
+      "fetch_thread",
+      { id: "789" },
+      { toolContextId: unscoped.contextId, toolCallId: "unscoped-listener" },
+    );
+    expect(sent[2]).not.toHaveProperty("turn_started_at");
   });
 
   test("agent-free turns can see their runtime-owned SDK tools", async () => {

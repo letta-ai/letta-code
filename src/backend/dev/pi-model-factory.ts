@@ -120,7 +120,8 @@ export function reasoningForSettings(
   const modelId = modelIdFromHandle(modelHandle);
   const preserveMax =
     modelId?.startsWith("gpt-5.6") === true ||
-    modelId?.startsWith("gpt-6") === true;
+    modelId?.startsWith("gpt-6") === true ||
+    model?.thinkingLevelMap?.max === "max";
   const nestedReasoning = isRecord(modelSettings.reasoning)
     ? modelSettings.reasoning
     : undefined;
@@ -582,6 +583,11 @@ export async function resolvePiModelForAgent(
         : authResult?.auth.apiKey,
   };
   if (authResult?.auth.baseUrl) baseURL = authResult.auth.baseUrl;
+  // pi-ai 1.5 moved Kimi Coding to Chat Completions under /coding/v1.
+  // Existing records may pin the former built-in URL; retain custom URLs.
+  if (provider === "kimi-coding" && baseURL === "https://api.kimi.com/coding") {
+    baseURL = publishedModel?.baseUrl;
+  }
   if (authResult?.auth.headers) {
     headers = mergeHeaders(headers, nonNullHeaders(authResult.auth.headers));
   }

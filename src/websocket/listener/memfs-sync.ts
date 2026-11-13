@@ -8,6 +8,11 @@
  */
 
 import { debugLog, debugWarn } from "@/utils/debug";
+import {
+  isMemoryAccessRefusal,
+  isMemoryUnavailable,
+  markMemoryUnavailable,
+} from "@/utils/memory-access";
 import type { ListenerRuntime } from "./types";
 
 /**
@@ -64,6 +69,7 @@ async function syncMemfsForAgent(agentId: string): Promise<void> {
     );
     await applyMemfsFlags(agentId, true, {
       pullOnExistingRepo: true,
+      throwOnPullFailure: true,
       agentTags: agent.tags ?? [],
     });
     debugLog("memfs-sync", `Memfs repair complete for agent ${agentId}`);
@@ -74,6 +80,7 @@ async function syncMemfsForAgent(agentId: string): Promise<void> {
 
   await applyMemfsFlags(agentId, undefined, {
     pullOnExistingRepo: true,
+    throwOnPullFailure: true,
     agentTags: agent.tags,
     skipPromptUpdate: true,
   });
@@ -98,6 +105,7 @@ export async function ensureMemfsSyncedForAgent(
   listener: ListenerRuntime,
   agentId: string,
 ): Promise<boolean> {
+  if (isMemoryUnavailable(agentId)) return false;
   const existing = listener.memfsSyncedAgents.get(agentId);
   if (existing) {
     return existing;
@@ -111,8 +119,12 @@ export async function ensureMemfsSyncedForAgent(
         "memfs-sync",
         `Failed to sync memfs for agent ${agentId}: ${err instanceof Error ? err.message : String(err)}`,
       );
-      // Remove so next turn retries.
-      listener.memfsSyncedAgents.delete(agentId);
+      if (isMemoryAccessRefusal(err)) {
+        markMemoryUnavailable(agentId);
+      } else {
+        // Transient failures may succeed on the next turn.
+        listener.memfsSyncedAgents.delete(agentId);
+      }
       return false;
     },
   );

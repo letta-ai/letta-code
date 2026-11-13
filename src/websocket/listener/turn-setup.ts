@@ -44,6 +44,7 @@ import {
   ensureListenerModAdaptersForAgent,
 } from "./mod-adapter";
 import type { ConversationPermissionModeState } from "./permission-mode";
+import { retryApprovalRecoveryRead } from "./recovery-read";
 import { hasInterruptedCacheForScope } from "./runtime";
 import { emitListenerTurnStart } from "./turn-events";
 import {
@@ -117,15 +118,7 @@ export async function prepareListenerTurn(params: {
     return { kind: "interrupted" };
   }
 
-  const detachedParentAddress =
-    !agentId && conversationId.startsWith("conv-")
-      ? await lookupDetachedConversationParentAddress(
-          conversationId,
-          getBackend(),
-        )
-      : undefined;
-  if (isInterrupted()) return { kind: "interrupted" };
-  updateRuntimeContext({ detachedParentAddress });
+  updateRuntimeContext({ detachedParentAddress: undefined });
   setCurrentAgentId(agentId);
   setCurrentAgentName(listenAgentMetadata?.name ?? null);
   setConversationId(conversationId);
@@ -375,6 +368,25 @@ export async function prepareListenerTurn(params: {
     toolOwner.toolPolicy,
   );
   const preparedToolContext = await prepareToolExecutionContextForScope({
+    readScopeState: async (read) => {
+      const state = await retryApprovalRecoveryRead(
+        read,
+        () => {
+          if (isInterrupted()) throw new Error("Cancelled by user");
+        },
+        turnLease.signal,
+      );
+      if (!agentId && conversationId.startsWith("conv-")) {
+        // Reuse the retried conversation read that supplies the tool scope.
+        const detachedParentAddress =
+          await lookupDetachedConversationParentAddress(conversationId, {
+            retrieveConversation: async () => state as object,
+          });
+        if (isInterrupted()) throw new Error("Cancelled by user");
+        updateRuntimeContext({ detachedParentAddress });
+      }
+      return state;
+    },
     connectionId: executionConnectionId,
     environmentDeviceId,
     agentId,
@@ -383,6 +395,7 @@ export async function prepareListenerTurn(params: {
     suppressActingUserFallback: msg.suppressActingUserFallback,
     mcpOriginatorSuperRunId: getEffectiveMcpOriginatorId(msg),
     resolveClientMessageIds,
+    turnStartedAt: msg.receivedAt,
     externalToolOwnerConnectionId: toolOwner.connectionId,
     clientToolset: toolSelection.clientToolset,
     clientToolAllowlist: toolSelection.clientToolAllowlist,
