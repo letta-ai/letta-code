@@ -1,6 +1,9 @@
 import * as path from "node:path";
 import { isUsableDirectory } from "@/helpers/usable-directory";
-import { getCurrentWorkingDirectory } from "@/runtime-context";
+import {
+  consumeWorkingDirectoryRecovery,
+  getCurrentWorkingDirectory,
+} from "@/runtime-context";
 import { resolveForegroundYieldMs } from "@/tools/foreground-yield";
 import {
   captureSecretRedactions,
@@ -307,11 +310,16 @@ function formatExecOutput(params: {
   originalTokenCount: number;
   maxOutputTokens?: number;
   secrets: Readonly<Record<string, string>>;
+  workingDirectoryNote?: string;
 }): string {
   const sections = [
     `Chunk ID: ${params.chunkId}`,
     `Wall time: ${(params.wallTimeMs / 1000).toFixed(4)} seconds`,
   ];
+
+  if (params.workingDirectoryNote) {
+    sections.push(params.workingDirectoryNote);
+  }
 
   if (params.exitCode !== null) {
     sections.push(`Process exited with code ${params.exitCode}`);
@@ -734,6 +742,20 @@ export async function exec_command(
   }
 
   const session = await startExecSession(args);
+
+  // If the runtime cwd was found deleted and repaired to a fallback, tell the
+  // model instead of silently running from a different directory. An explicit
+  // workdir that still exists makes the session cwd irrelevant to this
+  // command, so leave the notice pending for the next default-cwd command.
+  const defaultCwd = getCurrentWorkingDirectory();
+  const recoveredFrom =
+    resolveShellWorkdir(args.workdir) === defaultCwd
+      ? consumeWorkingDirectoryRecovery()
+      : null;
+  const workingDirectoryNote = recoveredFrom
+    ? `Note: working directory ${recoveredFrom} no longer exists; running in ${defaultCwd} instead.`
+    : undefined;
+
   const yieldTimeMs = clampYieldTime(
     args.yield_time_ms,
     resolveForegroundYieldMs(),
@@ -760,6 +782,7 @@ export async function exec_command(
     originalTokenCount: estimateTokenCount(output),
     maxOutputTokens: args.max_output_tokens,
     secrets: session.secrets,
+    workingDirectoryNote,
   });
   if (sessionId === null) {
     releaseExecSession(session);
