@@ -7,6 +7,10 @@ import { WebSocketServer } from "ws";
 import { ACTING_USER_ID_HEADER } from "@/agent/acting-user";
 import { sendMessageStreamWithBackend } from "@/agent/message";
 import { APIBackend } from "@/backend";
+import {
+  resolveBackendMode,
+  setConfiguredBackendMode,
+} from "@/backend/backend-mode";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { __clearExecSessionsForTests } from "@/tools/impl/exec-command";
 import { backgroundProcesses } from "@/tools/impl/process_manager";
@@ -37,12 +41,16 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 }
 
 const originalActingUserId = process.env.LETTA_ACTING_USER_ID;
+let previousBackendMode = resolveBackendMode();
 
 beforeEach(() => {
+  previousBackendMode = resolveBackendMode();
+  setConfiguredBackendMode("local");
   delete process.env.LETTA_ACTING_USER_ID;
 });
 
 afterEach(() => {
+  setConfiguredBackendMode(previousBackendMode);
   for (const process of backgroundProcesses.values()) {
     process.completionNotificationSuppressed = true;
     process.process.kill("SIGKILL");

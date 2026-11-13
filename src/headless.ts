@@ -180,6 +180,7 @@ import { subagentExecutionSettings } from "./runtime-execution-settings";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
 import { writeWireMessage, writeWireMessageAsync } from "./stream-json-writer";
 import { shutdownBackgroundMemoryTasks } from "./tools/impl/memory-task-lifecycle";
+import { shutdownMonitors } from "./tools/impl/monitor";
 import {
   type ExternalToolDefinition,
   registerExternalTools,
@@ -583,6 +584,7 @@ async function sendScopedApprovalMessages(params: {
 }
 
 async function flushAndExit(code: number): Promise<never> {
+  await shutdownMonitors();
   const flushWritable = (stream: NodeJS.WriteStream): Promise<void> =>
     new Promise((resolve) => {
       if (stream.destroyed || stream.writableEnded) return resolve();
@@ -598,8 +600,6 @@ async function flushAndExit(code: number): Promise<never> {
   process.exit(code);
 }
 
-// For one-shot headless outputs (json/text), await the final stdout write before
-// exiting so CI pipes don't occasionally observe an empty stdout buffer.
 async function writeFinalHeadlessStdout(text: string): Promise<void> {
   await new Promise<void>((resolve) => {
     if (process.stdout.destroyed || process.stdout.writableEnded) {

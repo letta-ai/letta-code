@@ -1,5 +1,9 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { ApiRequestError } from "@/backend/api/request";
+import {
+  resolveBackendMode,
+  setConfiguredBackendMode,
+} from "@/backend/backend-mode";
 import { experimentManager } from "@/experiments/manager";
 import { monitor } from "./monitor";
 import {
@@ -32,6 +36,8 @@ const scope = { agentId: "agent-1", conversationId: "conv-1" };
 describe("Monitor url source", () => {
   test("create and stop results use local Monitor wording", async () => {
     const flag = spyOn(experimentManager, "isEnabled").mockReturnValue(false);
+    const previousMode = resolveBackendMode();
+    setConfiguredBackendMode("local");
     let localId: string | undefined;
     try {
       const local = await monitor({
@@ -77,6 +83,7 @@ describe("Monitor url source", () => {
         clearBackgroundProcessCleanup(localId);
         backgroundProcesses.delete(localId);
       }
+      setConfiguredBackendMode(previousMode);
       flag.mockRestore();
     }
   });

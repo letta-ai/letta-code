@@ -2,6 +2,10 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  resolveBackendMode,
+  setConfiguredBackendMode,
+} from "@/backend/backend-mode";
 import { checkPermission } from "@/permissions/checker";
 import { TOOL_DEFINITIONS } from "@/tools/tool-definitions";
 import { TOOLSET_CATALOG } from "@/tools/toolset-catalog";
@@ -14,8 +18,11 @@ import { watch_pr } from "./watch-pr";
 
 const url = "https://github.com/letta-ai/letta-code/pull/42";
 let previousManagedCloud: string | undefined;
+let previousBackendMode = resolveBackendMode();
 let previousMonitorMaxTimeout: string | undefined;
 beforeEach(() => {
+  previousBackendMode = resolveBackendMode();
+  setConfiguredBackendMode("local");
   previousMonitorMaxTimeout = process.env.LETTA_MONITOR_MAX_TIMEOUT_SECONDS;
   delete process.env.LETTA_MONITOR_MAX_TIMEOUT_SECONDS;
   previousManagedCloud = process.env.LETTA_MANAGED_CLOUD_RUNTIME;
@@ -44,6 +51,7 @@ function snapshot(
 }
 
 afterEach(() => {
+  setConfiguredBackendMode(previousBackendMode);
   if (previousMonitorMaxTimeout === undefined)
     delete process.env.LETTA_MONITOR_MAX_TIMEOUT_SECONDS;
   else
