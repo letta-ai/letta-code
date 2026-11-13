@@ -16,6 +16,7 @@ import {
   openTaskProgressLog,
 } from "@/tools/impl/task-transcript";
 import {
+  clearPendingMessages,
   type QueuedMessage,
   setMessageQueueAdder,
 } from "@/utils/message-queue-bridge";
@@ -141,6 +142,8 @@ test("streams a remote Letta subagent's progress into the output file while it r
 
 test("notifies once while a completed child waits on background work and continues to the terminal result", async () => {
   const queued: QueuedMessage[] = [];
+  // Attaching a consumer delivers whatever earlier suites left queued.
+  clearPendingMessages();
   setMessageQueueAdder((message) => queued.push(message));
   registerSubagent(SUBAGENT, "general-purpose", "test", undefined, true);
   let poll = 0;
@@ -208,6 +211,8 @@ test("notifies once while a completed child waits on background work and continu
 
 test("does not notify a foreground Task's parent, which is blocked in this wait", async () => {
   const queued: QueuedMessage[] = [];
+  // Attaching a consumer delivers whatever earlier suites left queued.
+  clearPendingMessages();
   setMessageQueueAdder((message) => queued.push(message));
   registerSubagent(SUBAGENT, "general-purpose", "test", undefined, false);
   let poll = 0;
