@@ -235,7 +235,6 @@ Every key below links to its entry. Scope lists the [files](https://code.claude.
 | [`strictPluginOnlyCustomization.mcp`](#strictpluginonlycustomization-mcp) | Block [MCP servers](https://code.claude.com/docs/en/mcp.md) from user and project sources | Plugins and skills | Managed |
 | [`strictPluginOnlyCustomization.skills`](#strictpluginonlycustomization-skills) | Block [skills](https://code.claude.com/docs/en/skills.md) from user and project sources | Plugins and skills | Managed |
 | [`subagentPromptCacheTtl`](#subagentpromptcachettl) | Choose the [prompt cache lifetime](https://code.claude.com/docs/en/prompt-caching.md#cache-lifetime) for subagents and other requests outside the main conversation | Model and responses | Any file |
-| [`subagentStatusLine`](#subagentstatusline) | Rewrite rows in the [subagent](https://code.claude.com/docs/en/sub-agents.md) task display with your own command | Interface and terminal | Any file |
 | [`switchModelsOnFlag`](#switchmodelsonflag) | Switch models automatically or pause when a [safety classifier](https://code.claude.com/docs/en/model-config.md#ask-before-switching) flags a request | Model and responses | Any file |
 | [`syncClaudeAiPlugins`](#syncclaudeaiplugins) | Stop loading the [plugins enabled on your claude.ai account](https://code.claude.com/docs/en/plugins/loading.md#synced-plugins) and stop downloading new ones | Plugins and skills | User, local, or managed |
 | [`syncClaudeAiSkills`](#syncclaudeaiskills) | Stop loading the [skills enabled on your claude.ai account](https://code.claude.com/docs/en/skills.md#how-synced-skills-behave) and stop downloading new ones | Plugins and skills | User, local, or managed |
@@ -3175,25 +3174,6 @@ This example prints the model name and context usage, and adds two characters of
 
 The example needs [`jq`](https://jqlang.org/) installed and runs in a shell. For PowerShell and Git Bash equivalents, see [Windows configuration](https://code.claude.com/docs/en/statusline.md#windows-configuration); for the full setup, see [Manually configure a status line](https://code.claude.com/docs/en/statusline.md#manually-configure-a-status-line).
 
-### `subagentStatusLine`
-
-When Claude runs [subagents](https://code.claude.com/docs/en/sub-agents.md), Claude Code lists them in a task display below the prompt, one row per subagent showing `name · description · token count`. This key lets you run your own command to rewrite those rows, for example to show each subagent's context usage as a percentage. On each refresh, Claude Code sends the visible rows as one JSON object on stdin, with a `tasks` array carrying each subagent's `id`, `name`, `status`, `model`, `tokenCount`, and more, and replaces the row for each `id` you write back as a `{"id", "content"}` line. Rows you don't write back keep the default rendering.
-
-* **Scope**: [`Any file`](#scopes). When [`allowManagedHooksOnly`](#allowmanagedhooksonly) is on, or [`disableAllHooks`](#disableallhooks) is set outside managed settings, only the managed settings value runs.
-* **Type**: object with `type` set to `"command"` and a `command` string
-* **Default**: unset, so Claude Code renders the default rows
-
-```json settings.json theme={null}
-{
-  "subagentStatusLine": {
-    "type": "command",
-    "command": "jq -c '.tasks[] | {id, content: \"\\(.name): \\(.tokenCount) tokens\"}'"
-  }
-}
-```
-
-See [Subagent status lines](https://code.claude.com/docs/en/statusline.md#subagent-status-lines).
-
 ### `syntaxHighlightingDisabled`
 
 Claude Code colors code by language in the diffs, code blocks, and file previews it shows in the terminal, with its built-in highlighter. Set this key to `true` to show them as plain text instead, for example if the colors clash with your terminal theme or slow a screen reader.
@@ -3650,7 +3630,7 @@ When you set it to `true`, Claude Code changes which hooks and hook-like command
 * **Everything else is blocked**: user, project, and local hooks, hooks and mods from other installed plugins, and hooks declared in agent frontmatter. [Mods built into Claude Code](https://code.claude.com/docs/en/plugins/mods/overview.md#mods-built-into-claude-code) keep running. To block only users' mods, set [`allowManagedModsOnly`](https://code.claude.com/docs/en/plugins/mods/admin#set-options-on-the-built-in-guard) instead.
 * **Command-sourced plugins are disabled**: Claude Code also disables plugins with a [`command` source](https://code.claude.com/docs/en/plugins/marketplace-reference#command-plugin-source), including plugins force-enabled in managed `enabledPlugins`, unless you set [`disableCommandPluginSources`](#disablecommandpluginsources) to `false` explicitly
 * **Marketplace `headersHelper` commands are blocked**: Claude Code also blocks marketplace [`headersHelper` commands](https://code.claude.com/docs/en/plugins/host-marketplace#authenticate-archive-downloads) unless [`disableCommandPluginSources`](#disablecommandpluginsources) is explicitly set to `false`, except for a marketplace that managed settings themselves declare. Requires Claude Code v2.1.238 or later
-* **Status line and file suggestion narrow to managed settings**: Claude Code reads [`statusLine`](https://code.claude.com/docs/en/statusline), [`fileSuggestion`](#filesuggestion), and [`subagentStatusLine`](https://code.claude.com/docs/en/statusline#subagent-status-lines) from managed settings only, following the [status line and file suggestion gates](#status-line-and-file-suggestion-gates)
+* **Status line and file suggestion narrow to managed settings**: Claude Code reads [`statusLine`](https://code.claude.com/docs/en/statusline) and [`fileSuggestion`](#filesuggestion) from managed settings only, following the [status line and file suggestion gates](#status-line-and-file-suggestion-gates)
 
 The [`/goal`](https://code.claude.com/docs/en/goal) command can't run while this key is set, because it depends on hooks.
 
@@ -3689,7 +3669,7 @@ The [`/goal`](https://code.claude.com/docs/en/goal) command can't run while hook
 
 #### Status line and file suggestion gates
 
-Claude Code makes two decisions for `statusLine`, `fileSuggestion`, and `subagentStatusLine`, in this order:
+Claude Code makes two decisions for `statusLine` and `fileSuggestion`, in this order:
 
 * **Off entirely**: when managed settings set `disableAllHooks`, or when the folder isn't trusted under the same [workspace trust rule as hooks in settings files](https://code.claude.com/docs/en/permissions.md#what-runs-before-you-trust-a-folder)
 * **Narrowed to managed settings**: when [`allowManagedHooksOnly`](#allowmanagedhooksonly) is set, when `disableAllHooks` is `true` outside managed settings after [settings precedence](https://code.claude.com/docs/en/hooks.md#disable-or-remove-hooks) applies, or when you start Claude Code with `--safe-mode`
@@ -4661,7 +4641,7 @@ Run the main thread as a named [subagent](https://code.claude.com/docs/en/sub-ag
 
 * **Scope**: [`Any file`](#scopes)
 * **Type**: string, the name of a built-in or custom agent
-* **Default**: unset, so the main thread runs as Claude Code's default agent
+* **Default**: unset
 * **Per-session overrides**: `--agent` takes precedence over this key for one session
 
 ```json settings.json theme={null}
@@ -4669,8 +4649,6 @@ Run the main thread as a named [subagent](https://code.claude.com/docs/en/sub-ag
   "agent": "code-reviewer"
 }
 ```
-
-A plugin's own `settings.json` can also supply this key; see [Ship default settings with your plugin](https://code.claude.com/docs/en/plugins/components.md#default-settings).
 
 ### `crossSessionInbound`
 

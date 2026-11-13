@@ -191,7 +191,7 @@
 #### Create plugins
 
 - [Create a Claude Code plugin](https://code.claude.com/docs/en/plugins/create.md): Build your first Claude Code plugin from an empty directory, test it without a marketplace, and convert an existing .claude/ setup.
-- [Add components to a plugin](https://code.claude.com/docs/en/plugins/components.md): Add skills, hooks, MCP servers, and every other component type to a Claude Code plugin, with an example that validates for each.
+- [Add components to a plugin](https://code.claude.com/docs/en/plugins/components.md): Add skills, hooks, MCP servers, and other component types to a Claude Code plugin, with an example that validates for each.
 - [Plugin dependencies](https://code.claude.com/docs/en/plugins/dependencies.md): Declare the plugins your plugin depends on, with version ranges such as ^1.2, and see how Claude Code installs, resolves, and prunes them.
 - [Test plugins with evals](https://code.claude.com/docs/en/plugin-evals.md): Write eval cases for your Claude Code plugin, run them with claude plugin eval, grade the results, compare against a no-plugin baseline, and gate CI on the score.
 - [Publish and distribute a plugin](https://code.claude.com/docs/en/plugins/publish.md): Publish a Claude Code plugin through your own marketplace or Anthropic's directory, with a pre-release checklist and how users get updates.
@@ -234,7 +234,7 @@
 
 #### Reference
 
-- [Plugin manifest reference](https://code.claude.com/docs/en/plugins/manifest-reference.md): Complete reference for plugin.json: every field with its type and default, accepted path forms, and the userConfig and environment variable schemas.
+- [Plugin manifest reference](https://code.claude.com/docs/en/plugins/manifest-reference.md): Complete reference for plugin.json: fields with types and defaults, accepted path forms, and the userConfig and environment variable schemas.
 - [Marketplace reference](https://code.claude.com/docs/en/plugins/marketplace-reference.md): Complete reference for marketplace.json fields, plugin entries, and the plugin and marketplace source objects, with where each is valid.
 - [Plugin commands reference](https://code.claude.com/docs/en/plugins/cli-reference.md): Reference for the claude plugin shell commands, /plugin and /reload-plugins in a session, and the flags that load a plugin for one session.
 
@@ -264,7 +264,7 @@
 
 ### Reference
 
-- [Plugin manifest reference](https://code.claude.com/docs/en/plugins/manifest-reference.md): Complete reference for plugin.json: every field with its type and default, accepted path forms, and the userConfig and environment variable schemas.
+- [Plugin manifest reference](https://code.claude.com/docs/en/plugins/manifest-reference.md): Complete reference for plugin.json: fields with types and defaults, accepted path forms, and the userConfig and environment variable schemas.
 
 ## Administration
 
