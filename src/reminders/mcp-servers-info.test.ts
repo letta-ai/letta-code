@@ -84,6 +84,10 @@ describe("mcp servers info reminder", () => {
     expect(text).toContain("letta mcp tools <server>");
     expect(text).toContain("letta mcp schema <tool-name>");
     expect(text).toContain("letta mcp call <tool-name>");
+    expect(text).toContain("--args-file <path>");
+    expect(text).toContain(
+      "Exit code 2 means the tool returned an error result",
+    );
     expect(text).toContain(
       "Do not automatically store results of principal-restricted operations in shared memory.",
     );
