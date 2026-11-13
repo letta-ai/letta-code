@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { appendFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,6 +19,7 @@ import {
   LocalTranscriptRepairRequiredError,
   type LocalTranscriptRowsResult,
   overlayResidentLocalMessageSuffix,
+  prepareTranscriptAppend,
   readJsonlFile,
   readJsonlFileSuffix,
   readLocalTranscriptTailWindow,
@@ -691,8 +693,7 @@ function inspectResidency(store: LocalStore) {
 describe("JSONL readers with an interrupted append", () => {
   const first = { id: "m1" };
   const second = { id: "m2" };
-  const row = (value: unknown) => `${JSON.stringify(value)}
-`;
+  const row = (value: unknown) => `${JSON.stringify(value)}\n`;
   const torn = '{"id":"unfinished"';
 
   const readers: Array<[string, (path: string) => unknown[]]> = [
@@ -738,11 +739,37 @@ describe("JSONL readers with an interrupted append", () => {
       expect(read(path)).toEqual([first, second]);
     });
 
+    test("skips a torn final line followed only by blank lines", async () => {
+      const path = await writeMessages(`${row(first)}${torn}
+
+  
+`);
+      expect(read(path)).toEqual([first]);
+    });
+
+    test("skips a torn final line in a CRLF file", async () => {
+      const path = await writeMessages(`${JSON.stringify(first)}
+${torn}`);
+      expect(read(path)).toEqual([first]);
+    });
+
     test("still throws on a corrupt line in the middle", async () => {
       const path = await writeMessages(`${row(first)}not json
 ${row(second)}`);
       expect(() => read(path)).toThrow(SyntaxError);
     });
+  });
+
+  test("skips a torn multi-byte tail in a file larger than one read chunk", async () => {
+    const rows = Array.from({ length: 2000 }, (_, i) => ({
+      id: `m${i}`,
+      pad: "é😀".repeat(10),
+    }));
+    const path = await writeMessages(`${rows.map(row).join("")}{"id":"é😀`);
+    expect(readJsonlFile<unknown>(path)).toEqual(rows);
+    const streamed: unknown[] = [];
+    forEachJsonlRow<unknown>(path, (item) => streamed.push(item));
+    expect(streamed).toEqual(rows);
   });
 
   test("readJsonlFileSuffix skips a torn tail when the window skips the head", async () => {
@@ -754,5 +781,75 @@ ${row(second)}`);
     const result = readJsonlFileSuffix<{ id: string }>(path, 512);
     expect(result.reachedStart).toBe(false);
     expect(result.items.at(-1)?.id).toBe("m49");
+  });
+});
+
+describe("prepareTranscriptAppend", () => {
+  const row = (value: unknown) => `${JSON.stringify(value)}
+`;
+  const torn = '{"id":"unfinished"';
+
+  async function transcript(contents: string): Promise<string> {
+    const path = join(await createStorageDirectory(), "messages.jsonl");
+    await writeFile(path, contents);
+    return path;
+  }
+
+  // Mirrors the writer in LocalStore.appendConversationSessionEntry.
+  function append(path: string, value: unknown): void {
+    appendFileSync(path, `${prepareTranscriptAppend(path)}${row(value)}`);
+  }
+
+  test("drops a torn tail so later appends stay readable", async () => {
+    const path = await transcript(row({ id: "m1" }) + torn);
+    append(path, { id: "m2" });
+    expect(await readFile(path, "utf8")).toBe(
+      row({ id: "m1" }) + row({ id: "m2" }),
+    );
+    append(path, { id: "m3" });
+    expect(readJsonlFile<unknown>(path)).toEqual([
+      { id: "m1" },
+      { id: "m2" },
+      { id: "m3" },
+    ]);
+  });
+
+  test("keeps a valid last row that lacks a newline", async () => {
+    const path = await transcript(
+      row({ id: "m1" }) + JSON.stringify({ id: "m2" }),
+    );
+    append(path, { id: "m3" });
+    expect(readJsonlFile<unknown>(path)).toEqual([
+      { id: "m1" },
+      { id: "m2" },
+      { id: "m3" },
+    ]);
+  });
+
+  test("handles a file that is only a torn fragment", async () => {
+    const path = await transcript(torn);
+    append(path, { id: "m1" });
+    expect(await readFile(path, "utf8")).toBe(row({ id: "m1" }));
+  });
+
+  test("leaves a newline-terminated file untouched", async () => {
+    const before = row({ id: "m1" }) + row({ id: "m2" });
+    const path = await transcript(before);
+    append(path, { id: "m3" });
+    expect(await readFile(path, "utf8")).toBe(before + row({ id: "m3" }));
+  });
+
+  test("handles a missing file", async () => {
+    const path = join(await createStorageDirectory(), "missing.jsonl");
+    append(path, { id: "m1" });
+    expect(await readFile(path, "utf8")).toBe(row({ id: "m1" }));
+  });
+
+  test("drops a torn tail longer than one read chunk", async () => {
+    const path = await transcript(
+      `${row({ id: "m1" })}{"pad":"${"é".repeat(100_000)}`,
+    );
+    append(path, { id: "m2" });
+    expect(readJsonlFile<unknown>(path)).toEqual([{ id: "m1" }, { id: "m2" }]);
   });
 });

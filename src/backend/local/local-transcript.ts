@@ -8,6 +8,8 @@ import { randomUUID } from "node:crypto";
 import {
   closeSync,
   existsSync,
+  fstatSync,
+  ftruncateSync,
   openSync,
   readFileSync,
   readSync,
@@ -476,6 +478,50 @@ export function readJsonlFileSuffix<T>(
         ? start + firstNewlineByte + 1
         : size,
   };
+}
+
+/**
+ * Prepare a transcript for appending after an interrupted write. If the file
+ * does not end in a newline, the trailing fragment is either a complete row
+ * missing its newline (returns "\n" so the next row starts on its own line) or
+ * a torn row (truncated away). Rows that parse are never removed.
+ */
+export function prepareTranscriptAppend(path: string): "" | "\n" {
+  if (!existsSync(path)) return "";
+  const fd = openSync(path, "r+");
+  try {
+    const size = fstatSync(fd).size;
+    if (size === 0) return "";
+    const last = Buffer.alloc(1);
+    readSync(fd, last, 0, 1, size - 1);
+    if (last[0] === 0x0a) return "";
+
+    // Read backwards until the newline that precedes the trailing fragment.
+    const chunks: Buffer[] = [];
+    let fragmentStart = 0;
+    for (let end = size; end > 0; ) {
+      const start = Math.max(0, end - 64 * 1024);
+      const chunk = Buffer.alloc(end - start);
+      readSync(fd, chunk, 0, chunk.length, start);
+      const newline = chunk.lastIndexOf(0x0a);
+      if (newline >= 0) {
+        fragmentStart = start + newline + 1;
+        chunks.unshift(chunk.subarray(newline + 1));
+        break;
+      }
+      chunks.unshift(chunk);
+      end = start;
+    }
+    try {
+      JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      return "\n";
+    } catch {
+      ftruncateSync(fd, fragmentStart);
+      return "";
+    }
+  } finally {
+    closeSync(fd);
+  }
 }
 
 export function jsonl<T>(items: readonly T[]): string {
