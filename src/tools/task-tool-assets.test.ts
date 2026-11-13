@@ -230,6 +230,9 @@ test("local Monitor assets remain byte-identical to v0.34.56", async () => {
 
 test("Wake session warning appears only in the interactive TUI", async () => {
   const { runWithRuntimeContext } = await import("@/runtime-context");
+  const { resolveBackendSpecificToolAssets } = await import(
+    "./task-tool-assets"
+  );
   const previousDesktop = process.env.LETTA_DESKTOP_MODE;
   try {
     for (const sessionSource of [
