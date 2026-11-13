@@ -62,12 +62,45 @@ describe("sandbox file API", () => {
         port: 3000,
         expiresInSeconds: 7200,
         ...expectedRequestOptions,
+        ...(process.env.DAYTONA_SANDBOX_ID
+          ? { sandboxId: process.env.DAYTONA_SANDBOX_ID }
+          : {}),
       });
       expect(new Headers(calls[0]?.init?.headers).get("Authorization")).toBe(
         "Bearer secret",
       );
     },
   );
+
+  test("targets the runtime sandbox for creation and extension when available", async () => {
+    const previous = process.env.DAYTONA_SANDBOX_ID;
+    try {
+      for (const sandboxId of ["runtime-sandbox", undefined]) {
+        if (sandboxId) process.env.DAYTONA_SANDBOX_ID = sandboxId;
+        else delete process.env.DAYTONA_SANDBOX_ID;
+        for (const expiry of [
+          { expiresInSeconds: 7200 },
+          { extendBySeconds: 3600 },
+        ]) {
+          const calls: Array<{ input: string; init?: RequestInit }> = [];
+          await createSandboxExposure(
+            3000,
+            expiry,
+            {},
+            createDeps(Response.json({}), calls),
+          );
+          expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+            port: 3000,
+            ...expiry,
+            ...(sandboxId ? { sandboxId } : {}),
+          });
+        }
+      }
+    } finally {
+      if (previous === undefined) delete process.env.DAYTONA_SANDBOX_ID;
+      else process.env.DAYTONA_SANDBOX_ID = previous;
+    }
+  });
 
   test("selects agent scope for default rather than looking up a literal conversation", async () => {
     const calls: Array<{ input: string; init?: RequestInit }> = [];

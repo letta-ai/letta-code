@@ -137,7 +137,14 @@ export async function createSandboxExposure(
     "/v1/sandbox-exposures",
     {
       method: "POST",
-      body: JSON.stringify({ port, ...expiry, ...options }),
+      body: JSON.stringify({
+        port,
+        ...expiry,
+        ...options,
+        ...(process.env.DAYTONA_SANDBOX_ID
+          ? { sandboxId: process.env.DAYTONA_SANDBOX_ID }
+          : {}),
+      }),
       headers: { "Content-Type": "application/json" },
     },
     deps,
