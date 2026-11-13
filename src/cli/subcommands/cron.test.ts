@@ -93,6 +93,7 @@ function installScheduleApi(options: {
   environments?: Record<string, ReturnType<typeof environment>>;
   scheduleRoutesStatus?: number;
   scheduledMessages?: unknown[];
+  schedule?: ReturnType<typeof legacyCloudSchedule> & { model?: string | null };
 }) {
   const requests: Array<{
     method: string;
@@ -134,7 +135,8 @@ function installScheduleApi(options: {
       url.pathname ===
       "/v1/agents/agent-cloud-test/schedule/legacy-cloud-schedule"
     ) {
-      if (method === "GET") return jsonResponse(legacyCloudSchedule());
+      if (method === "GET")
+        return jsonResponse(options.schedule ?? legacyCloudSchedule());
       if (method === "DELETE") return jsonResponse({ success: true });
     }
 
@@ -364,6 +366,38 @@ describe("cron add execution targeting", () => {
       requests.find((request) => request.method === "POST")?.actingUserId,
     ).toBe("user-requester");
   });
+
+  test.each(["openai/gpt-4.1", null, undefined])(
+    "Cloud list and get show model %s",
+    async (model) => {
+      const home = mkdtempSync(join(tmpdir(), "letta-cron-model-"));
+      process.env.LETTA_HOME = home;
+      const schedule = {
+        ...legacyCloudSchedule(),
+        conversation_id: "new",
+        ...(model !== undefined && { model }),
+      };
+      installScheduleApi({ scheduledMessages: [schedule], schedule });
+      const logs: string[] = [];
+      console.log = mock((line: string) => logs.push(String(line)));
+
+      try {
+        for (const args of [["list"], ["get", schedule.id]]) {
+          expect(
+            await runCronSubcommand([...args, "--agent", "agent-cloud-test"]),
+          ).toBe(0);
+          const output = JSON.parse(logs.at(-1) ?? "null");
+          expect(args[0] === "list" ? output[0] : output).toMatchObject({
+            id: schedule.id,
+            conversation_id: "new",
+            model: model ?? null,
+          });
+        }
+      } finally {
+        rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
 
   test("local execution can inspect and delete legacy Cloud schedules", async () => {
     const home = mkdtempSync(join(tmpdir(), "letta-cron-legacy-cloud-"));
