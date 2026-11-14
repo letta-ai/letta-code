@@ -104,6 +104,33 @@ function alwaysOnZaiThinking(modelId?: string): boolean {
   );
 }
 
+function finiteNumberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
+/** The agent's sampling settings as pi-ai request options. */
+export function samplingOptionsForSettings(
+  modelSettings: Record<string, unknown>,
+): {
+  samplingParams?: Record<string, unknown>;
+  maxTokens?: number;
+  temperature?: number;
+} {
+  const maxTokens = finiteNumberValue(modelSettings.max_tokens);
+  const temperature = finiteNumberValue(modelSettings.temperature);
+  return {
+    // streamSimple drops provider-specific named options; samplingParams is
+    // pi-ai's supported pass-through for explicit provider request overrides.
+    ...(isRecord(modelSettings.sampling_params)
+      ? { samplingParams: modelSettings.sampling_params }
+      : {}),
+    ...(maxTokens ? { maxTokens } : {}),
+    ...(temperature !== undefined ? { temperature } : {}),
+  };
+}
+
 // Maps Letta model settings to a pi-ai ThinkingLevel. Every pi-ai Anthropic
 // call against a reasoning-capable model must pass this when available:
 // pi-ai sends `thinking: {type: "disabled"}` for reasoning models when
