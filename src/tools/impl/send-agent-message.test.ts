@@ -1,4 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
+import { ChildProcess } from "node:child_process";
 import type { SubagentResult } from "@/agent/subagents";
 import type { Backend } from "@/backend";
 import { ApiRequestError } from "@/backend/api/request";
@@ -775,6 +776,7 @@ test("local backend spawns a headless local send", async () => {
       ...f,
       spawnLocal: (_command, args) => {
         spawned.push(args);
+        return new ChildProcess();
       },
     }),
   );
@@ -797,7 +799,13 @@ test("local backend spawns a headless local send", async () => {
   await runWithRuntimeContext(caller, () =>
     send_agent_message(
       { conversation_id: localConv, message: "hi" },
-      { ...f, spawnLocal: (_command, args) => void spawned.push(args) },
+      {
+        ...f,
+        spawnLocal: (_command, args) => {
+          spawned.push(args);
+          return new ChildProcess();
+        },
+      },
     ),
   );
   expect(spawned[1]).toContain(localConv);
