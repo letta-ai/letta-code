@@ -256,7 +256,7 @@ describe("task computer routing", () => {
       },
     );
 
-    test("a fork ignores the default and does not route", async () => {
+    test("a fork uses the default computer", async () => {
       setDefaultComputer("cloud");
       // The shared fixture rejects forks so other cases can assert none happen;
       // this one needs the fork to land so the spawn below is observable.
@@ -275,7 +275,7 @@ describe("task computer routing", () => {
         expect(result).toContain("Task running in background with task ID:");
         expect(forkConversation).toHaveBeenCalledTimes(1);
         expect(spawn).toHaveBeenCalledTimes(1);
-        expect(receivedEnvironment).toBeUndefined();
+        expect(receivedEnvironment).toBe("cloud");
       } finally {
         await settingsManager.reset();
         if (originalHome === undefined) {
