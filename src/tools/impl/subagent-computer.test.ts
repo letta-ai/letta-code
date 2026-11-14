@@ -44,7 +44,7 @@ describe("resolveSubagentComputer", () => {
     });
   });
 
-  test.each(["codex", "claude-code", "cursor", "opencode", "fork", "recall"])(
+  test.each(["codex", "claude-code", "cursor", "opencode", "fork"])(
     "forked %s uses the default while memory workers stay local",
     (harness) => {
       expect(resolve(undefined, forked, "cloud", harness)).toEqual({
@@ -61,6 +61,17 @@ describe("resolveSubagentComputer", () => {
       });
     },
   );
+
+  test("recall stays local with a default but accepts an explicit computer", () => {
+    expect(resolve(undefined, forked, "cloud", "recall")).toEqual({
+      computer: undefined,
+      source: "none",
+    });
+    expect(resolve("office-mac", forked, "cloud", "recall")).toEqual({
+      computer: "office-mac",
+      source: "explicit",
+    });
+  });
 
   test.each(["", "   "])("treats a blank env default %j as unset", (value) => {
     expect(resolve(undefined, implementation, value)).toEqual({
