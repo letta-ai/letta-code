@@ -234,6 +234,29 @@ describe("remote external subagent control", () => {
     expect(response).toMatchObject({ success: true, delivery: "steered" });
   });
 
+  test("reports a steer queued behind an unacknowledged interrupt", async () => {
+    const { parent } = fixture();
+    const response = await handleSubagentMessageCommand(
+      {
+        type: "subagent_message",
+        request_id: "queued-steer",
+        runtime,
+        agent_id: nativeId,
+        message: "Change course",
+      },
+      parent,
+      {
+        workerEnv,
+        sendClaude: async () => ({
+          mode: "steered",
+          sessionId: nativeId,
+          queued: true,
+        }),
+      },
+    );
+    expect(response).toMatchObject({ success: true, delivery: "queued" });
+  });
+
   test("deduplicates a retried request ID", async () => {
     const { parent } = fixture();
     let calls = 0;

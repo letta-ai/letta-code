@@ -147,6 +147,19 @@ test("routes a computer-qualified external ID remotely", async () => {
   });
 });
 
+test("tells the agent a remote steer is queued so it doesn't resend", async () => {
+  const f = fixture();
+  const result = await runWithRuntimeContext(caller, () =>
+    send_agent_message(
+      { agent_id: `${CLAUDE_AGENT_ID}@device-1`, message: "Change course" },
+      { ...f, sendRemoteExternalMessage: async () => ({ delivery: "queued" }) },
+    ),
+  );
+  const content = JSON.parse(result.content);
+  expect(content).toMatchObject({ delivery: "remote/queued" });
+  expect(content.note).toContain("don't resend");
+});
+
 test("rejects an explicit computer with a qualified external ID", async () => {
   const result = await runWithRuntimeContext(caller, () =>
     send_agent_message({

@@ -826,7 +826,7 @@ export async function sendRemoteExternalCodingAgentMessage(
   params: RemoteExternalCodingAgentControl & { message: string },
   deps: RemoteExternalCodingAgentControlDeps = {},
 ): Promise<{
-  delivery: "steered" | "resumed";
+  delivery: "steered" | "queued" | "resumed";
   taskId?: string;
   outputFile?: string;
 }> {
@@ -855,7 +855,7 @@ async function deliverRemoteExternalCodingAgentMessage(
   params: RemoteExternalCodingAgentControl & { message: string },
   deps: RemoteExternalCodingAgentControlDeps,
 ): Promise<{
-  delivery: "steered" | "resumed";
+  delivery: "steered" | "queued" | "resumed";
   taskId?: string;
   outputFile?: string;
 }> {
@@ -926,9 +926,9 @@ async function deliverRemoteExternalCodingAgentMessage(
     }
     throw new Error(response.error);
   }
-  if (response.delivery === "steered") {
+  if (response.delivery === "steered" || response.delivery === "queued") {
     follower.close();
-    return { delivery: "steered" };
+    return { delivery: response.delivery };
   }
   follower.markLaunched();
   const completion = follower
