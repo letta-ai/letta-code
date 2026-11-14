@@ -227,3 +227,40 @@ test("local Monitor assets remain byte-identical to v0.34.56", async () => {
     );
   }
 });
+
+test("Wake session warning appears only in the interactive TUI", async () => {
+  const { runWithRuntimeContext } = await import("@/runtime-context");
+  const { resolveBackendSpecificToolAssets } = await import(
+    "./task-tool-assets"
+  );
+  const previousDesktop = process.env.LETTA_DESKTOP_MODE;
+  try {
+    for (const sessionSource of [
+      "interactive-cli",
+      "listen",
+      "headless",
+      undefined,
+    ] as const) {
+      for (const desktop of ["1", undefined]) {
+        if (desktop) process.env.LETTA_DESKTOP_MODE = desktop;
+        else delete process.env.LETTA_DESKTOP_MODE;
+        const assets = await runWithRuntimeContext({ sessionSource }, () =>
+          resolveBackendSpecificToolAssets(
+            "Wake",
+            "Schedule a future turn.",
+            {},
+          ),
+        );
+        expect(
+          assets.description.includes(
+            "Wakes fire only while this session is running.",
+          ),
+        ).toBe(sessionSource === "interactive-cli" && !desktop);
+        expect(assets.description).not.toMatch(/local|cloud|runner/i);
+      }
+    }
+  } finally {
+    if (previousDesktop === undefined) delete process.env.LETTA_DESKTOP_MODE;
+    else process.env.LETTA_DESKTOP_MODE = previousDesktop;
+  }
+});

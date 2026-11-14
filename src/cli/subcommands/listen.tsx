@@ -175,6 +175,7 @@ export async function runListenSubcommand(
   argv: string[],
   appServer?: AppServerCliOptions,
 ): Promise<number> {
+  process.env.LETTA_RUNTIME_SESSION_SOURCE = "listen";
   const lifecycleRequested = hasJsonlLifecycleIntent(argv);
   if (lifecycleRequested) suppressStartupLogMarker();
   let values: ReturnType<

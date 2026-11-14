@@ -2062,14 +2062,18 @@ describe("listen-client model command helpers", () => {
 });
 
 describe("listen-client cron command handling", () => {
-  test("wraps cron library CRUD over WS commands", async () => {
+  test("wraps Desktop local cron library CRUD over WS commands", async () => {
     const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-listen-cron-"));
     const originalLettaHome = process.env.LETTA_HOME;
+    const originalEnv = {
+      LETTA_DESKTOP_MODE: process.env.LETTA_DESKTOP_MODE,
+      LETTA_MANAGED_CLOUD_RUNTIME: process.env.LETTA_MANAGED_CLOUD_RUNTIME,
+    };
+    process.env.LETTA_DESKTOP_MODE = "1";
+    delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
     process.env.LETTA_HOME = tempRoot;
-
     try {
       const socket = new MockSocket(WebSocket.OPEN);
-
       await __listenClientTestUtils.handleCronCommand(
         {
           type: "cron_add",
@@ -2084,7 +2088,6 @@ describe("listen-client cron command handling", () => {
         },
         socket as unknown as WebSocket,
       );
-
       const addMessages = socket.sentPayloads.map((payload) =>
         JSON.parse(payload as string),
       );
@@ -2105,7 +2108,6 @@ describe("listen-client cron command handling", () => {
         agent_id: "agent-1",
         conversation_id: "conv-1",
       });
-
       const taskId = addMessages[0].task.id as string;
       appendCronRunLog(getCronRunLogPath(taskId), {
         ts: 1000,
@@ -2126,7 +2128,6 @@ describe("listen-client cron command handling", () => {
         runId: "run-newer",
       });
       socket.sentPayloads.length = 0;
-
       await __listenClientTestUtils.handleCronCommand(
         {
           type: "cron_list",
@@ -2143,7 +2144,6 @@ describe("listen-client cron command handling", () => {
       });
       expect(listResponse.tasks).toHaveLength(1);
       expect(listResponse.tasks[0].id).toBe(taskId);
-
       socket.sentPayloads.length = 0;
       await __listenClientTestUtils.handleCronCommand(
         {
@@ -2160,7 +2160,6 @@ describe("listen-client cron command handling", () => {
         found: true,
         task: { id: taskId },
       });
-
       socket.sentPayloads.length = 0;
       await __listenClientTestUtils.handleCronCommand(
         {
@@ -2191,7 +2190,6 @@ describe("listen-client cron command handling", () => {
         agent_id: "agent-1",
         conversation_id: "conv-1",
       });
-
       socket.sentPayloads.length = 0;
       await __listenClientTestUtils.handleCronCommand(
         {
@@ -2225,7 +2223,6 @@ describe("listen-client cron command handling", () => {
           ],
         },
       });
-
       socket.sentPayloads.length = 0;
       await __listenClientTestUtils.handleCronCommand(
         {
@@ -2249,7 +2246,6 @@ describe("listen-client cron command handling", () => {
         agent_id: "agent-1",
         conversation_id: "conv-1",
       });
-
       socket.sentPayloads.length = 0;
       await __listenClientTestUtils.handleCronCommand(
         {
@@ -2288,6 +2284,10 @@ describe("listen-client cron command handling", () => {
         agent_id: "agent-1",
       });
     } finally {
+      for (const [key, value] of Object.entries(originalEnv)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
       if (originalLettaHome) {
         process.env.LETTA_HOME = originalLettaHome;
       } else {

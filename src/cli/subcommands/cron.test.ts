@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { setConfiguredBackendMode } from "@/backend/backend-mode";
 import { runCronSubcommand } from "@/cli/subcommands/cron";
 import { listTasks } from "@/cron";
+import { runWithRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 
 const originalFetch = globalThis.fetch;
@@ -237,6 +238,7 @@ describe("cron add execution targeting", () => {
   });
 
   test("local schedules default to a new conversation per fire and ignore ambient conversation state", async () => {
+    setConfiguredBackendMode("local");
     const home = mkdtempSync(join(tmpdir(), "letta-cron-conversation-test-"));
     process.env.LETTA_HOME = home;
     process.env.LETTA_CONVERSATION_ID = "ambient-conversation";
@@ -295,7 +297,7 @@ describe("cron add execution targeting", () => {
     expect(requests.some((request) => request.method === "POST")).toBe(false);
   });
 
-  test("Cloud API-backed local execution creates a local schedule without calling the schedule API", async () => {
+  test("registered listener creates a Cloud schedule pinned to its device", async () => {
     const home = mkdtempSync(join(tmpdir(), "letta-cron-local-environment-"));
     process.env.LETTA_HOME = home;
     process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID = "registered-device";
@@ -307,8 +309,47 @@ describe("cron add execution targeting", () => {
 
     try {
       expect(await runCronSubcommand(addArgs)).toBe(0);
-      expect(requests).toHaveLength(0);
-      expect(JSON.parse(logs.join(""))).toMatchObject({ runner: "local" });
+      expect(
+        requests.find((request) => request.method === "POST")?.body,
+      ).toMatchObject({ target_device_id: "registered-device" });
+      expect(JSON.parse(logs.join(""))).not.toHaveProperty("runner");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("listener runtime context pins Cloud schedules and only falls back for OSS without routes", async () => {
+    const home = mkdtempSync(join(tmpdir(), "letta-cron-listener-"));
+    process.env.LETTA_HOME = home;
+    const logs: string[] = [];
+    console.log = mock((line: string) => logs.push(String(line)));
+    try {
+      for (const scheduleRoutesStatus of [undefined, 404, 405]) {
+        process.env.LETTA_BASE_URL = scheduleRoutesStatus
+          ? "http://localhost:8283"
+          : "https://api.letta.com";
+        const requests = installScheduleApi({
+          environments: { "listener-device": environment("listener-device") },
+          scheduleRoutesStatus,
+        });
+        logs.length = 0;
+        expect(
+          await runWithRuntimeContext(
+            { environmentDeviceId: "listener-device" },
+            () => runCronSubcommand(addArgs),
+          ),
+        ).toBe(0);
+        const created = requests.find((request) => request.method === "POST");
+        if (scheduleRoutesStatus) {
+          expect(created).toBeUndefined();
+          expect(JSON.parse(logs.join(""))).not.toHaveProperty("runner");
+        } else {
+          expect(created?.body).toMatchObject({
+            target_device_id: "listener-device",
+          });
+          expect(JSON.parse(logs.join(""))).not.toHaveProperty("runner");
+        }
+      }
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -381,7 +422,6 @@ describe("cron add execution targeting", () => {
       expect(JSON.parse(logs.at(-1) ?? "[]")).toEqual([
         expect.objectContaining({
           id: "legacy-cloud-schedule",
-          runner: "cloud",
         }),
       ]);
 
@@ -395,7 +435,6 @@ describe("cron add execution targeting", () => {
       ).toBe(0);
       expect(JSON.parse(logs.at(-1) ?? "{}")).toMatchObject({
         deleted: "legacy-cloud-schedule",
-        runner: "cloud",
       });
       expect(
         requests.some(
@@ -526,6 +565,7 @@ describe("cron add execution targeting", () => {
   });
 
   test("local execution rejects --computer without touching the schedule API", async () => {
+    setConfiguredBackendMode("local");
     const home = mkdtempSync(join(tmpdir(), "letta-cron-target-test-"));
     process.env.LETTA_HOME = home;
     const requests = installScheduleApi({});
@@ -539,7 +579,45 @@ describe("cron add execution targeting", () => {
     }
   });
 
-  test("unregistered local execution still creates a local schedule", async () => {
+  test("Cloud headless and listener runtimes error without creating local schedules", async () => {
+    process.env.LETTA_BASE_URL = "https://api.letta.com";
+    const home = mkdtempSync(join(tmpdir(), "letta-cron-unregistered-"));
+    process.env.LETTA_HOME = home;
+    const errors: string[] = [];
+    console.error = mock((line: string) => errors.push(String(line)));
+    try {
+      for (const sessionSource of ["headless", "listen"] as const) {
+        const requests = installScheduleApi({});
+        expect(
+          await runWithRuntimeContext({ sessionSource }, () =>
+            runCronSubcommand(addArgs),
+          ),
+        ).toBe(1);
+        expect(errors.join("\n")).toContain("Register this computer");
+        expect(requests.some((request) => request.method === "POST")).toBe(
+          false,
+        );
+        expect(listTasks()).toEqual([]);
+      }
+      process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID = "registered-device";
+      const requests = installScheduleApi({
+        environments: { "registered-device": environment("registered-device") },
+        scheduleRoutesStatus: 404,
+      });
+      expect(await runCronSubcommand(addArgs)).toBe(1);
+      expect(errors.join("\n")).toContain("Scheduling is unavailable");
+      expect(requests.some((request) => request.method === "POST")).toBe(false);
+      expect(listTasks()).toEqual([]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("Desktop execution still creates a local schedule", async () => {
+    const originalTimezone = process.env.TZ;
+    process.env.TZ = "America/Los_Angeles";
+    const originalDesktopMode = process.env.LETTA_DESKTOP_MODE;
+    process.env.LETTA_DESKTOP_MODE = "1";
     const home = mkdtempSync(join(tmpdir(), "letta-cron-local-test-"));
     process.env.LETTA_HOME = home;
     process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID = "unregistered-device";
@@ -549,9 +627,17 @@ describe("cron add execution targeting", () => {
 
     try {
       expect(await runCronSubcommand(addArgs)).toBe(0);
-      expect(requests).toHaveLength(0);
-      expect(JSON.parse(logs.join(""))).toMatchObject({ runner: "local" });
+      expect(
+        requests.some((request) => request.pathname.includes("/schedule")),
+      ).toBe(false);
+      expect(JSON.parse(logs.join(""))).not.toHaveProperty("runner");
+      expect(listTasks()).toMatchObject([{ timezone: "UTC" }]);
     } finally {
+      if (originalTimezone === undefined) delete process.env.TZ;
+      else process.env.TZ = originalTimezone;
+      if (originalDesktopMode === undefined)
+        delete process.env.LETTA_DESKTOP_MODE;
+      else process.env.LETTA_DESKTOP_MODE = originalDesktopMode;
       rmSync(home, { recursive: true, force: true });
     }
   });

@@ -32,6 +32,7 @@ import {
   getCurrentWorkingDirectory,
   getRuntimeActingUserId,
   getRuntimeContext,
+  getRuntimeSessionSource,
 } from "@/runtime-context";
 import { getRuntimeExecutionEnv } from "@/runtime-execution-settings";
 import { settingsManager } from "@/settings-manager";
@@ -368,6 +369,9 @@ export function getShellEnv(): NodeJS.ProcessEnv {
 
   // Commands started by a listener turn must inherit that listener's registered
   // device identity, not a stale installation id from the child CLI settings.
+  const sessionSource = getRuntimeSessionSource();
+  if (sessionSource) env.LETTA_RUNTIME_SESSION_SOURCE = sessionSource;
+  else delete env.LETTA_RUNTIME_SESSION_SOURCE;
   const environmentDeviceId = getRuntimeContext()?.environmentDeviceId?.trim();
   if (environmentDeviceId) {
     env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID = environmentDeviceId;

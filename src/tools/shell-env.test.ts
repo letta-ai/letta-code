@@ -356,6 +356,7 @@ test("getShellEnv prefers runtime-scoped agent, conversation, and cwd", () => {
   try {
     const env = runWithRuntimeContext(
       {
+        sessionSource: "interactive-cli",
         agentId: "agent-runtime-scope",
         agentName: "Runtime Scope Agent",
         conversationId: "conv-runtime-scope",
@@ -366,6 +367,7 @@ test("getShellEnv prefers runtime-scoped agent, conversation, and cwd", () => {
       () => getShellEnv(),
     );
 
+    expect(env.LETTA_RUNTIME_SESSION_SOURCE).toBe("interactive-cli");
     expect(env.AGENT_ID).toBe("agent-runtime-scope");
     expect(env.LETTA_AGENT_ID).toBe("agent-runtime-scope");
     expect(env.AGENT_NAME).toBe("Runtime Scope Agent");
