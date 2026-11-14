@@ -14,7 +14,7 @@ beforeAll(async () => {
 });
 afterAll(async () => rm(home, { recursive: true, force: true }));
 
-async function cli(args: string[]) {
+async function cli(args: string[], baseURL = "https://api.letta.com") {
   const bundle = process.env.LETTA_TEST_CLI_BUNDLE;
   const child = Bun.spawn(
     [bundle ? "node" : process.execPath, bundle || "src/index.ts", ...args],
@@ -26,8 +26,9 @@ async function cli(args: string[]) {
         USERPROFILE: home,
         LETTA_LOCAL_BACKEND_DIR: join(home, "backend"),
         LETTA_LOCAL_BACKEND_EXPERIMENTAL: undefined,
-        LETTA_BASE_URL: "https://api.letta.com",
-        LETTA_API_KEY: "",
+        LETTA_BASE_URL: baseURL,
+        LETTA_API_KEY:
+          baseURL === "https://api.letta.com" ? "" : "usage-test-key",
         LETTA_DEBUG: "0",
         LETTA_DISABLE_MODS: "1",
       },
@@ -77,3 +78,34 @@ test.each([
     expect(result.stderr).toContain('"error":');
   },
 );
+
+test("usage reads only plan and credits even when quota is unavailable", async () => {
+  const requests: string[] = [];
+  const server = Bun.serve({
+    port: 0,
+    fetch(request) {
+      const path = new URL(request.url).pathname;
+      requests.push(path);
+      if (path === "/v1/metadata/balance") {
+        return Response.json({ total_balance: -12.5, billing_tier: "pro" });
+      }
+      return new Response("Unexpected request", { status: 404 });
+    },
+  });
+  try {
+    const result = await cli(
+      ["--backend", "cloud", "usage"],
+      server.url.origin,
+    );
+    expect(result.code, result.stderr).toBe(0);
+    expect(result.stdout).toBe(`# Letta usage overview
+Current plan: pro
+
+## Usage Credits (non-BYOK models)
+* Balance: -12.5 credits
+`);
+    expect(requests).toEqual(["/v1/metadata/balance"]);
+  } finally {
+    server.stop(true);
+  }
+}, 30_000);

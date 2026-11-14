@@ -1,9 +1,6 @@
 import { parseArgs } from "node:util";
 import { getClient } from "@/backend/api/client";
-import {
-  getBalanceMetadata,
-  getModelQuotaMetadata,
-} from "@/backend/api/metadata";
+import { getBalanceMetadata } from "@/backend/api/metadata";
 import { isLocalBackendEnabled } from "@/backend/backend";
 import { settingsManager } from "@/settings-manager";
 
@@ -19,7 +16,7 @@ export async function runUsageSubcommand(argv: string[]): Promise<number> {
       console.log(`Usage:
   letta usage
 
-Show a Markdown overview of your plan, credit balance, and letta/* model quota.
+Show a Markdown overview of your plan and remaining credit balance.
 Local backend: model usage requires BYOK.
 
 Options:
@@ -34,20 +31,12 @@ Options:
     // Reuse CLI OAuth refresh and persist rotated credentials before exiting.
     await getClient();
     await settingsManager.flush();
-    const [balance, quota] = await Promise.all([
-      getBalanceMetadata(),
-      getModelQuotaMetadata(),
-    ]);
+    const balance = await getBalanceMetadata();
     const usage = `# Letta usage overview
 Current plan: ${balance.billing_tier}
 
 ## Usage Credits (non-BYOK models)
 * Balance: ${balance.total_balance} credits
-
-## Usage Quota (\`letta/*\` models)
-* Bucket (full/high/medium/low/empty): ${quota.lettaTier.bucket} (daily: ${quota.lettaTier.dailyBucket ?? "Unavailable"})
-* Quota Window End: ${quota.quotaWindowEnd}
-* Daily Quota Window End: ${quota.dailyQuotaWindowEnd ?? "Unavailable"}
 `;
     await new Promise<void>((resolve, reject) => {
       process.stdout.write(usage, (error) =>
