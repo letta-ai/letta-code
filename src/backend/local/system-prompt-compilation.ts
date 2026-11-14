@@ -9,6 +9,7 @@ import {
 } from "@/agent/memory-format";
 import { parseFrontmatter } from "@/utils/frontmatter";
 import type { LocalAgentRecord } from "./local-types";
+import { readCommittedFiles } from "./memory-git-batch";
 
 const CORE_MEMORY_VARIABLE = "{CORE_MEMORY}";
 const MEMORY_DIR_PLACEHOLDER = "$" + "{MEMORY_DIR}";
@@ -86,7 +87,6 @@ function collectCommittedMemoryFiles(memoryDir: string): {
   const revision = getCommittedMemfsRevision(memoryDir);
   if (!revision) return { files: [], format: "memfs-v1", revision };
 
-  const files: LocalMemoryFile[] = [];
   let paths: string[] = [];
   try {
     paths = gitOutput(memoryDir, ["ls-tree", "-r", "--name-only", "HEAD"])
@@ -102,13 +102,24 @@ function collectCommittedMemoryFiles(memoryDir: string): {
     : "memfs-v1";
   const allPaths = new Set(paths);
 
+  const readPaths: string[] = [];
   for (const relativePath of paths) {
     const shouldRead =
       format === "memfs-v1" ||
       isCoreMemoryPath(relativePath, format) ||
       (/^[^/]+\/MEMORY\.md$/.test(relativePath) &&
         isProjectedMemoryPath(relativePath, allPaths, format));
-    if (!shouldRead) {
+    if (shouldRead) readPaths.push(relativePath);
+  }
+  const readPathSet = new Set(readPaths);
+
+  // One batched `git cat-file --batch` reads every file we need, instead of
+  // spawning one `git show` process per tracked file.
+  const contents = readCommittedFiles(memoryDir, readPaths);
+
+  const files: LocalMemoryFile[] = [];
+  for (const relativePath of paths) {
+    if (!readPathSet.has(relativePath)) {
       files.push({
         relativePath,
         label: labelFromPath(relativePath),
@@ -117,22 +128,20 @@ function collectCommittedMemoryFiles(memoryDir: string): {
       });
       continue;
     }
-    try {
-      const raw = gitOutput(memoryDir, ["show", `HEAD:${relativePath}`]);
-      const { frontmatter, body } = parseFrontmatter(raw);
-      files.push({
-        relativePath,
-        label: labelFromPath(relativePath),
-        value: body,
-        description:
-          typeof frontmatter.description === "string"
-            ? frontmatter.description.trim()
-            : "",
-      });
-    } catch {
-      // Skip unreadable committed files. MemFS tooling surfaces validation
-      // issues at write/commit time; prompt compilation should stay best-effort.
-    }
+    const raw = contents.get(relativePath);
+    // Skip unreadable committed files. MemFS tooling surfaces validation
+    // issues at write/commit time; prompt compilation should stay best-effort.
+    if (raw === undefined) continue;
+    const { frontmatter, body } = parseFrontmatter(raw);
+    files.push({
+      relativePath,
+      label: labelFromPath(relativePath),
+      value: body,
+      description:
+        typeof frontmatter.description === "string"
+          ? frontmatter.description.trim()
+          : "",
+    });
   }
 
   return {
