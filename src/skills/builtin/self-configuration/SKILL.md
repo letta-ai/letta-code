@@ -22,6 +22,7 @@ The important part is choosing the right layer. Do not smear a preference into d
 | Skills | Reusable procedural knowledge or bundled scripts | Load `creating-skills` or `acquiring-skills` |
 | Channels | Slack/Discord/Telegram/WhatsApp/Signal accounts, pairing, routing, listener state | Use `letta channels` or channel commands |
 | Schedules | Reminders and recurring prompts | Load `scheduling-tasks` and use `letta cron` |
+| Agent variables | Plain, readable `$NAME` values for shell commands | Use `letta variable` (or `/variable` in a session) |
 | Agent secrets | Per-agent `$NAME` credential values for shell commands | Use `letta secret` (or `/secret` in a session) |
 
 Decision rule: if the model should remember and reason about it, use memory. If the runtime must enforce it or route it before the model decides anything, use settings, API fields, mods, channels, or schedules.
@@ -352,9 +353,21 @@ Use skills when the user wants you to become good at a repeatable workflow. Sour
 
 Load `creating-skills` to create or edit a skill. Load `acquiring-skills` when the user asks for a capability you do not already have. Project, global, bundled, and agent-owned skills have different visibility; verify the target scope before changing skills another agent may load.
 
+## Agent variables
+
+Variables are plain values the agent can read. They are never redacted. Use them for usernames, emails, URLs and other non-secret configuration. Never put a password, token or key in a variable. For a login, store the username as a variable (`X_USERNAME`) and the password as a secret (`X_PASSWORD`), and reference both in one command. Reference `$NAME` in a shell command to load a variable into the child shell's environment. A secret wins if it has the same name.
+
+```bash
+letta variable set X_USERNAME user@example.com
+letta variable list                     # names and values
+letta variable unset X_USERNAME
+```
+
+Use `--agent <agent-id>` to target another agent. `set` also supports `--env SOURCE_VAR` and `--stdin`. Cloud agents store variables server-side; local agents store them as plain JSON. Running sessions refresh variables within a minute.
+
 ## Agent secrets
 
-Agent-scoped secrets hold credential values that are referenced as `$NAME` in shell commands. Cloud agents store them server-side on the agent; local agents use OS secure storage. The harness substitutes `$NAME` at exec time and scrubs values from tool output, so values never enter agent context.
+Agent-scoped secrets hold credential values that are referenced as `$NAME` in shell commands. Cloud agents store them server-side on the agent; local agents use OS secure storage. The harness substitutes `$NAME` at exec time and scrubs values from tool output, so values never enter agent context. Because a secret's value is redacted wherever it appears, store only credentials as secrets; keep harmless identifiers like usernames in variables.
 
 ```bash
 letta secret list                                   # names only, never values

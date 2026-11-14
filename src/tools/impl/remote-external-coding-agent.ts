@@ -17,6 +17,7 @@ import {
 } from "@/app-server-client";
 import { getClient } from "@/backend/api/client";
 import {
+  ComputerResolutionError,
   type EnvironmentConnection,
   getEnvironmentConnection,
   isEnvironmentOnline,
@@ -35,6 +36,12 @@ import type {
   SubagentLaunchResult,
   SubagentStartupErrorCode,
 } from "@/types/subagent-protocol";
+import { compareSemver } from "@/utils/version";
+import {
+  CLAUDE_INTERRUPT_ACK_TIMEOUT_ERROR,
+  CLAUDE_TURN_START_TIMEOUT_ERROR,
+  REMOTE_SUBAGENT_MESSAGE_TIMEOUT_MS,
+} from "./claude-steer-timeouts";
 import {
   createExternalCodingAgentConfig,
   type ExternalCodingAgentMcpOptions,
@@ -128,8 +135,33 @@ async function defaultResolveComputer(computer: string, scope: ParentScope) {
     return resolveEnvironmentConnectionId(computer);
 
   const client = await getClient();
-  const createParams = { agent_id: scope.agentId, hidden: true };
-  const conversation = await client.conversations.create(createParams);
+  const parentConversationId =
+    scope.conversationId && scope.conversationId !== "default"
+      ? scope.conversationId
+      : undefined;
+  // The SDK forwards extra request fields until its types include ancestry.
+  const createParams = {
+    agent_id: scope.agentId,
+    hidden: true,
+    ...(parentConversationId
+      ? { parent_conversation_id: parentConversationId }
+      : {}),
+  };
+  const conversation = await client.conversations
+    .create(createParams)
+    .catch((error: unknown) => {
+      if (
+        !parentConversationId ||
+        !error ||
+        typeof error !== "object" ||
+        !("status" in error) ||
+        error.status !== 403
+      ) {
+        throw error;
+      }
+      const fallbackParams = { agent_id: scope.agentId, hidden: true };
+      return client.conversations.create(fallbackParams);
+    });
   return resolveAgentSandboxConnectionId(scope.agentId, {
     conversationId: conversation.id,
   });
@@ -154,16 +186,36 @@ async function defaultConnect(connectionId: string, scope: ParentScope) {
   }
 }
 
-async function resolveQualifiedComputer(deviceId: string) {
+async function resolveQualifiedComputer(deviceId: string, scope: ParentScope) {
+  let environment: EnvironmentConnection;
   try {
-    const environment = await getEnvironmentConnection(deviceId);
-    if (!isEnvironmentOnline(environment) || !environment.connectionId)
-      throw new Error(`Computer "${deviceId}" is offline`);
-    return { connectionId: environment.connectionId, environment };
-  } catch (error) {
-    if (errorMessage(error).includes("offline")) throw error;
+    environment = await getEnvironmentConnection(deviceId);
+  } catch {
     return resolveEnvironmentConnectionId(deviceId);
   }
+
+  if (!isEnvironmentOnline(environment) || !environment.connectionId) {
+    // Neither the sandbox creation response nor the environment record exposes
+    // the conversation. Only accept the caller's exact sandbox device format.
+    const prefix = `sandbox-${scope.agentId}-`;
+    const suffix = deviceId.startsWith(prefix)
+      ? deviceId
+          .slice(prefix.length)
+          .match(
+            /^(conv-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-linux-vm$/i,
+          )
+      : null;
+    if (environment.deviceId === deviceId && suffix) {
+      const resolved = await resolveAgentSandboxConnectionId(scope.agentId, {
+        conversationId: suffix[1],
+      });
+      if (resolved.environment.deviceId !== deviceId)
+        throw new Error("Cloud sandbox device changed while waking worker");
+      return resolved;
+    }
+    throw new Error(`Computer "${deviceId}" is offline`);
+  }
+  return { connectionId: environment.connectionId, environment };
 }
 
 function errorMessage(error: unknown): string {
@@ -176,6 +228,51 @@ function errorMessage(error: unknown): string {
  * child with it) before the caller saw a result.
  */
 class RemoteWorkerLostError extends Error {}
+
+class OutdatedRemoteWorkerError extends Error {}
+
+/** No answer to a follow-up in time; the listener may still deliver it. */
+class RemoteFollowUpTimeoutError extends Error {}
+
+/** Fixed telemetry categories; never include error text in the returned code. */
+export function classifyRemoteExternalWorkerControlError(
+  error: unknown,
+): string {
+  if (error instanceof ComputerResolutionError) {
+    return error.code === "computer_offline" ||
+      error.code === "computer_not_found"
+      ? error.code
+      : "other";
+  }
+  if (error instanceof OutdatedRemoteWorkerError) return "outdated_computer";
+  if (error instanceof RemoteFollowUpTimeoutError) return "steer_timeout";
+  const message = errorMessage(error);
+  if (
+    message === CLAUDE_TURN_START_TIMEOUT_ERROR ||
+    message === CLAUDE_INTERRUPT_ACK_TIMEOUT_ERROR
+  )
+    return "worker_busy";
+  if (
+    /^Computer ".*" is offline(?:\.|$)/.test(message) ||
+    message.startsWith("Timed out waiting for cloud sandbox ")
+  )
+    return "computer_offline";
+  if (/^Computer ".*" not found(?:\.|$)/.test(message))
+    return "computer_not_found";
+  if (/^Subagent .* was not found on this computer$/.test(message))
+    return "subagent_not_found";
+  if (message === "Subagent does not belong to this conversation")
+    return "subagent_not_owned";
+  if (
+    /^.* is running an older Letta Code that can't steer Claude Code subagents remotely\./.test(
+      message,
+    )
+  )
+    return "outdated_computer";
+  if (message.startsWith("App-server WebSocket failed to open:"))
+    return "connect_failed";
+  return "other";
+}
 
 /** Longest wait between reconnect attempts while the computer is unreachable. */
 const MAX_RECONNECT_DELAY_MS = 30_000;
@@ -404,7 +501,7 @@ export async function launchRemoteExternalCodingAgent(
     reportExternalWorkerLaunchFailure({
       stage,
       harness: type,
-      computer,
+      computer: stage === "resolve_computer" ? undefined : computer,
       error,
       errorCode,
       agentId: parentScope.agentId,
@@ -413,32 +510,42 @@ export async function launchRemoteExternalCodingAgent(
     });
     return { success: false, error };
   };
-  let connectionId: string;
-  let deviceId: string;
-  let supportsSteering: boolean;
-  let sendsForkContext: boolean;
-  try {
-    const resolved = await (deps.resolveComputer ?? defaultResolveComputer)(
-      computer,
-      parentScope,
-    );
+  let connectionId = "";
+  let deviceId = "";
+  let supportsSteering = false;
+  let sendsForkContext = false;
+  const resolveComputer = deps.resolveComputer ?? defaultResolveComputer;
+  function configureComputer(resolved: {
+    connectionId: string;
+    environment: EnvironmentConnection;
+  }): string | undefined {
     if (resolved.environment.metadata?.launch_subagent_notify_caller !== true)
-      return fail(
-        "outdated_computer",
-        formatOutdatedComputerError(type, computer),
-      );
+      return formatOutdatedComputerError(type, computer);
     sendsForkContext =
       resolved.environment.metadata?.external_fork_context === true;
     if (params.forkContext && !sendsForkContext)
-      return fail(
-        "outdated_computer",
-        `Update Letta Code on ${computer} to fork external workers with destination-local history files.`,
-      );
+      return `Update Letta Code on ${computer} to fork external workers with destination-local history files.`;
+    sendsForkContext ||=
+      (compareSemver(
+        resolved.environment.metadata?.lettaCodeVersion ?? "",
+        "0.34.40",
+      ) ?? -1) >= 0;
     connectionId = resolved.connectionId;
     deviceId = resolved.environment.deviceId;
     supportsSteering = resolved.environment.metadata?.subagent_message === true;
+    return undefined;
+  }
+  try {
+    const outdated = configureComputer(
+      await resolveComputer(computer, parentScope),
+    );
+    if (outdated) return fail("outdated_computer", outdated);
   } catch (error) {
-    return fail("resolve_computer", errorMessage(error));
+    return fail(
+      "resolve_computer",
+      errorMessage(error),
+      error instanceof ComputerResolutionError ? error.code : undefined,
+    );
   }
   params.signal?.throwIfAborted();
 
@@ -451,17 +558,20 @@ export async function launchRemoteExternalCodingAgent(
   } catch (error) {
     return fail("connect", `Can't reach ${computer}: ${errorMessage(error)}`);
   }
-  const follower = new RemoteSubagentFollower(
-    parentScope,
-    toolCallId,
-    connect,
-    deps.reconnectDelayMs ?? 2_000,
-  );
-  // Listen before launching: a fast worker can finish before the response.
-  follower.attach(client);
-  let launched: Awaited<ReturnType<AppServerClient["launchSubagent"]>>;
-  try {
-    launched = await client.launchSubagent({
+  const createFollower = () => {
+    const next = new RemoteSubagentFollower(
+      parentScope,
+      toolCallId,
+      connect,
+      deps.reconnectDelayMs ?? 2_000,
+    );
+    // Listen before launching: a fast worker can finish before the response.
+    next.attach(client);
+    return next;
+  };
+  let follower = createFollower();
+  const launch = () =>
+    client.launchSubagent({
       request_id: `launch-subagent-${randomUUID()}`,
       runtime: {
         agent_id: parentScope.agentId,
@@ -471,10 +581,10 @@ export async function launchRemoteExternalCodingAgent(
           : {}),
       },
       args: {
-        // Listeners that advertise `external_fork_context` accept `harness`
-        // and default an omitted `fork_context` to a fork, so send the
-        // caller's choice explicitly. Older listeners accept only
-        // `subagent_type`, which they never fork.
+        // Listeners since 0.34.40 accept `harness` and `fork_context`, even
+        // before advertising `external_fork_context`. Send the choice explicitly
+        // so versions that fork by default preserve a no-fork launch.
+        // Older or unrecognized listeners keep the legacy `subagent_type` wire.
         ...(sendsForkContext
           ? { harness: type, fork_context: params.forkContext === true }
           : { subagent_type: type }),
@@ -486,6 +596,35 @@ export async function launchRemoteExternalCodingAgent(
       tool_call_id: toolCallId,
       notify: "caller",
     });
+
+  let launched: Awaited<ReturnType<AppServerClient["launchSubagent"]>>;
+  try {
+    try {
+      launched = await launch();
+    } catch (error) {
+      follower.close();
+      // Resolving "cloud" again would create a different sandbox.
+      let resolved: Awaited<ReturnType<typeof resolveComputer>>;
+      try {
+        resolved = await resolveComputer(
+          isCloudEnvironmentSelector(computer) ? deviceId : computer,
+          parentScope,
+        );
+      } catch (resolveError) {
+        if (/\boffline\b/i.test(errorMessage(resolveError)))
+          throw new Error(
+            `${computer} disconnected during the launch: ${errorMessage(resolveError)}`,
+          );
+        throw resolveError;
+      }
+      if (resolved.connectionId === connectionId) throw error;
+      const outdated = configureComputer(resolved);
+      if (outdated) throw new Error(outdated);
+      params.signal?.throwIfAborted();
+      client = await connect();
+      follower = createFollower();
+      launched = await launch();
+    }
   } catch (error) {
     follower.close();
     return fail(
@@ -629,17 +768,20 @@ async function connectQualifiedTarget(
 ): Promise<{
   target: NonNullable<ReturnType<typeof parseExternalCodingAgentId>>;
   client: AppServerClient;
+  lettaCodeVersion?: string;
 }> {
   const target = parseExternalCodingAgentId(agentId);
   if (!target?.computer || target.type === "opencode")
     throw new Error(`Invalid remote external coding agent ID: ${agentId}`);
   const resolved = await (deps.resolveComputer ?? resolveQualifiedComputer)(
     target.computer,
+    parentScope,
   );
   if (resolved.environment.metadata?.subagent_message !== true)
     throw new Error(formatOutdatedSteeringError(target.computer));
   return {
     target,
+    lettaCodeVersion: resolved.environment.metadata?.lettaCodeVersion,
     client: await (deps.connect ?? defaultConnect)(
       resolved.connectionId,
       parentScope,
@@ -684,7 +826,7 @@ export async function sendRemoteExternalCodingAgentMessage(
   params: RemoteExternalCodingAgentControl & { message: string },
   deps: RemoteExternalCodingAgentControlDeps = {},
 ): Promise<{
-  delivery: "steered" | "resumed";
+  delivery: "steered" | "queued" | "resumed";
   taskId?: string;
   outputFile?: string;
 }> {
@@ -693,10 +835,14 @@ export async function sendRemoteExternalCodingAgentMessage(
   } catch (error) {
     const target = parseExternalCodingAgentId(params.agentId);
     reportExternalWorkerLaunchFailure({
-      stage: "follow_up",
+      stage:
+        error instanceof OutdatedRemoteWorkerError
+          ? "outdated_computer"
+          : "follow_up",
       harness: target?.type ?? "unknown",
       computer: target?.computer,
       error,
+      errorCode: classifyRemoteExternalWorkerControlError(error),
       agentId: params.parentScope.agentId,
       conversationId: params.parentScope.conversationId,
       toolCallId: params.toolCallId,
@@ -709,12 +855,12 @@ async function deliverRemoteExternalCodingAgentMessage(
   params: RemoteExternalCodingAgentControl & { message: string },
   deps: RemoteExternalCodingAgentControlDeps,
 ): Promise<{
-  delivery: "steered" | "resumed";
+  delivery: "steered" | "queued" | "resumed";
   taskId?: string;
   outputFile?: string;
 }> {
   const requestId = `subagent-message-${randomUUID()}`;
-  const { target, client } = await connectQualifiedTarget(
+  const { target, client, lettaCodeVersion } = await connectQualifiedTarget(
     params.agentId,
     params.parentScope,
     deps,
@@ -723,6 +869,7 @@ async function deliverRemoteExternalCodingAgentMessage(
   const connect = async () => {
     const resolved = await (deps.resolveComputer ?? resolveQualifiedComputer)(
       target.computer as string,
+      params.parentScope,
     );
     return (deps.connect ?? defaultConnect)(
       resolved.connectionId,
@@ -742,30 +889,46 @@ async function deliverRemoteExternalCodingAgentMessage(
   );
   let response: Awaited<ReturnType<AppServerClient["sendSubagentMessage"]>>;
   try {
-    response = await client.sendSubagentMessage({
-      request_id: requestId,
-      runtime: {
-        agent_id: params.parentScope.agentId,
-        conversation_id: params.parentScope.conversationId,
-        ...(params.parentScope.actingUserId
-          ? { acting_user_id: params.parentScope.actingUserId }
-          : {}),
+    response = await client.sendSubagentMessage(
+      {
+        request_id: requestId,
+        runtime: {
+          agent_id: params.parentScope.agentId,
+          conversation_id: params.parentScope.conversationId,
+          ...(params.parentScope.actingUserId
+            ? { acting_user_id: params.parentScope.actingUserId }
+            : {}),
+        },
+        agent_id: bareAgentId,
+        message: params.message,
+        tool_call_id: toolCallId,
       },
-      agent_id: bareAgentId,
-      message: params.message,
-      tool_call_id: toolCallId,
-    });
+      { timeoutMs: REMOTE_SUBAGENT_MESSAGE_TIMEOUT_MS },
+    );
   } catch (error) {
     follower.close();
+    if (errorMessage(error) === `Timed out waiting for ${requestId}`) {
+      throw new RemoteFollowUpTimeoutError(
+        `${target.computer} didn't confirm the follow-up within ${Math.round(REMOTE_SUBAGENT_MESSAGE_TIMEOUT_MS / 1000)}s. The message may not have been delivered; check the worker's output, or send it again.`,
+      );
+    }
     throw error;
   }
   if (!response.success) {
     follower.close();
+    if (
+      response.error === "Subagent does not belong to this conversation" &&
+      (compareSemver(lettaCodeVersion ?? "", "0.34.54") ?? -1) < 0
+    ) {
+      throw new OutdatedRemoteWorkerError(
+        `${target.computer} is running Letta Code ${lettaCodeVersion ?? "(unknown version)"}, which doesn't keep track of finished or restarted workers, so it can't resume this one. Update Letta Code on ${target.computer}, or launch a new worker.`,
+      );
+    }
     throw new Error(response.error);
   }
-  if (response.delivery === "steered") {
+  if (response.delivery === "steered" || response.delivery === "queued") {
     follower.close();
-    return { delivery: "steered" };
+    return { delivery: response.delivery };
   }
   follower.markLaunched();
   const completion = follower
@@ -787,6 +950,7 @@ async function deliverRemoteExternalCodingAgentMessage(
   const interrupt = async () => {
     const resolved = await (deps.resolveComputer ?? resolveQualifiedComputer)(
       target.computer as string,
+      params.parentScope,
     );
     const stopClient = await (deps.connect ?? defaultConnect)(
       resolved.connectionId,

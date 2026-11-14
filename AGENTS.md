@@ -403,7 +403,7 @@ image parts for text-only models), the model catalog, and env key resolution.
 
 LC's responsibility ends at a narrow seam: guarantee that only canonical,
 type-valid `LocalMessage` content enters the pi Context (ingestion sanitizers in
-`local-store.ts`, `toPiMessage`/`toPiMessages` in `pi-stream-adapter.ts`).
+`local-store.ts`, `toPiMessage`/`toPiMessages` in `pi-messages.ts`).
 
 **Any PR that adds capability-gated payload sanitization, image stripping,
 provider format fixups, or model-capability checks inside the LC adapter/dispatch

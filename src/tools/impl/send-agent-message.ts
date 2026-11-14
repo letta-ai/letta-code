@@ -51,6 +51,10 @@ import { sendOpenCodeMessage } from "./opencode-session";
 import { getNextTaskId } from "./process_manager";
 import { sendRemoteExternalCodingAgentMessage } from "./remote-external-coding-agent";
 
+/** Told to the agent when a steer is queued behind a long tool call. */
+const QUEUED_NOTE =
+  "The worker is in a long tool call and hasn't stopped yet. Your message is queued and will be handled when it does; don't resend it.";
+
 interface SendAgentMessageArgs {
   message: string;
   agent_id?: string;
@@ -244,7 +248,12 @@ export async function send_agent_message(
             status: "accepted",
             conversation_id: externalId,
             delivery:
-              receipt.delivery === "steered" ? "remote/steer" : "remote/resume",
+              receipt.delivery === "queued"
+                ? "remote/queued"
+                : receipt.delivery === "steered"
+                  ? "remote/steer"
+                  : "remote/resume",
+            ...(receipt.delivery === "queued" ? { note: QUEUED_NOTE } : {}),
             ...(receipt.taskId ? { task_id: receipt.taskId } : {}),
             ...(receipt.outputFile ? { output_file: receipt.outputFile } : {}),
           }),
@@ -465,7 +474,8 @@ export async function send_agent_message(
           content: JSON.stringify({
             status: "accepted",
             conversation_id: externalId,
-            delivery: "stream/interrupt",
+            delivery: receipt.queued ? "stream/queued" : "stream/interrupt",
+            ...(receipt.queued ? { note: QUEUED_NOTE } : {}),
           }),
           status: "success",
         };

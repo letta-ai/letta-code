@@ -107,6 +107,7 @@ export type * from "./toolset-protocol";
 
 export type DmPolicy = "pairing" | "allowlist" | "open";
 export type ExperimentId =
+  | "cloud_monitors"
   | "artifacts"
   | "conversation_titles"
   | "desktop_conversation_bootstrap"
@@ -114,7 +115,6 @@ export type ExperimentId =
   | "memory_palace"
   | "reflection_arena"
   | "tui_cron";
-
 export type ExperimentSource = "override" | "env" | "default";
 
 export interface ExperimentSnapshot {

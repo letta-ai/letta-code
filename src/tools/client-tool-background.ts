@@ -23,6 +23,50 @@ const FOREGROUND_TOOLS = new Set([
 ]);
 const SELF_BACKGROUNDING_TOOLS = new Set(["Bash", "exec_command", "CodeMode"]);
 
+// Foreground tools are expected to finish quickly, so a hang fails the call
+// instead of holding the turn. AskUserQuestionAsync waits on a human and is
+// never capped. Worktree tools run `git worktree add`/`remove`, which can be
+// slow on large repositories.
+export const FOREGROUND_TOOL_TIMEOUT_MS = 10_000;
+export const WORKTREE_TOOL_TIMEOUT_MS = 60_000;
+const UNCAPPED_FOREGROUND_TOOLS = new Set(["AskUserQuestionAsync"]);
+const WORKTREE_TOOLS = new Set(["EnterWorktree", "ExitWorktree"]);
+
+/** Foreground timeout for `name`, or undefined when the call is not capped. */
+export function foregroundToolTimeoutMs(name: string): number | undefined {
+  if (!FOREGROUND_TOOLS.has(name) || UNCAPPED_FOREGROUND_TOOLS.has(name))
+    return undefined;
+  return WORKTREE_TOOLS.has(name)
+    ? WORKTREE_TOOL_TIMEOUT_MS
+    : FOREGROUND_TOOL_TIMEOUT_MS;
+}
+
+function foregroundTimeoutMessage(name: string, timeoutMs: number): string {
+  return `${name} did not finish within ${timeoutMs / 1000}s and was abandoned. Its change may still have been applied; re-read the affected file or state before retrying.`;
+}
+
+function withForegroundTimeout<T extends { status: "success" | "error" }>(
+  name: string,
+  pending: Promise<T>,
+  controller: AbortController,
+): Promise<T | { status: "error"; toolReturn: string }> {
+  const timeoutMs = foregroundToolTimeoutMs(name);
+  if (timeoutMs === undefined) return pending;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<{ status: "error"; toolReturn: string }>(
+    (resolve) => {
+      timer = setTimeout(() => {
+        const toolReturn = foregroundTimeoutMessage(name, timeoutMs);
+        controller.abort(new Error(toolReturn));
+        resolve({ status: "error", toolReturn });
+      }, timeoutMs);
+    },
+  );
+  // The abandoned operation may still settle later; nothing awaits it.
+  pending.catch(() => {});
+  return Promise.race([pending, timedOut]).finally(() => clearTimeout(timer));
+}
+
 type BackgroundOptions = NonNullable<
   Parameters<typeof autoBackgroundExternalTool>[3]
 >;
@@ -60,8 +104,9 @@ export function autoBackgroundClientTool<
       ? operation(controller.signal, onOutput)
       : operation
   ).finally(() => options.signal?.removeEventListener("abort", abort));
-  if (FOREGROUND_TOOLS.has(name) || SELF_BACKGROUNDING_TOOLS.has(name))
-    return pending;
+  if (FOREGROUND_TOOLS.has(name))
+    return withForegroundTimeout(name, pending, controller);
+  if (SELF_BACKGROUNDING_TOOLS.has(name)) return pending;
   return runWithRuntimeContext(options.runtimeScope ?? {}, () =>
     autoBackgroundExternalTool(name, { autoBackground: true }, pending, {
       ...options,

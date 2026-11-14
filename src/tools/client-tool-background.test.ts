@@ -1,11 +1,15 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, jest, test } from "bun:test";
 import { readFileSync, rmSync } from "node:fs";
 import {
   backgroundProcesses,
   clearBackgroundProcessCleanup,
 } from "@/tools/impl/process_manager";
 import { task_stop } from "@/tools/impl/task-stop";
-import { autoBackgroundClientTool } from "./client-tool-background";
+import {
+  autoBackgroundClientTool,
+  FOREGROUND_TOOL_TIMEOUT_MS,
+  WORKTREE_TOOL_TIMEOUT_MS,
+} from "./client-tool-background";
 
 const existingEntries = new Set<string>();
 beforeEach(() => {
@@ -177,5 +181,91 @@ describe("client tool foreground budget", () => {
     operation.resolve({ status: "success", toolReturn: "done" });
     expect(await result).toEqual({ status: "success", toolReturn: "done" });
     expect(notifications).toHaveLength(0);
+  });
+});
+
+describe("foreground tool timeout", () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  async function settledAfter(name: string, advanceMs: number) {
+    jest.useFakeTimers();
+    let signal!: AbortSignal;
+    let settled: unknown;
+    void autoBackgroundClientTool(
+      name,
+      (callSignal) => {
+        signal = callSignal;
+        return new Promise<Result>(() => {});
+      },
+      { yieldMs: 1, runtimeScope: scope, enqueue: () => {} },
+    ).then((result) => {
+      settled = result;
+    });
+    jest.advanceTimersByTime(advanceMs);
+    jest.useRealTimers();
+    await Bun.sleep(0);
+    return { settled, signal };
+  }
+
+  test.each([
+    "Edit",
+    "Memory",
+    "Write",
+    "ApplyPatch",
+    "write_artifact_file",
+    "SetWorkingDirectory",
+    "UpdatePlan",
+    "TaskCreate",
+    "TaskUpdate",
+  ])("a hung %s fails with a timeout error and aborts", async (name) => {
+    const early = await settledAfter(name, FOREGROUND_TOOL_TIMEOUT_MS - 1);
+    expect(early.settled).toBeUndefined();
+    const { settled, signal } = await settledAfter(
+      name,
+      FOREGROUND_TOOL_TIMEOUT_MS,
+    );
+    expect(settled).toEqual({
+      status: "error",
+      toolReturn: `${name} did not finish within 10s and was abandoned. Its change may still have been applied; re-read the affected file or state before retrying.`,
+    });
+    expect(signal.aborted).toBe(true);
+    expect(backgroundProcesses.size).toBe(existingEntries.size);
+  });
+
+  test.each(["EnterWorktree", "ExitWorktree"])(
+    "%s gets the longer worktree cap",
+    async (name) => {
+      expect(WORKTREE_TOOL_TIMEOUT_MS).toBe(60_000);
+      const early = await settledAfter(name, WORKTREE_TOOL_TIMEOUT_MS - 1);
+      expect(early.settled).toBeUndefined();
+      expect(early.signal.aborted).toBe(false);
+      const { settled } = await settledAfter(name, WORKTREE_TOOL_TIMEOUT_MS);
+      expect(settled).toMatchObject({
+        status: "error",
+        toolReturn: expect.stringContaining("did not finish within 60s"),
+      });
+    },
+  );
+
+  test("AskUserQuestionAsync is not capped", async () => {
+    const { settled, signal } = await settledAfter(
+      "AskUserQuestionAsync",
+      60 * 60_000,
+    );
+    expect(settled).toBeUndefined();
+    expect(signal.aborted).toBe(false);
+  });
+
+  test("a foreground tool that finishes in time keeps its result", async () => {
+    jest.useFakeTimers();
+    const result = await autoBackgroundClientTool(
+      "Edit",
+      Promise.resolve<Result>({ status: "success", toolReturn: "edited" }),
+      { yieldMs: 1 },
+    );
+    expect(result).toEqual({ status: "success", toolReturn: "edited" });
+    expect(jest.getTimerCount()).toBe(0);
   });
 });

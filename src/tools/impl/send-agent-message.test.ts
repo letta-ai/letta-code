@@ -151,6 +151,19 @@ test("routes a computer-qualified external ID remotely", async () => {
   });
 });
 
+test("tells the agent a remote steer is queued so it doesn't resend", async () => {
+  const f = fixture();
+  const result = await runWithRuntimeContext(caller, () =>
+    send_agent_message(
+      { agent_id: `${CLAUDE_AGENT_ID}@device-1`, message: "Change course" },
+      { ...f, sendRemoteExternalMessage: async () => ({ delivery: "queued" }) },
+    ),
+  );
+  const content = JSON.parse(result.content);
+  expect(content).toMatchObject({ delivery: "remote/queued" });
+  expect(content.note).toContain("don't resend");
+});
+
 test("rejects an explicit computer with a qualified external ID", async () => {
   const result = await runWithRuntimeContext(caller, () =>
     send_agent_message({
@@ -659,8 +672,19 @@ test.each([
   async (args) => {
     const f = fixture();
     expect(
-      (await runWithRuntimeContext(caller, () => send_agent_message(args, f)))
-        .status,
+      (
+        await runWithRuntimeContext(
+          {
+            ...caller,
+            executionSettings: {
+              allowed_tools: [],
+              disallowed_tools: [],
+              disable_memory_guard: false,
+            },
+          },
+          () => send_agent_message(args, f),
+        )
+      ).status,
     ).toBe("error");
     expect(f.submissions).toHaveLength(0);
     expect(f.created).toHaveLength(0);

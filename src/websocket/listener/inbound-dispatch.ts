@@ -66,6 +66,7 @@ export function createIncomingMessage(
   }
   return {
     type: "message",
+    receivedAt: Date.now(),
     connectionId,
     agentId: scope.agent_id,
     conversationId: scope.conversation_id,

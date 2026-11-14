@@ -19,6 +19,8 @@ export interface RuntimeWorkspaceSandbox {
 }
 
 export interface RuntimeContextSnapshot {
+  /** Epoch milliseconds when the current turn input arrived. */
+  turnStartedAt?: number;
   /** Listener transport connection that owns the current turn, when present. */
   connectionId?: string | null;
   /** Registered listener device that owns the current turn, when present. */

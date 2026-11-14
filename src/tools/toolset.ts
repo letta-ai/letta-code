@@ -301,6 +301,7 @@ export async function prepareToolExecutionContextForScope(params: {
   mcpOriginatorSuperRunId?: string;
   /** Client message ids that started the listener turn owning this context. */
   resolveClientMessageIds?: () => string[];
+  turnStartedAt?: number;
   overrideModel?: string | null;
   overrideProviderType?: string | null;
   cachedEffectiveModel?: string | null;
@@ -319,6 +320,8 @@ export async function prepareToolExecutionContextForScope(params: {
   /** Foreground yield from the runtime tool policy; unset uses the default. */
   foregroundYieldMs?: number;
   cachedAgent?: AgentState | null;
+  /** Caller-owned retry/lease policy, applied only to scope metadata reads. */
+  readScopeState?: <T>(read: () => Promise<T>) => Promise<T>;
   modContext?: ModContext;
   shouldEnqueueBackground?: () => Promise<boolean>;
   modEvents?: ModEvents;
@@ -333,6 +336,7 @@ export async function prepareToolExecutionContextForScope(params: {
     suppressActingUserFallback,
     mcpOriginatorSuperRunId,
     resolveClientMessageIds,
+    turnStartedAt,
     overrideModel,
     overrideProviderType,
     cachedEffectiveModel,
@@ -361,16 +365,19 @@ export async function prepareToolExecutionContextForScope(params: {
       getStoredClientPreferences(agentId, conversationId).toolset,
     );
   const backend = getBackend();
+  const readScopeState = params.readScopeState ?? ((read) => read());
   const agent = agentId
     ? ((cachedAgent ??
-        (await backend.retrieveAgent(agentId))) as ScopeModelCarrier)
+        (await readScopeState(() =>
+          backend.retrieveAgent(agentId),
+        ))) as ScopeModelCarrier)
     : null;
   const agentTarget = modelTargetFromCarrier(agent);
   const conversationTarget =
     conversationId && conversationId !== "default"
       ? modelTargetFromCarrier(
-          (await backend.retrieveConversation(
-            conversationId,
+          (await readScopeState(() =>
+            backend.retrieveConversation(conversationId),
           )) as ScopeModelCarrier,
         )
       : { model: null, providerType: null, openAICompatibleProxy: false };
@@ -456,6 +463,7 @@ export async function prepareToolExecutionContextForScope(params: {
       mcpOriginatorSuperRunId: mcpOriginatorSuperRunId ?? null,
       // Nor another turn's client message ids.
       resolveClientMessageIds,
+      turnStartedAt,
       workingDirectory,
       ...(skillsDirectory !== undefined ? { skillsDirectory } : {}),
       ...(skillSources !== undefined ? { skillSources } : {}),

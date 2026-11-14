@@ -52,6 +52,7 @@ import {
   drainRecoveryStreamWithEmission,
   isApprovalToolCallDesyncError,
 } from "./recovery";
+import { retryApprovalRecoveryRead } from "./recovery-read";
 import { injectQueuedSkillContent } from "./skill-injection";
 import type { ListenerTransport } from "./transport";
 import type { TurnCorrelation } from "./turn-correlation";
@@ -307,8 +308,12 @@ export async function resolveStaleApprovals(
   } = {},
 ): Promise<Awaited<ReturnType<typeof drainRecoveryStreamWithEmission>> | null> {
   if (!runtime.agentId && runtime.conversationId === "default") return null;
-
-  const getResumeDataImpl = deps.getResumeData ?? getResumeDataFromBackend;
+  const getResumeDataImpl: typeof getResumeDataFromBackend = (...args) =>
+    retryApprovalRecoveryRead(
+      () => (deps.getResumeData ?? getResumeDataFromBackend)(...args),
+      assertCurrentTurnLease,
+      turnLease.signal,
+    );
   const prepareToolExecutionContext =
     deps.prepareToolExecutionContext ?? prepareToolExecutionContextForScope;
   const sendApprovalContinuation =
@@ -324,16 +329,22 @@ export async function resolveStaleApprovals(
       throw new Error("Cancelled by user");
     }
   };
-
   assertCurrentTurnLease();
   const backend = getBackend();
   let agent: Awaited<ReturnType<typeof backend.retrieveAgent>>;
   try {
-    agent = await retrieveResumeState(runtime.agentId, runtime.conversationId, {
-      retrieveAgent: deps.retrieveAgent ?? backend.retrieveAgent.bind(backend),
-      retrieveConversation:
-        deps.retrieveConversation ?? backend.retrieveConversation.bind(backend),
-    });
+    agent = await retryApprovalRecoveryRead(
+      () =>
+        retrieveResumeState(runtime.agentId, runtime.conversationId, {
+          retrieveAgent:
+            deps.retrieveAgent ?? backend.retrieveAgent.bind(backend),
+          retrieveConversation:
+            deps.retrieveConversation ??
+            backend.retrieveConversation.bind(backend),
+        }),
+      assertCurrentTurnLease,
+      turnLease.signal,
+    );
   } catch (err) {
     assertCurrentTurnLease();
     if (isBackendNotFoundError(err)) {
@@ -344,7 +355,6 @@ export async function resolveStaleApprovals(
   assertCurrentTurnLease();
   const requestedConversationId =
     runtime.conversationId !== "default" ? runtime.conversationId : undefined;
-
   let resumeData: Awaited<ReturnType<typeof getResumeDataFromBackend>>;
   try {
     resumeData = await getResumeDataImpl(agent, requestedConversationId, {
@@ -359,10 +369,8 @@ export async function resolveStaleApprovals(
     throw err;
   }
   assertCurrentTurnLease();
-
   let pendingApprovals = resumeData.pendingApprovals || [];
   if (pendingApprovals.length === 0) return null;
-
   // Another client may resolve these calls while we prepare or send the
   // denial; re-read the server and keep only the calls still pending.
   const filterStillPending = async (approvals: typeof pendingApprovals) => {
@@ -377,7 +385,6 @@ export async function resolveStaleApprovals(
     const ids = new Set(fresh?.pendingApprovals?.map((a) => a.toolCallId));
     return approvals.filter((a) => ids.has(a.toolCallId));
   };
-
   const recoveryConversationId = runtime.conversationId;
   const recoveryWorkingDirectory =
     runtime.activeWorkingDirectory ??
@@ -433,7 +440,6 @@ export async function resolveStaleApprovals(
       );
     }
     rememberPendingApprovalBatchIds(runtime, pendingApprovals, recoveryBatchId);
-
     // A call may have executed before its continuation was lost. Send its
     // checkpointed result instead of claiming no result was recorded.
     const pendingToolCallIds = pendingApprovals.map(
@@ -459,7 +465,6 @@ export async function resolveStaleApprovals(
       runtime.pendingInterruptedContext = null;
       runtime.pendingInterruptedToolCallIds = null;
     }
-
     try {
       const continuationInput = createTurnInputState([
         {
@@ -469,7 +474,6 @@ export async function resolveStaleApprovals(
         },
       ]);
       let recoveryTurnCorrelation: TurnCorrelation | undefined;
-
       const continuationMessagesWithSkillContent = injectQueuedSkillContent(
         continuationInput.messages,
         {
@@ -522,9 +526,7 @@ export async function resolveStaleApprovals(
         );
       }
       const recoveryStream = recoverySendResult.stream;
-
       setTurnLoopStatus(runtime, turnLease, "PROCESSING_API_RESPONSE", scope);
-
       const drainResult = await drainRecoveryStream(
         recoveryStream as Stream<LettaStreamingResponse>,
         socket,
@@ -538,7 +540,6 @@ export async function resolveStaleApprovals(
         },
       );
       assertCurrentTurnLease();
-
       if (drainResult.stopReason === "error") {
         throw new Error("Pre-stream approval recovery drain ended with error");
       }
@@ -553,10 +554,8 @@ export async function resolveStaleApprovals(
       runtime.turnLifecycle.setExecutingToolCallIds(turnLease, []);
     }
   }
-
   return null;
 }
-
 /**
  * Wrap sendMessageStream with pre-stream error handling (retry/recovery).
  * Mirrors headless bidirectional mode's pre-stream error handling.

@@ -333,7 +333,6 @@ describe("fork launch receipt", () => {
       harness: "codex",
       fork_context: false,
       model: "ignored-model",
-      computer: "ignored-computer",
       agent_id: "ignored-agent",
       conversation_id: "ignored-conversation",
       mcp: { inherit: false },

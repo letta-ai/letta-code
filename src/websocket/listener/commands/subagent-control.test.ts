@@ -103,6 +103,113 @@ describe("remote external subagent control", () => {
     expect(response).toMatchObject({ success: false });
   });
 
+  test("reports a session missing from this computer for message and stop", async () => {
+    const { parent } = fixture();
+    const agentId = "claude_22222222-2222-4222-8222-222222222222";
+    const expected = {
+      success: false,
+      error: `Subagent ${agentId} was not found on this computer`,
+    };
+    expect(
+      await handleSubagentMessageCommand(
+        {
+          type: "subagent_message",
+          request_id: "missing-message",
+          runtime,
+          agent_id: agentId,
+          message: "Continue",
+        },
+        parent,
+      ),
+    ).toMatchObject(expected);
+    expect(
+      await handleSubagentStopCommand(
+        {
+          type: "subagent_stop",
+          request_id: "missing-stop",
+          runtime,
+          agent_id: agentId,
+        },
+        parent,
+      ),
+    ).toMatchObject(expected);
+  });
+
+  for (const evicted of [false, true]) {
+    test(`accepts a same-agent handoff and rejects another agent (${evicted ? "persisted session" : "live task"})`, async () => {
+      if (evicted) evictedFixture();
+      else {
+        fixture();
+        const task = backgroundTasks.get("task-1");
+        if (task) task.completion = Promise.resolve();
+      }
+      for (const agentId of [runtime.agent_id, "agent-other"]) {
+        const scope = { agent_id: agentId, conversation_id: "conv-handoff" };
+        const parent = createConversationRuntime(
+          createRuntime(),
+          scope.agent_id,
+          scope.conversation_id,
+        );
+        let trackedScope: unknown;
+        let sends = 0;
+        const response = await handleSubagentMessageCommand(
+          {
+            type: "subagent_message",
+            request_id: `handoff-${agentId}`,
+            runtime: scope,
+            agent_id: nativeId,
+            message: "Continue here",
+          },
+          parent,
+          {
+            workerEnv,
+            sendClaude: async () => {
+              sends += 1;
+              return {
+                mode: "resumed",
+                sessionId: nativeId,
+                completion: Promise.resolve({
+                  agentId: nativeId,
+                  success: true,
+                  report: "Done",
+                }),
+                interrupt: async () => {},
+              };
+            },
+            track: (args) => {
+              trackedScope = args.parentScope;
+              return {
+                taskId: "followup",
+                outputFile: "/tmp/followup",
+                subagentId: "followup",
+              };
+            },
+          },
+        );
+        const owned = agentId === runtime.agent_id;
+        expect(response.success).toBe(owned);
+        expect(sends).toBe(owned ? 1 : 0);
+        if (owned) {
+          expect(response).toMatchObject({ delivery: "resumed" });
+          expect(trackedScope).toMatchObject({
+            agentId,
+            conversationId: scope.conversation_id,
+          });
+        }
+        const stopped = await handleSubagentStopCommand(
+          {
+            type: "subagent_stop",
+            request_id: `handoff-stop-${agentId}`,
+            runtime: scope,
+            agent_id: nativeId,
+          },
+          parent,
+        );
+        expect(stopped.success).toBe(owned);
+      }
+    });
+  }
+
   test("reports steered without passing a disconnect signal", async () => {
     const { parent } = fixture();
     let signal: AbortSignal | undefined;
@@ -125,6 +232,29 @@ describe("remote external subagent control", () => {
     );
     expect(signal).toBeUndefined();
     expect(response).toMatchObject({ success: true, delivery: "steered" });
+  });
+
+  test("reports a steer queued behind an unacknowledged interrupt", async () => {
+    const { parent } = fixture();
+    const response = await handleSubagentMessageCommand(
+      {
+        type: "subagent_message",
+        request_id: "queued-steer",
+        runtime,
+        agent_id: nativeId,
+        message: "Change course",
+      },
+      parent,
+      {
+        workerEnv,
+        sendClaude: async () => ({
+          mode: "steered",
+          sessionId: nativeId,
+          queued: true,
+        }),
+      },
+    );
+    expect(response).toMatchObject({ success: true, delivery: "queued" });
   });
 
   test("deduplicates a retried request ID", async () => {
@@ -483,9 +613,9 @@ describe("remote external subagent control", () => {
       expect(tracked).toBe(true);
     });
 
-    test("rejects another conversation", async () => {
+    test("rejects another agent", async () => {
       evictedFixture();
-      const other = { agent_id: "agent-a", conversation_id: "conv-other" };
+      const other = { agent_id: "agent-other", conversation_id: "conv-other" };
       const otherParent = createConversationRuntime(
         createRuntime(),
         other.agent_id,

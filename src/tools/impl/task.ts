@@ -31,6 +31,7 @@ import {
 import { resolveEffectiveAgentId } from "@/agent/subagents/ephemeral-subagent";
 import { forkParentConversation } from "@/agent/subagents/fork-conversation";
 import { spawnSubagent } from "@/agent/subagents/manager";
+import { formatSubagentError } from "@/agent/subagents/subagent-refusal";
 import { getBackend } from "@/backend";
 import { runSubagentStopHooks } from "@/hooks";
 import {
@@ -482,7 +483,7 @@ export function spawnBackgroundSubagentTask(
 
         const fullResult = result.success
           ? `${header}\n\n${result.report || ""}`
-          : `${header}\n\nError: ${result.error || "Subagent execution failed"}`;
+          : `${header}\n\n${formatSubagentError(result.error || "Subagent execution failed")}`;
         const userCwd = getCurrentWorkingDirectory();
         const { content: truncatedResult } = truncateByChars(
           fullResult,
@@ -596,7 +597,7 @@ export function spawnBackgroundSubagentTask(
           taskId,
           status: "failed",
           summary,
-          result: `${header}\n\nError: ${errorMessage}`,
+          result: `${header}\n\n${formatSubagentError(errorMessage)}`,
           outputFile,
           usage: {
             toolUses:

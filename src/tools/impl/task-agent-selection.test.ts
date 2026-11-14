@@ -91,7 +91,6 @@ describe("Agent launch selection", () => {
       harness: "codex",
       fork_context: false,
       model: "override",
-      computer: "remote",
       agent_id: "other",
       conversation_id: "other-conversation",
       mcp: { inherit: false },
@@ -101,6 +100,11 @@ describe("Agent launch selection", () => {
     for (const key of Object.keys(overrides))
       expect(normalized[key as keyof typeof normalized]).toBeUndefined();
     expect(applySubagentPreset(overrides)).toBe(overrides);
+  });
+
+  test("presets preserve computer routing across normalization", () => {
+    const args = { subagent_type: "recall", computer: "build-server" };
+    expect(applySubagentPreset(applySubagentPreset(args))).toEqual(args);
   });
 
   test("error suggestions exclude non-selectable configs", () => {

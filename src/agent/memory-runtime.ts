@@ -1,5 +1,6 @@
 import { getBackend } from "@/backend";
 import { settingsManager } from "@/settings-manager";
+import { isMemoryUnavailable } from "@/utils/memory-access";
 import { getScopedMemoryFilesystemRoot } from "./memory-filesystem";
 
 /**
@@ -12,8 +13,9 @@ import { getScopedMemoryFilesystemRoot } from "./memory-filesystem";
  */
 export function isActiveMemfsEnabled(agentId: string): boolean {
   return (
-    getBackend().capabilities.localMemfs ||
-    settingsManager.isMemfsEnabled(agentId)
+    !isMemoryUnavailable(agentId) &&
+    (getBackend().capabilities.localMemfs ||
+      settingsManager.isMemfsEnabled(agentId))
   );
 }
 

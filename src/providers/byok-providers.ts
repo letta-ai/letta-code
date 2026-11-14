@@ -236,7 +236,7 @@ export const BYOK_PROVIDERS = CLOUD_BYOK_PROVIDERS;
 const LOCAL_PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   anthropic: "Anthropic",
   "amazon-bedrock": "Amazon Bedrock",
-  "azure-openai-responses": "Azure OpenAI Responses",
+  azure: "Azure OpenAI Responses",
   cerebras: "Cerebras",
   "cloudflare-ai-gateway": "Cloudflare AI Gateway",
   "cloudflare-workers-ai": "Cloudflare Workers AI",

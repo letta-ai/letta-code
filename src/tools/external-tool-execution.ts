@@ -1,3 +1,4 @@
+import { getRuntimeContext } from "@/runtime-context";
 import { telemetry } from "@/telemetry";
 import { messageChannelTelemetry } from "@/telemetry/channel";
 import { normalizeExternalToolResultContent } from "@/tools/external-tool-content";
@@ -36,7 +37,9 @@ export async function executeExternalToolRequest(
       toolCallId,
       toolName,
       input,
-      tool ? { tool, signal } : undefined,
+      tool
+        ? { tool, signal, turnStartedAt: getRuntimeContext()?.turnStartedAt }
+        : undefined,
     );
     success = !result.isError;
     return {
