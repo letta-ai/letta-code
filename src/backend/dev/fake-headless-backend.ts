@@ -278,6 +278,26 @@ export class HeadlessBackend implements Backend {
     return this.store.createConversation(body);
   }
 
+  async deleteConversation(
+    conversationId: string,
+  ): ReturnType<NonNullable<Backend["deleteConversation"]>> {
+    if (conversationId === "default") {
+      throw new Error("An agent's default conversation cannot be deleted");
+    }
+    const agentId = this.store.resolveAgentIdForConversation(conversationId);
+    const activeRunId = this.activeRunByConversation.get(
+      localConversationKey(conversationId, agentId),
+    );
+    const activeRun = activeRunId ? this.runs.get(activeRunId) : undefined;
+    if (activeRun && !isTerminalRun(activeRun)) {
+      throw new Error(
+        `Cannot delete conversation ${conversationId} while it has an active run (${activeRun.id})`,
+      );
+    }
+    this.store.deleteConversation(conversationId);
+    return undefined;
+  }
+
   updateConversation(...args: Parameters<Backend["updateConversation"]>) {
     const [conversationId, body] = args;
     return Promise.resolve(this.store.updateConversation(conversationId, body));
