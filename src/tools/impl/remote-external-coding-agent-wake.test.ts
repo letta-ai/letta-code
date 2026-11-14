@@ -3,6 +3,7 @@ import type { AppServerClient } from "@/app-server-client";
 import { ComputerResolutionError } from "@/backend/api/environments";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
+import { REMOTE_SUBAGENT_MESSAGE_TIMEOUT_MS } from "./claude-steer-timeouts";
 import {
   classifyRemoteExternalWorkerControlError,
   sendRemoteExternalCodingAgentMessage,
@@ -260,9 +261,54 @@ test.each([
     ),
     "connect_failed",
   ],
+  [new Error("Claude turn did not become interruptible"), "worker_busy"],
+  [new Error("Claude interrupt acknowledgement timed out"), "worker_busy"],
   [new Error("unrecognized private detail"), "other"],
   ["unrecognized rejection", "other"],
   [null, "other"],
 ])("classifies remote control error %s as %s", (error, code) => {
   expect(classifyRemoteExternalWorkerControlError(error)).toBe(code);
+});
+
+test("follow-ups wait longer than the listener's worst-case steer", async () => {
+  expect(REMOTE_SUBAGENT_MESSAGE_TIMEOUT_MS).toBeGreaterThan(90_000);
+  const report = spyOn(telemetry, "trackError").mockImplementation(() => {});
+  spyOn(telemetry, "flush").mockResolvedValue(undefined);
+  const resolveComputer = mock(async () => ({
+    connectionId: "conn-1",
+    environment: {
+      ...environment(),
+      deviceId: "computer",
+      lastHeartbeat: Date.now(),
+      connectionId: "conn-1",
+      metadata: { subagent_message: true, lettaCodeVersion: "0.34.61" },
+    },
+  }));
+  const timeouts: Array<number | undefined> = [];
+  const client = {
+    sendSubagentMessage: async (
+      command: { request_id: string },
+      options?: { timeoutMs?: number },
+    ) => {
+      timeouts.push(options?.timeoutMs);
+      throw new Error(`Timed out waiting for ${command.request_id}`);
+    },
+    onMessage: () => () => {},
+    onDisconnect: () => () => {},
+    close: () => {},
+  } as unknown as AppServerClient;
+  await expect(
+    sendRemoteExternalCodingAgentMessage(
+      {
+        agentId: "claude_22222222-2222-4222-8222-222222222222@computer",
+        parentScope: scope,
+        message: "Continue",
+      },
+      { resolveComputer, connect: async () => client },
+    ),
+  ).rejects.toThrow("The message may not have been delivered");
+  expect(timeouts).toEqual([REMOTE_SUBAGENT_MESSAGE_TIMEOUT_MS]);
+  expect(JSON.parse(report.mock.calls[0]?.[2] as string).error_code).toBe(
+    "steer_timeout",
+  );
 });

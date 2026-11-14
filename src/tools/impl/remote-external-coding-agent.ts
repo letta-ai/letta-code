@@ -38,6 +38,11 @@ import type {
 } from "@/types/subagent-protocol";
 import { compareSemver } from "@/utils/version";
 import {
+  CLAUDE_INTERRUPT_ACK_TIMEOUT_ERROR,
+  CLAUDE_TURN_START_TIMEOUT_ERROR,
+  REMOTE_SUBAGENT_MESSAGE_TIMEOUT_MS,
+} from "./claude-steer-timeouts";
+import {
   createExternalCodingAgentConfig,
   type ExternalCodingAgentMcpOptions,
   type ExternalCodingAgentType,
@@ -226,6 +231,9 @@ class RemoteWorkerLostError extends Error {}
 
 class OutdatedRemoteWorkerError extends Error {}
 
+/** No answer to a follow-up in time; the listener may still deliver it. */
+class RemoteFollowUpTimeoutError extends Error {}
+
 /** Fixed telemetry categories; never include error text in the returned code. */
 export function classifyRemoteExternalWorkerControlError(
   error: unknown,
@@ -237,7 +245,13 @@ export function classifyRemoteExternalWorkerControlError(
       : "other";
   }
   if (error instanceof OutdatedRemoteWorkerError) return "outdated_computer";
+  if (error instanceof RemoteFollowUpTimeoutError) return "steer_timeout";
   const message = errorMessage(error);
+  if (
+    message === CLAUDE_TURN_START_TIMEOUT_ERROR ||
+    message === CLAUDE_INTERRUPT_ACK_TIMEOUT_ERROR
+  )
+    return "worker_busy";
   if (
     /^Computer ".*" is offline(?:\.|$)/.test(message) ||
     message.startsWith("Timed out waiting for cloud sandbox ")
@@ -812,7 +826,7 @@ export async function sendRemoteExternalCodingAgentMessage(
   params: RemoteExternalCodingAgentControl & { message: string },
   deps: RemoteExternalCodingAgentControlDeps = {},
 ): Promise<{
-  delivery: "steered" | "resumed";
+  delivery: "steered" | "queued" | "resumed";
   taskId?: string;
   outputFile?: string;
 }> {
@@ -841,7 +855,7 @@ async function deliverRemoteExternalCodingAgentMessage(
   params: RemoteExternalCodingAgentControl & { message: string },
   deps: RemoteExternalCodingAgentControlDeps,
 ): Promise<{
-  delivery: "steered" | "resumed";
+  delivery: "steered" | "queued" | "resumed";
   taskId?: string;
   outputFile?: string;
 }> {
@@ -875,21 +889,29 @@ async function deliverRemoteExternalCodingAgentMessage(
   );
   let response: Awaited<ReturnType<AppServerClient["sendSubagentMessage"]>>;
   try {
-    response = await client.sendSubagentMessage({
-      request_id: requestId,
-      runtime: {
-        agent_id: params.parentScope.agentId,
-        conversation_id: params.parentScope.conversationId,
-        ...(params.parentScope.actingUserId
-          ? { acting_user_id: params.parentScope.actingUserId }
-          : {}),
+    response = await client.sendSubagentMessage(
+      {
+        request_id: requestId,
+        runtime: {
+          agent_id: params.parentScope.agentId,
+          conversation_id: params.parentScope.conversationId,
+          ...(params.parentScope.actingUserId
+            ? { acting_user_id: params.parentScope.actingUserId }
+            : {}),
+        },
+        agent_id: bareAgentId,
+        message: params.message,
+        tool_call_id: toolCallId,
       },
-      agent_id: bareAgentId,
-      message: params.message,
-      tool_call_id: toolCallId,
-    });
+      { timeoutMs: REMOTE_SUBAGENT_MESSAGE_TIMEOUT_MS },
+    );
   } catch (error) {
     follower.close();
+    if (errorMessage(error) === `Timed out waiting for ${requestId}`) {
+      throw new RemoteFollowUpTimeoutError(
+        `${target.computer} didn't confirm the follow-up within ${Math.round(REMOTE_SUBAGENT_MESSAGE_TIMEOUT_MS / 1000)}s. The message may not have been delivered; check the worker's output, or send it again.`,
+      );
+    }
     throw error;
   }
   if (!response.success) {
@@ -904,9 +926,9 @@ async function deliverRemoteExternalCodingAgentMessage(
     }
     throw new Error(response.error);
   }
-  if (response.delivery === "steered") {
+  if (response.delivery === "steered" || response.delivery === "queued") {
     follower.close();
-    return { delivery: "steered" };
+    return { delivery: response.delivery };
   }
   follower.markLaunched();
   const completion = follower
