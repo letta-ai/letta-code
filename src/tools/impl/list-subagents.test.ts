@@ -300,10 +300,24 @@ test("omits other conversations' children and memory workers", async () => {
     agentId: "agent-parent",
     conversationId: "conv-other",
   });
+  launch("unscoped", "general-purpose", "unscoped");
+  updateSubagent("unscoped", { parentConversationId: undefined });
+  launch("no-parent", "general-purpose", "no parent");
+  updateSubagent("no-parent", { parentAgentId: undefined });
   launch("memory", "memory", "memory upkeep");
 
   const { agents } = await list_subagents({}, { scope });
   expect(agents.map((a) => a.description)).toEqual(["mine"]);
+  expect(await list_subagents({}, { scope: () => null })).toEqual({
+    agents: [],
+  });
+
+  const defaultScope = { agentId: PARENT.agentId, conversationId: "default" };
+  launch("default", "general-purpose", "default", defaultScope);
+  const result = await runWithRuntimeContext(defaultScope, () =>
+    list_subagents(),
+  );
+  expect(result.agents.map((a) => a.description)).toEqual(["default"]);
 });
 
 test("lists the most recently active agent first, even if it started earlier", async () => {

@@ -4,7 +4,6 @@ import {
   type SubagentHistoryEntry,
 } from "@/agent/subagent-state.js";
 import { INTERRUPTED_BY_USER } from "@/constants";
-import { subagentScopeMatches } from "@/utils/subagent-scope";
 import {
   type ExternalCodingAgentType,
   isExternalCodingAgentType,
@@ -127,6 +126,8 @@ export function listSessionSubagents(
   scope: { agentId: string; conversationId: string } | null,
   history: SubagentHistoryEntry[] = getSubagentHistory(),
 ): ListedAgent[] {
+  if (!scope?.agentId || !scope.conversationId) return [];
+
   const groups = new Map<
     string,
     { first: SubagentHistoryEntry; latest: SubagentHistoryEntry }
@@ -136,11 +137,8 @@ export function listSessionSubagents(
     // Memory workers maintain this agent's own memory; they are not peers.
     if (agent.type.toLowerCase() === "memory") continue;
     if (
-      scope &&
-      !subagentScopeMatches(agent.parentAgentId, agent.parentConversationId, {
-        agentId: scope.agentId,
-        conversationId: scope.conversationId,
-      })
+      agent.parentAgentId !== scope.agentId ||
+      agent.parentConversationId !== scope.conversationId
     ) {
       continue;
     }
