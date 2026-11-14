@@ -1,4 +1,4 @@
-import { apiRequest } from "./request";
+import { ApiRequestError, apiRequest } from "./request";
 
 export interface ForkConversationOptions {
   agentId?: string;
@@ -66,4 +66,29 @@ export async function summarizeConversation(
     body,
     options,
   );
+}
+
+/**
+ * GET /v1/conversations/:conversationId
+ *
+ * Returns the conversation (including its owning `agent_id`), or `null` when
+ * the server reports that no conversation with this ID exists.
+ */
+export async function getConversation(
+  conversationId: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<{ id: string; agent_id: string } | null> {
+  try {
+    return await apiRequest<{ id: string; agent_id: string }>(
+      "GET",
+      `/v1/conversations/${encodeURIComponent(conversationId)}`,
+      undefined,
+      options,
+    );
+  } catch (error) {
+    if (error instanceof ApiRequestError && error.status === 404) {
+      return null;
+    }
+    throw error;
+  }
 }

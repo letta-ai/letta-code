@@ -44,6 +44,10 @@ function withoutConversationArgument(args: string[]): string[] {
   return [...args.slice(0, index), ...args.slice(index + 2)];
 }
 
+function withConversationValue(args: string[], value: string): string[] {
+  return [...withoutConversationArgument(args), "--conversation", value];
+}
+
 function environment(
   deviceId: string,
   overrides: {
@@ -93,6 +97,7 @@ function installScheduleApi(options: {
   environments?: Record<string, ReturnType<typeof environment>>;
   scheduleRoutesStatus?: number;
   scheduledMessages?: unknown[];
+  conversations?: Record<string, { id: string; agent_id: string } | null>;
 }) {
   const requests: Array<{
     method: string;
@@ -151,6 +156,19 @@ function installScheduleApi(options: {
       return found
         ? jsonResponse(found)
         : jsonResponse({ error: "environment not found" }, 404);
+    }
+
+    if (method === "GET" && url.pathname.startsWith("/v1/conversations/")) {
+      const conversationId = decodeURIComponent(
+        url.pathname.slice("/v1/conversations/".length),
+      );
+      const overrides = options.conversations ?? {};
+      const conversation = Object.hasOwn(overrides, conversationId)
+        ? overrides[conversationId]
+        : { id: conversationId, agent_id: "agent-cloud-test" };
+      return conversation === null
+        ? jsonResponse({ error: "conversation not found" }, 404)
+        : jsonResponse(conversation);
     }
 
     if (
@@ -295,6 +313,77 @@ describe("cron add execution targeting", () => {
     expect(requests.some((request) => request.method === "POST")).toBe(false);
   });
 
+  test("cron add rejects a --conversation id that does not exist", async () => {
+    process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
+    const requests = installScheduleApi({
+      conversations: { "conversation-missing": null },
+    });
+    const errors: string[] = [];
+    console.error = mock((line: string) => errors.push(String(line)));
+
+    expect(
+      await runCronSubcommand(
+        withConversationValue(addArgs, "conversation-missing"),
+      ),
+    ).toBe(1);
+
+    expect(errors).toContain(
+      'Error: conversation "conversation-missing" does not exist. Pass "new", "default", or an existing conversation ID.',
+    );
+    expect(requests.some((request) => request.method === "POST")).toBe(false);
+  });
+
+  test("cron add rejects a conversation owned by a different agent", async () => {
+    const home = mkdtempSync(
+      join(tmpdir(), "letta-cron-foreign-conversation-"),
+    );
+    process.env.LETTA_HOME = home;
+    const requests = installScheduleApi({
+      conversations: {
+        "foreign-conversation": {
+          id: "foreign-conversation",
+          agent_id: "agent-other",
+        },
+      },
+    });
+    const errors: string[] = [];
+    console.error = mock((line: string) => errors.push(String(line)));
+
+    try {
+      expect(
+        await runCronSubcommand(
+          withConversationValue(addArgs, "foreign-conversation"),
+        ),
+      ).toBe(1);
+
+      expect(errors.join("\n")).toContain(
+        'conversation "foreign-conversation" belongs to agent agent-other, not agent-cloud-test.',
+      );
+      expect(requests.some((request) => request.method === "POST")).toBe(false);
+      expect(listTasks()).toHaveLength(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("cron add --conversation default skips conversation validation", async () => {
+    process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
+    const requests = installScheduleApi({});
+
+    expect(
+      await runCronSubcommand(withConversationValue(addArgs, "default")),
+    ).toBe(0);
+
+    expect(
+      requests.some((request) =>
+        request.pathname.startsWith("/v1/conversations/"),
+      ),
+    ).toBe(false);
+    expect(
+      requests.find((request) => request.method === "POST")?.body,
+    ).toMatchObject({ conversation_id: "default" });
+  });
+
   test("Cloud API-backed local execution creates a local schedule without calling the schedule API", async () => {
     const home = mkdtempSync(join(tmpdir(), "letta-cron-local-environment-"));
     process.env.LETTA_HOME = home;
@@ -307,7 +396,14 @@ describe("cron add execution targeting", () => {
 
     try {
       expect(await runCronSubcommand(addArgs)).toBe(0);
-      expect(requests).toHaveLength(0);
+      // The only API call is the --conversation existence check; the schedule
+      // create API is never touched.
+      expect(requests).toEqual([
+        expect.objectContaining({
+          method: "GET",
+          pathname: "/v1/conversations/conversation-test",
+        }),
+      ]);
       expect(JSON.parse(logs.join(""))).toMatchObject({ runner: "local" });
     } finally {
       rmSync(home, { recursive: true, force: true });
@@ -549,7 +645,14 @@ describe("cron add execution targeting", () => {
 
     try {
       expect(await runCronSubcommand(addArgs)).toBe(0);
-      expect(requests).toHaveLength(0);
+      // The only API call is the --conversation existence check; the schedule
+      // create API is never touched.
+      expect(requests).toEqual([
+        expect.objectContaining({
+          method: "GET",
+          pathname: "/v1/conversations/conversation-test",
+        }),
+      ]);
       expect(JSON.parse(logs.join(""))).toMatchObject({ runner: "local" });
     } finally {
       rmSync(home, { recursive: true, force: true });
