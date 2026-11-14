@@ -270,12 +270,12 @@ export interface RenderSkillContentOptions {
   allowDisabledModelInvocation?: boolean;
 }
 
-export function renderSkillContent(
+function prepareSkillContent(
   skillName: string,
   skillContent: string,
   skillPath: string,
   options: RenderSkillContentOptions = {},
-): string {
+): { content: string; footer: string } {
   const { frontmatter } = parseFrontmatter(skillContent);
   if (
     !options.allowDisabledModelInvocation &&
@@ -302,7 +302,25 @@ export function renderSkillContent(
       ? `\n\n<skill_resources>\n${resourceLines.join("\n")}\n</skill_resources>`
       : "";
 
-  return `${withSkillDir}\n\nSkill directory: ${skillDir}\nRelative paths in this skill are relative to the skill directory.${resourcesSection}`;
+  return {
+    content: withSkillDir,
+    footer: `\n\nSkill directory: ${skillDir}\nRelative paths in this skill are relative to the skill directory.${resourcesSection}`,
+  };
+}
+
+export function renderSkillContent(
+  skillName: string,
+  skillContent: string,
+  skillPath: string,
+  options: RenderSkillContentOptions = {},
+): string {
+  const { content, footer } = prepareSkillContent(
+    skillName,
+    skillContent,
+    skillPath,
+    options,
+  );
+  return content + footer;
 }
 
 export async function loadRenderedSkillContent(
@@ -320,7 +338,18 @@ export async function loadRenderedSkillContent(
     options.agentId,
     options,
   );
-  return renderSkillContent(skillName, skillContent, skillPath, options);
+  const { content, footer } = prepareSkillContent(
+    skillName,
+    skillContent,
+    skillPath,
+    options,
+  );
+  if (process.env.LETTA_SKILL_COMMAND_EXPANSION !== "1")
+    return content + footer;
+
+  // Validate invocation before executing commands, and expand only authored content.
+  const { expandSkillCommands } = await import("./skill-command-expansion");
+  return (await expandSkillCommands(content)) + footer;
 }
 
 function escapeXmlText(value: string): string {
