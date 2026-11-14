@@ -23,6 +23,7 @@ import {
   peekOrganizationId,
   warmOrganizationId,
 } from "@/agent/organization-id";
+import { resolveDetachedSubagentEnvAgentId } from "@/agent/subagents/ephemeral-subagent";
 import { getDesktopAccessToken } from "@/auth/desktop-credentials";
 import { peekOrgAccessToken } from "@/auth/org-credentials-session";
 import { getServerUrl } from "@/backend/api/server-url";
@@ -412,8 +413,12 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   }
 
   if (agentId) {
-    env.LETTA_AGENT_ID = agentId;
-    env.AGENT_ID = agentId;
+    // A detached subagent conversation has no agent of its own; expose the
+    // parent agent it runs under rather than the conversation ID.
+    const exportedAgentId =
+      resolveDetachedSubagentEnvAgentId(agentId, executionEnv) ?? agentId;
+    env.LETTA_AGENT_ID = exportedAgentId;
+    env.AGENT_ID = exportedAgentId;
 
     const agentName = getCurrentAgentName()?.trim() || env.AGENT_NAME?.trim();
     if (agentName) {

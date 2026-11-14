@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type WebSocket from "ws";
+import { removeTestDir } from "@/test-utils/test-fs";
 import { createFileCommandSession } from "./file-commands";
 
 function createHarness() {
@@ -35,7 +36,7 @@ describe("listener file commands without file index", () => {
   afterEach(async () => {
     process.env.HOME = originalHome;
     for (const dir of tempDirs.splice(0)) {
-      await rm(dir, { recursive: true, force: true });
+      await removeTestDir(dir);
     }
   });
 

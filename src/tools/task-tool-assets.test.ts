@@ -1,11 +1,9 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import TaskDescriptionRaw from "./descriptions/Task.md";
+import { TASK_HARNESSES } from "./impl/task-agent-selection";
 import type { JsonSchema } from "./model-facing-tool";
 import TaskSchema from "./schemas/Task.json";
-import {
-  stripComputerFromTaskDescription,
-  stripComputerFromTaskSchema,
-} from "./task-tool-assets";
+import { stripComputerFromTaskSchema } from "./task-tool-assets";
 
 const taskSchema = TaskSchema as JsonSchema;
 const taskDescription = (TaskDescriptionRaw as string).trim();
@@ -16,7 +14,7 @@ describe("stripComputerFromTaskSchema", () => {
     const stripped = stripComputerFromTaskSchema(taskSchema);
     expect(stripped.properties?.computer).toBeUndefined();
     expect(stripped.properties?.prompt).toBeDefined();
-    expect(stripped.properties?.subagent_type).toBeDefined();
+    expect(stripped.properties?.harness).toBeDefined();
     expect(stripped.required).toEqual(taskSchema.required);
   });
 
@@ -28,35 +26,6 @@ describe("stripComputerFromTaskSchema", () => {
   test("returns schemas without a computer property unchanged", () => {
     const schema: JsonSchema = { properties: { prompt: { type: "string" } } };
     expect(stripComputerFromTaskSchema(schema)).toBe(schema);
-  });
-});
-
-describe("stripComputerFromTaskDescription", () => {
-  test("removes the Running on Another Computer section from the real description", () => {
-    expect(taskDescription).toContain("## Running on Another Computer");
-    const stripped = stripComputerFromTaskDescription(taskDescription);
-    expect(stripped).not.toContain("## Running on Another Computer");
-    expect(stripped).not.toContain("computer:");
-    expect(stripped).not.toContain("`computer`");
-  });
-
-  test("keeps external coding agent docs but drops their computer routing", () => {
-    const stripped = stripComputerFromTaskDescription(taskDescription);
-    expect(stripped).toContain("## External Coding Agents");
-    expect(stripped).toContain('subagent_type: "claude-code"');
-    expect(stripped).not.toMatch(/\bcomputer\b(?!s)/i);
-  });
-
-  test("keeps the surrounding sections intact", () => {
-    const stripped = stripComputerFromTaskDescription(taskDescription);
-    expect(stripped).toContain("## Forking Parent Context");
-    expect(stripped).toContain("## Concurrency and Safety:");
-    expect(stripped).not.toContain("\n\n\n");
-  });
-
-  test("returns descriptions without the section unchanged", () => {
-    const description = "## Intro\n\nBody text.";
-    expect(stripComputerFromTaskDescription(description)).toBe(description);
   });
 });
 
@@ -89,17 +58,29 @@ describe("task() computer guard", () => {
   });
 });
 
-describe("Task subagent_type requirement", () => {
-  test("the schema leaves subagent_type optional so resumes can omit it", () => {
+describe("Task agent selection fields", () => {
+  test("harness is an optional enum of letta and the external workers", () => {
+    expect(taskSchema.required).not.toContain("harness");
+    expect(taskSchema.properties?.harness).toMatchObject({
+      type: "string",
+      enum: ["letta", "claude-code", "codex", "cursor", "opencode"],
+    });
+    const schemaEnum = (taskSchema.properties?.harness as { enum: string[] })
+      .enum;
+    expect([...schemaEnum].sort()).toEqual([...TASK_HARNESSES].sort());
+  });
+  test("subagent_type is an optional string and agent_type is gone", () => {
     expect(taskSchema.required).not.toContain("subagent_type");
+    expect(taskSchema.properties?.subagent_type).toMatchObject({
+      type: "string",
+    });
+    expect(taskSchema.properties?.agent_type).toBeUndefined();
+    expect(taskSchema.additionalProperties).toBe(false);
   });
-
-  test("launching a new subagent without subagent_type is still rejected", async () => {
-    const { launchSubagent } = await import("./impl/task");
-    await expect(
-      launchSubagent({ prompt: "Work", description: "New task" } as never),
-    ).rejects.toThrow("missing required parameter: subagent_type");
+  test("the model-facing description does not mention agent_type", () => {
+    expect(taskDescription).not.toMatch(/\bagent_type\b/);
   });
+  // Launch behavior is covered by the existing routing and fork-receipt suites.
 });
 
 describe("resolveBackendSpecificToolAssets Task dispatch", () => {
@@ -124,9 +105,7 @@ describe("resolveBackendSpecificToolAssets Task dispatch", () => {
       taskSchema,
     );
     expect(resolved.inputSchema.properties?.computer).toBeUndefined();
-    expect(resolved.description).not.toContain(
-      "## Running on Another Computer",
-    );
+    expect(resolved.description).toBe(taskDescription);
   });
 
   test("keeps computer for the Cloud server", async () => {
@@ -140,6 +119,111 @@ describe("resolveBackendSpecificToolAssets Task dispatch", () => {
       taskSchema,
     );
     expect(resolved.inputSchema.properties?.computer).toBeDefined();
-    expect(resolved.description).toContain("## Running on Another Computer");
+    expect(resolved.description).toBe(taskDescription);
   });
+});
+
+describe("Monitor experiment assets", () => {
+  test("selects mutually exclusive schemas and rejects inactive arguments", async () => {
+    const { experimentManager } = await import("@/experiments/manager");
+    const { resolveBackendSpecificToolAssets } = await import(
+      "./task-tool-assets"
+    );
+    const { default: schema } = await import("./schemas/Monitor.json");
+    const { default: description } = await import("./descriptions/Monitor.md");
+    const { monitor } = await import("./impl/monitor");
+    const flag = spyOn(experimentManager, "isEnabled");
+    try {
+      flag.mockReturnValue(false);
+      const local = await resolveBackendSpecificToolAssets(
+        "Monitor",
+        description,
+        schema,
+      );
+      expect(local).toEqual({ description, inputSchema: schema });
+      expect(Object.keys(local.inputSchema.properties ?? {}).sort()).toEqual(
+        [
+          "description",
+          "timeout_ms",
+          "persistent",
+          "backup_after_seconds",
+          "backup_prompt",
+          "command",
+          "ws",
+          "script",
+          "args",
+        ].sort(),
+      );
+      for (const key of [
+        "url",
+        "interval_seconds",
+        "headers",
+        "select",
+        "match",
+        "stop_on_match",
+      ]) {
+        await expect(
+          monitor({ description: "Status", [key]: "unused" }),
+        ).rejects.toThrow(`${key} is not supported in local mode`);
+      }
+      flag.mockReturnValue(true);
+      const cloud = await resolveBackendSpecificToolAssets(
+        "Monitor",
+        description,
+        schema,
+      );
+      expect(Object.keys(cloud.inputSchema.properties ?? {}).sort()).toEqual(
+        [
+          "description",
+          "timeout_ms",
+          "url",
+          "interval_seconds",
+          "headers",
+          "select",
+          "match",
+          "stop_on_match",
+        ].sort(),
+      );
+      expect(cloud.inputSchema.required).toEqual(["description", "url"]);
+      expect(cloud.inputSchema.additionalProperties).toBe(false);
+      expect(cloud.description).not.toBe(local.description);
+      for (const key of [
+        "command",
+        "ws",
+        "script",
+        "args",
+        "persistent",
+        "backup_after_seconds",
+        "backup_prompt",
+      ]) {
+        await expect(
+          monitor({
+            description: "Status",
+            url: "https://example.com",
+            [key]: "unused",
+          }),
+        ).rejects.toThrow(`${key} is not supported in Cloud mode`);
+      }
+    } finally {
+      flag.mockRestore();
+    }
+  });
+});
+
+test("local Monitor assets remain byte-identical to v0.34.56", async () => {
+  for (const [path, hash] of [
+    [
+      "./descriptions/Monitor.md",
+      "c86a9f99f14c5c6b1f4688dc8f60583fee7bb6e35c85bc3e1aeb9d67308ecdc4",
+    ],
+    [
+      "./schemas/Monitor.json",
+      "2a24864b9e926634a427bb372a77592ac6d8b957f1fbc8d06a4efaaf58edddd3",
+    ],
+  ] as const) {
+    const bytes = await Bun.file(new URL(path, import.meta.url)).arrayBuffer();
+    expect(new Bun.CryptoHasher("sha256").update(bytes).digest("hex")).toBe(
+      hash,
+    );
+  }
 });

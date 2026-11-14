@@ -3,10 +3,12 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, delimiter, join } from "node:path";
 import {
+  getOwnProcessStartTime,
   getProcessStartTime,
   isPidReusedByNonLetta,
   isProcessAlive,
   isSameProcessRunning,
+  resetOwnProcessStartTimeForTests,
 } from "./process-liveness";
 
 test("this process is alive and an exited child is not", async () => {
@@ -46,6 +48,29 @@ test.skipIf(process.platform === "win32")(
       process.env.PATH = originalPath;
       rmSync(bin, { recursive: true, force: true });
     }
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "a failed own start-time lookup is retried rather than cached",
+  async () => {
+    resetOwnProcessStartTimeForTests();
+    const bin = mkdtempSync(join(tmpdir(), "failing-ps-"));
+    writeFileSync(join(bin, "ps"), "#!/bin/sh\nexit 1\n");
+    chmodSync(join(bin, "ps"), 0o755);
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${bin}${delimiter}${originalPath ?? ""}`;
+    try {
+      expect(await getOwnProcessStartTime()).toBeNull();
+    } finally {
+      process.env.PATH = originalPath;
+      rmSync(bin, { recursive: true, force: true });
+    }
+    const started = await getOwnProcessStartTime();
+    expect(started).not.toBeNull();
+    expect(started).toBe(await getProcessStartTime(process.pid));
+    // A successful lookup is cached for the life of the process.
+    expect(await getOwnProcessStartTime()).toBe(started);
   },
 );
 

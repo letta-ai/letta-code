@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
+import { getConversationId } from "@/agent/context";
 import { buildParentMemoryNote } from "@/agent/parent-memory-note";
 import type { SubagentConfig, SubagentResult } from "@/agent/subagents";
 import { getCurrentSubagentDepth } from "@/agent/subagents/subagent-depth";
@@ -68,6 +69,7 @@ export interface ExternalCodingAgentRunOptions extends ExternalWorkerListeners {
   model?: string;
   parentAgentId: string;
   parentConversationId?: string;
+  taskId?: string;
   actingUserId?: string | null;
   resumeSessionId?: string;
   cwd?: string;
@@ -82,8 +84,11 @@ export interface ExternalCodingAgentCommand {
   stdin?: string;
 }
 
+/** `fork` marks a worker launched with the parent's transcript, which, like a
+ * Letta fork, keeps it off the ambient default computer. */
 export function createExternalCodingAgentConfig(
   type: ExternalCodingAgentType,
+  fork = false,
 ): SubagentConfig {
   return {
     name: type,
@@ -92,7 +97,7 @@ export function createExternalCodingAgentConfig(
     allowedTools: "all",
     recommendedModel: "inherit",
     skills: [],
-    fork: false,
+    fork,
     launchProfile: "default",
   };
 }
@@ -496,7 +501,7 @@ export interface ExternalWorkerLaunchEnv {
 export async function buildExternalWorkerLaunchEnv(
   options: Pick<
     ExternalCodingAgentRunOptions,
-    "parentAgentId" | "actingUserId" | "mcpReminder"
+    "parentAgentId" | "parentConversationId" | "actingUserId" | "mcpReminder"
   >,
   deps: Pick<ExternalCodingAgentDependencies, "env" | "resolveSecretEnv"> = {},
 ): Promise<ExternalWorkerLaunchEnv> {
@@ -520,6 +525,8 @@ export async function buildExternalWorkerLaunchEnv(
     AGENT_ID: options.parentAgentId,
     LETTA_AGENT_ID: options.parentAgentId,
     LETTA_PARENT_AGENT_ID: options.parentAgentId,
+    LETTA_PARENT_CONVERSATION_ID:
+      options.parentConversationId ?? getConversationId() ?? "default",
     LETTA_CODE_AGENT_ROLE: "subagent",
     // A Letta CLI launched from the worker's shell stays inside the depth bound.
     [SUBAGENT_DEPTH_ENV]: String(getCurrentSubagentDepth() + 1),
@@ -715,6 +722,15 @@ export async function runExternalCodingAgent(
       return capture(
         await (deps.runCodexTurn ?? runCodexTurn)(
           {
+            traceContext: scope
+              ? {
+                  actingUserId: scope.actingUserId,
+                  secretValues: Object.values(secretEnv),
+                  parent_agent_id: scope.agentId,
+                  parent_conversation_id: scope.conversationId,
+                  task_id: options.taskId ?? randomUUID(),
+                }
+              : undefined,
             prompt: options.prompt,
             parentAgentId: options.parentAgentId,
             cwd,
@@ -773,6 +789,15 @@ export async function runExternalCodingAgent(
       return capture(
         await runClaudeTurn(
           {
+            traceContext: scope
+              ? {
+                  actingUserId: scope.actingUserId,
+                  secretValues: Object.values(secretEnv),
+                  parent_agent_id: scope.agentId,
+                  parent_conversation_id: scope.conversationId,
+                  task_id: options.taskId ?? randomUUID(),
+                }
+              : undefined,
             prompt: options.prompt,
             parentAgentId: options.parentAgentId,
             cwd,

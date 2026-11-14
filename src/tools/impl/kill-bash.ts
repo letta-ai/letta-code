@@ -1,4 +1,5 @@
 import { cancelMonitorBackup } from "./monitor-backup.js";
+import { persistMonitorState } from "./monitor-state";
 import {
   backgroundProcesses,
   clearBackgroundProcessCleanup,
@@ -10,7 +11,10 @@ export function killBackgroundProcess(shell_id: string): boolean {
   const proc = backgroundProcesses.get(shell_id);
   // Monitors and workflows keep their entry after a stop so their status and
   // output file remain available; only a running one can be killed.
-  const retainsEntry = proc?.kind === "monitor" || proc?.kind === "workflow";
+  const retainsEntry =
+    proc?.kind === "monitor" ||
+    proc?.kind === "workflow" ||
+    proc?.kind === "tool";
   if (!proc || (retainsEntry && proc.status !== "running")) {
     return false;
   }
@@ -24,14 +28,15 @@ export function killBackgroundProcess(shell_id: string): boolean {
       proc.status = "failed";
     }
     proc.process.kill("SIGTERM");
+    persistMonitorState(proc);
     if (proc.kind === "monitor") void cancelMonitorBackup(shell_id);
     clearBackgroundProcessCleanup(shell_id);
     if (retainsEntry) {
       scheduleBackgroundProcessCleanup(shell_id);
-      notifyBackgroundProcessStateChanged(proc.runtimeScope);
     } else {
       backgroundProcesses.delete(shell_id);
     }
+    notifyBackgroundProcessStateChanged(proc.runtimeScope);
     return true;
   } catch {
     proc.status = previousStatus;

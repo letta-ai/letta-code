@@ -40,6 +40,7 @@ const TOOL_CALL_REFILL_MS = 500;
 const MAX_RESULT_CHARS = 30_000;
 
 export interface ScriptMonitorArgs {
+  taskId?: string;
   description: string;
   script: string;
   args?: unknown;
@@ -157,7 +158,7 @@ export async function startScriptMonitor(
     throw error;
   });
 
-  const taskId = getNextMonitorId();
+  const taskId = args.taskId ?? getNextMonitorId();
   const outputFile = createBackgroundOutputFile(taskId);
   const output = hooks.createOutput(outputFile);
   const scope = resolveNotificationScope(args.parentScope);

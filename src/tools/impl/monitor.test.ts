@@ -10,6 +10,10 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebSocketServer } from "ws";
+import {
+  resolveBackendMode,
+  setConfiguredBackendMode,
+} from "@/backend/backend-mode";
 import { runWithRuntimeContext } from "@/runtime-context";
 import {
   executeTool,
@@ -53,6 +57,7 @@ function outputFileOf(result: Awaited<ReturnType<typeof monitor>>): string {
 }
 
 describe("Monitor", () => {
+  let previousBackendMode = resolveBackendMode();
   let scratchpad: string;
   let previousScratchpad: string | undefined;
   let previousManagedCloud: string | undefined;
@@ -73,6 +78,8 @@ describe("Monitor", () => {
   }
 
   beforeEach(() => {
+    previousBackendMode = resolveBackendMode();
+    setConfiguredBackendMode("local");
     previousManagedCloud = process.env.LETTA_MANAGED_CLOUD_RUNTIME;
     delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
     previousScratchpad = process.env.LETTA_SCRATCHPAD;
@@ -85,6 +92,7 @@ describe("Monitor", () => {
   });
 
   afterEach(() => {
+    setConfiguredBackendMode(previousBackendMode);
     if (previousManagedCloud === undefined) {
       delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
     } else {

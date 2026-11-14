@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { __testSetBackend } from "@/backend";
 import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
+import { removeTestDir } from "@/test-utils/test-fs";
 import { toolFilter } from "./filter";
 import {
   clearCapturedToolExecutionContexts,
@@ -33,7 +34,7 @@ afterEach(async () => {
   if (originalArtifacts === undefined) delete process.env.LETTA_ARTIFACTS;
   else process.env.LETTA_ARTIFACTS = originalArtifacts;
   for (const path of temporaryDirectories.splice(0)) {
-    await rm(path, { recursive: true, force: true });
+    await removeTestDir(path);
   }
 });
 
@@ -111,9 +112,11 @@ describe("shared toolset construction", () => {
       expect(description).toContain("## Available Agents");
       expect(description).toContain("### toolset-auditor");
       expect(description).toContain("Inspect toolset assembly");
-      expect(description).toContain("### claude-code");
-      expect(description).toContain("### codex");
-      expect(description).toContain("### cursor");
+      // External workers are harness values, not subagent types; internal
+      // subagents are harness-launched only.
+      for (const hidden of ["claude-code", "codex", "cursor", "reflection"]) {
+        expect(description).not.toContain(`### ${hidden}\n`);
+      }
     }
     const other = await prepare({ toolsetPreference: "letta" });
     expect(

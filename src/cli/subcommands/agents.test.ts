@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { buildAgentConfigReport } from "@/cli/subcommands/model";
+import { removeTestDir } from "@/test-utils/test-fs";
 
 describe("buildAgentConfigReport", () => {
   test("reports agent defaults and redacts credential fields", () => {
@@ -214,7 +215,7 @@ describe("agents create --body", () => {
   });
 
   afterAll(async () => {
-    if (home) await rm(home, { recursive: true, force: true });
+    if (home) await removeTestDir(home);
   });
 
   test("creates the agent the request describes, from a file or stdin", async () => {

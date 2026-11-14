@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { checkPermission } from "@/permissions/checker";
 import { permissionMode } from "@/permissions/mode";
 import { sessionPermissions } from "@/permissions/session";
@@ -373,6 +376,31 @@ test("Deny directory blocks all files within", () => {
     "/Users/test/project",
   );
   expect(result.decision).toBe("deny");
+});
+
+test("deny rules match expanded home paths", () => {
+  const tempHome = mkdtempSync(join(tmpdir(), "permission-home-"));
+  const previousHome = process.env.HOME;
+  process.env.HOME = tempHome;
+  try {
+    const permissions: PermissionRules = {
+      allow: [],
+      deny: ["Read(~/.ssh/**)"],
+      ask: [],
+    };
+    for (const filePath of ["$HOME/.ssh/id_rsa", "~/.ssh/id_rsa"]) {
+      expect(
+        checkPermission("Read", { file_path: filePath }, permissions, tempHome),
+      ).toMatchObject({
+        decision: "deny",
+        matchedRule: "Read(~/.ssh/**)",
+      });
+    }
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    rmSync(tempHome, { recursive: true, force: true });
+  }
 });
 
 // ============================================================================

@@ -19,6 +19,8 @@ export interface RuntimeWorkspaceSandbox {
 }
 
 export interface RuntimeContextSnapshot {
+  /** Epoch milliseconds when the current turn input arrived. */
+  turnStartedAt?: number;
   /** Listener transport connection that owns the current turn, when present. */
   connectionId?: string | null;
   /** Registered listener device that owns the current turn, when present. */
@@ -64,6 +66,8 @@ export interface RuntimeContextSnapshot {
   permissionMode?: RuntimePermissionMode;
   workspaceSandbox?: RuntimeWorkspaceSandbox;
   executionSettings?: RuntimeExecutionSettings;
+  /** Foreground yield from the runtime tool policy; unset uses the default. */
+  foregroundYieldMs?: number;
 }
 
 const runtimeContextStorage = new AsyncLocalStorage<RuntimeContextSnapshot>();

@@ -92,7 +92,9 @@ describe("runGitWithRetry HTTP failures", () => {
   ])("clone: $status, $failures failures", async (scenario) => {
     const cwd = await mkdtemp(join(tmpdir(), "memfs-git-http-"));
     let attempts = 0;
+    const requests: string[] = [];
     const server = createServer((req, res) => {
+      requests.push(`${Date.now()} ${req.method} ${req.url}`);
       if (req.url?.startsWith("/repo.git/info/refs")) {
         attempts += 1;
         res.writeHead(attempts <= scenario.failures ? scenario.status : 200, {
@@ -121,7 +123,13 @@ describe("runGitWithRetry HTTP failures", () => {
         { baseDelayMs: 0, timeoutMs: 5_000 },
       );
       if (scenario.succeeds) {
-        await clone;
+        // This scenario has hung on Windows CI until the per-attempt timeout.
+        // Keep the server's view of the attempts so the next failure says
+        // which request git was waiting on.
+        await clone.catch((error: Error) => {
+          error.message += `\nserver requests:\n${requests.join("\n")}`;
+          throw error;
+        });
       } else {
         await expect(clone).rejects.toThrow(
           `The requested URL returned error: ${scenario.status}`,

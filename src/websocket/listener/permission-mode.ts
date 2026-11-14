@@ -13,12 +13,23 @@ import {
   migratePermissionMode,
   type PermissionMode,
 } from "@/permissions/mode";
-import { loadRemoteSettings, saveRemoteSettings } from "./remote-settings";
+import {
+  loadRemoteSettings,
+  type PersistedPermissionModeState,
+  saveRemoteSettings,
+} from "./remote-settings";
 import { normalizeConversationId, normalizeCwdAgentId } from "./scope";
 import type { ListenerRuntime } from "./types";
 
 export type ConversationPermissionModeState = {
   mode: PermissionMode;
+  /**
+   * True when the mode was chosen for this conversation (mode change or a
+   * non-default runtime_start), as opposed to inherited from a default. Explicit
+   * entries are never pruned or dropped from the persisted map, even when they
+   * equal the global default, so a later default-only mode cannot override them.
+   */
+  explicit?: boolean;
 };
 
 export function getPermissionModeScopeKey(
@@ -42,7 +53,7 @@ function createDefaultPermissionModeState(): ConversationPermissionModeState {
 function isPrunableDefaultState(
   state: ConversationPermissionModeState,
 ): boolean {
-  return state.mode === globalPermissionMode.getMode();
+  return !state.explicit && state.mode === globalPermissionMode.getMode();
 }
 
 /**
@@ -166,6 +177,7 @@ export function loadPersistedPermissionModeMap(): Map<
         migratePermissionMode(persisted.mode) ?? DEFAULT_PERMISSION_MODE;
       map.set(key, {
         mode: rawMode,
+        ...(persisted.explicit ? { explicit: true } : {}),
       });
     }
     return map;
@@ -190,16 +202,17 @@ export function persistPermissionModeMapForRuntime(
 function persistPermissionModeMap(
   map: Map<string, ConversationPermissionModeState>,
 ): void {
-  const permissionModeMap: Record<string, { mode: PermissionMode }> = {};
+  const permissionModeMap: Record<string, PersistedPermissionModeState> = {};
 
   for (const [key, state] of map) {
     // Skip entries that are just the default starting mode with no context — lean map.
-    if (state.mode === DEFAULT_PERMISSION_MODE) {
+    if (!state.explicit && state.mode === DEFAULT_PERMISSION_MODE) {
       continue;
     }
 
     permissionModeMap[key] = {
       mode: state.mode,
+      ...(state.explicit ? { explicit: true } : {}),
     };
   }
 

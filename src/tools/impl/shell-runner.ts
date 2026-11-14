@@ -51,6 +51,7 @@ export interface ShellProcessResult {
   stdout: string;
   stderr: string;
   exitCode: number | null;
+  signal?: string | number | null;
 }
 
 export interface RunningShellProcess {
@@ -86,7 +87,7 @@ type NodePtyModule = {
 type ProcessEvents = {
   output(data: Buffer | string, stream: ShellOutputStream): void;
   error(error: NodeJS.ErrnoException): void;
-  close(code: number | null): void;
+  close(code: number | null, signal?: string | number | null): void;
 };
 
 const NODE_PTY_BRIDGE_SCRIPT = `
@@ -365,8 +366,8 @@ function spawnNativePtyProcess(
   });
 
   ptyProcess.onData((data) => events.output(data, "stdout"));
-  ptyProcess.onExit(({ exitCode }) => {
-    events.close(typeof exitCode === "number" ? exitCode : null);
+  ptyProcess.onExit(({ exitCode, signal }) => {
+    events.close(typeof exitCode === "number" ? exitCode : null, signal);
   });
 
   return {
@@ -565,7 +566,7 @@ export function startShellProcess(
       void pullRequestTracker?.finish();
       rejectCompletion(buildSpawnError(error, executable, options.cwd));
     },
-    close(code) {
+    close(code, signal) {
       if (completed) return;
       completed = true;
       cleanup();
@@ -581,7 +582,12 @@ export function startShellProcess(
         rejectCompletion(buildAbortError(stdout, stderr));
         return;
       }
-      resolveCompletion({ stdout, stderr, exitCode: code });
+      resolveCompletion({
+        stdout,
+        stderr,
+        exitCode: code,
+        ...(signal ? { signal } : {}),
+      });
     },
   };
 

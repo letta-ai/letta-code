@@ -15,7 +15,9 @@ import { link, mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { uptime } from "node:os";
 import path from "node:path";
 import {
+  getOwnProcessStartTime,
   getProcessCommand,
+  getProcessStartTime,
   isPidReusedByNonLetta,
 } from "@/utils/process-liveness";
 import { resolveGlobalConfigDir } from "@/utils/settings-path";
@@ -37,6 +39,7 @@ interface ManualListenerLockRecord {
   ownerToken: string;
   acquiredAt: string;
   scopeHash: string;
+  started?: string;
 }
 
 interface ManualListenerLockDeps {
@@ -48,6 +51,8 @@ interface ManualListenerLockDeps {
   bootTimeMs: number;
   /** Returns the pid's command line, or null when it cannot be determined. */
   getProcessCommand: (pid: number) => string | null;
+  getOwnProcessStartTime: () => Promise<string | null>;
+  getProcessStartTime: (pid: number) => Promise<string | null>;
 }
 
 const RECOVERY_MAX_DEPTH = 64;
@@ -101,16 +106,21 @@ function getDefaultBootTimeMs(): number {
 }
 
 /**
- * A live pid recorded before the current boot may have been reused by an
- * unrelated process after a reboot. The boot estimate moves with the wall
- * clock, so it only prompts a closer look: the owner is treated as stale only
- * when its pid is positively identified as something other than letta.
+ * For legacy records without a start time, a live pid recorded before the
+ * current boot may have been reused after a reboot. The boot estimate moves
+ * with the wall clock, so it only prompts a closer look: the owner is treated
+ * as stale only when its pid is positively identified as something other than
+ * letta.
  */
-function isOwnerAlive(
+async function isOwnerAlive(
   record: ManualListenerLockRecord,
   deps: ManualListenerLockDeps,
-): boolean {
+): Promise<boolean> {
   if (!deps.isProcessAlive(record.pid)) return false;
+  if (record.started) {
+    const started = await deps.getProcessStartTime(record.pid);
+    return started === null || started === record.started;
+  }
   const acquiredAtMs = Date.parse(record.acquiredAt);
   if (
     !Number.isFinite(acquiredAtMs) ||
@@ -177,6 +187,8 @@ function parseLockRecord(
       typeof parsed.ownerToken !== "string" ||
       parsed.ownerToken.length === 0 ||
       typeof parsed.acquiredAt !== "string" ||
+      (parsed.started !== undefined &&
+        (typeof parsed.started !== "string" || parsed.started.length === 0)) ||
       parsed.scopeHash !== expectedScopeHash
     ) {
       return null;
@@ -276,7 +288,7 @@ async function recoverDeadOwner(
           lockPath,
         );
       }
-      if (isOwnerAlive(claimOwner, deps)) {
+      if (await isOwnerAlive(claimOwner, deps)) {
         return false;
       }
     }
@@ -325,16 +337,20 @@ export async function acquireManualListenerLock(
     isProcessAlive: defaultIsProcessAlive,
     bootTimeMs: getDefaultBootTimeMs(),
     getProcessCommand,
+    getOwnProcessStartTime,
+    getProcessStartTime,
     ...overrides,
   };
   const listenerLockDir = path.join(deps.lockRoot, "listeners");
   const lockPath = path.join(listenerLockDir, `manual-${scopeHash}.lock`);
+  const started = (await deps.getOwnProcessStartTime()) ?? undefined;
   const ownerRecord: ManualListenerLockRecord = {
     version: 1,
     pid: deps.processId,
     ownerToken: deps.ownerToken,
     acquiredAt: new Date().toISOString(),
     scopeHash,
+    ...(started ? { started } : {}),
   };
   const ownerContents = JSON.stringify(ownerRecord);
 
@@ -407,7 +423,7 @@ export async function acquireManualListenerLock(
         lockPath,
       );
     }
-    if (isOwnerAlive(incumbent, deps)) {
+    if (await isOwnerAlive(incumbent, deps)) {
       throw new ManualListenerAlreadyRunningError(incumbent.pid, lockPath);
     }
 

@@ -2,6 +2,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  resolveBackendMode,
+  setConfiguredBackendMode,
+} from "@/backend/backend-mode";
 import { runWithRuntimeContext } from "@/runtime-context";
 import {
   clearPendingMessages,
@@ -43,6 +47,7 @@ async function waitFor(predicate: () => boolean, timeoutMs = 4000) {
 
 describe("Monitor backup wake", () => {
   let scratchpad: string;
+  let previousBackendMode = resolveBackendMode();
   let previousScratchpad: string | undefined;
   let calls: WakeCall[];
   let nextId: number;
@@ -56,6 +61,8 @@ describe("Monitor backup wake", () => {
   }
 
   beforeEach(async () => {
+    previousBackendMode = resolveBackendMode();
+    setConfiguredBackendMode("local");
     previousScratchpad = process.env.LETTA_SCRATCHPAD;
     scratchpad = mkdtempSync(join(tmpdir(), "monitor-backup-test-"));
     process.env.LETTA_SCRATCHPAD = scratchpad;
@@ -92,6 +99,7 @@ describe("Monitor backup wake", () => {
   });
 
   afterEach(() => {
+    setConfiguredBackendMode(previousBackendMode);
     stopMonitorsForProcessExit();
     backgroundProcesses.clear();
     __setMonitorBackupWakeForTests(null);

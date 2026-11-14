@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import WebSocket from "ws";
 import { settingsManager } from "@/settings-manager";
+import { removeTestDir } from "@/test-utils/test-fs";
 import {
   startListenerClient,
   stopListenerClient,
@@ -101,7 +102,7 @@ afterEach(async () => {
   settingsManager.updateSettings = originalUpdateSettings;
   settingsManager.flush = originalFlush;
   await settingsManager.reset();
-  await rm(testHome, { recursive: true, force: true });
+  await removeTestDir(testHome);
   for (const key of ENV_KEYS) {
     const value = originalEnv[key];
     if (value === undefined) delete process.env[key];

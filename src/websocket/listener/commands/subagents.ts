@@ -8,6 +8,7 @@ import type {
   LaunchSubagentResponse,
 } from "@/types/subagent-protocol";
 import { getConversationWorkingDirectory } from "@/websocket/listener/cwd";
+import { toSubagentLaunchArgs } from "@/websocket/listener/subagent-protocol-inbound";
 import type { ConversationRuntime } from "@/websocket/listener/types";
 
 /** A sideband launch never acquires or changes the parent's turn lease. */
@@ -74,7 +75,7 @@ export async function handleLaunchSubagentCommand(
           },
           () =>
             launch({
-              ...command.args,
+              ...toSubagentLaunchArgs(command.args),
               signal,
               toolCallId: command.tool_call_id,
               notifyCaller: command.notify === "caller",

@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { settingsManager } from "@/settings-manager";
+import { removeTestDir } from "@/test-utils/test-fs";
 import { setServiceName } from "@/utils/secrets";
 
 const originalHome = process.env.HOME;
@@ -19,7 +20,7 @@ afterEach(async () => {
   await settingsManager.reset();
   process.env.HOME = originalHome;
   setServiceName("letta-code");
-  await rm(testHome, { recursive: true, force: true });
+  await removeTestDir(testHome);
 });
 
 describe("per-agent MCP settings", () => {

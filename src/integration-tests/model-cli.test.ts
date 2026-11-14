@@ -15,7 +15,7 @@ async function verifyCloudModelCli(verifyInference: boolean) {
   const agent = await client.agents.create({
     name: "CLI set-model integration",
     agent_type: "letta_v1_agent",
-    model: "letta/auto",
+    model: "anthropic/claude-sonnet-4-6",
     system: "Reply concisely. Do not call tools.",
     include_base_tools: false,
     include_base_tool_rules: false,
@@ -63,7 +63,7 @@ async function verifyCloudModelCli(verifyInference: boolean) {
     const changed = await cli(["set", model, "--reasoning", "high"]);
     expect(changed.code, changed.stderr).toBe(0);
     expect(JSON.parse(changed.stdout)).toMatchObject({
-      agent: { id: agent.id, model: "letta/auto" },
+      agent: { id: agent.id, model: "anthropic/claude-sonnet-4-6" },
       conversation: { id: conversationId, agent_id: agent.id, model },
       effective: { scope: "conversation", model },
     });

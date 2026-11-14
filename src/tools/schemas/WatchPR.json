@@ -3,7 +3,26 @@
   "properties": {
     "url": {
       "type": "string",
-      "description": "Open github.com pull request URL ending at the PR number, for example https://github.com/owner/repo/pull/123. Remove sub-page suffixes such as /files or /commits."
+      "description": "Open github.com pull request URL ending at the PR number, for example https://github.com/owner/repo/pull/123. Remove sub-page suffixes such as /files or /commits. Also accepts https://github.com/owner/repo/actions/runs/123."
+    },
+    "notify_on": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "merged",
+          "closed",
+          "conflict",
+          "checks_done",
+          "review",
+          "comment",
+          "push",
+          "state",
+          "checks"
+        ]
+      },
+      "description": "PR events to report; omitted reports all. checks_done reports when no checks remain pending, including pass/fail. Workflow runs always report status and completion."
     }
   },
   "required": ["url"],

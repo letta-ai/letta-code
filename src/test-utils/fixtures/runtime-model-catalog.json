@@ -1,11 +1,11 @@
 {
   "models": [
     {
-      "id": "auto",
+      "id": "glm",
       "isDefault": true,
-      "handle": "letta/auto",
-      "label": "Auto",
-      "description": "Automatically select the best model",
+      "handle": "letta/glm",
+      "label": "GLM",
+      "description": "Letta's default model",
       "free": true,
       "updateArgs": {
         "context_window": 140000,

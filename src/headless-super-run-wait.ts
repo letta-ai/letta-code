@@ -5,6 +5,10 @@ import type {
   Run,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import {
+  type AgentRuntimeStatusEntry,
+  getAgentRuntimeStatus,
+} from "@/backend/api/agents";
+import {
   type EnqueueReceipt,
   type ExactSuperRun,
   getEnqueueAgentId,
@@ -26,6 +30,13 @@ export interface SuperRunWaitDeps {
    * ignored: progress is best effort and never ends the wait.
    */
   onProgress?: (runIds: string[], signal: AbortSignal) => Promise<void>;
+  /** Optional, best-effort observation of an idle child with background work. */
+  runtimeStatus?: (
+    agentId: string,
+    conversationId: string,
+    signal: AbortSignal,
+  ) => Promise<AgentRuntimeStatusEntry | null>;
+  onIdle?: (text: string, backgroundCount: number) => void;
   progressMs?: number;
   pollMs?: number;
   /** How long a completed Super Run may report no linked child run. */
@@ -37,6 +48,24 @@ class RemoteExecutionFailed extends Error {}
 
 /** The server can link a child run to its Super Run after marking it complete. */
 const DEFAULT_RUN_LINK_GRACE_MS = 60_000;
+
+/** Read only the accepted send's conversation from the runtime snapshot. */
+export async function readConversationRuntimeStatus(
+  agentId: string,
+  conversationId: string,
+  signal: AbortSignal,
+): Promise<AgentRuntimeStatusEntry | null> {
+  const snapshot = await getAgentRuntimeStatus(
+    agentId,
+    [conversationId],
+    signal,
+  );
+  return (
+    snapshot.statuses.find(
+      (entry) => entry.conversation_id === conversationId,
+    ) ?? null
+  );
+}
 
 function isTransientReadError(error: unknown): boolean {
   if (error instanceof ApiRequestError || error instanceof APIError) {
@@ -145,6 +174,48 @@ export async function waitForAcceptedSuperRun(
     ((ms: number, waitSignal: AbortSignal) =>
       delay(ms, undefined, { signal: waitSignal }));
 
+  let newestRunId: string | undefined;
+  let idleNotified = false;
+  const reportIdle = async (exact: ExactSuperRun) => {
+    if (!deps.runtimeStatus || !deps.onIdle) return;
+    const runId = exact.run_ids[0];
+    if (runId !== newestRunId) {
+      newestRunId = runId;
+      idleNotified = false;
+    }
+    if (!runId) return;
+    try {
+      const readSignal = AbortSignal.any([signal, AbortSignal.timeout(10_000)]);
+      const status = await deps.runtimeStatus(
+        getEnqueueAgentId(receipt),
+        receipt.conversation_id,
+        readSignal,
+      );
+      if (!status) return;
+      if (status.active_run_ids.some((id) => exact.run_ids.includes(id))) {
+        idleNotified = false;
+        return;
+      }
+      const count = status.active_bash_count ?? 0;
+      if (
+        idleNotified ||
+        status.loop_state?.status !== "WAITING_ON_INPUT" ||
+        count <= 0
+      )
+        return;
+      const run = await deps.run(runId, readSignal);
+      if (run.status !== "completed" || run.stop_reason === "requires_approval")
+        return;
+      const text = assistantText(await deps.messages(runId, readSignal));
+      if (!text) return;
+      deps.onIdle(text, count);
+      idleNotified = true;
+    } catch {
+      // Older servers and transient observation failures must not end the wait.
+      signal.throwIfAborted();
+    }
+  };
+
   while (true) {
     signal.throwIfAborted();
     const exact = await retryRead(
@@ -167,6 +238,7 @@ export async function waitForAcceptedSuperRun(
     const terminal = exact.status === "COM" || exact.completed_at !== null;
     if (!terminal) {
       await reportProgress(exact.run_ids, false);
+      await reportIdle(exact);
       await sleep(pollMs, signal);
       continue;
     }

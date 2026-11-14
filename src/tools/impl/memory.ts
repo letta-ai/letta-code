@@ -22,6 +22,7 @@ import { getCurrentAgentId } from "@/agent/context";
 import { detectMemoryFormat } from "@/agent/memory-format";
 import { getActiveMemoryDirectory } from "@/agent/memory-runtime";
 import { parseFrontmatter } from "@/utils/frontmatter";
+import { isMemoryUnavailable } from "@/utils/memory-access";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
 
@@ -345,6 +346,10 @@ function renderFile(relPath: string, fullPath: string): string {
 }
 
 export async function memory(args: MemoryArgs): Promise<{ content: string }> {
+  const agentId = getCurrentAgentId();
+  if (agentId && isMemoryUnavailable(agentId)) {
+    return { content: "Memory is not available on this machine." };
+  }
   validateRequiredParams(args, ["path"], "Memory");
   const memoryDir = resolveMemoryToolDirectory();
   if (!memoryDir) {

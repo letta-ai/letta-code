@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import type { ServerResponse } from "node:http";
 import type { Backend } from "@/backend";
 import { __testSetBackend } from "@/backend";
-import { resolveAgentForModel } from "@/websocket/app-server-openai-common";
+import {
+  handleListModels,
+  resolveAgentForModel,
+} from "@/websocket/app-server-openai-common";
 
 interface TestAgent {
   id: string;
@@ -133,5 +137,45 @@ describe("OpenAI model agent resolution", () => {
     await expect(resolveAgentForModel("agent-cloud-secret")).rejects.toBe(
       forbidden,
     );
+  });
+});
+
+describe("OpenAI model listing", () => {
+  test("caps requests at 200 and lists every agent across local pages", async () => {
+    const agents = Array.from({ length: 401 }, (_, index) => ({
+      id: `agent-${index}`,
+    }));
+    const calls: Array<Record<string, unknown> | undefined> = [];
+    setLookupBackend({
+      listAgents: async (body) => {
+        calls.push(body);
+        const limit = body?.limit as number;
+        expect(limit).toBeGreaterThan(0);
+        expect(limit).toBeLessThanOrEqual(200);
+        const start = body?.after
+          ? agents.findIndex((agent) => agent.id === body.after) + 1
+          : 0;
+        return { items: agents.slice(start, start + limit) };
+      },
+    });
+    let payload = "";
+    const response = {
+      writeHead: (status: number) => expect(status).toBe(200),
+      end: (body: string) => {
+        payload = body;
+      },
+    } as unknown as ServerResponse;
+
+    await handleListModels(response);
+
+    expect(calls).toHaveLength(3);
+    expect(calls.map((body) => body?.after)).toEqual([
+      undefined,
+      "agent-199",
+      "agent-399",
+    ]);
+    expect(
+      JSON.parse(payload).data.map((model: { id: string }) => model.id),
+    ).toEqual(agents.map((agent) => agent.id));
   });
 });

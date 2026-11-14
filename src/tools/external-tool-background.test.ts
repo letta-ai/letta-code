@@ -1,7 +1,26 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { readFileSync, rmSync } from "node:fs";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import {
+  backgroundProcesses,
+  clearBackgroundProcessCleanup,
+} from "@/tools/impl/process_manager";
+import { task_stop } from "@/tools/impl/task-stop";
 import { autoBackgroundExternalTool } from "./external-tool-background";
 
+const existingEntries = new Set<string>();
+beforeEach(() => {
+  existingEntries.clear();
+  for (const id of backgroundProcesses.keys()) existingEntries.add(id);
+});
+afterEach(() => {
+  for (const [id, entry] of backgroundProcesses) {
+    if (existingEntries.has(id)) continue;
+    clearBackgroundProcessCleanup(id);
+    if (entry.outputFile) rmSync(entry.outputFile, { force: true });
+    backgroundProcesses.delete(id);
+  }
+});
 const scope = {
   agentId: "agent-1",
   conversationId: "conv-1",
@@ -9,7 +28,43 @@ const scope = {
 };
 const listenerTool = { autoBackground: true };
 
+function backgroundEntry(receipt: { toolReturn: unknown }) {
+  const id = String(receipt.toolReturn).match(/task ID: (\S+)/)?.[1];
+  const entry = id ? backgroundProcesses.get(id) : undefined;
+  if (!id || !entry) throw new Error("Missing returned background task");
+  return [id, entry] as const;
+}
+
 describe("external tool auto-backgrounding", () => {
+  test("stopping a remote task reports unsupported cancellation and still notifies", async () => {
+    let complete!: (result: { status: "success"; toolReturn: string }) => void;
+    const notifications: unknown[] = [];
+    const receipt = await autoBackgroundExternalTool(
+      "write",
+      listenerTool,
+      new Promise<{ status: "success"; toolReturn: string }>((resolve) => {
+        complete = resolve;
+      }),
+      {
+        yieldMs: 1,
+        runtimeScope: scope,
+        enqueue: (message) => notifications.push(message),
+      },
+    );
+    const [id, entry] = backgroundEntry(receipt);
+    const stopped = await task_stop({ task_id: id });
+    expect(stopped.killed).toBe(false);
+    expect(stopped.output).toContain("doesn't support cancelling");
+    expect(stopped.output).toContain("will still arrive as a notification");
+    complete({ status: "success", toolReturn: "remote receipt" });
+    await Bun.sleep(0);
+    expect(entry.status).toBe("completed");
+    expect(readFileSync(entry.outputFile as string, "utf8")).toContain(
+      "remote receipt",
+    );
+    expect(notifications).toHaveLength(1);
+  });
+
   test("keeps quick results inline without a notification", async () => {
     const notifications: unknown[] = [];
     const result = await autoBackgroundExternalTool(
@@ -124,6 +179,10 @@ describe("external tool auto-backgrounding", () => {
     await Bun.sleep(0);
     expect(notifications).toHaveLength(1);
     expect(notifications[0]?.content).toEqual(richResult);
+    const [, entry] = backgroundEntry(receipt);
+    expect(readFileSync(entry?.outputFile as string, "utf8")).toBe(
+      "before\n[Image result; see completion notification]\nafter\n",
+    );
   });
 
   test("does not hide a long result's overflow-file path in a second clamp", async () => {

@@ -1,7 +1,8 @@
 import { getBackend } from "@/backend";
+import { experimentManager } from "@/experiments/manager";
+import MonitorCloudDescription from "./descriptions/MonitorCloud.md";
 import type { JsonSchema } from "./model-facing-tool";
-
-const COMPUTER_SECTION_HEADING = "## Running on Another Computer";
+import MonitorCloudSchema from "./schemas/MonitorCloud.json";
 
 /**
  * Remove the `computer` parameter from the Task tool schema. Used when the
@@ -19,26 +20,8 @@ export function stripComputerFromTaskSchema(schema: JsonSchema): JsonSchema {
 }
 
 /**
- * Remove the "Running on Another Computer" section from the Task tool
- * description (the heading and everything up to the next `## ` heading).
- */
-export function stripComputerFromTaskDescription(description: string): string {
-  const start = description.indexOf(COMPUTER_SECTION_HEADING);
-  if (start === -1) {
-    return description;
-  }
-  const afterHeading = start + COMPUTER_SECTION_HEADING.length;
-  const next = description.indexOf("\n## ", afterHeading);
-  const removed =
-    next === -1
-      ? description.slice(0, start)
-      : description.slice(0, start) + description.slice(next + 1);
-  return removed.replace(/\n{3,}/g, "\n\n").trimEnd();
-}
-
-/**
- * Adjust a bundled tool's model-facing assets for the active backend. Only
- * Task varies today: it advertises `computer` only when the backend can route
+ * Adjust a bundled tool's model-facing assets for the active backend. Monitor selects Cloud assets when its experiment is enabled.
+ * Task varies by backend: it advertises `computer` only when the backend can route
  * work to another environment.
  */
 export async function resolveBackendSpecificToolAssets(
@@ -46,6 +29,12 @@ export async function resolveBackendSpecificToolAssets(
   description: string,
   inputSchema: JsonSchema,
 ): Promise<{ description: string; inputSchema: JsonSchema }> {
+  if (name === "Monitor" && experimentManager.isEnabled("cloud_monitors")) {
+    return {
+      description: (MonitorCloudDescription as string).trim(),
+      inputSchema: MonitorCloudSchema as JsonSchema,
+    };
+  }
   if (name !== "Task") {
     return { description, inputSchema };
   }
@@ -59,7 +48,7 @@ export async function resolveBackendSpecificToolAssets(
     return { description, inputSchema };
   }
   return {
-    description: stripComputerFromTaskDescription(description),
+    description,
     inputSchema: stripComputerFromTaskSchema(inputSchema),
   };
 }

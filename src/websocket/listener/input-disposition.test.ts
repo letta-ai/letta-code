@@ -936,7 +936,10 @@ test("corrupt durable store fails closed and is never overwritten", () => {
     const runtime = persistentRuntime(path);
     expect(
       reserveInputDisposition(runtime, ordinaryInputIdentity("cm-corrupt")),
-    ).toEqual({ kind: "full" });
+    ).toEqual({
+      kind: "full",
+      reason: expect.stringContaining("Input ledger unavailable: "),
+    });
     expect(() => restoreDurableQueuedInputs(runtime.listener)).toThrow();
     expect(readFileSync(path, "utf8")).toBe("{corrupt");
   } finally {
@@ -954,7 +957,7 @@ test("durability failure rejects admission without an in-memory tombstone", () =
     mkdirSync(directoryAsStore);
     expect(
       reserveInputDisposition(runtime, ordinaryInputIdentity("cm-failure")),
-    ).toEqual({ kind: "full" });
+    ).toEqual({ kind: "full", reason: expect.stringContaining("EISDIR") });
     expect(runtime.listener.acceptedInputDispositionLedger.entries.size).toBe(
       0,
     );

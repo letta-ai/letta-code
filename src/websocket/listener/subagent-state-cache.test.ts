@@ -3,6 +3,7 @@ import WebSocket from "ws";
 import {
   addToolCall,
   clearAllSubagents,
+  completeSubagent,
   registerSubagent,
 } from "@/agent/subagent-state";
 import {
@@ -18,7 +19,7 @@ import {
   installProcessEventRouting,
 } from "./process-services";
 import { emitStateSync } from "./protocol-outbound";
-import { setActiveRuntime } from "./runtime";
+import { evictConversationRuntimeIfIdle, setActiveRuntime } from "./runtime";
 import type { StartListenerOptions } from "./types";
 
 type SentFrame = {
@@ -204,6 +205,39 @@ test("changes missed while disconnected do not suppress updates after reconnect"
     expect(updates[0]?.subagents?.map((s) => s.subagent_id)).toEqual([
       "subagent-1",
     ]);
+  } finally {
+    clearProcessServices(listener);
+  }
+});
+
+test("terminal subagent state reaches an evicted launch scope after a handoff", () => {
+  const { listener, takeSubagentUpdates } = setupListener();
+  try {
+    registerSubagent(
+      "stopped-child",
+      "claude-code",
+      "Stoppable child",
+      "stop-call",
+      true,
+      false,
+      { agentId: AGENT_ID, conversationId: "conv-owner" },
+    );
+    takeSubagentUpdates();
+    const owner = getOrCreateScopedRuntime(listener, AGENT_ID, "conv-owner");
+    expect(evictConversationRuntimeIfIdle(owner)).toBe(true);
+    completeSubagent("stopped-child", {
+      success: false,
+      error: "Stopped by parent",
+    });
+    const updates = takeSubagentUpdates();
+    expect(updates.map((frame) => frame.runtime?.conversation_id)).toEqual([
+      "conv-owner",
+    ]);
+    expect(updates[0]?.subagents).toMatchObject([
+      { subagent_id: "stopped-child", status: "error" },
+    ]);
+    clearAllSubagents();
+    expect(takeSubagentUpdates().map((frame) => frame.subagents)).toEqual([[]]);
   } finally {
     clearProcessServices(listener);
   }

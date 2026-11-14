@@ -12,7 +12,6 @@
  */
 
 import type { CreateBlock } from "@letta-ai/letta-client/resources/blocks/blocks";
-import { DEFAULT_SUMMARIZATION_MODEL } from "@/constants";
 import { buildCreatedAgentTags } from "./agent-tags";
 import { getDefaultMemoryBlocks } from "./memory";
 import { getDefaultModel, resolveModel } from "./model-catalog";
@@ -213,7 +212,7 @@ export async function buildCreateAgentRequest(
     initial_message_sequence: [],
     parallel_tool_calls: options.parallelToolCalls ?? true,
     compaction_settings: {
-      model: options.compactionModel ?? DEFAULT_SUMMARIZATION_MODEL,
+      model: options.compactionModel ?? modelHandle,
     },
     ...(options.embedding !== undefined
       ? { embedding: options.embedding }

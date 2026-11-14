@@ -1,6 +1,8 @@
+import { isToolsetPreference } from "@/tools/toolset-catalog";
 import type {
   ExternalToolCallResponseCommand,
   RuntimeExternalToolsUpdateCommand,
+  RuntimeToolPolicy,
 } from "@/types/protocol_v2";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -37,12 +39,43 @@ function isExternalToolDefinitionPayload(value: unknown): boolean {
   );
 }
 
+function isStringList(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) && value.every((entry) => typeof entry === "string")
+  );
+}
+
+// A legacy scope_id is still accepted so older controllers are not rejected;
+// registration ignores it.
 export function isRuntimeStartExternalToolsGroup(value: unknown): boolean {
   if (!isRecord(value)) return false;
   return (
-    (value.scope_id === undefined || typeof value.scope_id === "string") &&
     Array.isArray(value.tools) &&
-    value.tools.every(isExternalToolDefinitionPayload)
+    value.tools.every(isExternalToolDefinitionPayload) &&
+    (value.capabilities === undefined ||
+      (isRecord(value.capabilities) &&
+        (value.capabilities.external_tool_call_cancel === undefined ||
+          typeof value.capabilities.external_tool_call_cancel === "boolean")))
+  );
+}
+
+export function isRuntimeToolPolicy(
+  value: unknown,
+): value is RuntimeToolPolicy {
+  if (!isRecord(value)) return false;
+  const toolset = value.toolset;
+  return (
+    (toolset === undefined ||
+      (isRecord(toolset) &&
+        (toolset.base === undefined || isToolsetPreference(toolset.base)) &&
+        (toolset.include === undefined || isStringList(toolset.include)))) &&
+    (value.allowlist === undefined || isStringList(value.allowlist)) &&
+    (value.exclude_interactive === undefined ||
+      typeof value.exclude_interactive === "boolean") &&
+    (value.foreground_yield_ms === undefined ||
+      (typeof value.foreground_yield_ms === "number" &&
+        Number.isFinite(value.foreground_yield_ms) &&
+        value.foreground_yield_ms > 0))
   );
 }
 
@@ -65,7 +98,9 @@ export function isRuntimeExternalToolsUpdateCommand(
       update.runtimes.length === 0 ||
       !update.runtimes.every(isRuntimeScope) ||
       !Array.isArray(update.external_tools) ||
-      !update.external_tools.every(isRuntimeStartExternalToolsGroup)
+      !update.external_tools.every(isRuntimeStartExternalToolsGroup) ||
+      (update.tool_policy !== undefined &&
+        !isRuntimeToolPolicy(update.tool_policy))
     ) {
       return false;
     }

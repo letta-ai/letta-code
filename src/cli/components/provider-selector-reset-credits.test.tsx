@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -10,6 +10,7 @@ import { type BackendMode, resolveBackendMode } from "@/backend/backend-mode";
 import { setLocalOAuthProvider } from "@/backend/local/local-provider-auth-store";
 import { useChatGPTRateLimitState } from "@/cli/hooks/use-chatgpt-rate-limit-state";
 import { settingsManager } from "@/settings-manager";
+import { removeTestDir } from "@/test-utils/test-fs";
 import { ProviderSelector } from "./ProviderSelector";
 
 class CaptureStream extends Writable {
@@ -171,7 +172,7 @@ afterEach(async () => {
   if (previousLocalDir === undefined)
     delete process.env.LETTA_LOCAL_BACKEND_DIR;
   else process.env.LETTA_LOCAL_BACKEND_DIR = previousLocalDir;
-  await rm(storageDir, { recursive: true, force: true });
+  await removeTestDir(storageDir);
 });
 
 async function openResetConfirmation(

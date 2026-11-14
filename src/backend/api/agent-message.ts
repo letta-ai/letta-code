@@ -61,7 +61,7 @@ export function validateAddress(
 ): string | undefined {
   if (!value) return undefined;
   if (kind === "conversation" && value === "default") return value;
-  const prefix = kind === "agent" ? "agent" : "conv";
+  const prefix = kind === "agent" ? "agent" : "(local-)?conv";
   if (!new RegExp(`^${prefix}-[a-zA-Z0-9-]+$`).test(value)) {
     throw new Error(`Invalid ${kind} ID: ${JSON.stringify(value)}`);
   }

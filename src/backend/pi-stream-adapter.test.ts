@@ -646,7 +646,7 @@ describe("PiStreamAdapter", () => {
         ...baseInput,
         agent: {
           ...baseInput.agent,
-          model: "openrouter/anthropic/claude-sonnet-4",
+          model: "openrouter/anthropic/claude-sonnet-4.6",
           model_settings: { provider_type: "openrouter" },
         },
         uiMessages: [
@@ -679,7 +679,7 @@ describe("PiStreamAdapter", () => {
             ],
             api: "openai-completions",
             provider: "openrouter",
-            model: "anthropic/claude-sonnet-4",
+            model: "anthropic/claude-sonnet-4.6",
             usage: emptyLocalUsage(),
             stopReason: "toolUse",
             timestamp: Date.now(),
@@ -852,7 +852,7 @@ describe("PiStreamAdapter", () => {
         // drain
       }
 
-      expect(capturedOptions).toMatchObject({ reasoning: "xhigh" });
+      expect(capturedOptions).toMatchObject({ reasoning: "max" });
       const rewrittenPayload = await capturedOptions?.onPayload?.(
         {
           model: "claude-fable-5",
@@ -1106,7 +1106,7 @@ describe("PiStreamAdapter", () => {
         ...baseInput,
         agent: {
           ...baseInput.agent,
-          model: "openai-codex/gpt-5.5",
+          model: "openai-codex/gpt-6.1-sol",
           model_settings: {
             provider_type: "chatgpt_oauth",
             service_tier: "priority",

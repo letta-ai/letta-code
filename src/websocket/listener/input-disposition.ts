@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { dirname } from "node:path";
 import { getServerUrl } from "@/backend/api/server-url";
+import { withDiskReserveRetry } from "@/utils/disk-reserve";
 import { renameSyncWithRetry } from "@/utils/rename-sync-with-retry";
 import {
   acquireDurableFileLock,
@@ -48,7 +49,6 @@ import type {
   InputIdentity,
   ListenerRuntime,
 } from "./types";
-
 export const ACCEPTED_INPUT_DISPOSITION_TTL_MS = 60 * 60 * 1000;
 export const MAX_ACCEPTED_INPUT_DISPOSITIONS_PER_SCOPE = 4096;
 export const MAX_ACCEPTED_INPUT_DISPOSITIONS = 65_536;
@@ -62,13 +62,11 @@ export const MAX_DURABLE_QUEUED_INPUT_BYTES = 21 * 1024 * 1024;
 // leaving room for several maximum-size inputs in flight at once.
 export const MAX_INPUT_DISPOSITION_STORE_BYTES = 128 * 1024 * 1024;
 const LOCK_WAIT_MS = 2_000;
-
 export function ordinaryInputIdentity(
   clientMessageId: string | undefined,
 ): InputIdentity | undefined {
   return clientMessageId ? { domain: "input", id: clientMessageId } : undefined;
 }
-
 export function teleportInputIdentity(teleportId: string): InputIdentity {
   return { domain: "teleport", id: teleportId };
 }
@@ -488,16 +486,18 @@ export function durableTransaction<T>(
   path: string,
   transaction: (store: DurableStore) => { result: T; changed: boolean },
 ): T {
-  const release = acquireLock(path);
-  try {
-    const store = readDurableStore(path);
-    const pruned = pruneDurableStore(store, Date.now());
-    const { result, changed } = transaction(store);
-    if (pruned || changed) writeDurableStore(path, store);
-    return result;
-  } finally {
-    release();
-  }
+  return withDiskReserveRetry(path, () => {
+    const release = acquireLock(path);
+    try {
+      const store = readDurableStore(path);
+      const pruned = pruneDurableStore(store, Date.now());
+      const { result, changed } = transaction(store);
+      if (pruned || changed) writeDurableStore(path, store);
+      return result;
+    } finally {
+      release();
+    }
+  });
 }
 
 export function syncMemoryFromDurable(
@@ -534,18 +534,17 @@ export type InputDispositionAdmission =
   | { kind: "untracked" }
   | { kind: "duplicate"; disposition: AcceptedInputDisposition }
   | { kind: "reserved"; reservation: InputDispositionReservation }
-  | { kind: "full" };
+  | { kind: "full"; reason?: string };
 
 function reserveDurably(
   ledger: AcceptedInputDispositionLedger,
   runtimeKey: string,
   key: string,
 ): InputDispositionAdmission {
-  const path = ledger.persistentPath;
-  if (!path) return { kind: "full" };
   try {
+    if (!ledger.persistentPath) throw new Error("Missing persistent path");
     const result = durableTransaction<InputDispositionAdmission>(
-      path,
+      ledger.persistentPath,
       (store) => {
         syncMemoryFromDurable(ledger, store);
         const existing = store.entries[key];
@@ -608,8 +607,9 @@ function reserveDurably(
     );
     if (result.kind === "reserved") ledger.abandonedReservations.delete(key);
     return result;
-  } catch {
-    return { kind: "full" };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { kind: "full", reason: `Input ledger unavailable: ${message}` };
   }
 }
 

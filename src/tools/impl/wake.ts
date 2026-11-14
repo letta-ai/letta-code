@@ -455,3 +455,15 @@ export async function wake(
     });
   }
 }
+
+/** Cancel only schedules belonging to the stopped conversation. */
+export async function cancelConversationWakes(
+  scope: WakeScope,
+  deps: WakeDeps = {},
+): Promise<void> {
+  const current = await listCurrentWakes(scope, { action: "list" }, deps);
+  if (current.warnings.length) throw new Error(current.warnings.join("; "));
+  for (const record of current.wakes) {
+    await cancelWake({ action: "cancel", id: record.id }, scope, deps);
+  }
+}

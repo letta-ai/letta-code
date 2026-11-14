@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import {
+  contextWindowToPreserveForModelSelection,
   getByokOpenAIReasoningTierOptions,
   getChatGptFastRegistryHandleForModelHandle,
   getModelInfo,
@@ -8,7 +9,6 @@ import {
   getPreferredReasoningOption,
   getReasoningTierOptionsForHandle,
   models,
-  shouldPreserveContextWindowForModelSelection,
   withReasoningEffortUpdateArg,
 } from "@/agent/model";
 import {
@@ -688,10 +688,10 @@ describe("getReasoningTierOptionsForHandle", () => {
   });
 });
 
-describe("shouldPreserveContextWindowForModelSelection", () => {
+describe("contextWindowToPreserveForModelSelection", () => {
   test("preserves manual context when switching reasoning tiers on the same preset", () => {
     expect(
-      shouldPreserveContextWindowForModelSelection({
+      contextWindowToPreserveForModelSelection({
         currentModelHandle: "openai/gpt-5.5",
         currentModelId: "gpt-5.5-high",
         currentLlmConfig: {
@@ -702,12 +702,12 @@ describe("shouldPreserveContextWindowForModelSelection", () => {
         selectedModelHandle: "openai/gpt-5.5",
         selectedContextWindow: 272000,
       }),
-    ).toBe(true);
+    ).toBe(500000);
   });
 
   test("does not preserve context when selecting a different context-window preset", () => {
     expect(
-      shouldPreserveContextWindowForModelSelection({
+      contextWindowToPreserveForModelSelection({
         currentModelHandle: "anthropic/claude-sonnet-4-6",
         currentModelId: "sonnet",
         currentLlmConfig: {
@@ -718,12 +718,12 @@ describe("shouldPreserveContextWindowForModelSelection", () => {
         selectedModelHandle: "anthropic/claude-sonnet-4-6",
         selectedContextWindow: 9500000,
       }),
-    ).toBe(false);
+    ).toBeUndefined();
   });
 
   test("normalizes ChatGPT OAuth llm_config handles before comparison", () => {
     expect(
-      shouldPreserveContextWindowForModelSelection({
+      contextWindowToPreserveForModelSelection({
         currentModelId: "gpt-5.5-plus-pro-high",
         currentLlmConfig: {
           model: "gpt-5.5",
@@ -733,12 +733,12 @@ describe("shouldPreserveContextWindowForModelSelection", () => {
         selectedModelHandle: "chatgpt-plus-pro/gpt-5.5",
         selectedContextWindow: 272000,
       }),
-    ).toBe(true);
+    ).toBe(500000);
   });
 
   test("derives current preset from llm config when no current model id is available", () => {
     expect(
-      shouldPreserveContextWindowForModelSelection({
+      contextWindowToPreserveForModelSelection({
         currentLlmConfig: {
           model: "gpt-5.5",
           model_endpoint_type: "openai",
@@ -748,6 +748,21 @@ describe("shouldPreserveContextWindowForModelSelection", () => {
         selectedModelHandle: "openai/gpt-5.5",
         selectedContextWindow: 272000,
       }),
-    ).toBe(true);
+    ).toBe(500000);
+  });
+
+  test("does not preserve a window that looks like the legacy 128k server clamp", () => {
+    expect(
+      contextWindowToPreserveForModelSelection({
+        currentModelHandle: "anthropic/claude-opus-4-8",
+        currentLlmConfig: {
+          model: "claude-opus-4-8",
+          model_endpoint_type: "anthropic",
+          context_window: 128000,
+        },
+        selectedModelHandle: "anthropic/claude-opus-4-8",
+        selectedContextWindow: 200000,
+      }),
+    ).toBeUndefined();
   });
 });

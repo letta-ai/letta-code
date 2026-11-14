@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import WebSocket from "ws";
+import type { TaskNotificationQueueItem } from "@/queue/queue-runtime";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
 import { enqueueInboundUserMessage } from "./inbound-queue";
 import { consumeQueuedTurn } from "./queue";
@@ -123,4 +124,41 @@ test("dequeue correlates the queue id generated for a payload without one", () =
       consumed?.dequeuedBatch.batchId ?? "missing",
     ),
   ).toEqual([generatedClientMessageId]);
+});
+
+test("idle enqueue-and-dequeue reports the item source on the removal", async () => {
+  const listener = __listenClientTestUtils.createListenerRuntime();
+  const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+    listener,
+    "agent-1",
+    "conv-1",
+  );
+  const socket = new MockSocket();
+  listener.socket = socket as unknown as WebSocket;
+
+  runtime.queueRuntime.enqueue({
+    kind: "task_notification",
+    source: "task_notification",
+    text: "<task-notification>done</task-notification>",
+    clientMessageId: "cm-task",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  } as Omit<TaskNotificationQueueItem, "id" | "enqueuedAt">);
+  expect(consumeQueuedTurn(runtime)).not.toBeNull();
+
+  await Promise.resolve();
+  const updates = socket.sentPayloads
+    .map((payload) => JSON.parse(payload))
+    .filter((payload) => payload.type === "update_queue");
+  expect(updates).toHaveLength(1);
+  expect(updates[0]).toMatchObject({
+    queue: [],
+    removed: [
+      {
+        client_message_id: "cm-task",
+        disposition: "dequeued",
+        source: "task_notification",
+      },
+    ],
+  });
 });
