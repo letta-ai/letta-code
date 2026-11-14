@@ -27,6 +27,9 @@ export function followRemoteSubagentEvents(
   const pull = (target: number) => {
     requested = target;
     draining = draining.then(async () => {
+      // A failed read clears the target; queued drains did not read anything
+      // and must not count as a success that resets consecutive failures.
+      if (cursor >= requested) return;
       try {
         while (cursor < requested) {
           const page = await read(cursor);
