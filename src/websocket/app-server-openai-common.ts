@@ -2,8 +2,14 @@ import type {
   IncomingMessage as HttpIncomingMessage,
   ServerResponse,
 } from "node:http";
+import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
 import { getBackend } from "@/backend";
 import type { WebsocketAuthPolicy } from "@/websocket/app-server-auth";
+import {
+  OpenAiChatBindingError,
+  readOpenAiChatBinding,
+  writeOpenAiChatBinding,
+} from "@/websocket/app-server-openai-bindings";
 import type {
   TurnOutcome,
   UserContentPart,
@@ -311,8 +317,8 @@ export async function resolveAgentForModel(
 }
 
 // Conversation continuity for header-keyed chats. Clients that supply a
-// stable chat identity get a pinned Letta conversation; the bounded FIFO
-// map evicts long-idle chats, which then start a fresh conversation.
+// stable chat identity get a pinned Letta conversation. Local bindings survive
+// process restarts and eviction from this bounded in-memory cache.
 const MAX_TRACKED_TRANSCRIPTS = 4096;
 const conversationIdByTranscript = new Map<string, string>();
 
@@ -320,6 +326,11 @@ export function rememberConversation(
   key: string,
   conversationId: string,
 ): void {
+  writeOpenAiChatBinding(key, conversationId);
+  cacheConversation(key, conversationId);
+}
+
+function cacheConversation(key: string, conversationId: string): void {
   conversationIdByTranscript.delete(key);
   conversationIdByTranscript.set(key, conversationId);
   while (conversationIdByTranscript.size > MAX_TRACKED_TRANSCRIPTS) {
@@ -363,14 +374,45 @@ async function createConversationWithRetry(agentId: string): Promise<string> {
 export async function createConversationSerialized(
   agentId: string,
   reuseKey?: string,
+  requiresHistory = false,
 ): Promise<string> {
   const tail = conversationCreateTailByAgent.get(agentId) ?? Promise.resolve();
   const creation = tail.then(async () => {
     if (reuseKey) {
-      const raced = conversationIdByTranscript.get(reuseKey);
-      if (raced) return raced;
+      const saved = readOpenAiChatBinding(reuseKey);
+      const cached = conversationIdByTranscript.get(reuseKey);
+      if (saved === undefined) {
+        if (cached) return cached;
+      } else if (saved) {
+        let conversation: Conversation;
+        try {
+          conversation = await getBackend().retrieveConversation(saved);
+        } catch (error) {
+          throw new OpenAiChatBindingError(
+            "The saved chat conversation is unavailable",
+            { cause: error },
+          );
+        }
+        if (conversation.id !== saved || conversation.agent_id !== agentId) {
+          throw new OpenAiChatBindingError(
+            "The saved chat conversation does not belong to this agent",
+          );
+        }
+        // A fork may replace the binding while retrieval is in flight. This
+        // lookup can refresh its cache without overwriting the newer binding.
+        cacheConversation(reuseKey, saved);
+        return saved;
+      } else if (cached || requiresHistory) {
+        throw new OpenAiChatBindingError(
+          "This existing chat has no saved conversation binding",
+        );
+      }
     }
-    return await createConversationWithRetry(agentId);
+    const conversationId = await createConversationWithRetry(agentId);
+    // Publish inside the serialized operation: a second first request may
+    // already be queued before the first caller resumes from its await.
+    if (reuseKey) rememberConversation(reuseKey, conversationId);
+    return conversationId;
   });
   const settled = creation.then(
     () => undefined,
@@ -388,10 +430,16 @@ export async function createConversationSerialized(
 export async function resolveConversationId(
   agentId: string,
   chatKey: string,
+  requiresHistory = false,
 ): Promise<string> {
-  const existing = conversationIdByTranscript.get(chatKey);
-  if (existing) return existing;
-  return await createConversationSerialized(agentId, chatKey);
+  return await createConversationSerialized(agentId, chatKey, requiresHistory);
+}
+
+export function openAiInputHasHistory(messages: OpenAiChatMessage[]): boolean {
+  return (
+    messages.some((message) => message.role === "assistant") ||
+    messages.filter((message) => message.role === "user").length > 1
+  );
 }
 
 // Clients that know their chat identity can pin it explicitly instead of
