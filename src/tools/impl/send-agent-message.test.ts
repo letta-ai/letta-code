@@ -900,3 +900,38 @@ test("a subagent that omits the destination messages the conversation that launc
   expect(root.status).toBe("error");
   expect(root.content).toContain("Choose a destination");
 });
+
+test("an ephemeral restart recovers its parent when returned and fails clearly on older servers", async () => {
+  const f = fixture();
+  f.backend.retrieveConversation = async () =>
+    ({
+      agent_id: null,
+      parent_agent_id: "agent-parent",
+      is_subagent: true,
+    }) as never;
+  const result = await runWithRuntimeContext(
+    { agentId: "conv-child", conversationId: "conv-child" },
+    () => send_agent_message({ message: "reply" }, f),
+  );
+  expect(result.content).toContain("Cannot recover the parent conversation");
+  expect(result.status).toBe("error");
+  expect(f.submissions).toHaveLength(0);
+
+  f.backend.retrieveConversation = async (id) =>
+    ({
+      agent_id: id === "conv-child" ? null : "agent-parent",
+      parent_agent_id: "agent-parent",
+      parent_conversation_id: "conv-parent",
+      is_subagent: true,
+    }) as never;
+  const recovered = await runWithRuntimeContext(
+    { agentId: "conv-child", conversationId: "conv-child" },
+    () => send_agent_message({ message: "reply" }, f),
+  );
+  expect(recovered.status).toBe("success");
+  expect(f.submissions).toHaveLength(1);
+  expect(f.submissions[0]).toMatchObject({
+    agentId: "agent-parent",
+    conversationId: "conv-parent",
+  });
+});

@@ -118,9 +118,13 @@ export function trackChildSend(input: TrackChildSendInput): string {
     agentId: receipt.agent_id ?? undefined,
     conversationId: receipt.conversation_id,
     superRunId: receipt.super_run_id,
-    agentURL: buildAgentReference(getEnqueueAgentId(receipt), {
-      conversationId: receipt.conversation_id,
-    }),
+    // An agentless conversation may report neither agent nor parent agent.
+    agentURL:
+      receipt.agent_id || receipt.parent_agent_id
+        ? buildAgentReference(getEnqueueAgentId(receipt), {
+            conversationId: receipt.conversation_id,
+          })
+        : null,
   });
 
   const onIdle = createRemoteIdleNotifier(subagentId, parentScope);
