@@ -137,12 +137,21 @@ export async function drainStream(
   // Track if we triggered abort via our listener (for eager cancellation)
   let abortedViaListener = false;
 
+  // An abort should end the SDK iterator, but a dead read can stay pending
+  // forever; 5s after our own abort, stop waiting on it.
+  let abandonTimer: ReturnType<typeof setTimeout> | undefined;
+  const abandoned = Promise.withResolvers<{ done: true; value?: undefined }>();
+  const abortHttpRead = (reason: string) => {
+    abortStreamController(stream, reason);
+    abandonTimer ??= setTimeout(() => abandoned.resolve({ done: true }), 5_000);
+  };
+
   // Terminal-EOF guard: once the terminal SSE sequence has arrived, don't wait
   // forever for HTTP body EOF (see stream-terminal-eof-guard.ts).
   const terminalEofGuard = createTerminalEofGuard({
     getStopReason: () => streamProcessor.stopReason,
     getRunId: () => streamProcessor.lastRunId,
-    abortHttpRead: () => abortStreamController(stream, "terminal_eof_guard"),
+    abortHttpRead: () => abortHttpRead("terminal_eof_guard"),
   });
 
   // Stall reconciler: if the stream goes silent mid-run (server pings every
@@ -162,7 +171,7 @@ export async function drainStream(
           signal,
         } as RunRetrieveOptions)
       ).status,
-    abortHttpRead: () => abortStreamController(stream, "stall_reconciler"),
+    abortHttpRead: () => abortHttpRead("stall_reconciler"),
   });
 
   // Capture the abort generation at stream start to detect if handleInterrupt ran
@@ -172,7 +181,7 @@ export async function drainStream(
   // This immediately cancels the HTTP request instead of waiting for next chunk
   const abortHandler = () => {
     abortedViaListener = true;
-    abortStreamController(stream, "abort_signal");
+    abortHttpRead("abort_signal");
   };
 
   if (abortSignal && !abortSignal.aborted) {
@@ -180,9 +189,10 @@ export async function drainStream(
   } else if (abortSignal?.aborted) {
     // Already aborted before we started
     abortedViaListener = true;
-    abortStreamController(stream, "pre_aborted_signal");
+    abortHttpRead("pre_aborted_signal");
   }
 
+  let iterator: AsyncIterator<LettaStreamingResponse> | undefined;
   try {
     const asyncIterator = (stream as unknown as Record<PropertyKey, unknown>)[
       Symbol.asyncIterator
@@ -194,7 +204,11 @@ export async function drainStream(
     }
 
     stallReconciler.arm();
-    for await (const chunk of stream) {
+    iterator = asyncIterator.call(stream) as typeof iterator & {};
+    while (true) {
+      const next = await Promise.race([iterator.next(), abandoned.promise]);
+      if (next.done) break;
+      const chunk = next.value as LettaStreamingResponse;
       stallReconciler.arm();
       lastChunkDebugSummary = summarizeChunkForDebug(chunk);
       recordTuiJsonPayload(
@@ -388,6 +402,9 @@ export async function drainStream(
   } finally {
     terminalEofGuard.clear();
     stallReconciler.clear();
+    clearTimeout(abandonTimer);
+    // for-await's implicit return(), not awaited: a dead read would wedge it.
+    void iterator?.return?.()?.catch(() => {});
 
     // Persist chunk log to disk (one write per stream, not per chunk)
     try {
