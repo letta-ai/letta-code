@@ -89,13 +89,18 @@ mock.module("./external-coding-agent", () => ({
     return new Promise<SubagentResult>(() => {});
   },
 }));
-const remoteLaunches: Array<{ prompt: string; forkContext?: boolean }> = [];
+const remoteLaunches: Array<{
+  prompt: string;
+  forkContext?: boolean;
+  computer: string;
+}> = [];
 const realRemote = await import("./remote-external-coding-agent");
 mock.module("./remote-external-coding-agent", () => ({
   ...realRemote,
   launchRemoteExternalCodingAgent: async (launch: {
     prompt: string;
     forkContext?: boolean;
+    computer: string;
   }) => {
     remoteLaunches.push(launch);
     return { success: true, task_id: "t", output_file: "o", agent_id: null };
@@ -224,7 +229,7 @@ describe("fork_context for external coding workers", () => {
     expect(listConversationMessages).not.toHaveBeenCalled();
   });
 
-  test("a forked external worker ignores the default computer", async () => {
+  test("a forked external worker uses the default computer", async () => {
     process.env.LETTA_DEFAULT_SUBAGENT_COMPUTER = "cloud";
     try {
       await task({
@@ -237,7 +242,13 @@ describe("fork_context for external coding workers", () => {
       delete process.env.LETTA_DEFAULT_SUBAGENT_COMPUTER;
     }
 
-    expect(remoteLaunches).toHaveLength(0);
-    expect(workerPrompts).toHaveLength(1);
+    expect(remoteLaunches).toHaveLength(1);
+    expect(remoteLaunches[0]).toMatchObject({
+      computer: "cloud",
+      prompt: brief.prompt,
+      forkContext: true,
+    });
+    expect(workerPrompts).toHaveLength(0);
+    expect(listConversationMessages).not.toHaveBeenCalled();
   });
 });
