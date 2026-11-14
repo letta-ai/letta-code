@@ -101,6 +101,8 @@ export async function startTurnInput(
 export async function prepareProviderRetryInput(params: {
   input: TurnInputState;
   errorDetail: string | null;
+  retryAfterMs?: number;
+  sleep?: (delayMs: number) => Promise<void>;
   attempt: number;
   socket: ListenerTransport;
   runtime: ConversationRuntime;
@@ -113,6 +115,7 @@ export async function prepareProviderRetryInput(params: {
     category: "transient_provider",
     attempt: params.attempt,
     detail: params.errorDetail,
+    retryAfterMs: params.retryAfterMs,
   });
   emitRecoverableRetryNotice(params.socket, params.runtime, {
     kind: "transient_provider_retry",
@@ -127,7 +130,8 @@ export async function prepareProviderRetryInput(params: {
     agentId: params.agentId,
     conversationId: params.conversationId,
   });
-  await new Promise((resolve) => setTimeout(resolve, delayMs));
+  await (params.sleep?.(delayMs) ??
+    new Promise((resolve) => setTimeout(resolve, delayMs)));
   if (params.turnLease.signal.aborted) {
     throw new Error("Cancelled by user");
   }

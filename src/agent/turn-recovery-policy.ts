@@ -361,6 +361,13 @@ export function getTransientRetryDelayMs(opts: {
   });
 }
 
+/** Accept only a bounded numeric delay from run error metadata. */
+export function getRunRetryAfterMs(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.min(60_000, Math.round(value))
+    : undefined;
+}
+
 // ── Pre-stream conflict routing ─────────────────────────────────────
 
 export type PreStreamConflictKind =
