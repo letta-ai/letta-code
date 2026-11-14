@@ -8,6 +8,8 @@ import { randomUUID } from "node:crypto";
 import {
   closeSync,
   existsSync,
+  fstatSync,
+  ftruncateSync,
   openSync,
   readFileSync,
   readSync,
@@ -368,7 +370,8 @@ export function readJsonlFile<T>(path: string): T[] {
 /**
  * Stream a JSONL file row by row in 64 KB chunks. Only the current row is
  * held in memory, so callers that do not retain rows stay bounded no matter
- * how large the file grows.
+ * how large the file grows. An unparseable final row (an interrupted append)
+ * is skipped; an unparseable row followed by another row throws.
  */
 export function forEachJsonlRow<T>(
   path: string,
@@ -378,6 +381,19 @@ export function forEachJsonlRow<T>(
 
   const buffer = Buffer.alloc(64 * 1024);
   const pending: Buffer[] = [];
+  let tornRowError: unknown;
+  const emitLine = (text: string) => {
+    if (text.trim().length === 0) return;
+    if (tornRowError !== undefined) throw tornRowError;
+    let row: T;
+    try {
+      row = JSON.parse(text) as T;
+    } catch (error) {
+      tornRowError = error;
+      return;
+    }
+    onRow(row);
+  };
   const fd = openSync(path, "r");
   try {
     let bytesRead = 0;
@@ -391,8 +407,7 @@ export function forEachJsonlRow<T>(
           ? Buffer.concat([...pending, suffix])
           : suffix;
         pending.length = 0;
-        const text = line.toString("utf8");
-        if (text.trim().length > 0) onRow(JSON.parse(text) as T);
+        emitLine(line.toString("utf8"));
         lineStart = index + 1;
       }
       if (lineStart < bytesRead) {
@@ -404,8 +419,7 @@ export function forEachJsonlRow<T>(
   }
 
   if (pending.length > 0) {
-    const text = Buffer.concat(pending).toString("utf8");
-    if (text.trim().length > 0) onRow(JSON.parse(text) as T);
+    emitLine(Buffer.concat(pending).toString("utf8"));
   }
 }
 
@@ -443,11 +457,19 @@ export function readJsonlFileSuffix<T>(
   // Byte offset of the first parsed row (the partial first line is skipped).
   const firstNewlineByte = reachedStart ? -1 : buffer.indexOf(0x0a);
 
+  const lines = text.split("\n").filter((line) => line.trim().length > 0);
+  const items: T[] = [];
+  lines.forEach((line, index) => {
+    try {
+      items.push(JSON.parse(line) as T);
+    } catch (error) {
+      // An unparseable final row is an interrupted append; skip it.
+      if (index < lines.length - 1) throw error;
+    }
+  });
+
   return {
-    items: text
-      .split("\n")
-      .filter((line) => line.trim().length > 0)
-      .map((line) => JSON.parse(line) as T),
+    items,
     reachedStart,
     bytesRead: bytesToRead,
     startOffset: reachedStart
@@ -456,6 +478,61 @@ export function readJsonlFileSuffix<T>(
         ? start + firstNewlineByte + 1
         : size,
   };
+}
+
+function endsWithNewline(fd: number, size: number): boolean {
+  const last = Buffer.alloc(1);
+  readSync(fd, last, 0, 1, size - 1);
+  return last[0] === 0x0a;
+}
+
+/** Read the bytes that follow the last newline of an open file. */
+function readTrailingFragment(
+  fd: number,
+  size: number,
+): { start: number; text: string } {
+  const chunks: Buffer[] = [];
+  let end = size;
+  while (end > 0) {
+    const start = Math.max(0, end - 64 * 1024);
+    const chunk = Buffer.alloc(end - start);
+    readSync(fd, chunk, 0, chunk.length, start);
+    const newline = chunk.lastIndexOf(0x0a);
+    if (newline >= 0) {
+      chunks.unshift(chunk.subarray(newline + 1));
+      end = start + newline + 1;
+      break;
+    }
+    chunks.unshift(chunk);
+    end = start;
+  }
+  return { start: end, text: Buffer.concat(chunks).toString("utf8") };
+}
+
+/**
+ * Prepare a transcript for appending after an interrupted write. If the file
+ * does not end in a newline, the trailing fragment is either a complete row
+ * missing its newline (returns "\n" so the next row starts on its own line) or
+ * a torn row (truncated away). Rows that parse are never removed.
+ */
+export function prepareTranscriptAppend(path: string): "" | "\n" {
+  if (!existsSync(path)) return "";
+  const fd = openSync(path, "r+");
+  try {
+    const size = fstatSync(fd).size;
+    if (size === 0 || endsWithNewline(fd, size)) return "";
+
+    const fragment = readTrailingFragment(fd, size);
+    try {
+      JSON.parse(fragment.text);
+      return "\n";
+    } catch {
+      ftruncateSync(fd, fragment.start);
+      return "";
+    }
+  } finally {
+    closeSync(fd);
+  }
 }
 
 export function jsonl<T>(items: readonly T[]): string {
