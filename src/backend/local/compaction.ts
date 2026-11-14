@@ -684,7 +684,7 @@ async function runGenerateText(
       ? samplingOptionsForSettings(input.agent.model_settings)
       : isRecord(localModel.modelSettings.sampling_params)
         ? { samplingParams: localModel.modelSettings.sampling_params }
-      : {}),
+        : {}),
     maxRetries: 0,
     sessionId: input.conversationId,
   };
