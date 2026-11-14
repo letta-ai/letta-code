@@ -34,6 +34,10 @@ Automatic client-side dreaming is disabled by default on native Windows, includi
 
 See the full list of slash commands in our [documentation](https://docs.letta.com/letta-code/slash-commands).
 
+### Inline skill context
+
+Set `LETTA_SKILL_COMMAND_EXPANSION=1` in the environment of the Letta Code process to expand inline shell commands in skill bodies, such as ``Branch: !`git branch --show-current` ``. This is disabled by default and applies to both slash-invoked skills and the `Skill` tool. Commands run in the active workspace with Bash permission checks and the shell sandbox, with a 10-second timeout per command. Commands that require approval or are denied stop skill loading; allow them through your normal permission settings first. A skill's frontmatter cannot enable expansion or grant command permission. Nonzero command exits also stop loading, and command output is inserted literally without recursively executing further placeholders.
+
 ## Get started
 
 Install the package via [npm](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm):
