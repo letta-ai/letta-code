@@ -219,7 +219,7 @@ test("local Monitor assets pin the resume-enabled schema and description", async
     ],
     [
       "./schemas/Monitor.json",
-      "1efbb290eaf43bcb33a333af575fd10ed6cb345a41aee71f88ae232d107a513d",
+      "48e07b777c824598ff2bf0dae2c2fbfb439e0f341fde91affeaa0389c8ea8a35",
     ],
   ] as const) {
     const bytes = await Bun.file(new URL(path, import.meta.url)).arrayBuffer();
