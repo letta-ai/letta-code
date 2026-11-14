@@ -118,6 +118,9 @@ describe("app-server client", () => {
     "keeps late socket errors handled and reports ErrorEvent.%s",
     async (field) => {
       class FailedSocket extends EventEmitter {
+        constructor(_url: string) {
+          super();
+        }
         readyState = 0;
         send() {}
         close() {
