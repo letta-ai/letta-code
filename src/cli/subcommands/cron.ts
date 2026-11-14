@@ -17,6 +17,7 @@
  */
 
 import { parseArgs } from "node:util";
+import { getConversation } from "@/backend/api/conversations";
 import { ApiRequestError } from "@/backend/api/request";
 import {
   type CloudSchedule,
@@ -167,6 +168,46 @@ function formatCloudScheduleOutput(
 
 // ── Handlers ────────────────────────────────────────────────────────
 
+type ConversationTargetValidation =
+  | { ok: true }
+  | { ok: false; message: string };
+
+/**
+ * Verify that a concrete conversation ID exists and belongs to the agent the
+ * cron task targets. Sentinels ("new", "default") are handled by the caller.
+ */
+async function validateCronConversationTarget(
+  agentId: string,
+  conversationId: string,
+): Promise<ConversationTargetValidation> {
+  let conversation: { id: string; agent_id: string } | null;
+  try {
+    conversation = await getConversation(conversationId);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return {
+      ok: false,
+      message: `could not verify conversation "${conversationId}" exists: ${detail}`,
+    };
+  }
+
+  if (!conversation) {
+    return {
+      ok: false,
+      message: `conversation "${conversationId}" does not exist. Pass "new", "default", or an existing conversation ID.`,
+    };
+  }
+
+  if (conversation.agent_id && conversation.agent_id !== agentId) {
+    return {
+      ok: false,
+      message: `conversation "${conversationId}" belongs to agent ${conversation.agent_id}, not ${agentId}.`,
+    };
+  }
+
+  return { ok: true };
+}
+
 async function handleAdd(values: CronArgValues): Promise<number> {
   const name = values.name;
   if (!name || typeof name !== "string") {
@@ -265,6 +306,20 @@ async function handleAdd(values: CronArgValues): Promise<number> {
     return 1;
   }
   const { runner, targetDeviceId } = placement;
+
+  // A concrete conversation target must exist and belong to the agent before
+  // the task is created; a fake success would route every fire to a missing
+  // conversation. Sentinels ("new", "default") skip this check.
+  if (conversationId !== "new" && conversationId !== "default") {
+    const validated = await validateCronConversationTarget(
+      agentId,
+      conversationId,
+    );
+    if (!validated.ok) {
+      console.error(`Error: ${validated.message}`);
+      return 1;
+    }
+  }
 
   if (runner === "cloud") {
     return handleCloudAdd({
