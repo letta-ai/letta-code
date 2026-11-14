@@ -197,8 +197,12 @@ export function estimateProviderContextTokens(
   input: ProviderTurnInput,
 ): number | undefined {
   const contextEstimate = estimateLocalContextTokens(input.uiMessages);
+  const pendingPromptTokens = estimateSerializedTokens(
+    input.midConversationSystemPrompt,
+  );
   if (contextEstimate.lastUsageIndex !== null) {
-    return contextEstimate.tokens > 0 ? contextEstimate.tokens : undefined;
+    const total = contextEstimate.tokens + pendingPromptTokens;
+    return total > 0 ? total : undefined;
   }
 
   const systemPromptTokens = estimateSerializedTokens(
@@ -206,7 +210,8 @@ export function estimateProviderContextTokens(
   );
   const messageTokens = contextEstimate.tokens;
   const toolTokens = estimateSerializedTokens(input.clientTools);
-  const total = systemPromptTokens + messageTokens + toolTokens;
+  const total =
+    systemPromptTokens + messageTokens + toolTokens + pendingPromptTokens;
   return total > 0 ? total : undefined;
 }
 
