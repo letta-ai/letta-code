@@ -18,6 +18,7 @@ import {
   runGit,
   runGitWithRetry,
 } from "./memory-git";
+import { resolveEffectiveAgentId } from "./subagents/ephemeral-subagent";
 
 export interface RepositoryPostTurnSyncResult {
   name: string;
@@ -268,7 +269,7 @@ export async function syncPendingAttachedRepositoryCommitsAfterTurn(
 
   const listRepositories =
     dependencies.listRepositories ?? listAttachedAgentRepositories;
-  const repositories = await listRepositories(agentId);
+  const repositories = await listRepositories(resolveEffectiveAgentId(agentId));
   if (repositories.length === 0) {
     return { results: [] };
   }
