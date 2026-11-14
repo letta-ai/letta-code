@@ -232,7 +232,8 @@ If a worktree with the name you pass to `--worktree` already exists, Claude Code
 
 With the default `"fresh"` [base](#choose-the-base-branch), a reopened worktree resets to the repository's default branch instead of continuing at its old tip when all of the following hold:
 
-* It has no uncommitted changes or untracked files.
+* The [sandbox](https://code.claude.com/docs/en/sandboxing.md#filesystem-isolation) isn't restricting file writes in your session, and neither the worktree's nor the main checkout's `.claude` settings files enable the sandbox.
+* The worktree has no uncommitted changes or untracked files.
 * It is still on the branch Claude Code created for it.
 * It has no commits of its own, or its pull request or merge request was merged and its remote branch deleted.
 
@@ -240,10 +241,12 @@ Claude Code detects the merged case from git state alone: the remote branch the 
 
 In every other case, Claude Code reopens the worktree at its old tip:
 
-* The worktree fails any of the conditions.
+* The worktree or session fails any of the conditions.
 * Claude Code can't verify the worktree's state.
 * `worktree.baseRef` is `"head"`.
 * The name is a pull request or merge request reference.
+
+If you use the sandbox with the `"fresh"` base, run `git fetch origin`, then pass a new name to `--worktree` to start from the latest default branch.
 
 ### Replace worktree creation with a hook
 

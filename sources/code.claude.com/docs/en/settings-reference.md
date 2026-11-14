@@ -1355,21 +1355,21 @@ See [Enforce sandboxing with managed settings](https://code.claude.com/docs/en/s
 
 ### `sandbox.autoAllowBashIfSandboxed`
 
-Let Claude Code run sandboxed Bash commands without a permission prompt. Commands that can't run in the sandbox still go through the regular permission flow, and `deny` rules and content-scoped `ask` rules such as `Bash(git push *)` still apply; a bare `Bash` ask rule is skipped for sandboxed commands. Set it to `false` to send sandboxed commands through the regular permission flow too, which the `/sandbox` **Mode** tab calls regular permissions mode.
+Let Claude Code run sandboxed Bash commands without a permission prompt. Commands that can't run in the sandbox still go through the regular permission flow. `deny` rules and content-scoped `ask` rules such as `Bash(git push *)` still apply, but a bare `Bash` ask rule is skipped for sandboxed commands. To set it to `true` in managed settings, add it to the `sandbox` block of your [highest-ranked managed source](https://code.claude.com/docs/en/managed-settings.md#how-claude-code-combines-managed-sources).
 
 * **Scope**: [`Any file`](#scopes)
 * **Type**: Boolean
   * `true`: Claude Code runs sandboxed Bash commands without a permission prompt, except in the cases that [Auto-allow mode](https://code.claude.com/docs/en/sandboxing.md#auto-allow-mode) describes; `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` turns auto-allow off
   * `false`: sandboxed commands go through the regular permission flow, so your allow rules and permission mode decide. The `/sandbox` **Mode** tab calls this regular permissions mode
-* **Default**: `true`
+* **Default**: `false`. Before v2.1.324, the default was `true`
 
-This keeps the sandbox on and sends sandboxed commands through the regular permission flow:
+To keep the sandbox on and run sandboxed commands without a permission prompt, set both keys in your `sandbox` block:
 
 ```json settings.json theme={null}
 {
   "sandbox": {
     "enabled": true,
-    "autoAllowBashIfSandboxed": false
+    "autoAllowBashIfSandboxed": true
   }
 }
 ```
@@ -1653,7 +1653,7 @@ This leaves the filesystem open and confines network egress to GitHub and npm:
 }
 ```
 
-With the layer off, Claude Code doesn't enforce `denyRead` or `credentials.files` `deny` entries, while `credentials.envVars` entries and applied `mask` entries keep working. [`autoAllowBashIfSandboxed`](#sandbox-autoallowbashifsandboxed) still defaults to `true`, so set it to `false` to keep prompting. See [Disable filesystem isolation](https://code.claude.com/docs/en/sandboxing.md#disable-filesystem-isolation) for the full list of sources that can set it and what changes when isolation is off.
+With the layer off, Claude Code doesn't enforce `denyRead` or `credentials.files` `deny` entries, while `credentials.envVars` entries and applied `mask` entries keep working. See [Disable filesystem isolation](https://code.claude.com/docs/en/sandboxing.md#disable-filesystem-isolation) for the full list of sources that can set it and what changes when isolation is off.
 
 ### `sandbox.ignoreViolations`
 
@@ -5421,18 +5421,18 @@ Claude Code writes `"stable"` to your user settings when you pick it under **Aut
 
 ### `minimumVersion`
 
-Keep background auto-updates and `claude update` from installing any version below this one, so moving to the `"stable"` channel doesn't downgrade you from a newer `"latest"` build. Claude Code writes this key for you when you choose to stay on your current version while switching channels in `/config`, and clears it when you switch back to `"latest"`.
+Keep background auto-updates and `claude update` from installing any version below the one you set. Claude Code writes this key for you when you choose to stay on your current version while switching channels in `/config`. Claude Code clears the key when you switch back to `"latest"` in `/config`.
 
-* **Scope**: [`Any file`](#scopes). Set it in managed settings to pin an organization-wide minimum that user and project settings can't lower.
-* **Type**: string, a version number such as `"2.1.100"`; a value that isn't a valid version is ignored
+* **Scope**: [`Any file`](#scopes). Set this key in managed settings to pin an organization-wide minimum that user and project settings can't override.
+* **Type**: string, a version number such as `"2.1.323"`; a value that isn't a valid version is ignored
 * **Default**: unset, so updates can install any version the channel offers
 
-This example follows the stable channel and refuses to install any version below 2.1.100:
+This example follows the stable channel and refuses to install any version below 2.1.323:
 
 ```json settings.json theme={null}
 {
   "autoUpdatesChannel": "stable",
-  "minimumVersion": "2.1.100"
+  "minimumVersion": "2.1.323"
 }
 ```
 

@@ -36,9 +36,9 @@ Explore and Plan start without your CLAUDE.md files and the git status snapshot 
 >
 > A fast, read-only agent optimized for searching and analyzing codebases.
 >
-> * **Model**: the main conversation's model. When the main conversation runs Fable, Explore's model depends on how you connect:
+> * **Model**: the [parent conversation's](#which-model-a-nested-subagent-runs-on) model. When the parent conversation runs Fable, Explore runs on Opus or stays on Fable, based on how you connect.
 >   * With a Claude subscription, an Anthropic Console account, or an [LLM gateway](https://code.claude.com/docs/en/llm-gateway) reached through `ANTHROPIC_BASE_URL`, Explore runs on the Opus model that the [`opus` alias](https://code.claude.com/docs/en/model-config#model-aliases) resolves to.
->   * On Amazon Bedrock, Google Cloud's Agent Platform, Microsoft Foundry, [Claude Platform on AWS](https://code.claude.com/docs/en/claude-platform-on-aws.md), or a [Claude apps gateway](https://code.claude.com/docs/en/claude-apps-gateway), Explore stays on the main conversation's model.
+>   * On Amazon Bedrock, Google Cloud's Agent Platform, Microsoft Foundry, [Claude Platform on AWS](https://code.claude.com/docs/en/claude-platform-on-aws.md), or a [Claude apps gateway](https://code.claude.com/docs/en/claude-apps-gateway), Explore stays on Fable.
 > * **Tools**: read-only tools; Write and Edit are denied
 > * **Purpose**: file discovery, code search, codebase exploration
 >
@@ -52,7 +52,7 @@ Explore and Plan start without your CLAUDE.md files and the git status snapshot 
 >
 > A research agent used during [plan mode](https://code.claude.com/docs/en/permission-modes.md#analyze-before-you-edit-with-plan-mode) to gather context before presenting a plan.
 >
-> * **Model**: inherits from the main conversation, unless you set `CLAUDE_CODE_SUBAGENT_MODEL` and [force it onto every subagent](#run-every-subagent-on-one-model)
+> * **Model**: inherits from the [parent conversation](#which-model-a-nested-subagent-runs-on), unless you set `CLAUDE_CODE_SUBAGENT_MODEL` and [force it onto every subagent](#run-every-subagent-on-one-model)
 > * **Tools**: read-only tools; Write and Edit are denied
 > * **Purpose**: codebase research for planning
 >
@@ -62,7 +62,7 @@ Explore and Plan start without your CLAUDE.md files and the git status snapshot 
 >
 > A capable agent for complex, multi-step tasks that require both exploration and action.
 >
-> * **Model**: the [`CLAUDE_CODE_SUBAGENT_MODEL`](#choose-a-model) model if you set one and nothing assigns a model another way, otherwise the main conversation's model; [Choose a model](#choose-a-model) states the full order, and [Run every subagent on one model](#run-every-subagent-on-one-model) shows how to make the variable override those sources
+> * **Model**: the parent conversation's model by default, following the [model order](#choose-a-model)
 > * **Tools**: every tool [available to subagents](#available-tools)
 > * **Purpose**: complex research, multi-step operations, code modifications
 >
@@ -346,51 +346,42 @@ To find files in an `agents` directory whose frontmatter doesn't parse, run `cla
 
 ### Choose a model
 
-The `model` field controls which model the subagent uses:
+By default, a subagent you define runs on the same model as the conversation that starts it. To choose its model yourself, set the [`model`](#supported-frontmatter-fields) field in its definition to one of these values:
 
-* **Model alias**: use one of the available aliases: `sonnet`, `opus`, `haiku`, or `fable`
-* **Full model ID**: use a full model ID such as `claude-opus-5-5` or `claude-sonnet-5`. Accepts the same values as the `--model` flag
-* **inherit**: use the same model as the main conversation
+* **Model alias**: `sonnet`, `opus`, `haiku`, or `fable`
+* **Full model ID**: a value the [`--model`](https://code.claude.com/docs/en/cli-reference#cli-flags) flag accepts, such as `claude-opus-5-5` or `claude-sonnet-5`
+* **`inherit`**: the main conversation's model, or the spawning subagent's model for a [nested subagent](#which-model-a-nested-subagent-runs-on)
 
-When Claude invokes a subagent, it can also pass a `model` parameter for that specific invocation. On an Agent tool call, that parameter takes a model alias: `sonnet`, `opus`, `haiku`, or `fable`. Claude can't pass a full model ID or `inherit` on that call. Claude Code resolves the subagent's model in this order:
+When more than one source sets a model, Claude Code uses the first in this order:
 
-1. The per-invocation `model` parameter
-2. The subagent definition's `model` frontmatter, where `inherit` selects the main conversation's model
-3. The [`CLAUDE_CODE_SUBAGENT_MODEL`](https://code.claude.com/docs/en/model-config#environment-variables) environment variable, when you set it to a model alias or model ID
-4. The main conversation's model
+1. The per-invocation `model` parameter, which Claude can pass when it starts the subagent. On an Agent tool call, the parameter takes a model alias, not a full model ID or `inherit`.
+2. The `model` field in the subagent's definition, including `inherit`
+3. The [`CLAUDE_CODE_SUBAGENT_MODEL`](https://code.claude.com/docs/en/model-config#environment-variables) environment variable
+4. The main conversation's model, or the spawning subagent's model for a nested subagent
 
-If an installed [mod](https://code.claude.com/docs/en/plugins/mods/overview.md) sets a model in its [`agent.spawn`](https://code.claude.com/docs/en/plugins/mods/reference#subagents) hook, Claude Code uses that model in place of the per-invocation parameter.
-
-In two cases, a family alias such as `opus` in the per-invocation parameter or the frontmatter resolves to the main conversation's model instead of the [version the alias points to](https://code.claude.com/docs/en/model-config.md#model-aliases):
-
-* **The main conversation's model belongs to that family**: the subagent runs on the main conversation's exact model, including any `[1m]` suffix, so it gets the same [extended context](https://code.claude.com/docs/en/model-config.md#extended-context) window as the main conversation.
-* **Claude Code can't tell the main conversation's model family, on [a provider other than the Anthropic API](https://code.claude.com/docs/en/third-party-integrations.md)**: this can happen with an [application inference profile ARN](https://code.claude.com/docs/en/amazon-bedrock.md#iam-configuration) on Amazon Bedrock that Claude Code hasn't resolved to a backing model. This case covers only the `opus` alias, and doesn't apply when you set [`ANTHROPIC_DEFAULT_OPUS_MODEL`](https://code.claude.com/docs/en/model-config#environment-variables), since `opus` then resolves to the model you set.
-
-An alias in `CLAUDE_CODE_SUBAGENT_MODEL` always resolves to the version the alias points to, even when it names the main conversation's family. Setting the variable to `inherit` is the same as leaving it unset.
+If Claude passed an alias, the subagent keeps that alias when it [resumes or receives a follow-up message](#resume-subagents). If an installed [mod](https://code.claude.com/docs/en/plugins/mods/overview.md) sets a model in its [`agent.spawn`](https://code.claude.com/docs/en/plugins/mods/reference#subagents) hook, Claude Code uses that model in place of the per-invocation parameter.
 
 Setting `CLAUDE_CODE_SUBAGENT_MODEL` by itself doesn't change the model the built-in Explore and Plan subagents run on. To change it, see [Run every subagent on one model](#run-every-subagent-on-one-model).
 
-Before v2.1.251, `CLAUDE_CODE_SUBAGENT_MODEL` came first in this order and overrode both the per-invocation parameter and the frontmatter, including `model: inherit`.
+#### Which model a nested subagent runs on
 
-Claude Code checks the per-invocation parameter, frontmatter, and environment variable values against your organization's [`availableModels`](https://code.claude.com/docs/en/model-config#restrict-model-selection) allowlist. For a blocked value, it substitutes another model:
+By default, a [nested subagent](#let-subagents-spawn-their-own-subagents) you define runs on the model of its parent, the subagent that spawned it. To run the nested subagent on another model, set its `model` field to that model.
 
-* When the blocked value is a family alias such as `opus`, Claude Code runs the subagent on the newest version of that family the allowlist permits, following the same [substitution rules and provider scope](https://code.claude.com/docs/en/model-config.md#restrict-model-selection) as `/model`. Before v2.1.222, Claude Code ran the subagent on the inherited model for a blocked family alias as well.
-* For any other blocked value, on providers where that substitution doesn't operate, or when the allowlist permits no version of the family, Claude Code runs the subagent on the inherited model instead. If you set `CLAUDE_CODE_SUBAGENT_MODEL`, Claude Code tries that model first, under these same rules.
+For example, suppose your main conversation runs on Opus and starts a reviewer subagent on Haiku. By default, these subagents run on Haiku, not Opus, when the reviewer spawns them:
 
-In interactive sessions, Claude Code shows a warning naming the requested model and the model the subagent runs on, for either substitution.
+* A subagent with `model: inherit` or no `model` field
+* The built-in Explore, Plan, and general-purpose subagents
+* A [fork](#fork-the-current-conversation)
+
+In plan mode, these subagents run on Opus if you set your session's model to [`opusplan`](https://code.claude.com/docs/en/model-config#opusplan-model-setting), or on Sonnet if you set it to `haiku`.
+
+#### Check a subagent's model
 
 To check which model a subagent is running on, run [`/tasks`](https://code.claude.com/docs/en/commands). Claude Code names the model on the subagent's row, and adds the [effort level](https://code.claude.com/docs/en/model-config.md#adjust-effort-level) set for that subagent, if any. Requires Claude Code v2.1.242 or later.
 
-A per-invocation `model` parameter also applies when the subagent is [resumed or sent a follow-up message](#resume-subagents), so the subagent stays on that model.
-
-As of v2.1.198, subagents also inherit the main conversation's [extended thinking](https://code.claude.com/docs/en/model-config.md#extended-thinking) configuration: if thinking is on in your session, it's on for the subagent, and if it's off, it stays off. There is no per-subagent thinking setting. Before v2.1.198, subagents ran with extended thinking disabled regardless of the main conversation's setting.
-
 #### Run every subagent on one model
 
-`CLAUDE_CODE_SUBAGENT_MODEL` is a default, so a subagent's definition or a model Claude passes still takes precedence over it. To apply one model to every subagent, [teammate](https://code.claude.com/docs/en/agent-teams.md#specify-teammates-and-models), and [workflow agent](https://code.claude.com/docs/en/workflows.md), also set `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` to `1`. Requires Claude Code v2.1.257 or later.
-
-* If you set both variables, subagents run on the model in `CLAUDE_CODE_SUBAGENT_MODEL`.
-* If you set only `CLAUDE_CODE_SUBAGENT_MODEL_FORCE`, subagents run on the main conversation's model, except that the built-in Explore subagent runs on the [model listed for it under Built-in subagents](#built-in-subagents).
+To apply one model to every subagent, [teammate](https://code.claude.com/docs/en/agent-teams.md#specify-teammates-and-models), and [workflow agent](https://code.claude.com/docs/en/workflows.md), set `CLAUDE_CODE_SUBAGENT_MODEL` to that model and `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` to `1`. Requires Claude Code v2.1.257 or later.
 
 For example, to run every subagent on Haiku, set both variables in the `env` block of a [settings file](https://code.claude.com/docs/en/settings.md):
 
@@ -405,10 +396,33 @@ For example, to run every subagent on Haiku, set both variables in the `env` blo
 
 To check that the setting took effect, run [`/tasks`](https://code.claude.com/docs/en/commands) while a subagent is running. The subagent's row shows the model it runs on.
 
-While `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` is [on](https://code.claude.com/docs/en/env-vars.md), Claude Code ignores the `model` field in subagent definitions, and Claude can't pass a model when it starts a subagent. These subagents still run on the main conversation's model:
+While `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` is [on](https://code.claude.com/docs/en/env-vars.md), Claude Code ignores the `model` field in subagent definitions, and Claude can't pass a model when it starts a subagent. The following subagents still run on their parent conversation's model:
 
 * A [fork](#fork-the-current-conversation)
 * A [skill that runs in a subagent](https://code.claude.com/docs/en/skills.md#run-skills-in-a-subagent) with `model: inherit`
+
+If you set only `CLAUDE_CODE_SUBAGENT_MODEL_FORCE`, subagents run on the main conversation's model, except that the built-in Explore subagent runs on the [model listed for it under Built-in subagents](#built-in-subagents).
+
+#### Which version a model alias selects
+
+By default, a subagent with a model alias runs on the [version the alias points to](https://code.claude.com/docs/en/model-config.md#model-aliases). With a family alias such as `opus` in the `model` field or per-invocation parameter, the subagent runs on its parent conversation's model in two cases:
+
+* **Same family**: for example, if your main conversation runs on `claude-opus-4-7`, a subagent with `model: opus` runs on that version too. To run another version, set a full model ID in the `model` field.
+* **Unknown family**: Claude Code can't tell the parent model's family, such as with an Amazon Bedrock ARN it [can't look up](https://code.claude.com/docs/en/amazon-bedrock.md#iam-configuration). This case applies only to the `opus` alias on [a provider other than the Anthropic API](https://code.claude.com/docs/en/third-party-integrations.md). To choose the Opus version, set [`ANTHROPIC_DEFAULT_OPUS_MODEL`](https://code.claude.com/docs/en/model-config#environment-variables).
+
+#### When an allowlist blocks a subagent model
+
+If your organization's [`availableModels`](https://code.claude.com/docs/en/model-config#restrict-model-selection) allowlist blocks the model set for a subagent, the subagent runs on the first of these that applies:
+
+1. For a blocked family alias, the newest permitted version in that family, on [providers that support this substitution](https://code.claude.com/docs/en/model-config.md#restrict-model-selection)
+2. The model in `CLAUDE_CODE_SUBAGENT_MODEL`, if you set it, under these same rules
+3. The main conversation's model, or the spawning subagent's model for a nested subagent
+
+For a top-level subagent in an interactive session, a warning names the requested model and its replacement. To run a particular model, change the blocked value to one the allowlist permits.
+
+### Extended thinking in subagents
+
+Subagents inherit your main conversation's [extended thinking](https://code.claude.com/docs/en/model-config.md#extended-thinking) configuration. There is no per-subagent thinking setting.
 
 ### Choose an effort level
 
@@ -426,7 +440,9 @@ You can control what subagents can do through tool access, permission modes, and
 
 #### Available tools
 
-Subagents inherit the [built-in tools](https://code.claude.com/docs/en/tools-reference.md) and MCP tools available in the main conversation, narrowed by two filters: the first removes a short list of tools from every subagent, and the second reduces the built-in tool set for subagents that run in the [background](#run-subagents-in-foreground-or-background), which is the default. On macOS, Linux, and WSL, a subagent can also receive the Glob and Grep tools when the main conversation doesn't have them, as described under [Glob tool behavior](https://code.claude.com/docs/en/tools-reference.md#glob-tool-behavior). [Forks](#fork-the-current-conversation) skip both filters and receive the main conversation's exact tool pool. The first filter removes these tools, even when listed in the `tools` field:
+Subagents inherit the [built-in tools](https://code.claude.com/docs/en/tools-reference.md) and MCP tools available in the main conversation, narrowed by two filters. The first removes a short list of tools from every subagent. The second reduces the built-in tool set for subagents that run in the [background](#run-subagents-in-foreground-or-background), which is the default.
+
+On macOS, Linux, and WSL, a subagent can also receive the Glob and Grep tools when the main conversation doesn't have them, as described under [Glob tool behavior](https://code.claude.com/docs/en/tools-reference.md#glob-tool-behavior). [Forks](#fork-the-current-conversation) skip both filters and receive their parent conversation's exact tool pool. The first filter removes these tools, even when listed in the `tools` field:
 
 * `Agent`, when the subagent is at the [depth limit](#let-subagents-spawn-their-own-subagents); in a [fork](#fork-the-current-conversation) the tool stays listed but returns an error instead of spawning
 * `AskUserQuestion`
@@ -1077,7 +1093,7 @@ To change the limit, set [`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH`](https://code.c
 
 With this value, your subagents can delegate to a second layer of their own, and that second layer can't delegate further. Set `1` to turn nesting off.
 
-A nested subagent is configured the same way as a top-level one and resolves from the same [scopes](#choose-the-subagent-scope). To keep one subagent from spawning while nesting is on, such as a reviewer that should stay read-only, omit `Agent` from its [`tools`](#available-tools) list or add it to `disallowedTools`.
+Define a nested subagent in the same [scopes](#choose-the-subagent-scope) as a top-level one. By default, a nested subagent you define runs on the [spawning subagent's model](#which-model-a-nested-subagent-runs-on). To keep one subagent from spawning while nesting is on, such as a reviewer that should stay read-only, omit `Agent` from its [`tools`](#available-tools) list or add it to `disallowedTools`.
 
 In the terminal, Claude Code shows nested subagents as a tree in the subagent panel below the prompt input and marks each row that still has descendants in the panel with a `(+N)` count of them. Open a row to see that subagent's siblings and direct children with a path back to `main`.
 
@@ -1221,7 +1237,10 @@ If the value is in range and you still see no change, check for these causes:
 >
 > When [agent view is turned off](https://code.claude.com/docs/en/agent-view.md#turn-off-agent-view), `/subtask` isn't available and `/fork` starts the forked subagent instead; otherwise `/fork` copies the whole session into a new [background session](https://code.claude.com/docs/en/agent-view.md#from-inside-a-session).
 
-A fork is a subagent that inherits the entire conversation so far instead of starting fresh. This drops the input isolation that subagents otherwise provide: a fork sees the same system prompt, tools, model, and message history as the main session, so you can hand it a side task without re-explaining the situation. The fork's own tool calls still stay out of your conversation and only its final result comes back, so your main context window stays clean. Use a fork when any other subagent would need too much background to be useful, or when you want to try several approaches in parallel from the same starting point.
+A fork is a subagent that inherits the entire conversation so far instead of starting fresh. Use a fork when any other subagent would need too much background to be useful, or when you want to try several approaches in parallel from the same starting point.
+
+* **Input**: a fork sees the same system prompt, tools, [model](#which-model-a-nested-subagent-runs-on), and message history as its parent conversation
+* **Output**: the fork's own tool calls stay out of its parent conversation and only its final result comes back
 
 Claude can start a fork on its own while fork mode is on, as it is by default. To stop forks, see [Turn fork mode off](#turn-fork-mode-on-or-off).
 
@@ -1257,14 +1276,12 @@ To have the viewed agent read your message before the work it's waiting on finis
 
 ### How forks differ from other subagents
 
-A fork inherits everything the main session has at the moment it spawns. Any other subagent starts fresh from its definition.
-
 | | Fork | Non-fork subagent |
 | :- | :- | :- |
 | Context | Full conversation history | Fresh context with the prompt you pass |
-| System prompt and tools | Same as main session | From the subagent's [definition file](#write-subagent-files), [filtered for background runs](#available-tools) |
-| Model | Same as main session | From the subagent's `model` field |
-| Prompt cache | Shared with main session | Separate cache |
+| System prompt and tools | Same as the parent conversation | From the subagent's [definition file](#write-subagent-files), [filtered for background runs](#available-tools) |
+| Model | Same as the [parent conversation](#which-model-a-nested-subagent-runs-on) | Follows the [subagent model order](#choose-a-model) |
+| Prompt cache | Shared with the parent conversation | Separate cache |
 
 Because a fork's system prompt and tool definitions are identical to the parent, its first request reuses the parent's [prompt cache](https://code.claude.com/docs/en/prompt-caching.md#subagents-and-the-cache). Because of that reuse, a fork costs less than a fresh subagent for tasks that need the same context.
 
