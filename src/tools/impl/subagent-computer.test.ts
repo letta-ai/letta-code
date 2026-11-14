@@ -44,16 +44,12 @@ describe("resolveSubagentComputer", () => {
     });
   });
 
-  test.each(["codex", "claude-code", "cursor", "opencode"])(
-    "forked %s uses the default while Letta forks stay local",
+  test.each(["codex", "claude-code", "cursor", "opencode", "fork", "recall"])(
+    "forked %s uses the default while memory workers stay local",
     (harness) => {
       expect(resolve(undefined, forked, "cloud", harness)).toEqual({
         computer: "cloud",
         source: "default",
-      });
-      expect(resolve(undefined, forked, "cloud", "fork")).toEqual({
-        computer: undefined,
-        source: "none",
       });
       expect(resolve("local", forked, "cloud", harness)).toEqual({
         computer: undefined,
@@ -111,15 +107,15 @@ describe("resolveSubagentComputer", () => {
     });
   });
 
-  test.each([
-    ["forks", forked],
-    ["memory-profile subagents", memory],
-  ])("%s ignore the env default", (_label, config) => {
-    expect(resolve(undefined, config, "cloud")).toEqual({
-      computer: undefined,
-      source: "none",
-    });
-  });
+  test.each([["memory-profile subagents", memory]])(
+    "%s ignore the env default",
+    (_label, config) => {
+      expect(resolve(undefined, config, "cloud")).toEqual({
+        computer: undefined,
+        source: "none",
+      });
+    },
+  );
 
   test.each([
     ["forks", forked],
@@ -170,7 +166,6 @@ describe("acceptsDefaultComputer", () => {
   });
 
   test.each([
-    ["fork", "fork", forked],
     ["memory-subagent", "reflection", memory],
     ["memory by name", "memory", implementation],
   ])("rejects %s", (_label, subagentType, config) => {
