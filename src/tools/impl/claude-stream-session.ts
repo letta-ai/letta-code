@@ -9,6 +9,12 @@ import {
 } from "@/agent/subagents/subagent-process";
 import { confirmProcessExit } from "@/utils/confirm-process-exit";
 import { withNativeCliPath } from "@/utils/native-cli-env";
+import {
+  CLAUDE_CONTROL_RESPONSE_TIMEOUT_MS,
+  CLAUDE_INTERRUPT_ACK_TIMEOUT_ERROR,
+  CLAUDE_TURN_START_TIMEOUT_ERROR,
+  CLAUDE_TURN_START_TIMEOUT_MS,
+} from "./claude-steer-timeouts";
 import { traceClaudeLaunch } from "./external-llm-trace-launch";
 import type { ExternalTraceContext } from "./external-llm-trace-session";
 import {
@@ -127,8 +133,6 @@ export interface ClaudeSessionDependencies {
 }
 
 const sessions = new Map<string, ClaudeSession>();
-const CONTROL_RESPONSE_TIMEOUT_MS = 30_000;
-const TURN_START_TIMEOUT_MS = 60_000;
 /**
  * How long to keep waiting after a result while background tasks are still
  * listed. Claude Code's own background-task limit is 30 minutes.
@@ -252,8 +256,8 @@ function waitForTurnStart(
   return new Promise((resolve, reject) => {
     const waiter = { resolve: finishResolve, reject: finishReject };
     const timeout = setTimeout(
-      () => finishReject(new Error("Claude turn did not become interruptible")),
-      TURN_START_TIMEOUT_MS,
+      () => finishReject(new Error(CLAUDE_TURN_START_TIMEOUT_ERROR)),
+      CLAUDE_TURN_START_TIMEOUT_MS,
     );
     timeout.unref?.();
     const abort = () =>
@@ -862,8 +866,8 @@ async function steerSession(
     const timeout = setTimeout(() => {
       session.pendingControls
         .get(requestId)
-        ?.reject(new Error("Claude interrupt acknowledgement timed out"));
-    }, CONTROL_RESPONSE_TIMEOUT_MS);
+        ?.reject(new Error(CLAUDE_INTERRUPT_ACK_TIMEOUT_ERROR));
+    }, CLAUDE_CONTROL_RESPONSE_TIMEOUT_MS);
     timeout.unref?.();
     try {
       await writeRaw(
