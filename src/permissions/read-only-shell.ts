@@ -14,6 +14,7 @@ import {
   substituteShellVariable,
   tokenizeShellWords,
 } from "./shell-analysis";
+import { extractHeredocWrite } from "./shell-heredoc";
 
 const ALWAYS_SAFE_COMMANDS = new Set([
   "cat",
@@ -814,31 +815,6 @@ function splitShellSegmentsAllowUnsafeRedirects(
   return segments.map((segment) => segment.trim()).filter(Boolean);
 }
 
-function extractHeredocWrite(segment: string): {
-  path: string;
-  delimiter: string;
-} | null {
-  const match = segment.match(
-    /^cat\s+(?:(?:>|>>)\s*(?<path1>"[^"]+"|'[^']+'|\S+)\s+<<-?\s*(?<delim1>"[^"]+"|'[^']+'|\S+)|<<-?\s*(?<delim2>"[^"]+"|'[^']+'|\S+)\s+(?:>|>>)\s*(?<path2>"[^"]+"|'[^']+'|\S+))\s*$/,
-  );
-  if (!match?.groups) {
-    return null;
-  }
-
-  const rawPath = match.groups.path1 || match.groups.path2;
-  const rawDelim = match.groups.delim1 || match.groups.delim2;
-  if (!rawPath || !rawDelim) {
-    return null;
-  }
-
-  const delimiter = stripShellQuotes(rawDelim);
-  if (!delimiter) {
-    return null;
-  }
-
-  return { path: stripShellQuotes(rawPath), delimiter };
-}
-
 function validateScopedSegments(
   command: string,
   cwd: string | null,
@@ -942,6 +918,14 @@ function isScopedHeredocMemoryCommand(
     }
   }
   if (terminatorLine === -1) {
+    return false;
+  }
+
+  // Unquoted bodies expand; backslashes can change the terminating line.
+  if (
+    !heredoc.literalBody &&
+    /[$`\\]/.test(lines.slice(1, terminatorLine).join("\n"))
+  ) {
     return false;
   }
 
