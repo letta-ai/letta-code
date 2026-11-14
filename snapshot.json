@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.325:docs:95f7323f9481b40b99b538edcf827becebbe60417bc76a8c93f9285e24b5ca53:runtime:624a7070ac5d2a41a53ea4284510cf2421b31b3fc43545f2f2370cd218801212",
+  "candidate_id": "claude@2.1.325:docs:bd2f38ad46f18af7205ba45fcaa6ef08999f6071193426b3b744a4c06652ffef:runtime:624a7070ac5d2a41a53ea4284510cf2421b31b3fc43545f2f2370cd218801212",
   "package_version": "2.1.325",
   "npm_integrity": "sha512-OUxCb0sx734zJh9zGTP9oF01gZ44DCGFaw7hgD4byepjRRGyvHzgUOwC7dlCgVIljV6CiEVDjq+anY3GUvKFQw==",
   "npm_published_at": "2026-11-13T20:07:25.823Z",
@@ -1190,7 +1190,7 @@
       },
       "https://code.claude.com/docs/en/tools-reference.md": {
         "url": "https://code.claude.com/docs/en/tools-reference.md",
-        "hash": "d212d29556fbd9886aeff4826f451504655a56ed5231f74f0c03e1631336e95a",
+        "hash": "fe2d97e824c95da2dda7f2c47c3ebe35c063d952addacdb6cdc560ff30be9817",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/tools-reference.md"
       },
@@ -1255,7 +1255,7 @@
         "source_path": "sources/raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
       }
     },
-    "digest": "95f7323f9481b40b99b538edcf827becebbe60417bc76a8c93f9285e24b5ca53"
+    "digest": "bd2f38ad46f18af7205ba45fcaa6ef08999f6071193426b3b744a4c06652ffef"
   },
   "runtime": {
     "probe_contract_version": 2,
@@ -1552,8 +1552,8 @@
     ],
     "digest": "624a7070ac5d2a41a53ea4284510cf2421b31b3fc43545f2f2370cd218801212"
   },
-  "fetched_at": "2026-11-14T16:19:16.614Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/43614803876",
-  "state_commit_parent": "1a1dd195ec2fd7edeb016946f73ae2504e840b19",
-  "analysis_parent_sha": "1a1dd195ec2fd7edeb016946f73ae2504e840b19"
+  "fetched_at": "2026-11-14T18:19:23.294Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/43625834856",
+  "state_commit_parent": "9f9e58ac4a07e3ea86b15a2e38524a7c4414f4d6",
+  "analysis_parent_sha": "9f9e58ac4a07e3ea86b15a2e38524a7c4414f4d6"
 }
