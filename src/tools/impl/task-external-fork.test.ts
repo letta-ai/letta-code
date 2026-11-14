@@ -17,6 +17,7 @@ import type { spawnSubagent } from "@/agent/subagents/manager";
 import { __testSetBackend, type Backend } from "@/backend";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
+import { FORK_PROMPT_CHARACTER_LIMIT } from "./fork-prompt";
 import { backgroundTasks } from "./process_manager";
 
 // External coding workers with fork_context. Replace discovery and the
@@ -39,6 +40,7 @@ mock.module("@/agent/subagents", () => ({
     fork: { ...base, name: "fork", fork: true },
     recall: { ...base, name: "recall", fork: true },
     reviewer: { ...base, name: "reviewer" },
+    "forked-reviewer": { ...base, name: "forked-reviewer", fork: true },
   }),
   clearSubagentConfigCache: () => {},
   discoverSubagents: async () => ({ subagents: [], errors: [] }),
@@ -102,7 +104,7 @@ mock.module("./remote-external-coding-agent", () => ({
   },
 }));
 
-const { task } = await import("./task");
+const { task, launchSubagent } = await import("./task");
 const forkConversation = mock(async () => ({ id: "conv-forked-child" }));
 const retrieveAgent = mock(async () => ({ model: "anthropic/test-model" }));
 const olderMessage = `OLDER ${"x".repeat(50_000)}`;
@@ -239,5 +241,94 @@ describe("fork_context for external coding workers", () => {
 
     expect(remoteLaunches).toHaveLength(0);
     expect(workerPrompts).toHaveLength(1);
+  });
+});
+
+// Exercise the shared launch entrypoint and the model-facing Agent/Task adapter.
+// Rejection must happen before history reads, forks, or local/remote processes.
+describe("fork prompt limit", () => {
+  const oversized = "x".repeat(FORK_PROMPT_CHARACTER_LIMIT + 1);
+  for (const harness of [
+    "letta",
+    "codex",
+    "claude-code",
+    "cursor",
+    "opencode",
+  ] as const) {
+    for (const computer of [undefined, "office-mac"]) {
+      test(`${harness} on ${computer ?? "local"} rejects oversized default and explicit forks`, async () => {
+        for (const fork_context of [undefined, true]) {
+          const result = await launchSubagent({
+            ...brief,
+            harness,
+            computer,
+            fork_context,
+            prompt: oversized,
+          });
+          expect(result).toMatchObject({ success: false });
+          if (result.success) throw new Error("Expected rejection");
+          expect(result.error).toContain(
+            "The agent already has the conversation",
+          );
+          expect(result.error).toContain("what done looks like");
+          expect(result.error).not.toContain("launch unforked");
+        }
+        expect(spawn).not.toHaveBeenCalled();
+        expect(forkConversation).not.toHaveBeenCalled();
+        expect(listConversationMessages).not.toHaveBeenCalled();
+        expect(workerPrompts).toHaveLength(0);
+        expect(remoteLaunches).toHaveLength(0);
+        expect(backgroundTasks.size).toBe(0);
+      });
+    }
+    test(`${harness} accepts a prompt at the limit`, async () => {
+      const result = await launchSubagent({
+        ...brief,
+        harness,
+        prompt: "x".repeat(FORK_PROMPT_CHARACTER_LIMIT),
+        mcp:
+          harness === "codex" || harness === "claude-code"
+            ? { inherit: false }
+            : undefined,
+      });
+      expect(result.success).toBe(true);
+    });
+    test(`${harness} allows long unforked prompts`, async () => {
+      const result = await launchSubagent({
+        ...brief,
+        harness,
+        fork_context: false,
+        prompt: oversized,
+        mcp:
+          harness === "codex" || harness === "claude-code"
+            ? { inherit: false }
+            : undefined,
+      });
+      expect(result.success).toBe(true);
+      expect(forkConversation).not.toHaveBeenCalled();
+      expect(listConversationMessages).not.toHaveBeenCalled();
+    });
+  }
+  test("a forked preset cannot bypass the cap with fork_context: false", async () => {
+    const result = await task({
+      ...brief,
+      subagent_type: "forked-reviewer",
+      fork_context: false,
+      prompt: oversized,
+    });
+    expect(result).toMatchObject({ status: "error" });
+    if (typeof result === "string") throw new Error("Expected tool error");
+    expect(result.content).toContain("The agent already has the conversation");
+    expect(spawn).not.toHaveBeenCalled();
+    expect(forkConversation).not.toHaveBeenCalled();
+  });
+  test("an unforked preset allows long prompts", async () => {
+    const result = await launchSubagent({
+      ...brief,
+      subagent_type: "reviewer",
+      prompt: oversized,
+    });
+    expect(result.success).toBe(true);
+    expect(forkConversation).not.toHaveBeenCalled();
   });
 });
