@@ -777,7 +777,7 @@ With `--json`, Claude Code prints an array with one object per marketplace, carr
 | `repo` | `owner/repo`. `github` sources only |
 | `url` | The clone or fetch URL. `git` and `url` sources only |
 | `path` | The local path. `directory` and `file` sources only |
-| `ref` | The pinned branch or tag. `github` and `git` sources, only when pinned |
+| `ref` | The pinned branch, tag, or commit SHA. `github` and `git` sources, only when pinned |
 | `installLocation` | Where Claude Code cached the marketplace |
 
 An added [claude.ai marketplace](https://code.claude.com/docs/en/plugins/install.md#add-from-claude-ai) has no local clone, so its entry carries its claude.ai identifiers, `marketplaceId` and `organizationUuid`, in place of `installLocation`. It also carries `scope` when one is recorded, and `status`.

@@ -260,6 +260,10 @@ Claude can also edit a file without a separate Read after viewing it with a Bash
 
 When Claude views a file this way, Claude Code also loads any [subdirectory `CLAUDE.md`](https://code.claude.com/docs/en/memory#how-claude-md-files-load) and [path-scoped rules](https://code.claude.com/docs/en/memory.md#path-specific-rules) that apply to that file. See [Read and Edit permission rules](https://code.claude.com/docs/en/permissions.md#read-and-edit) for which Bash commands your `Read` and `Edit` deny rules cover.
 
+### Protect read-only files in Perforce
+
+To keep Edit, Write, and NotebookEdit from overwriting read-only files in a Perforce workspace, set [`CLAUDE_CODE_PERFORCE_MODE`](https://code.claude.com/docs/en/env-vars#variables) to `1`. Those tools then refuse to change read-only files and tell Claude to run `p4 edit` first.
+
 ### Non-UTF-8 files
 
 Claude can't use [NotebookEdit](#notebookedit-tool-behavior) on a file that isn't valid UTF-8. The same goes for Edit, unless the file starts with a little-endian UTF-16 byte-order mark. When Claude tries, the tool refuses the change and leaves the file untouched. Refused files include non-ASCII text saved in a legacy encoding such as Windows-1252 or Shift-JIS, binary files, and UTF-8 with an invalid byte sequence.

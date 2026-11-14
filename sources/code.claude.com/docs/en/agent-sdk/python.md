@@ -1244,7 +1244,7 @@ class ToolPermissionContext:
 | Field | Type | Description |
 | :- | :- | :- |
 | `signal` | `Any \| None` | Reserved for future abort signal support |
-| `suggestions` | `list[PermissionUpdate]` | Permission update suggestions from the CLI. Bash prompts include a suggestion with the `localSettings` destination, so returning it in `updated_permissions` writes the rule to `.claude/settings.local.json` and persists across sessions. |
+| `suggestions` | `list[PermissionUpdate]` | Permission update suggestions from the CLI. Bash prompts can include a suggestion with the `localSettings` destination, so returning it in `updated_permissions` writes the rule to `.claude/settings.local.json` and persists across sessions. |
 | `tool_use_id` | `str \| None` | Identifier of the specific tool call this prompt is for. Always populated when delivered to `can_use_tool` |
 | `agent_id` | `str \| None` | Sub-agent ID when the call originates from a subagent; `None` for the main agent |
 | `blocked_path` | `str \| None` | File path that triggered the permission request, when applicable. For example, when a Bash command tries to access a path outside allowed directories |
@@ -3583,7 +3583,7 @@ class SandboxSettings(TypedDict, total=False):
 | Property | Type | Default | Description |
 | :- | :- | :- | :- |
 | `enabled` | `bool` | `False` | Enable sandbox mode for command execution |
-| `autoAllowBashIfSandboxed` | `bool` | `True` | Auto-approve bash commands when sandbox is enabled |
+| [`autoAllowBashIfSandboxed`](https://code.claude.com/docs/en/settings-reference#sandbox-autoallowbashifsandboxed) | `bool` | `False` | Auto-approve Bash commands when sandbox is enabled. The `False` default requires Python SDK v0.2.182 or later |
 | `excludedCommands` | `list[str]` | `[]` | Commands that bypass sandbox restrictions, such as `["docker *"]`. These run unsandboxed automatically without model involvement; [`sandbox.excludedCommands`](https://code.claude.com/docs/en/settings-reference#sandbox-excludedcommands) covers when an entry applies |
 | `allowUnsandboxedCommands` | `bool` | `True` | Allow the model to request running commands outside the sandbox. When `True`, the model can set `dangerouslyDisableSandbox` in tool input, which falls back to the [permissions system](#permissions-fallback-for-unsandboxed-commands) |
 | `network` | [`SandboxNetworkConfig`](#sandboxnetworkconfig) | `None` | Network-specific sandbox configuration |

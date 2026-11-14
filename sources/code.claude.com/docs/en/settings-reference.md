@@ -4043,7 +4043,7 @@ Each entry below shows one allowlist entry per source type and the fields it acc
 
 | Source | Example entry | Fields |
 | :- | :- | :- |
-| `github` | `{ "source": "github", "repo": "acme-corp/plugins", "ref": "main", "path": "marketplace" }` | `repo` required; `ref` is a branch or tag; `path` is a subdirectory |
+| `github` | `{ "source": "github", "repo": "acme-corp/plugins", "ref": "main", "path": "marketplace" }` | `repo` required; `ref` is a branch, tag, or commit SHA; `path` is a subdirectory |
 | `git` | `{ "source": "git", "url": "https://gitlab.example.com/tools/plugins.git", "ref": "production" }` | `url` required; `ref` and `path` as for `github` |
 | `url` | `{ "source": "url", "url": "https://plugins.example.com/marketplace.json", "headers": { "Authorization": "Bearer ${TOKEN}" } }` | `url` required; `headers` adds HTTP headers for authenticated access |
 | `file` | `{ "source": "file", "path": "/opt/acme-corp/plugins/marketplace.json" }` | `path` required, the absolute path to a `marketplace.json` file |

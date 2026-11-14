@@ -1413,7 +1413,7 @@ type CanUseTool = (
 | Option | Type | Description |
 | :- | :- | :- |
 | `signal` | `AbortSignal` | Signaled if the operation should be aborted |
-| `suggestions` | [`PermissionUpdate`](#permissionupdate)`[]` | Suggested permission updates so the user is not prompted again for this tool. Bash prompts include a suggestion with the `localSettings` [destination](#permissionupdatedestination), so returning it in `updatedPermissions` writes the rule to `.claude/settings.local.json` and persists across sessions. |
+| `suggestions` | [`PermissionUpdate`](#permissionupdate)`[]` | Suggested permission updates so the user is not prompted again for this tool. Bash prompts can include a suggestion with the `localSettings` [destination](#permissionupdatedestination), so returning it in `updatedPermissions` writes the rule to `.claude/settings.local.json` and persists across sessions. |
 | `blockedPath` | `string` | The file path that triggered the permission request, if applicable |
 | `mcpServer` | `{ name: string; source: string }` | For an `mcp__*` tool, the MCP server that serves it and where that server's definition came from, with the fields of [`McpServerProvenance`](#mcpserverprovenance). Absent for other tools. Requires Agent SDK v0.3.274 or later |
 | `decisionReason` | `string` | Explains why this permission request was triggered |
@@ -1596,7 +1596,7 @@ type McpServerToolPolicy = {
 Choose `always_ask` to approve each call yourself, or `always_deny` to block the tool outright:
 
 * **`always_ask`**: each call to the tool [needs approval](https://code.claude.com/docs/en/agent-sdk/permissions.md#how-permissions-are-evaluated), even if an `allowedTools` entry or allow rule covers it. The call goes to your `canUseTool` callback or [`permissionPromptToolName`](#options) tool, unless it's settled first. A [mod](https://code.claude.com/docs/en/plugins/mods/overview.md) in a plugin you load [can approve it first](https://code.claude.com/docs/en/permissions.md#precedence-among-rules-hooks-and-mods). Otherwise, in `dontAsk` mode it's denied, and in [`auto`, `plan`, and `bypassPermissions` mode](#permission-modes-that-can-approve-an-always_ask-call) it can be approved before it reaches your callback
-* **`always_deny`**: a call to the tool [is denied](https://code.claude.com/docs/en/agent-sdk/permissions.md#how-permissions-are-evaluated) in every permission mode, including `bypassPermissions`, but a mod in a plugin you load [can still approve it](https://code.claude.com/docs/en/permissions.md#precedence-among-rules-hooks-and-mods)
+* **`always_deny`**: Claude Code removes the tool from Claude's context in every permission mode, including `bypassPermissions`. Removal requires Claude Code v2.1.324 or later
 
 If you pass neither `canUseTool` nor `permissionPromptToolName`, or set [`permissionPrompts`](#options) to `'none'`, an `always_ask` call that isn't settled first is denied unless a [`PermissionRequest` hook](https://code.claude.com/docs/en/hooks#permissionrequest) allows it.
 
@@ -6089,7 +6089,7 @@ type SandboxSettings = {
 | :- | :- | :- | :- |
 | `enabled` | `boolean` | `false` | Enable sandbox mode for command execution |
 | `failIfUnavailable` | `boolean` | `true` | Stop at startup if `enabled` is `true` but the sandbox can't start. Set `false` to fall back to unsandboxed execution with a warning on stderr |
-| `autoAllowBashIfSandboxed` | `boolean` | `true` | Auto-approve Bash commands when sandbox is enabled |
+| [`autoAllowBashIfSandboxed`](https://code.claude.com/docs/en/settings-reference#sandbox-autoallowbashifsandboxed) | `boolean` | `false` | Auto-approve Bash commands when sandbox is enabled. The `false` default requires Agent SDK v0.3.324 or later |
 | `excludedCommands` | `string[]` | `[]` | Commands that bypass sandbox restrictions, such as `['docker *']`. These run unsandboxed automatically without model involvement; [`sandbox.excludedCommands`](https://code.claude.com/docs/en/settings-reference#sandbox-excludedcommands) covers when an entry applies |
 | `allowUnsandboxedCommands` | `boolean` | `true` | Allow the model to request running commands outside the sandbox. When `true`, the model can set `dangerouslyDisableSandbox` in tool input, which falls back to the [permissions system](#permissions-fallback-for-unsandboxed-commands) |
 | `network` | [`SandboxNetworkConfig`](#sandboxnetworkconfig) | `undefined` | Network-specific sandbox configuration |

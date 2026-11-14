@@ -3779,8 +3779,6 @@ This output declines a request:
 }
 ```
 
-In the dialog, selecting **Decline** sends `decline` and pressing `Esc` sends `cancel`, so return the one you want the server to see.
-
 For a URL-mode request, a hook that returns `accept` skips the dialog, so the URL never opens.
 
 Claude Code discards `reason`, `systemMessage`, and `continue` from an Elicitation hook's JSON output, whichever `action` you return.

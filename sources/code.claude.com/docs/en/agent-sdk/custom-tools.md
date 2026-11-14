@@ -392,7 +392,7 @@ To remove a built-in from Claude's context, omit it from `tools` or list its bar
 
 ### Require approval for specific tools
 
-Set a tool's `permission_policy` to `always_ask`, and `allowedTools` stops approving that tool's calls, so they can reach your [`canUseTool`](https://code.claude.com/docs/en/agent-sdk/user-input) callback even though the tool is listed. Set `always_deny` instead, and [a call to the tool is denied](https://code.claude.com/docs/en/agent-sdk/permissions.md#how-permissions-are-evaluated), but a [mod](https://code.claude.com/docs/en/plugins/mods/overview.md) in a plugin you load [can still approve it](https://code.claude.com/docs/en/permissions.md#precedence-among-rules-hooks-and-mods). The field is TypeScript-only and requires Agent SDK v0.3.301 or later.
+Set a tool's `permission_policy` to `always_ask`, and `allowedTools` stops approving that tool's calls, so they can reach your [`canUseTool`](https://code.claude.com/docs/en/agent-sdk/user-input) callback even though the tool is listed. Set `always_deny` instead to [block the tool](https://code.claude.com/docs/en/agent-sdk/typescript.md#permission-policy-values). The field is TypeScript-only and requires Agent SDK v0.3.301 or later.
 
 Put the policy entry in a `tools` array on the config object `createSdkMcpServer()` returns, not in the `tools` option you pass into that function. This example spreads `weatherServer` from the [weather tool example](#weather-tool-example) and adds a `tools` array giving `get_temperature` the `always_ask` policy:
 
