@@ -20,7 +20,7 @@
     },
     "fork_context": {
       "type": "boolean",
-      "description": "When creating a Letta Code subagent (without subagent_type), whether to include the full conversation history in the subagent. Cannot be applied to existing agents or threads. Defaults to true for new default Letta agents and external workers; existing agent or conversation targets resume without forking."
+      "description": "Whether the new agent starts from this conversation. A fork gives it the source: what people actually said, the evidence gathered so far, and the decisions and corrections made along the way. A brief is your retelling of that, and anything you leave out or reword never reaches the worker. So fork whenever the task comes out of this conversation, however long or noisy it is; the fork is trimmed to fit. If you notice yourself writing a brief to explain the conversation, that's the cue to fork. Skip forking only when the task has nothing to do with this conversation, or the worker shouldn't see what's in it. Applies when creating a Letta Code subagent without subagent_type. Cannot be applied to existing agents or threads. Defaults to true for new default Letta agents and external workers; existing agent or conversation targets resume without forking."
     },
     "model": {
       "type": "string",

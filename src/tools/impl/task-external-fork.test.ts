@@ -271,7 +271,7 @@ describe("fork prompt limit", () => {
             "The agent already has the conversation",
           );
           expect(result.error).toContain("what done looks like");
-          expect(result.error).toContain("fork_context: false");
+          expect(result.error).not.toContain("launch unforked");
         }
         expect(spawn).not.toHaveBeenCalled();
         expect(forkConversation).not.toHaveBeenCalled();
