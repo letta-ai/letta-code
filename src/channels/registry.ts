@@ -49,6 +49,11 @@ import {
   type ChannelRouteProvisioner,
   createChannelRouteProvisioner,
 } from "./registry-routes";
+import {
+  ChannelInitializationError,
+  type ChannelStartupFailure,
+  formatIsolatedChannelStartupFailures,
+} from "./registry-startup-failures";
 import type { ChannelRestoreAgentScope } from "./restore-scope";
 import { shouldRestoreChannelAccountForAgentScope } from "./restore-scope";
 import {
@@ -60,6 +65,7 @@ import {
   removeRouteInMemory,
   setRouteInMemory,
 } from "./routing";
+import { isMissingChannelRuntimeError } from "./runtime-deps";
 import {
   buildSignalBaseUrlConflictError,
   findSignalBaseUrlConflict,
@@ -78,6 +84,13 @@ import type {
 } from "./types";
 import { isSignalChannelAccount } from "./types";
 import { subscribeWhatsAppConnectionState } from "./whatsapp/state";
+
+export {
+  ChannelInitializationError,
+  type ChannelStartupFailure,
+  formatChannelStartupFailures,
+  formatIsolatedChannelStartupFailures,
+} from "./registry-startup-failures";
 
 // ── Singleton ─────────────────────────────────────────────────────
 
@@ -102,19 +115,6 @@ type ChannelStartupOptions = {
   logger?: ChannelStartupLogger;
 };
 
-export interface ChannelStartupFailure {
-  channelId: string;
-  accountId?: string;
-  error: string;
-}
-
-export class ChannelInitializationError extends Error {
-  constructor(public readonly failures: ChannelStartupFailure[]) {
-    super(formatChannelStartupFailures(failures));
-    this.name = "ChannelInitializationError";
-  }
-}
-
 function logChannelStartup(
   logger: ChannelStartupLogger | undefined,
   message: string,
@@ -127,32 +127,6 @@ function formatChannelStartupError(error: unknown): string {
     return error.stack || error.message;
   }
   return String(error);
-}
-
-export function formatChannelStartupFailures(
-  failures: ChannelStartupFailure[],
-): string {
-  const failedChannels = Array.from(
-    new Set(failures.map((failure) => failure.channelId)),
-  );
-  const lines = failures.map((failure) => {
-    const label = failure.accountId
-      ? `${failure.channelId}/${failure.accountId}`
-      : failure.channelId;
-    return `- ${label}: ${failure.error}`;
-  });
-
-  return [
-    "Failed to start requested channel listeners.",
-    ...lines,
-    "",
-    "The listener is not running for these channels.",
-    `Install missing runtimes with: letta server --channels ${failedChannels.join(",")} --install-channel-runtimes`,
-    "Or install them once with:",
-    ...failedChannels.map(
-      (channelId) => `  letta channels install ${channelId}`,
-    ),
-  ].join("\n");
 }
 
 // ── Registry ──────────────────────────────────────────────────────
@@ -621,7 +595,20 @@ export class ChannelRegistry {
       options?.logger,
       `starting adapter for ${account.channel}/${accountId}`,
     );
-    await adapter.start({ logger: options?.logger });
+    try {
+      await adapter.start({ logger: options?.logger });
+    } catch (error) {
+      // A half-started adapter cannot receive traffic, so drop it instead of
+      // leaving it registered. Cleanup is best effort: the startup error is
+      // the one worth reporting.
+      this.adapters.delete(this.getAdapterKey(channelId, accountId));
+      try {
+        await adapter.stop();
+      } catch {
+        // Ignore cleanup errors.
+      }
+      throw error;
+    }
     logChannelStartup(
       options?.logger,
       `started adapter for ${account.channel}/${accountId}`,
@@ -804,7 +791,7 @@ export async function initializeChannels(
     );
     if (accounts.length === 0) {
       const error = `Channel "${channelId}" not configured. Run: letta channels configure ${channelId}`;
-      failures.push({ channelId, error });
+      failures.push({ channelId, error, scope: "channel" });
       console.error(error);
       continue;
     }
@@ -814,7 +801,7 @@ export async function initializeChannels(
         ? ` in ${options.restoreAgentScope} restore scope`
         : "";
       const error = `Channel "${channelId}" has no enabled accounts${scopeSuffix}.`;
-      failures.push({ channelId, error });
+      failures.push({ channelId, error, scope: "channel" });
       console.error(error);
       logChannelStartup(options?.logger, error);
       continue;
@@ -826,7 +813,7 @@ export async function initializeChannels(
       );
       if (conflict) {
         const error = buildSignalBaseUrlConflictError(conflict);
-        failures.push({ channelId, error });
+        failures.push({ channelId, error, scope: "channel" });
         console.error(error);
         logChannelStartup(options?.logger, error);
         continue;
@@ -844,6 +831,8 @@ export async function initializeChannels(
           channelId,
           accountId: account.accountId,
           error: message,
+          scope: "account",
+          missingRuntime: isMissingChannelRuntimeError(error),
         });
         console.error(
           `[Channels] Failed to start ${channelId}/${account.accountId}:`,
@@ -858,6 +847,24 @@ export async function initializeChannels(
   }
 
   if (failures.length > 0 && options?.failOnStartupError) {
+    // A channel-level failure means the requested channel cannot serve at all,
+    // so startup fails. An account-level failure only affects the account that
+    // failed to start: when other adapters are running, they keep serving and
+    // the failed accounts are reported as not listening.
+    const accountFailures = failures.filter(
+      (failure) => failure.scope === "account",
+    );
+    const canIsolateAccountFailures =
+      accountFailures.length === failures.length &&
+      registry.getActiveChannelIds().length > 0;
+
+    if (canIsolateAccountFailures) {
+      const message = formatIsolatedChannelStartupFailures(accountFailures);
+      console.error(message);
+      logChannelStartup(options?.logger, message);
+      return registry;
+    }
+
     await registry.stopAll();
     throw new ChannelInitializationError(failures);
   }

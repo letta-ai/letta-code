@@ -14,6 +14,7 @@ import {
   __testOverrideSavePendingControlRequestStore,
   clearPendingControlRequestStore,
 } from "@/channels/pending-control-requests";
+import { __testOverrideLoadChannelPlugin } from "@/channels/plugin-registry";
 import {
   ChannelInitializationError,
   ChannelRegistry,
@@ -26,7 +27,12 @@ import {
   addRoute,
   clearAllRoutes,
 } from "@/channels/routing";
-import type { SignalChannelAccount } from "@/channels/types";
+import { buildMissingChannelRuntimeError } from "@/channels/runtime-deps";
+import type {
+  ChannelAdapter,
+  SignalChannelAccount,
+  TelegramChannelAccount,
+} from "@/channels/types";
 
 beforeEach(() => {
   __testOverrideLoadPendingControlRequestStore(null);
@@ -251,5 +257,204 @@ describe("ChannelRegistry lifecycle", () => {
     expect(logs).toContain(
       '[Channels] Channel "slack" has no enabled accounts in local restore scope.',
     );
+  });
+});
+
+describe("ChannelRegistry startup isolation", () => {
+  const createdAt = "2026-08-10T00:00:00.000Z";
+
+  beforeEach(() => {
+    __testOverrideLoadRoutes(() => null);
+    __testOverrideSaveRoutes(() => {});
+    __testOverrideLoadPairingStore(() => null);
+    __testOverrideSavePairingStore(() => {});
+  });
+
+  afterEach(async () => {
+    const registry = getChannelRegistry();
+    if (registry) {
+      await registry.stopAll();
+    }
+    clearAllRoutes();
+    clearPairingStores();
+    clearChannelAccountStores();
+    __testOverrideLoadRoutes(null);
+    __testOverrideSaveRoutes(null);
+    __testOverrideLoadPairingStore(null);
+    __testOverrideSavePairingStore(null);
+    __testOverrideLoadChannelAccounts(null);
+    __testOverrideSaveChannelAccounts(null);
+    __testOverrideLoadChannelPlugin(null);
+  });
+
+  function makeTelegramAccount(accountId: string): TelegramChannelAccount {
+    return {
+      channel: "telegram",
+      accountId,
+      enabled: true,
+      token: `token-${accountId}`,
+      binding: { agentId: null, conversationId: null },
+      dmPolicy: "pairing",
+      allowedUsers: [],
+      createdAt,
+      updatedAt: createdAt,
+    };
+  }
+
+  function makeAdapter(
+    account: TelegramChannelAccount,
+    startFailure?: () => Error,
+  ): ChannelAdapter {
+    let running = false;
+    return {
+      id: `telegram:${account.accountId}`,
+      channelId: "telegram",
+      accountId: account.accountId,
+      name: "Telegram",
+      async start(): Promise<void> {
+        const failure = startFailure?.();
+        if (failure) throw failure;
+        running = true;
+      },
+      async stop(): Promise<void> {
+        running = false;
+      },
+      isRunning: () => running,
+      async sendMessage() {
+        return { messageId: "msg-1" };
+      },
+      async sendDirectReply(): Promise<void> {},
+    };
+  }
+
+  function overridePlugin(
+    startFailureFor: (accountId: string) => Error | undefined,
+  ): void {
+    __testOverrideLoadChannelPlugin(async () => ({
+      metadata: {
+        id: "telegram",
+        displayName: "Telegram",
+        runtimePackages: [],
+        runtimeModules: [],
+      },
+      createAdapter: (account) => {
+        const telegramAccount = account as TelegramChannelAccount;
+        const failure = startFailureFor(telegramAccount.accountId);
+        return makeAdapter(
+          telegramAccount,
+          failure ? () => failure : undefined,
+        );
+      },
+    }));
+  }
+
+  test("keeps healthy accounts running when one account fails to start", async () => {
+    __testOverrideLoadChannelAccounts(() => [
+      makeTelegramAccount("good"),
+      makeTelegramAccount("bad"),
+    ]);
+    __testOverrideSaveChannelAccounts(() => {});
+    overridePlugin((accountId) =>
+      accountId === "bad"
+        ? new Error("Telegram bot init timed out after 15000ms")
+        : undefined,
+    );
+    const logs: string[] = [];
+
+    const registry = await initializeChannels(["telegram"], {
+      failOnStartupError: true,
+      logger: (message) => logs.push(message),
+    });
+
+    expect(registry.getActiveChannelIds()).toEqual(["telegram"]);
+    expect(registry.getAdapter("telegram", "good")?.isRunning()).toBe(true);
+    // The half-started adapter is dropped instead of lingering unregistered.
+    expect(registry.getAdapter("telegram", "bad")).toBeNull();
+    expect(
+      logs.some((line) =>
+        line.includes("Some channel accounts failed to start"),
+      ),
+    ).toBe(true);
+    expect(
+      logs.some((line) =>
+        line.includes(
+          "telegram/bad: Telegram bot init timed out after 15000ms",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  test("does not suggest installing runtimes for unrelated failures", async () => {
+    __testOverrideLoadChannelAccounts(() => [
+      makeTelegramAccount("good"),
+      makeTelegramAccount("bad"),
+    ]);
+    __testOverrideSaveChannelAccounts(() => {});
+    overridePlugin((accountId) =>
+      accountId === "bad"
+        ? new Error("Telegram bot init timed out after 15000ms")
+        : undefined,
+    );
+    const logs: string[] = [];
+
+    await initializeChannels(["telegram"], {
+      failOnStartupError: true,
+      logger: (message) => logs.push(message),
+    });
+
+    expect(logs.some((line) => line.includes("Install missing runtimes"))).toBe(
+      false,
+    );
+  });
+
+  test("suggests installing the runtime when it is missing", async () => {
+    __testOverrideLoadChannelAccounts(() => [
+      makeTelegramAccount("good"),
+      makeTelegramAccount("bad"),
+    ]);
+    __testOverrideSaveChannelAccounts(() => {});
+    overridePlugin((accountId) =>
+      accountId === "bad"
+        ? buildMissingChannelRuntimeError("telegram")
+        : undefined,
+    );
+    const logs: string[] = [];
+
+    await initializeChannels(["telegram"], {
+      failOnStartupError: true,
+      logger: (message) => logs.push(message),
+    });
+
+    expect(
+      logs.some((line) =>
+        line.includes(
+          "Install missing runtimes with: letta server --channels telegram",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  test("fails startup when no account could start", async () => {
+    __testOverrideLoadChannelAccounts(() => [makeTelegramAccount("bad")]);
+    __testOverrideSaveChannelAccounts(() => {});
+    overridePlugin(
+      () => new Error("Telegram bot init timed out after 15000ms"),
+    );
+
+    await expect(
+      initializeChannels(["telegram"], { failOnStartupError: true }),
+    ).rejects.toBeInstanceOf(ChannelInitializationError);
+  });
+
+  test("keeps the channel failure fatal even when another account started", async () => {
+    __testOverrideLoadChannelAccounts((channelId) =>
+      channelId === "telegram" ? [makeTelegramAccount("good")] : [],
+    );
+    __testOverrideSaveChannelAccounts(() => {});
+    overridePlugin(() => undefined);
+
+    await expect(
+      initializeChannels(["telegram", "discord"], { failOnStartupError: true }),
+    ).rejects.toBeInstanceOf(ChannelInitializationError);
   });
 });
