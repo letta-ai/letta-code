@@ -93,7 +93,7 @@ When background work starts another turn, the run prints each turn's result with
 
 #### Give a long subagent command more time
 
-When a subagent's long command [moves to the background](https://code.claude.com/docs/en/tools-reference.md#foreground-commands-that-move-to-the-background) at its timeout, it keeps running, but a `claude -p` run can exit with code 0 before the command finishes.
+When a subagent's long command [moves to the background](https://code.claude.com/docs/en/tools-reference.md#foreground-commands-that-move-to-the-background) at its timeout, a `claude -p` run can exit with code 0 before the command finishes.
 
 To raise the default timeout above the command's run time, set [`BASH_DEFAULT_TIMEOUT_MS`](https://code.claude.com/docs/en/env-vars), for example `BASH_DEFAULT_TIMEOUT_MS=300000 claude -p "<prompt>"` for five minutes. For a background subagent's command over 10 minutes, also raise the [10-minute cap](#background-tasks-at-exit).
 
@@ -339,9 +339,13 @@ claude -p "Apply the lint fixes" --permission-mode acceptEdits
 
 ### Turn off permission prompts in unattended runs
 
-Pass `--permission-prompts none` when nobody is available to answer permission prompts, for example in a scheduled job. The flag matters most when your run has a permission host: an Agent SDK app with a [`canUseTool` callback](https://code.claude.com/docs/en/agent-sdk/user-input), or an MCP tool you pass with [`--permission-prompt-tool`](https://code.claude.com/docs/en/cli-reference#cli-flags). Without the flag, your run waits for that host to answer each permission request.
+Pass `--permission-prompts none` when nobody is available to answer permission prompts, for example in a scheduled job. The flag matters most when your run has a permission host: an Agent SDK app with a [`canUseTool` callback](https://code.claude.com/docs/en/agent-sdk/user-input), or an MCP tool you pass with [`--permission-prompt-tool`](https://code.claude.com/docs/en/cli-reference#cli-flags). Without the flag or the [`permissions.denyInsteadOfPrompting`](https://code.claude.com/docs/en/settings-reference#permissions-denyinsteadofprompting) setting, your run waits for that host to answer each permission request.
 
 With the flag, your run doesn't consult the host or wait on it. Anything that would prompt is denied unless a `PermissionRequest` hook allows it, Claude is told that nobody can approve the request and not to retry it, and the run continues. In a `-p` run with no host, these requests are denied either way, and the flag also tells Claude not to retry them. Permission rules, [`PermissionRequest` hooks](https://code.claude.com/docs/en/hooks#permissionrequest), and the permission mode you set still decide every call first; Claude Code denies only the requests that nothing else resolves.
+
+> [!NOTE]
+>
+> The `--permission-prompts none` flag lasts for one run. To deny calls that would wait on a permission prompt in later runs too, set [`permissions.denyInsteadOfPrompting`](https://code.claude.com/docs/en/settings-reference#permissions-denyinsteadofprompting) to `true` in your user or managed settings.
 
 This example runs an unattended task in [auto mode](https://code.claude.com/docs/en/permission-modes.md#eliminate-prompts-with-auto-mode). The classifier reviews each action as usual, and Claude Code denies anything that would have fallen back to a prompt:
 

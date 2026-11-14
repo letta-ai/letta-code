@@ -4,9 +4,9 @@
 
 # Troubleshoot the Agent SDK
 
-> Fix Agent SDK errors when the Claude Code CLI fails to start, the CLI process exits, or a successful result arrives without structured output.
+> Fix Agent SDK errors: the Claude Code CLI fails to start or exits, a tool message is too large, or a result arrives without structured output.
 
-This page covers Agent SDK errors in CLI startup, CLI process exit, and structured outputs. Entries on this page are keyed to the error you see. Each entry names the cause and what to do.
+This page covers Agent SDK errors in CLI startup, CLI process exit, large tool calls and results, and structured outputs. Entries on this page are keyed to the error you see. Each entry names the cause and what to do.
 
 Symptoms tied to a feature, such as a hook not firing or a skill not being used, have a troubleshooting section on that feature's page. The table names the section or page that covers each symptom:
 
@@ -20,7 +20,7 @@ Symptoms tied to a feature, such as a hook not firing or a skill not being used,
 | Hook not firing, matcher not filtering as expected, hook timeout, tool blocked unexpectedly, modified input not applied, session hooks not available in Python, subagent permission prompts multiplying, recursive hook loops with subagents, `systemMessage` not appearing in output | [Fix common issues](https://code.claude.com/docs/en/agent-sdk/hooks.md#fix-common-issues) on the hooks page |
 | An agent that works on your machine fails in a deployed service or container | [Troubleshoot deployment failures](https://code.claude.com/docs/en/agent-sdk/hosting.md#troubleshoot-deployment-failures) |
 | `Not logged in`, `Invalid API key`, `API Error`, `429`, `There's an issue with the selected model` | [Error reference](https://code.claude.com/docs/en/errors.md#find-your-error) |
-| `CLINotFoundError`, `CLIConnectionError`, `ProcessError`, `Claude Code process exited with code N`, `Claude Code returned an error result`, `structured_output` is `None` | [CLI startup](#cli-startup), [CLI process exit](#cli-process-exit), and [Structured outputs](#structured-outputs) on this page |
+| `CLINotFoundError`, `CLIConnectionError`, `ProcessError`, `Claude Code process exited with code N`, `Claude Code returned an error result`, `CLIJSONDecodeError`, `structured_output` is `None` | [CLI startup](#cli-startup), [CLI process exit](#cli-process-exit), [Large tool calls and results](#large-tool-calls-and-results), and [Structured outputs](#structured-outputs) on this page |
 
 ## CLI startup
 
@@ -135,6 +135,34 @@ Claude Code returned an error result: <the CLI's own error report>
 ```
 
 The text after the colon is the CLI's report of what went wrong, so start there rather than with the exit itself. Python raises this as a [`ResultError`](https://code.claude.com/docs/en/agent-sdk/python#resulterror), whose `data` attribute carries the full error result. TypeScript rejects the message loop with a plain `Error` carrying the same message shape.
+
+## Large tool calls and results
+
+### CLIJSONDecodeError: JSON message exceeded maximum buffer size
+
+The Python SDK raises this error when one message from Claude Code is longer than the [`max_buffer_size`](https://code.claude.com/docs/en/agent-sdk/python#claudeagentoptions) option, which defaults to 1,048,576 characters. The error calls them bytes:
+
+```text theme={null}
+Failed to decode JSON: JSON message exceeded maximum buffer size of 1048576 bytes...
+```
+
+For example, PDFs, screenshots, and text files can produce messages that reach that limit:
+
+* **PDFs and screenshots**: when Claude reads a whole PDF of about 393 KB or more with the Read tool, the tool result can reach the limit, because it holds the file's base64 twice. A tool result with a screenshot, from Read or an MCP tool, holds the base64 twice too.
+* **Text files**: messages from the Edit and Write tools can reach the limit on a file well under 1 MB, depending on how much of the file changes.
+
+To stop the error, set a larger limit in `ClaudeAgentOptions`:
+
+```python theme={null}
+options = ClaudeAgentOptions(max_buffer_size=64 * 1024 * 1024)
+```
+
+That value is enough for a screenshot, and for a Read of a whole PDF up to Read's 20 MB limit. If the error comes back, for example on an Edit of a very large file, set a higher value.
+
+Any change a tool already made stays in place, and the tool call whose message was too long may have made one. To pick up the work that stopped:
+
+1. If you hold a `ClaudeSDKClient` open, call `disconnect()`. The client receives no more messages after this error, but Claude Code keeps running and can still make changes.
+2. Start a new `query()` or `ClaudeSDKClient` with the larger limit and [`continue_conversation=True`](https://code.claude.com/docs/en/agent-sdk/sessions#continue-resume-and-fork), which picks the most recent session in the working directory. To pick a specific session, set `resume` to `data["session_id"]` from the init [`SystemMessage`](https://code.claude.com/docs/en/agent-sdk/python#systemmessage).
 
 ## Structured outputs
 

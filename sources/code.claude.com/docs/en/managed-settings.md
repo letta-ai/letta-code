@@ -97,7 +97,7 @@ A deployed policy reaches the developer's sessions as follows:
 
 The keys are the same everywhere, but each mechanism stores them in a different place and shape:
 
-* **Server-managed**: Anthropic's servers, or your gateway, hold the policy. Claude Code keeps a local cache that it applies at startup and [replaces on each successful fetch](https://code.claude.com/docs/en/server-managed-settings.md#security-considerations).
+* **Server-managed**: Anthropic's servers, or your gateway, hold the policy. Claude Code keeps a local cache that it [can apply at startup](https://code.claude.com/docs/en/server-managed-settings.md#fetch-and-caching-behavior) and [replaces on each successful fetch](https://code.claude.com/docs/en/server-managed-settings.md#security-considerations).
 * **macOS configuration profile**: the `com.anthropic.claudecode` managed preferences domain. Use the same top-level keys as `managed-settings.json`, with nested settings as dictionaries and lists as plist arrays.
 * **Windows HKLM registry**: the JSON as a `REG_SZ` or `REG_EXPAND_SZ` value named `Settings` under `HKLM\SOFTWARE\Policies\ClaudeCode`.
 * **File-based**: `managed-settings.json`, an optional `managed-settings.d/` directory, and `managed-mcp.json` in the system directory: `/Library/Application Support/ClaudeCode/` on macOS, `/etc/claude-code/` on Linux and WSL, and `C:\Program Files\ClaudeCode\` on Windows. Claude Code doesn't read the legacy Windows path `C:\ProgramData\ClaudeCode\managed-settings.json`.

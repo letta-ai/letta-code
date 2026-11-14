@@ -619,9 +619,12 @@ To find out which of these happened, start `claude --debug` with spell checking 
 
 Pasted text can carry Unicode characters that a terminal draws as nothing at all, such as tag characters, bidirectional controls, and zero-width spaces, so a prompt can contain text you never see. To keep copied text from carrying instructions your terminal doesn't draw, Claude Code removes those characters when you press Enter, before sending anything. It cleans both the prompt and the contents of any collapsed [pasted-text reference](https://code.claude.com/docs/en/terminal-config.md#paste-large-content) the prompt includes. Claude Code keeps the joiners that Persian and Indic scripts write and the selectors inside emoji sequences.
 
-If Claude Code removed anything, that Enter sends nothing. The cleaned prompt goes back into the input box with a notice such as `Removed 3 invisible characters · review and press Enter to send`, and pressing Enter again sends the text as shown.
+If Claude Code removed anything, it either sends the cleaned prompt or puts it back for you to review. To tell which, check the notice:
 
-When you pass a prompt on the command line, as in `claude "fix the login bug"`, Claude Code doesn't wait for a second Enter. It removes the characters, shows a notice, and sends the cleaned prompt. If the cleaned prompt would begin with `/`, Claude Code puts it in the input box for you to review and send instead.
+* **`Removed 3 invisible characters from your prompt`**: if the input box is empty, your prompt was sent without those characters. If the prompt is still there, it wasn't sent, so press Enter again.
+* **`Removed 3 invisible characters · review and press Enter to send`**: nothing was sent. Read the cleaned prompt in the input box, then press Enter to send it as shown.
+
+When you pass a prompt on the command line, as in `claude "fix the login bug"`, Claude Code removes the characters, shows a notice, and sends the cleaned prompt. If the cleaned prompt would begin with `/`, Claude Code puts it in the input box for you to review and send instead.
 
 ## Review changes with /diff
 

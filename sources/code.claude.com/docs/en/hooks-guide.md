@@ -593,10 +593,8 @@ With an exit code besides 0 and 2 and no valid JSON output, the action proceeds 
 
 * **Exit 0**: if you exit 0 from a `PreToolUse` hook, the tool call still goes through the normal [permission flow](https://code.claude.com/docs/en/permissions.md), because exit 0 doesn't approve it. For `UserPromptSubmit`, `UserPromptExpansion`, `SessionStart`, and `PostModelSwitch` hooks, Claude Code adds stdout it [treats as plain text](https://code.claude.com/docs/en/hooks.md#exit-code-0) to Claude's context.
 * **Exit 2**: write a reason to stderr. Depending on the event, Claude receives it as feedback so it can adjust, the user sees it, or no message appears, as with `ConfigChange` and `Elicitation`. Some events can't be blocked: for `SessionStart` and others, exit 2 shows stderr to the user and execution continues. See [exit code 2 behavior per event](https://code.claude.com/docs/en/hooks.md#exit-code-2-behavior-per-event) for the full list.
-* **Any other exit code**: for the per-event exceptions, such as `WorktreeCreate` failing on any nonzero exit, see [Exit code output](https://code.claude.com/docs/en/hooks.md#exit-code-output). On other events, unless the hook is one whose failure blocks the action, find your case by what your hook printed to stdout:
-  * A parsed object that passes schema validation: Claude Code ignores the exit code, the JSON alone decides the outcome, and the hook isn't reported as an error.
-  * A parsed object that fails schema validation, or stdout that Claude Code [tries to parse as JSON](https://code.claude.com/docs/en/hooks.md#exit-code-0) but that isn't valid JSON: the action proceeds as a non-blocking error. Check the `<hook name> hook error` notice for the validation or parse message.
-  * Stdout that Claude Code [treats as plain text](https://code.claude.com/docs/en/hooks.md#exit-code-0), or empty stdout: the action proceeds as a non-blocking error. The transcript shows a `<hook name> hook error` notice, then the first line of stderr prefixed with `Failed with non-blocking status code:`. To capture the full stderr, enable [debug logging](https://code.claude.com/docs/en/hooks.md#debug-hooks) with `claude --debug` or by running `/debug` mid-session.
+
+To look up the outcome for a combination of exit code and stdout on an event such as `PreToolUse`, see [Exit code output](https://code.claude.com/docs/en/hooks.md#exit-code-output). Check the same section for events with their own exit code rules, such as `WorktreeCreate`.
 
 #### Structured JSON output
 
@@ -700,9 +698,9 @@ Each event type matches on a specific field:
 
 The tabs below show a few more matchers on different event types.
 
-> [tab] Log every Bash command
+> [tab] Log successful Bash commands
 >
-> Match only `Bash` tool calls and log each command to a file. The `PostToolUse` event fires after the command completes, so `tool_input.command` contains what ran. The hook receives the event data as JSON on stdin, and `jq -r '.tool_input.command'` extracts only the command string, which `>>` appends to the log file:
+> Match only `Bash` tool calls and log each successful command to a file. The `PostToolUse` event fires after a command succeeds, so `tool_input.command` contains what ran. The hook receives the event data as JSON on stdin, and `jq -r '.tool_input.command'` extracts only the command string, which `>>` appends to the log file:
 >
 > ```json theme={null}
 > {
@@ -803,7 +801,7 @@ Whether your hook command runs depends on the shape of your `if` pattern and the
 | `Bash(git *)` | `echo $(date)` | no | no subcommand matches `git *` |
 | `Bash(git push *)` | `echo $(date)` | yes | patterns that specify more than the command name run the hook anyway on `$()`, backticks, or `$VAR` |
 
-When Claude Code can't determine which commands the Bash input runs, it runs your hook regardless of the pattern. The [Bash matching table](https://code.claude.com/docs/en/hooks.md#bash-if-matching) covers the command shapes Claude Code can and can't narrow by subcommand. Because the filter is best-effort, use the [permission system](https://code.claude.com/docs/en/permissions.md) rather than a hook to enforce a hard allow or deny.
+When Claude Code can't split the Bash input into subcommands, it runs your hook regardless of the pattern. The [Bash matching table](https://code.claude.com/docs/en/hooks.md#bash-if-matching) covers the command shapes Claude Code can and can't narrow by subcommand. Because the filter is best-effort, use the [permission system](https://code.claude.com/docs/en/permissions.md) rather than a hook to enforce a hard allow or deny.
 
 The `if` field accepts the same patterns as permission rules: `"Bash(git *)"`, `"Edit(*.ts)"`, and so on. To match multiple tool names, use separate handlers each with its own `if` value, or match at the `matcher` level where pipe alternation is supported.
 
@@ -901,9 +899,7 @@ For full configuration options, see [Agent-based hooks](https://code.claude.com/
 
 Use `type: "http"` hooks to POST event data to an HTTP endpoint instead of running a shell command. The endpoint receives the same JSON that a command hook would receive on stdin, and returns results through the HTTP response body using the same JSON format.
 
-HTTP hooks are useful when you want a web server, cloud function, or external service to handle hook logic: for example, a shared audit service that logs tool use events across a team.
-
-This example posts every tool use to a local logging service:
+HTTP hooks are useful when you want a web server, cloud function, or external service to handle hook logic, such as a team's shared audit service. The configuration below posts every successful tool call to a local logging service:
 
 ```json theme={null}
 {
@@ -1062,11 +1058,11 @@ Press `Ctrl+O` to open the transcript view and look for the hook's outcome:
 * **Success**: you see nothing, unless the hook's JSON surfaces something, such as `systemMessage` or Stop hook feedback.
   * To confirm the hook ran, check for its effect, like a reformatted file
 * **Blocking error**: on most events you see the message that came with the block, for example `Blocked: rm commands are not allowed`. On a few events, such as `ConfigChange` and `Elicitation`, you see no message. [Exit code 2](https://code.claude.com/docs/en/hooks.md#exit-code-2) covers where the message comes from.
-* **Non-blocking error**: you see a `<hook name> hook error` notice with a short explanation, such as the first line of stderr after `Failed with non-blocking status code:`, or a JSON validation or parse message. The action went ahead.
+* **Non-blocking error**: a `<hook name> hook error` notice with `Failed with non-blocking status code:` means your hook didn't stop the action. You don't see this notice when a command hook on an event such as `Notification` fails.
 
-To look up the outcome for a specific exit code and stdout, including the per-event exceptions, see [Exit code output](https://code.claude.com/docs/en/hooks.md#exit-code-output) in the reference.
+To look up the outcome for a combination of exit code and stdout on an event such as `PreToolUse`, see [Exit code output](https://code.claude.com/docs/en/hooks.md#exit-code-output) in the reference. Check the same section for events with their own exit code rules, such as `WorktreeCreate`.
 
-For full execution details, including hook exit codes, stdout, and stderr, read the [debug log](https://code.claude.com/docs/en/hooks.md#debug-hooks). Start Claude Code with `claude --debug-file /tmp/claude.log` to write to a known path, then `tail -f /tmp/claude.log` in another terminal. If you started without that flag, run `/debug` mid-session to enable logging and find the log path.
+For execution details, read the [debug log](https://code.claude.com/docs/en/hooks.md#debug-hooks). Start Claude Code with `claude --debug-file /tmp/claude.log` to write to a known path, then `tail -f /tmp/claude.log` in another terminal. If you started without that flag, run `/debug` mid-session to enable logging and find the log path.
 
 ## Learn more
 
