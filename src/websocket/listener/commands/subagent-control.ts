@@ -75,9 +75,7 @@ function finishUntrackedNativeCapture(
 function findOwnedTask(runtime: ConversationRuntime, agentId: string) {
   const subagent = getSubagents().find(
     (entry) =>
-      entry.agentId === agentId &&
-      entry.parentAgentId === runtime.agentId &&
-      entry.parentConversationId === runtime.conversationId,
+      entry.agentId === agentId && entry.parentAgentId === runtime.agentId,
   );
   if (!subagent) return undefined;
   return [...backgroundTasks.entries()].find(
@@ -88,23 +86,33 @@ function findOwnedTask(runtime: ConversationRuntime, agentId: string) {
 /**
  * Completed background tasks and their subagent rows are evicted within
  * minutes, but the native session stays resumable on disk. Fall back to the
- * record of which conversation launched it.
+ * record of which agent launched it.
  */
+function nativeSessionOwner(agentId: string) {
+  const target = parseExternalCodingAgentId(agentId);
+  if (!target || target.computer) return undefined;
+  if (target.type !== "claude-code" && target.type !== "codex")
+    return undefined;
+  return getNativeSessionOwner(
+    target.type === "claude-code" ? "claude_code" : "codex",
+    target.sessionId,
+  );
+}
+
 function ownsNativeSession(
   runtime: ConversationRuntime,
   agentId: string,
 ): boolean {
-  const target = parseExternalCodingAgentId(agentId);
-  if (!target || target.computer) return false;
-  if (target.type !== "claude-code" && target.type !== "codex") return false;
-  const owner = getNativeSessionOwner(
-    target.type === "claude-code" ? "claude_code" : "codex",
-    target.sessionId,
-  );
-  return (
-    owner?.agentId === runtime.agentId &&
-    owner.conversationId === runtime.conversationId
-  );
+  return nativeSessionOwner(agentId)?.agentId === runtime.agentId;
+}
+
+function subagentAccessError(agentId: string): string {
+  const known =
+    getSubagents().some((entry) => entry.agentId === agentId) ||
+    nativeSessionOwner(agentId);
+  return known
+    ? "Subagent does not belong to this conversation"
+    : `Subagent ${agentId} was not found on this computer`;
 }
 
 function runtimeContext(
@@ -163,7 +171,7 @@ export async function handleSubagentMessageCommand(
         !findOwnedTask(parent, command.agent_id) &&
         !ownsNativeSession(parent, command.agent_id)
       )
-        throw new Error("Subagent does not belong to this conversation");
+        throw new Error(subagentAccessError(command.agent_id));
       const target = parseExternalCodingAgentId(command.agent_id);
       if (!target || target.computer || !isExternalCodingAgentType(target.type))
         throw new Error("Invalid external coding agent ID");
@@ -366,7 +374,7 @@ export async function handleSubagentStopCommand(
         stopped: nativeStopped,
         cleanup_confirmed: true,
       };
-    return { ...base, error: "Subagent does not belong to this conversation" };
+    return { ...base, error: subagentAccessError(command.agent_id) };
   }
   const [taskId, task] = owned;
   if (task.status !== "running")

@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-
 import {
   mkdirSync,
   mkdtempSync,
@@ -10,6 +9,10 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { __testSetBackend, type Backend } from "@/backend";
+import {
+  resolveBackendMode,
+  setConfiguredBackendMode,
+} from "@/backend/backend-mode";
 import { truncateHookFeedback } from "@/hooks/executor";
 import type { ModToolEndEvent } from "@/mods/types";
 import { settingsManager } from "@/settings-manager";
@@ -656,6 +659,8 @@ describe("ambient runtime credential redaction", () => {
   test.skipIf(process.platform === "win32")(
     "monitor events include a final unterminated tail held back as a secret prefix",
     async () => {
+      const previousBackendMode = resolveBackendMode();
+      setConfiguredBackendMode("local");
       const queued: QueuedMessage[] = [];
       setMessageQueueAdder((message) => {
         queued.push(message);
@@ -687,6 +692,7 @@ describe("ambient runtime credential redaction", () => {
           expect(text).not.toContain(AMBIENT_SENTINEL);
         }
       } finally {
+        setConfiguredBackendMode(previousBackendMode);
         setMessageQueueAdder(null);
       }
     },

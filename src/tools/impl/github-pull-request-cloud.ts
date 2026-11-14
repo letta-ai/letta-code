@@ -13,6 +13,13 @@ import type {
 } from "./github-pull-request-types";
 import { fetchGitHubPullRequestSnapshot } from "./github-pull-request-watch";
 
+export class GitHubPullRequestSnapshotPending extends Error {
+  constructor() {
+    super("Cloud PR snapshot is still cooling down");
+    this.name = "GitHubPullRequestSnapshotPending";
+  }
+}
+
 type SnapshotOptions = { cwd: string; signal?: AbortSignal };
 type FetchSnapshot = (
   ref: GitHubPullRequestRef,
@@ -226,7 +233,7 @@ export function createGitHubPullRequestSnapshotFetcher(
   return async (ref, options) => {
     if (unsupported || !shouldFetchCloud()) return fetchGh(ref, options);
     let waited = false;
-    const cooldownError = new Error("Cloud PR snapshot is still cooling down");
+    const cooldownError = new GitHubPullRequestSnapshotPending();
     const cooldown = async (retryAt?: string) => {
       if (waited) {
         throw cooldownError;

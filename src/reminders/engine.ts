@@ -227,7 +227,7 @@ export function buildMcpServersReminderText(
     return `${SYSTEM_REMINDER_OPEN}\nMCP servers with available tools: None\nDo not automatically store results of principal-restricted operations in shared memory.\n${SYSTEM_REMINDER_CLOSE}`;
   }
   const rendered = entries.map(formatMcpServerEntry).join(", ");
-  return `${SYSTEM_REMINDER_OPEN}\nMCP servers with available tools: ${rendered}\nDo not automatically store results of principal-restricted operations in shared memory.\nFind tools (with schemas) with \`letta mcp search "<what you want to do>"\`, list one server's tools with \`letta mcp tools <server>\` (\`--full\` includes schemas, \`letta mcp schema <tool-name>\` fetches one), and invoke one with \`letta mcp call <tool-name> --args '{"key":"value"}'\`.\n${SYSTEM_REMINDER_CLOSE}`;
+  return `${SYSTEM_REMINDER_OPEN}\nMCP servers with available tools: ${rendered}\nDo not automatically store results of principal-restricted operations in shared memory.\nFind tools (with schemas) with \`letta mcp search "<what you want to do>"\`, list one server's tools with \`letta mcp tools <server>\` (\`--full\` includes schemas, \`letta mcp schema <tool-name>\` fetches one), and invoke one with \`letta mcp call <tool-name> --args '{"key":"value"}'\`. For large or quote-heavy arguments, use \`--args-file <path>\` (\`-\` for stdin) instead of \`--args\`. Exit code 2 means the tool returned an error result: read its \`content\`, fix the arguments, and retry (exit 1 is a CLI/usage error).\n${SYSTEM_REMINDER_CLOSE}`;
 }
 
 export async function listMcpServersForAgent(

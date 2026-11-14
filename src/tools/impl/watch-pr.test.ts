@@ -2,10 +2,15 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  resolveBackendMode,
+  setConfiguredBackendMode,
+} from "@/backend/backend-mode";
 import { checkPermission } from "@/permissions/checker";
 import { TOOL_DEFINITIONS } from "@/tools/tool-definitions";
 import { TOOLSET_CATALOG } from "@/tools/toolset-catalog";
 import { setMessageQueueAdder } from "@/utils/message-queue-bridge";
+import { GitHubPullRequestSnapshotPending } from "./github-pull-request-cloud";
 import type { GitHubPullRequestSnapshot } from "./github-pull-request-types";
 import { backgroundProcesses } from "./process_manager";
 import { task_stop } from "./task-stop";
@@ -13,8 +18,11 @@ import { watch_pr } from "./watch-pr";
 
 const url = "https://github.com/letta-ai/letta-code/pull/42";
 let previousManagedCloud: string | undefined;
+let previousBackendMode = resolveBackendMode();
 let previousMonitorMaxTimeout: string | undefined;
 beforeEach(() => {
+  previousBackendMode = resolveBackendMode();
+  setConfiguredBackendMode("local");
   previousMonitorMaxTimeout = process.env.LETTA_MONITOR_MAX_TIMEOUT_SECONDS;
   delete process.env.LETTA_MONITOR_MAX_TIMEOUT_SECONDS;
   previousManagedCloud = process.env.LETTA_MANAGED_CLOUD_RUNTIME;
@@ -43,6 +51,7 @@ function snapshot(
 }
 
 afterEach(() => {
+  setConfiguredBackendMode(previousBackendMode);
   if (previousMonitorMaxTimeout === undefined)
     delete process.env.LETTA_MONITOR_MAX_TIMEOUT_SECONDS;
   else
@@ -357,6 +366,76 @@ describe("WatchPR background lifecycle", () => {
     ).toHaveLength(6);
   });
 
+  for (const pendingMinutes of [20, 35]) {
+    test(`${pendingMinutes} minutes of pending polls only reports prolonged silence and its recovery`, async () => {
+      let now = 0;
+      let fetchCount = 0;
+      let output = "";
+      const queued: string[] = [];
+      const waits: number[] = [];
+      let finish!: () => void;
+      const finished = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      setMessageQueueAdder((message) => queued.push(message.text));
+      const result = await watch_pr(
+        { url },
+        {
+          now: () => now,
+          createOutputWriter: () => ({
+            append: (text) => {
+              output += text;
+              return true;
+            },
+          }),
+          fetchSnapshot: async () => {
+            fetchCount++;
+            if (fetchCount > 1 && now <= pendingMinutes * 60_000) {
+              throw new GitHubPullRequestSnapshotPending();
+            }
+            return snapshot();
+          },
+          wait: async (signal, milliseconds) => {
+            if (now > pendingMinutes * 60_000) {
+              finish();
+              await new Promise<void>((_resolve, reject) => {
+                signal.addEventListener("abort", () => reject(signal.reason), {
+                  once: true,
+                });
+              });
+            }
+            waits.push(milliseconds);
+            now += milliseconds;
+          },
+        },
+      );
+      await finished;
+      await Bun.sleep(250);
+      await task_stop({ task_id: result.taskId });
+      expect(waits.every((ms) => ms === 30_000)).toBe(true);
+      expect(output).toContain("[poll pending]");
+      expect(output).not.toContain("[poll error");
+      expect(output).not.toContain("could not refresh");
+      expect(output).not.toContain("recovered after");
+      if (pendingMinutes === 20) {
+        expect(queued).toEqual([]);
+        expect(output).not.toContain("WatchPR hasn't received");
+        expect(output).not.toContain("receiving PR updates again");
+      } else {
+        expect(
+          output.match(
+            /WatchPR hasn't received fresh PR data for 30 minutes; still watching\./g,
+          ),
+        ).toHaveLength(1);
+        expect(
+          output.match(/WatchPR is receiving PR updates again\./g),
+        ).toHaveLength(1);
+        expect(queued.join("\n")).toContain("still watching.");
+        expect(queued.join("\n")).toContain("receiving PR updates again.");
+      }
+    });
+  }
+
   test("reports a sustained refresh error once and reports recovery", async () => {
     let now = 0;
     let fetchCount = 0;
@@ -494,4 +573,40 @@ describe("WatchPR background lifecycle", () => {
       killed: false,
     });
   });
+});
+
+test("workflow completion stops the background task and records failed jobs and steps", async () => {
+  const { workflowRunSnapshot, parseGitHubWorkflowRunUrl } = await import(
+    "./github-workflow-run"
+  );
+  const ref = parseGitHubWorkflowRunUrl(
+    "https://github.com/owner/repo/actions/runs/42",
+  );
+  let reads = 0;
+  const result = await watch_pr(
+    { url: ref.url },
+    {
+      fetchSnapshot: async () =>
+        workflowRunSnapshot(ref, {
+          headSha: "abc",
+          status: ++reads === 1 ? "in_progress" : "completed",
+          conclusion: reads === 1 ? null : "failure",
+          jobs: [
+            {
+              name: "build",
+              conclusion: "failure",
+              steps: [{ name: "compile", conclusion: "failure" }],
+            },
+          ],
+        }),
+      wait: async () => {},
+    },
+  );
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const task = backgroundProcesses.get(result.taskId);
+  expect(task?.status).toBe("completed");
+  expect(reads).toBe(2);
+  expect(readFileSync(task?.outputFile ?? "", "utf8")).toContain(
+    "Failed jobs/steps: build (compile)",
+  );
 });

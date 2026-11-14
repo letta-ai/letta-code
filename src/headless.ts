@@ -121,6 +121,10 @@ import {
   validateConversationDefaultRequiresAgent,
   validatePrimaryStartupFlagConflicts,
 } from "./cli/startup-flag-validation";
+import {
+  applyStartupReflectionOverrides,
+  parseReflectionOverrides,
+} from "./cli/startup-reflection-settings";
 import { tryCloudHeadlessSend } from "./headless-cloud-send";
 import {
   buildEnvironmentLaunchResult,
@@ -149,10 +153,6 @@ import {
   waitForHeadlessPermissionResponse,
 } from "./headless-permission";
 import {
-  applyHeadlessReflectionOverrides,
-  type ReflectionOverrides,
-} from "./headless-reflection-settings";
-import {
   emitLocalToolCalls,
   emitLocalToolReturns,
 } from "./headless-tool-events";
@@ -180,6 +180,7 @@ import { subagentExecutionSettings } from "./runtime-execution-settings";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
 import { writeWireMessage, writeWireMessageAsync } from "./stream-json-writer";
 import { shutdownBackgroundMemoryTasks } from "./tools/impl/memory-task-lifecycle";
+import { shutdownMonitors } from "./tools/impl/monitor";
 import {
   type ExternalToolDefinition,
   registerExternalTools,
@@ -367,47 +368,6 @@ export const __headlessTestUtils = {
   toBidirectionalQueuedInput,
   prepareHeadlessToolExecutionContext,
 };
-
-function parseReflectionOverrides(
-  values: ParsedCliArgs["values"],
-): ReflectionOverrides {
-  const triggerRaw = values["reflection-trigger"];
-  const stepCountRaw = values["reflection-step-count"];
-
-  if (!triggerRaw && !stepCountRaw) {
-    return {};
-  }
-
-  const overrides: ReflectionOverrides = {};
-
-  if (triggerRaw !== undefined) {
-    if (
-      triggerRaw !== "off" &&
-      triggerRaw !== "step-count" &&
-      triggerRaw !== "compaction-event"
-    ) {
-      throw new Error(
-        `Invalid --reflection-trigger "${triggerRaw}". Valid values: off, step-count, compaction-event`,
-      );
-    }
-    overrides.trigger = triggerRaw;
-  }
-
-  if (stepCountRaw !== undefined) {
-    try {
-      overrides.stepCount = parsePositiveIntFlag({
-        rawValue: stepCountRaw,
-        flagName: "reflection-step-count",
-      });
-    } catch {
-      throw new Error(
-        `Invalid --reflection-step-count "${stepCountRaw}". Expected a positive integer.`,
-      );
-    }
-  }
-
-  return overrides;
-}
 
 async function prepareHeadlessToolExecutionContext(params: {
   agentId: string;
@@ -624,6 +584,7 @@ async function sendScopedApprovalMessages(params: {
 }
 
 async function flushAndExit(code: number): Promise<never> {
+  await shutdownMonitors();
   const flushWritable = (stream: NodeJS.WriteStream): Promise<void> =>
     new Promise((resolve) => {
       if (stream.destroyed || stream.writableEnded) return resolve();
@@ -639,8 +600,6 @@ async function flushAndExit(code: number): Promise<never> {
   process.exit(code);
 }
 
-// For one-shot headless outputs (json/text), await the final stdout write before
-// exiting so CI pipes don't occasionally observe an empty stdout buffer.
 async function writeFinalHeadlessStdout(text: string): Promise<void> {
   await new Promise<void>((resolve) => {
     if (process.stdout.destroyed || process.stdout.writableEnded) {
@@ -1461,7 +1420,7 @@ export async function handleHeadlessCommand(
     if (isDetached) {
       effectiveReflectionSettings = { trigger: "off", stepCount: 0 };
     } else {
-      const resolvedReflectionSettings = await applyHeadlessReflectionOverrides(
+      const resolvedReflectionSettings = await applyStartupReflectionOverrides(
         agent.id,
         reflectionOverrides,
       );

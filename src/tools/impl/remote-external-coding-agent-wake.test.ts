@@ -1,7 +1,10 @@
 import { afterEach, beforeAll, expect, mock, spyOn, test } from "bun:test";
 import type { AppServerClient } from "@/app-server-client";
+import { ComputerResolutionError } from "@/backend/api/environments";
 import { settingsManager } from "@/settings-manager";
+import { telemetry } from "@/telemetry";
 import {
+  classifyRemoteExternalWorkerControlError,
   sendRemoteExternalCodingAgentMessage,
   stopRemoteExternalCodingAgent,
 } from "./remote-external-coding-agent";
@@ -141,4 +144,125 @@ test.each([
     }),
   ).rejects.toThrow("offline");
   expect(requests).toBe(1);
+});
+
+test("follow-up ownership rejection distinguishes outdated listeners", async () => {
+  const report = spyOn(telemetry, "trackError").mockImplementation(() => {});
+  spyOn(telemetry, "flush").mockResolvedValue(undefined);
+  const rejection = "Subagent does not belong to this conversation";
+  for (const version of ["0.34.24", undefined, "invalid", "0.34.54"]) {
+    report.mockClear();
+    const resolveComputer = mock(async () => ({
+      connectionId: "conn-1",
+      environment: {
+        ...environment(),
+        deviceId: "computer",
+        lastHeartbeat: Date.now(),
+        connectionId: "conn-1",
+        metadata: { subagent_message: true, lettaCodeVersion: version },
+      },
+    }));
+    const close = mock(() => {});
+    const client = {
+      sendSubagentMessage: async () => ({ success: false, error: rejection }),
+      onMessage: () => () => {},
+      onDisconnect: () => () => {},
+      close,
+    } as unknown as AppServerClient;
+    await expect(
+      sendRemoteExternalCodingAgentMessage(
+        {
+          agentId: "claude_22222222-2222-4222-8222-222222222222@computer",
+          parentScope: scope,
+          message: "Continue",
+        },
+        { resolveComputer, connect: async () => client },
+      ),
+    ).rejects.toThrow(
+      version === "0.34.54"
+        ? rejection
+        : `computer is running Letta Code ${version ?? "(unknown version)"}, which doesn't keep track of finished or restarted workers, so it can't resume this one. Update Letta Code on computer, or launch a new worker.`,
+    );
+    expect(JSON.parse(report.mock.calls[0]?.[2] as string).stage).toBe(
+      version === "0.34.54" ? "follow_up" : "outdated_computer",
+    );
+    expect(JSON.parse(report.mock.calls[0]?.[2] as string).error_code).toBe(
+      version === "0.34.54" ? "subagent_not_owned" : "outdated_computer",
+    );
+    expect(resolveComputer).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalledTimes(1);
+  }
+});
+
+test.each([
+  [
+    new ComputerResolutionError("computer_offline", "opaque"),
+    "computer_offline",
+  ],
+  [
+    new ComputerResolutionError("computer_not_found", "opaque"),
+    "computer_not_found",
+  ],
+  [new ComputerResolutionError("computer_ambiguous", "opaque"), "other"],
+  [new ComputerResolutionError("computer_selector_empty", "opaque"), "other"],
+  [new Error('Computer "build-box" is offline'), "computer_offline"],
+  [
+    new Error('Computer "build-box" is offline. Matched: build-box'),
+    "computer_offline",
+  ],
+  [
+    new Error(
+      'Computer "build-box" not found. Run `letta computers list` to discover available computers.',
+    ),
+    "computer_not_found",
+  ],
+  [
+    new Error(
+      "Timed out waiting for cloud sandbox cloud to come online. Last status: offline",
+    ),
+    "computer_offline",
+  ],
+  [
+    new Error(
+      "Timed out waiting for cloud sandbox cloud to register: unavailable",
+    ),
+    "computer_offline",
+  ],
+  [
+    new Error("Subagent claude_123 was not found on this computer"),
+    "subagent_not_found",
+  ],
+  [
+    new Error("Subagent does not belong to this conversation"),
+    "subagent_not_owned",
+  ],
+  [
+    new Error(
+      "build-box is running an older Letta Code that can't steer Claude Code subagents remotely. Update Letta Code on build-box.",
+    ),
+    "outdated_computer",
+  ],
+  [
+    new Error("App-server WebSocket failed to open: HTTP 403: forbidden"),
+    "connect_failed",
+  ],
+  [
+    new Error("App-server WebSocket failed to open: closed before opening"),
+    "connect_failed",
+  ],
+  [
+    new Error("App-server WebSocket failed to open: timed out after 30000ms"),
+    "connect_failed",
+  ],
+  [
+    new Error(
+      "App-server WebSocket failed to open: Error: connect ECONNREFUSED",
+    ),
+    "connect_failed",
+  ],
+  [new Error("unrecognized private detail"), "other"],
+  ["unrecognized rejection", "other"],
+  [null, "other"],
+])("classifies remote control error %s as %s", (error, code) => {
+  expect(classifyRemoteExternalWorkerControlError(error)).toBe(code);
 });

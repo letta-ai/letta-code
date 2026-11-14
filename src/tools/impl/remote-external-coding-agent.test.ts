@@ -356,7 +356,10 @@ describe("launchRemoteExternalCodingAgent", () => {
           {
             method: "POST",
             path: "/v1/conversations/",
-            body: { hidden: true },
+            body: {
+              hidden: true,
+              parent_conversation_id: scope.conversationId,
+            },
           },
           {
             method: "POST",
