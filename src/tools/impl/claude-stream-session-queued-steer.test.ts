@@ -89,6 +89,25 @@ describe("Claude steer queued behind an unacknowledged interrupt", () => {
     expect(fixture.writes.filter((w) => w.includes('"new"'))).toHaveLength(1);
   });
 
+  test.each([true, false])(
+    "suppresses the interrupted result even if the old turn starts another request first (input acks: %p)",
+    async (acknowledgesInputs) => {
+      const { fixture, running, completed } = await steerWithoutAck({
+        acknowledgesInputs,
+      });
+      // Before the queued turn starts, the old turn makes another model request
+      // and then ends on the late interrupt.
+      fixture.emit({ type: "stream_event", event: { type: "message_start" } });
+      fixture.emit({ type: "result", is_error: true, result: "interrupted" });
+      await Bun.sleep(0);
+      expect(completed()).toBe(false);
+      if (acknowledgesInputs) fixture.echo(2);
+      fixture.emit({ type: "stream_event", event: { type: "message_start" } });
+      fixture.emit({ type: "result", is_error: false, result: "new" });
+      expect(await running).toMatchObject({ success: true, report: "new" });
+    },
+  );
+
   test("reports the turn that picked the queued prompt up mid-turn", async () => {
     const { fixture, running } = await steerWithoutAck({
       acknowledgesInputs: true,
