@@ -6,7 +6,7 @@ Your job is to review the cumulative stable `@earendil-works/pi-ai` changes sinc
 
 Before running the sandbox bootstrap, resolve the watcher credential identity with `test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN" gh api user --jq .login`. It must exactly match the Expected GitHub login from the run inputs. If the secret is missing or the identities differ, stop without modifying GitHub or the tracker.
 
-Plain `git push` uses the sandbox's default GitHub App credential, not `GH_TOKEN`. For the one required branch push, use exactly:
+Plain `git push` uses the sandbox's default GitHub App credential, not `GH_TOKEN`. For each required branch push, use exactly:
 
 ```bash
 test ! -e .git/hooks/pre-push
@@ -46,7 +46,7 @@ The analysis uses each npm artifact's `gitHead` as the published source revision
 8. Keep pi-ai as the owner of provider runtime behavior. Do not duplicate image filtering, provider capability checks, request-format fixups, model catalog data, or retry logic inside Letta Code when the new pi-ai version already owns it.
 9. Search open and closed PRs for the exact marker before creating anything: `Pi-ai-watch: <previous>...<current>`. Recover an existing open matching PR rather than creating a duplicate. Do not adopt a closed unmerged PR.
 10. Use only `test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN"` for GitHub operations. Never use `CAREN_GITHUB_TOKEN` or a general `GITHUB_TOKEN` secret.
-11. Do not merge, wait for CI, or update the upgrade PR after creation.
+11. Do not merge. You may wait for CI and update the same upgrade PR to fix current-head failures before review handoff; never open a replacement PR for the same range.
 
 ## Local integration map
 
@@ -66,12 +66,12 @@ When the upstream provider inventory changes, the local catalog coverage tests s
 
 For an upgrade:
 
-1. Create a fresh branch from current `main`.
+1. If an open PR already matches this release range, check out its branch and resume it. Otherwise create a fresh branch from current `main`.
 2. Update to the exact Current release while preserving the repository's dependency range style, for example `bun add '@earendil-works/pi-ai@^<current>'`.
 3. Follow repository instructions for every generated dependency artifact affected by the lockfile.
 4. Fix required application integration and add focused tests.
 5. Run `bun run check`, the relevant pi-ai/provider/runtime tests, and build validation appropriate to the diff. If a documented platform-specific validation cannot run, say so in the PR body and tracker note.
-6. Open one PR as ready for review with a Conventional Commit title.
+6. Open one PR as ready for review with a Conventional Commit title, or retain the matching open PR.
 7. Include all of these in the PR body:
    - `Pi-ai-watch: <previous>...<current>`
    - installed and target package versions
@@ -80,7 +80,8 @@ For an upgrade:
    - application changes or explicit reasons none were needed
    - validation performed
 8. Immediately verify `draft: false` and that the PR author matches the Expected GitHub login. If either is wrong, fix or close the PR instead of reporting success.
-9. Request the single GitHub reviewer from the run inputs unless already requested.
+9. Immediately record `pr_created` with the PR URL using the tracker command below, before waiting for CI. This keeps the open PR discoverable even if this run times out. On a resumed PR, update the existing tracker entry rather than creating a duplicate.
+10. Wait up to 15 minutes for all expected checks on the current head. Fix failures in the same branch and PR, rerun affected local tests, and verify checks against the new head. Only request the single GitHub reviewer from the run inputs and send the Slack review handoff once, after the current head has passing checks, a CLEAN merge state, and no unresolved review threads. If checks fail or remain pending at the deadline, retain `pr_created`, update its tracker notes with the exact outstanding checks, and stop without requesting review or sending Slack. Never report pending CI as a successful handoff. On a resumed PR, if review was already requested, do not repeat the reviewer request or Slack handoff.
 
 ## Tracker updates
 
@@ -118,7 +119,7 @@ test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN" 
   --notes "<exact uncertainty or blocker>"
 ```
 
-A `pr_created` outcome remains pending and blocks later upgrade PRs until that PR merges or closes. `pr_created`, `no_upgrade`, and `needs_human_review` advance the audit cursor to the latest release reviewed. Errors leave the cursor unchanged so the full range retries.
+A `pr_created` outcome remains pending and blocks later upgrade PRs until that PR merges or closes. Only `pr_created` and `no_upgrade` advance the audit cursor to the latest release reviewed. Errors leave the cursor unchanged and retry the same range. `needs_human_review` also leaves the cursor unchanged and blocks later releases; older-policy human-review entries are retried once under the current policy, while current-policy blockers require an explicit manual replay or a policy update.
 
 ## Slack notification
 
