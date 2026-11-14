@@ -44,6 +44,28 @@ describe("resolveSubagentComputer", () => {
     });
   });
 
+  test.each(["codex", "claude-code", "cursor", "opencode"])(
+    "forked %s uses the default while Letta forks stay local",
+    (harness) => {
+      expect(resolve(undefined, forked, "cloud", harness)).toEqual({
+        computer: "cloud",
+        source: "default",
+      });
+      expect(resolve(undefined, forked, "cloud", "fork")).toEqual({
+        computer: undefined,
+        source: "none",
+      });
+      expect(resolve("local", forked, "cloud", harness)).toEqual({
+        computer: undefined,
+        source: "explicit",
+      });
+      expect(resolve(undefined, memory, "cloud", harness)).toEqual({
+        computer: undefined,
+        source: "none",
+      });
+    },
+  );
+
   test.each(["", "   "])("treats a blank env default %j as unset", (value) => {
     expect(resolve(undefined, implementation, value)).toEqual({
       computer: undefined,
