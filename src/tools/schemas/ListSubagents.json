@@ -1,0 +1,17 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["running", "idle"]
+      },
+      "minItems": 1,
+      "default": ["running"],
+      "description": "Only list agents with these statuses. Defaults to [\"running\"]; pass [\"idle\"] or [\"running\", \"idle\"] to see finished ones."
+    }
+  },
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

@@ -812,6 +812,8 @@ function getDefaultDecision(
     "TaskGet",
     "TaskList",
     "TaskUpdate",
+    // Reads this session's subagent rows only.
+    "ListSubagents",
     "read_artifact_file",
     "write_artifact_file",
     "Wake",
