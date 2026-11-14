@@ -315,7 +315,9 @@ function waitForSocketOpen(
     detachError = onceSocketEvent(socket, "error", (event) => {
       cleanup();
       reject(
-        new Error(`App-server WebSocket failed to open: ${String(event)}`),
+        new Error(
+          `App-server WebSocket failed to open: ${socketErrorDetail(event)}`,
+        ),
       );
     });
     detachClose = onceSocketEvent(socket, "close", () => {
@@ -327,6 +329,17 @@ function waitForSocketOpen(
       );
     });
   });
+}
+
+function socketErrorDetail(event: unknown): string {
+  if (event instanceof Error) return event.message;
+  if (event && typeof event === "object") {
+    const error = Reflect.get(event, "error");
+    if (error instanceof Error) return error.message;
+    const message = Reflect.get(event, "message");
+    if (typeof message === "string" && message) return message;
+  }
+  return String(event);
 }
 
 function rawEventData(event: unknown): unknown {
@@ -399,6 +412,9 @@ export class AppServerClient {
       resolveAppServerUrl(options.url),
       socketOptions,
     );
+    // EventEmitter sockets can emit again after handshake listeners detach,
+    // including while close() aborts a failed connection. Keep this for life.
+    this.socket.on?.("error", () => {});
     this.control = this.socket;
     this.stream = this.socket;
 
@@ -411,8 +427,13 @@ export class AppServerClient {
   }
 
   async connect(): Promise<this> {
-    await waitForSocketOpen(this.socket, this.requestTimeoutMs);
-    return this;
+    try {
+      await waitForSocketOpen(this.socket, this.requestTimeoutMs);
+      return this;
+    } catch (error) {
+      this.close();
+      throw error;
+    }
   }
 
   close(): void {
