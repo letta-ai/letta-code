@@ -73,6 +73,7 @@ export async function forkParentConversation(
         ? { agentId: params.parentAgentId }
         : {}),
       hidden: true,
+      headers: { "x-letta-subagent-type": params.config.name },
       signal: params.signal,
     },
   );
