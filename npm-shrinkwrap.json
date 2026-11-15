@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/letta-code",
-  "version": "0.34.61",
+  "version": "0.34.62",
   "lockfileVersion": 3,
   "packages": {
     "node_modules/@alcalzone/ansi-tokenize": {
@@ -2444,9 +2444,9 @@
       }
     },
     "node_modules/cron-parser": {
-      "version": "5.10.5",
-      "resolved": "https://registry.npmjs.org/cron-parser/-/cron-parser-5.10.5.tgz",
-      "integrity": "sha512-zxFew0gkBdb9HudAqeNLIZ2Phczw8oQDGDMYc1HUYvAaxZqhML2gZyUwVqaOs23YKDWXRRvd/nNo0ycGdXt80A==",
+      "version": "5.10.6",
+      "resolved": "https://registry.npmjs.org/cron-parser/-/cron-parser-5.10.6.tgz",
+      "integrity": "sha512-kpoxgQyveO1l29nw+FWdvmotyV7eOSzGHQpxiXOEZIDOjqO1iR6kfgJ0PVHTuV26uBemKq3ppzma7dHFAG7viw==",
       "license": "MIT",
       "dependencies": {
         "luxon": "^3.7.2"
@@ -5083,7 +5083,7 @@
     },
     "": {
       "name": "@letta-ai/letta-code",
-      "version": "0.34.61",
+      "version": "0.34.62",
       "dependencies": {
         "@cursor/sdk": "1.1.0",
         "@earendil-works/pi-ai": "^1.5.2",
