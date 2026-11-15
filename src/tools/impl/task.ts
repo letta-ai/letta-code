@@ -46,6 +46,7 @@ import { addToMessageQueue } from "@/utils/message-queue-bridge.js";
 import {
   formatTaskNotification,
   resolveNotificationScope,
+  taskNotificationMessage,
 } from "@/utils/task-notifications.js";
 import {
   classifyExternalCodingAgentStartupError,
@@ -512,7 +513,7 @@ export function spawnBackgroundSubagentTask(
         });
         addToMessageQueueFn({
           kind: "task_notification",
-          text: notificationXml,
+          ...taskNotificationMessage(notificationXml),
           agentId: resolvedParentScope?.agentId,
           conversationId: resolvedParentScope?.conversationId,
           actingUserId: bgTask.actingUserId,
@@ -605,7 +606,7 @@ export function spawnBackgroundSubagentTask(
         });
         addToMessageQueueFn({
           kind: "task_notification",
-          text: notificationXml,
+          ...taskNotificationMessage(notificationXml),
           agentId: resolvedParentScope?.agentId,
           conversationId: resolvedParentScope?.conversationId,
           actingUserId: bgTask.actingUserId,
@@ -973,7 +974,6 @@ export async function launchSubagent(
       linkedAgent?.conversationId ?? effectiveConversationId ?? null,
   };
 }
-
 /** Agent's text adapter; App Server callers consume launchSubagent directly. */
 export async function task(
   args: TaskArgs,

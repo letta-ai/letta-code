@@ -26,6 +26,7 @@ import { addToMessageQueue } from "@/utils/message-queue-bridge";
 import {
   formatTaskNotification,
   resolveNotificationScope,
+  taskNotificationMessage,
 } from "@/utils/task-notifications";
 import {
   type ExecutionState,
@@ -62,12 +63,14 @@ export function createRemoteIdleNotifier(
     addToMessageQueue({
       kind: "task_notification",
       ...scope,
-      text: formatTaskNotification({
-        taskId: subagentId,
-        status: "running",
-        summary: `Agent loop stopped with ${count} background process${count === 1 ? "" : "es"} still running`,
-        result: `${text}\n\nThe child agent's loop has stopped with ${count} background process${count === 1 ? "" : "es"} still running. It will resume when they finish, and a final notification will follow.`,
-      }),
+      ...taskNotificationMessage(
+        formatTaskNotification({
+          taskId: subagentId,
+          status: "running",
+          summary: `Agent loop stopped with ${count} background process${count === 1 ? "" : "es"} still running`,
+          result: `${text}\n\nThe child agent's loop has stopped with ${count} background process${count === 1 ? "" : "es"} still running. It will resume when they finish, and a final notification will follow.`,
+        }),
+      ),
     });
   };
 }
