@@ -56,6 +56,19 @@ describe("prependParentContext", () => {
     });
     if ("error" in result) throw new Error(result.error);
 
+    expect(result.prompt).toContain(
+      "The task after the history block tells you what to do now",
+    );
+    expect(result.prompt).toContain(
+      "use the history as the source for everything else",
+    );
+    expect(result.prompt).toContain(
+      "If the task conflicts with what people said in the history, follow what people said in the history.",
+    );
+    expect(result.prompt).toContain(
+      "Do not resume unrelated work from the history.",
+    );
+    expect(result.prompt).not.toContain("not instructions addressed to you");
     expect(result.prompt).not.toContain(older);
     expect(result.prompt).toContain('"shown":4');
     expect(result.prompt).toContain('"truncated":true');

@@ -55,6 +55,7 @@ import {
   validateExternalCodingAgentMcpOptions,
 } from "./external-coding-agent";
 import { prepareExternalWorkerPrompt } from "./external-fork-context";
+import { validateForkPrompt } from "./fork-prompt";
 import { copyGitHubPullRequestTags } from "./github-pull-request-tracker.js";
 import {
   ensureMemoryRepair,
@@ -695,7 +696,6 @@ export async function launchSubagent(
 
   const inputPrompt = args.prompt as string;
   const description = args.description as string;
-
   const allConfigs =
     prepared || isExternalCodingAgent
       ? {}
@@ -714,6 +714,8 @@ export async function launchSubagent(
       error: `Invalid subagent_type "${configName}". Available subagent types: ${listSubagentTypes(Object.keys(allConfigs))}. Omit subagent_type for the default agent.`,
     };
   }
+  const promptError = validateForkPrompt(inputPrompt, Boolean(config.fork));
+  if (promptError) return { success: false, error: promptError };
   if (
     prepared &&
     (!args.conversation_id ||
