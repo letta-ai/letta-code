@@ -5,6 +5,7 @@ import {
   describe,
   expect,
   mock,
+  spyOn,
   test,
 } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -17,6 +18,7 @@ import type { spawnSubagent } from "@/agent/subagents/manager";
 import { __testSetBackend, type Backend } from "@/backend";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
+import * as errorReporting from "@/telemetry/error-reporting";
 import { FORK_PROMPT_CHARACTER_LIMIT } from "./fork-prompt";
 import { backgroundTasks } from "./process_manager";
 
@@ -259,6 +261,31 @@ describe("fork_context for external coding workers", () => {
 // Rejection must happen before history reads, forks, or local/remote processes.
 describe("fork prompt limit", () => {
   const oversized = "x".repeat(FORK_PROMPT_CHARACTER_LIMIT + 1);
+  test("an oversized remote external fork skips launch and failure reporting", async () => {
+    const reportFailure = spyOn(
+      errorReporting,
+      "reportExternalWorkerLaunchFailure",
+    ).mockImplementation(() => {});
+    try {
+      const result = await launchSubagent({
+        ...brief,
+        harness: "claude-code",
+        computer: "office-mac",
+        fork_context: true,
+        prompt: oversized,
+      });
+      expect(result).toEqual({
+        success: false,
+        error: `Forked prompt is ${oversized.length} characters; the limit is ${FORK_PROMPT_CHARACTER_LIMIT}. The agent already has the conversation. Send only the go, what done looks like, and what to read.`,
+      });
+      expect(remoteLaunches).toHaveLength(0);
+      expect(spawn).not.toHaveBeenCalled();
+      expect(listConversationMessages).not.toHaveBeenCalled();
+      expect(reportFailure).not.toHaveBeenCalled();
+    } finally {
+      reportFailure.mockRestore();
+    }
+  });
   for (const harness of [
     "letta",
     "codex",

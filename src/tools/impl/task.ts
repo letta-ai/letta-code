@@ -663,7 +663,6 @@ export async function launchSubagent(
     };
   const resolvedParentScope = resolveNotificationScope(args.parentScope);
   signal?.throwIfAborted();
-
   const isDeployingExisting = Boolean(args.agent_id || args.conversation_id);
   const configName =
     selection.kind === "external" ? selection.type : selection.subagentType;
@@ -695,7 +694,6 @@ export async function launchSubagent(
   if (mcpValidationError) return { success: false, error: mcpValidationError };
 
   validateRequiredParams(args, ["prompt", "description"], "Task");
-
   const inputPrompt = args.prompt as string;
   const description = args.description as string;
   const allConfigs =
@@ -744,10 +742,8 @@ export async function launchSubagent(
   if (resolvedComputer.error) {
     return { success: false, error: resolvedComputer.error };
   }
-
   let effectiveAgentId = args.agent_id;
   let effectiveConversationId = args.conversation_id;
-
   const callerNotification = args.notifyCaller
     ? {
         emitCompletionNotification: false,
@@ -756,6 +752,11 @@ export async function launchSubagent(
       }
     : {};
   if (isExternalCodingAgent) {
+    const promptError = validateForkPrompt(
+      inputPrompt,
+      shouldForkTaskContext(args),
+    );
+    if (promptError) return { success: false, error: promptError };
     const parentAgentId = resolveEffectiveAgentId(
       resolvedParentScope?.agentId ?? getCurrentAgentId(),
     );
@@ -927,7 +928,6 @@ export async function launchSubagent(
 
   const prompt = inputPrompt;
   signal?.throwIfAborted();
-
   const { taskId, outputFile, subagentId } = spawnBackgroundSubagentTask({
     subagentType: configName,
     config,
