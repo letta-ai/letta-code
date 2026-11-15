@@ -1,6 +1,11 @@
 import { expect, test } from "bun:test";
 import { runWithRuntimeContext, updateRuntimeContext } from "@/runtime-context";
-import { resolveNotificationScope } from "./task-notifications";
+import {
+  formatTaskNotification,
+  resolveNotificationScope,
+  subagentResultReminder,
+  taskNotificationMessage,
+} from "./task-notifications";
 
 for (const actingUserId of ["user-a", undefined]) {
   test(`notification scope retains ${actingUserId ?? "anonymous"} ownership after the turn changes`, () => {
@@ -382,4 +387,34 @@ test("entries retire only when their row leaves the snapshot", () => {
   // Row deleted from the store: entry retires.
   selectStopFailedNotifications([], seen, scope);
   expect(seen.has("sub_a:1")).toBe(false);
+});
+
+test("subagent reminders are opt-in and do not alter other background notifications", () => {
+  const previous = process.env.LETTA_SUBAGENT_RESULT_REMINDER;
+  const notification = {
+    taskId: "task-1",
+    status: "completed" as const,
+    summary: "Finished",
+    result: "Report",
+  };
+  const original = formatTaskNotification(notification);
+  try {
+    for (const value of [undefined, "", "Keep this work internal."]) {
+      if (value === undefined)
+        delete process.env.LETTA_SUBAGENT_RESULT_REMINDER;
+      else process.env.LETTA_SUBAGENT_RESULT_REMINDER = value;
+      const suffix = value
+        ? `\n\n<system-reminder>\n${value}\n</system-reminder>`
+        : "";
+      expect(subagentResultReminder()).toBe(suffix);
+      expect(formatSubagentTaskNotification(notification)).toBe(
+        original + suffix,
+      );
+      expect(formatTaskNotification(notification)).toBe(original);
+    }
+  } finally {
+    if (previous === undefined)
+      delete process.env.LETTA_SUBAGENT_RESULT_REMINDER;
+    else process.env.LETTA_SUBAGENT_RESULT_REMINDER = previous;
+  }
 });
