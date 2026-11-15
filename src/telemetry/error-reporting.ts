@@ -98,3 +98,62 @@ export function trackEndTurnNoAssistant(params: {
     },
   );
 }
+
+export type ExternalWorkerFailureStage =
+  | "resolve_computer"
+  | "outdated_computer"
+  | "connect"
+  | "launch_request"
+  | "launch_rejected"
+  | "follow_up";
+
+/** The HTTP status an error message starts with or carries after a colon. */
+export function extractHttpStatus(message: string): number | undefined {
+  const match = /(?:^|:\s*)([45]\d{2})\b/.exec(message);
+  return match ? Number(match[1]) : undefined;
+}
+
+/**
+ * Report a Claude Code / Codex (or other external worker) launch or
+ * follow-up that failed before the worker started.
+ *
+ * Error messages can quote prompts, paths, or server text, so only the stage,
+ * worker type, HTTP status, error code, and opaque IDs are sent.
+ */
+export function reportExternalWorkerLaunchFailure(options: {
+  stage: ExternalWorkerFailureStage;
+  harness: string;
+  computer?: string;
+  error: unknown;
+  errorCode?: string;
+  agentId?: string;
+  conversationId?: string;
+  toolCallId?: string;
+}): void {
+  try {
+    const safe = (value: string | undefined, pattern: RegExp) =>
+      value && pattern.test(value) ? value : undefined;
+    const safeId = (id: string | undefined) =>
+      safe(id, /^[a-zA-Z0-9_-]{1,128}$/);
+    const httpStatus = extractHttpStatus(
+      formatTelemetryErrorMessage(options.error),
+    );
+    telemetry.trackError(
+      "external_worker_launch_failed",
+      "External worker launch failed",
+      JSON.stringify({
+        stage: options.stage,
+        harness: safe(options.harness, /^[a-z-]{1,32}$/),
+        computer: safe(options.computer, /^[a-zA-Z0-9_.:-]{1,128}$/),
+        error_code: safe(options.errorCode, /^[a-zA-Z0-9_]{1,64}$/),
+        agent_id: safeId(options.agentId),
+        conversation_id: safeId(options.conversationId),
+        tool_call_id: safeId(options.toolCallId),
+      }),
+      { httpStatus, omitDebugLogTail: true },
+    );
+    void telemetry.flush().catch(() => {});
+  } catch {
+    // A diagnostic must never mask the launch failure itself.
+  }
+}

@@ -36,3 +36,26 @@ describe("listener memory command sync ordering", () => {
     expect(readFile).toHaveBeenCalledTimes(1);
   });
 });
+
+test("does not execute a memory command when checkout is unavailable", async () => {
+  const runtime = {
+    memfsSyncedAgents: new Map([
+      ["unavailable-command", Promise.resolve(false)],
+    ]),
+  } as ListenerRuntime;
+  let detachedTask: (() => Promise<void>) | undefined;
+  const task = mock(async () => {});
+  const run = createMemfsSyncedTaskRunner(
+    { type: "read_memory_file", agent_id: "unavailable-command" },
+    runtime,
+    (_name, callback) => {
+      detachedTask = callback;
+    },
+  );
+  run("read_memory_file", task);
+  expect(detachedTask).toBeDefined();
+  await expect(detachedTask?.()).rejects.toThrow(
+    "Memory is not available on this machine.",
+  );
+  expect(task).not.toHaveBeenCalled();
+});

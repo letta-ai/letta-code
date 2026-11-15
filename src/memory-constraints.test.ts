@@ -39,6 +39,61 @@ describe("public memory constraints contract", () => {
       "core memory: 5 characters exceeds 4 from maxCoreMemoryCharacters",
     ]);
   });
+  test("warns instead of failing for problems outside the changed paths", async () => {
+    const files: Record<string, string> = {
+      "MEMORY.md": "#",
+      "big.md": "x".repeat(10),
+      "edited.md": "ok",
+      "deep/a/b.md": "ok",
+    };
+    const reader = {
+      async listFiles() {
+        return Object.keys(files).map((path) => ({ path, mode: "100644" }));
+      },
+      async readFile(path: string) {
+        return new TextEncoder().encode(files[path]);
+      },
+    };
+    const options = {
+      layout: "root-marker" as const,
+      requireRootMarker: true,
+      config: {
+        version: 1 as const,
+        maxDepth: 1,
+        maxFileCharacters: 5,
+        maxCoreMemoryCharacters: 12,
+      },
+    };
+    const coreProblem =
+      "core memory: 13 characters exceeds 12 from maxCoreMemoryCharacters";
+    const problems = [
+      "deep/a/b.md: missing required index deep/MEMORY.md",
+      "big.md: 10 characters exceeds 5 from maxFileCharacters",
+      "deep/a/b.md: depth 2 exceeds maxDepth 1",
+      coreProblem,
+    ];
+
+    const warnings: string[] = [];
+    expect(
+      await validateMemoryTreeConstraints(reader, {
+        ...options,
+        changedPaths: ["notes.txt"],
+        warnings,
+      }),
+    ).toEqual([]);
+    expect(warnings).toEqual(problems);
+
+    // Changing a root file can raise the combined budget, so it blocks.
+    expect(
+      await validateMemoryTreeConstraints(reader, {
+        ...options,
+        changedPaths: ["edited.md"],
+      }),
+    ).toEqual([coreProblem]);
+    expect(await validateMemoryTreeConstraints(reader, options)).toEqual(
+      problems,
+    );
+  });
   test("preserves missing defaults and ordered nullable overrides", () => {
     const policy = {
       version: 1 as const,

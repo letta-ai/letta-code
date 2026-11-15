@@ -9,11 +9,46 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
-import { getBackend } from "@/backend";
+import { type ConversationMessageStreamBody, getBackend } from "@/backend";
 import {
+  getBusyRecoveryHttpStatus,
+  reportBusyRecovery,
+  traceBusyRecoveryStream,
+} from "@/telemetry/busy-recovery";
+import {
+  extractConversationBusyRunId,
+  isConversationBusyError,
   rebuildInputWithFreshDenials,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
 } from "./turn-recovery-policy";
+
+const ACTIVE_BLOCKING_RUN_STATUSES = new Set(["created", "running", "pending"]);
+const TERMINAL_BLOCKING_RUN_STATUSES = new Set([
+  "completed",
+  "failed",
+  "cancelled",
+  "expired",
+]);
+
+export const CONVERSATION_BUSY_WAIT_TIMEOUT_MS = 5 * 60 * 1000;
+export const CONVERSATION_BUSY_POLL_INTERVAL_MS = 5000;
+
+export type BlockingRunWaitResult = "settled" | "timed_out" | "unavailable";
+
+interface BlockingRunWaitOptions {
+  deadlineMs?: number;
+  pollIntervalMs?: number;
+  now?: () => number;
+  retrieveRun?: (
+    runId: string,
+    options?: {
+      signal?: AbortSignal;
+      maxRetries?: number;
+      timeout?: number;
+    },
+  ) => Promise<{ status?: unknown }>;
+  sleep?: (delayMs: number, signal?: AbortSignal) => Promise<void>;
+}
 
 export interface RunErrorInfo {
   error_type?: string;
@@ -38,6 +73,7 @@ export {
   buildFreshDenialApprovals,
   classifyPreStreamConflict,
   extractConflictDetail,
+  extractConversationBusyRunId,
   getPreStreamErrorAction,
   getRetryDelayMs,
   getTransientRetryDelayMs,
@@ -59,7 +95,184 @@ export {
   shouldRetryRunMetadataError,
 } from "./turn-recovery-policy";
 
+/** Call only at final fallthrough, after own-request replay and blocker waiting. */
+export function reportBusyRetryExhausted(
+  detail: unknown,
+  retries: number,
+  maxRetries: number,
+): void {
+  if (isConversationBusyError(detail) && retries >= maxRetries) {
+    reportBusyRecovery("retry_budget_exhausted", {
+      blockerRunId: extractConversationBusyRunId(detail) ?? undefined,
+    });
+  }
+}
+
 // ── Async helpers (network side effects — stay here) ────────────────
+
+async function sleepWithAbort(
+  delayMs: number,
+  signal?: AbortSignal,
+): Promise<void> {
+  signal?.throwIfAborted();
+  if (delayMs <= 0) return;
+
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, delayMs);
+    function onAbort() {
+      clearTimeout(timeout);
+      reject(signal?.reason ?? new Error("Cancelled by user"));
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/**
+ * Wait for a server-named conversation lock owner to finish. Callers keep one
+ * absolute deadline across successive blocker ids so healthy rotating runs do
+ * not consume the generic three-attempt fallback budget or wait forever.
+ */
+export async function waitForConversationBusyRun(
+  runId: string,
+  signal?: AbortSignal,
+  options: BlockingRunWaitOptions = {},
+): Promise<BlockingRunWaitResult> {
+  const now = options.now ?? Date.now;
+  const start = now();
+  const report = (phase: Parameters<typeof reportBusyRecovery>[0]) =>
+    reportBusyRecovery(phase, {
+      blockerRunId: runId,
+      elapsedMs: now() - start,
+    });
+  report("poll_started");
+  try {
+    const result = await waitForBlockingRun(runId, signal, options);
+    report(
+      result === "settled"
+        ? "poll_settled"
+        : result === "timed_out"
+          ? "poll_timed_out"
+          : "poll_unavailable",
+    );
+    return result;
+  } catch (error) {
+    report(signal?.aborted ? "cancelled" : "poll_failed");
+    throw error;
+  }
+}
+
+async function waitForBlockingRun(
+  runId: string,
+  signal?: AbortSignal,
+  options: BlockingRunWaitOptions = {},
+): Promise<BlockingRunWaitResult> {
+  const now = options.now ?? Date.now;
+  const deadlineMs =
+    options.deadlineMs ?? now() + CONVERSATION_BUSY_WAIT_TIMEOUT_MS;
+  const pollIntervalMs =
+    options.pollIntervalMs ?? CONVERSATION_BUSY_POLL_INTERVAL_MS;
+  const retrieveRun =
+    options.retrieveRun ??
+    ((id, requestOptions) =>
+      getBackend().retrieveRun(id, requestOptions) as Promise<{
+        status?: unknown;
+      }>);
+  const sleep = options.sleep ?? sleepWithAbort;
+
+  while (true) {
+    signal?.throwIfAborted();
+    const remainingMs = deadlineMs - now();
+    if (remainingMs <= 0) return "timed_out";
+
+    let status: unknown;
+    try {
+      status = (
+        await retrieveRun(runId, {
+          signal,
+          maxRetries: 0,
+          timeout: Math.min(remainingMs, pollIntervalMs),
+        })
+      ).status;
+    } catch (error) {
+      signal?.throwIfAborted();
+      reportBusyRecovery("poll_failed", {
+        blockerRunId: runId,
+        httpStatus: getBusyRecoveryHttpStatus(error),
+      });
+      return "unavailable";
+    }
+
+    if (TERMINAL_BLOCKING_RUN_STATUSES.has(String(status))) {
+      const delayMs = Math.min(pollIntervalMs, deadlineMs - now());
+      if (delayMs <= 0) return "timed_out";
+      await sleep(delayMs, signal);
+      return "settled";
+    }
+    if (!ACTIVE_BLOCKING_RUN_STATUSES.has(String(status))) return "unavailable";
+
+    const delayMs = Math.min(pollIntervalMs, deadlineMs - now());
+    if (delayMs <= 0) return "timed_out";
+    await sleep(delayMs, signal);
+  }
+}
+
+export async function waitForConversationBusyRunOrThrow(
+  runId: string,
+  signal: AbortSignal | undefined,
+  deadlineMs: number,
+): Promise<boolean> {
+  const result = await waitForConversationBusyRun(runId, signal, {
+    deadlineMs,
+  });
+  if (result === "timed_out") {
+    throw new Error(
+      `Conversation is still busy because run ${runId} did not finish before the recovery deadline`,
+    );
+  }
+  return result === "settled";
+}
+
+/** Resume only the rejected request's OTID; a missing lookup is not success. */
+export async function resumeConversationBusyRequest(
+  conversationId: string,
+  agentId: string | undefined,
+  input: Array<MessageCreate | ApprovalCreate>,
+  signal?: AbortSignal,
+) {
+  signal?.throwIfAborted();
+  const otid = input
+    .map((item) => (item as Record<string, unknown>).otid)
+    .find((value): value is string => typeof value === "string");
+  const fields = { conversationId, otid };
+  if (!otid) {
+    reportBusyRecovery("replay_missing_otid", fields);
+    return null;
+  }
+
+  try {
+    const stream = await getBackend().streamConversationMessages(
+      conversationId,
+      {
+        agent_id: conversationId === "default" ? agentId : undefined,
+        otid,
+        starting_after: 0,
+        batch_size: 1000,
+      } as unknown as ConversationMessageStreamBody,
+      signal ? { signal } : undefined,
+    );
+    return traceBusyRecoveryStream(stream, conversationId, otid, signal);
+  } catch (error) {
+    reportBusyRecovery(signal?.aborted ? "cancelled" : "replay_unavailable", {
+      ...fields,
+      httpStatus: getBusyRecoveryHttpStatus(error),
+    });
+    signal?.throwIfAborted();
+    return null;
+  }
+}
 
 type RunErrorMetadata =
   | {

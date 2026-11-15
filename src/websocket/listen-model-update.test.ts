@@ -232,10 +232,10 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
     // (contextWindowOverride), never omit the field (an omitted
     // context_window_limit makes the server re-derive and clamp it to a
     // legacy 128k default — LET-9786), and must not preserve a value that
-    // looks like that server clamp (preservableContextWindow).
+    // looks like that server clamp (contextWindowToPreserveForModelSelection).
     expect(source).not.toContain("avoidOverwritingExistingContextWindow");
     expect(source).not.toContain("delete updateArgsForRequest.context_window");
-    expect(source).toContain("preservableContextWindow(");
+    expect(source).toContain("contextWindowToPreserveForModelSelection(");
     expect(source).toContain("contextWindowOverride: preservedContextWindow");
   });
 

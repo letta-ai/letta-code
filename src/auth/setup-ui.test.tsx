@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -11,6 +11,7 @@ import {
   setConfiguredBackendMode,
 } from "@/backend/backend-mode";
 import { settingsManager } from "@/settings-manager";
+import { removeTestDir } from "@/test-utils/test-fs";
 import { type SetupResult, SetupUI } from "./setup-ui";
 
 // Use real Ink streams, as in the component tests; ink-testing-library is not
@@ -81,7 +82,7 @@ afterEach(async () => {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
   }
-  await rm(home, { recursive: true, force: true });
+  await removeTestDir(home);
 });
 
 async function waitFor(predicate: () => boolean) {

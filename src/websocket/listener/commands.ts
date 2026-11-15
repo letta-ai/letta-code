@@ -21,7 +21,6 @@ import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import { parseReflectCommandArgs } from "@/cli/helpers/reflect-command";
 import { launchReflectionSubagent } from "@/cli/helpers/reflection-launcher";
 import { buildModCommandPrompt } from "@/cli/mods/command-runtime";
-import { DEFAULT_SUMMARIZATION_MODEL } from "@/constants";
 import { runPreCompactHooks } from "@/hooks";
 import type { ModCommand } from "@/mods/types";
 import { markPostCompactionContextRemindersPending } from "@/reminders/state";
@@ -569,7 +568,8 @@ async function handleCompactCommand(
           mode: modeArg,
           model:
             agent.compaction_settings?.model?.trim() ||
-            DEFAULT_SUMMARIZATION_MODEL,
+            agent.model ||
+            undefined,
         },
       } as ConversationMessageCompactBody;
     }

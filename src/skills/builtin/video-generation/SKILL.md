@@ -44,6 +44,7 @@ Recommendation as of 2026-10-29. Video models move fast, so this will go stale; 
 - **Fast:** `minimax/hailuo-3-max` (MiniMax H3). Also top tier; renders in well under a minute. Use it for quick replies in a live thread or for iterating on a prompt, then rerun the final cut on Seedance.
 - Other top-tier models on the endpoint include `alibaba/wan-3.0`, `black-forest-labs/flux-3-video` and `heygen/heygen-video-1`. Some providers filter prompts more strictly than others; if one rejects a prompt, try another model rather than rewording around the filter.
 - `heygen/avatar-iv` makes a talking head from one photo.
+- `alibaba/wan-3.0` does reference-guided generation: image `input_references` hold a person's identity, and an `audio_url` reference drives lip-sync to that clip. Use it for a talking head of a specific person in their own voice: pass a few front-facing photos and a clip of them (or their generated voice) saying the exact script.
 
 ## Writing the prompt
 
@@ -116,10 +117,10 @@ Required: `model`. `prompt` is required by every model except those that can gen
 - `generate_audio` (bool) — only meaningful if the model's `generate_audio` capability is true.
 - `seed` (int) — honored only if the model's `seed` capability is true.
 - `frame_images[]` — image-to-video; each entry is `{ type: "image_url", image_url: { url }, frame_type: "first_frame" | "last_frame" }`.
-- `input_references[]` — reference-to-video (style guidance); image entries have the same shape, no `frame_type`. Audio and video references are `{ type: "audio_url", audio_url: { url } }` and `{ type: "video_url", video_url: { url } }`; only some models (such as `bytedance/seedance-2.5`) use them, and the rest ignore them. If both arrays are present, `frame_images` wins.
+- `input_references[]` — reference-to-video (style guidance); image entries have the same shape, no `frame_type`. Audio and video references are `{ type: "audio_url", audio_url: { url } }` and `{ type: "video_url", video_url: { url } }`; only some models (such as `bytedance/seedance-2.5` and `alibaba/wan-3.0`) use them, and the rest ignore them. If both arrays are present, `frame_images` wins.
 - `provider.options.<slug>.parameters.<key>` — provider passthrough, see below.
 
-Image `url` can be a public `https://` URL or a local-file data URL: `MIME=image/png; B64=$(base64 < file.png | tr -d '\n'); url="data:${MIME};base64,${B64}"`. Audio and video references take URLs the same way.
+Image `url` can be a public `https://` URL or a local-file data URL: `MIME=image/png; B64=$(base64 < file.png | tr -d '\n'); url="data:${MIME};base64,${B64}"`. Audio and video references must be public `https://` URLs; data URLs are rejected, so host the file somewhere public first.
 
 ## Provider passthrough
 
@@ -160,7 +161,7 @@ Example:
 ## Chaining with other skills
 
 - **Keyframes:** generate stills with the `image-generation` skill, then pass them as `frame_images` (`first_frame` / `last_frame`) or image `input_references` as data URLs.
-- **Sound:** make a voiceover with the `speech-generation` skill or a soundtrack with the `music-generation` skill, then pass the audio as an `audio_url` input reference to a model that uses audio, or mix it onto the finished MP4 (for example with `ffmpeg`).
+- **Sound:** make a voiceover with the `speech-generation` skill or a soundtrack with the `music-generation` skill, then host it at a public `https://` URL and pass that as an `audio_url` input reference to a model that uses audio, or mix it onto the finished MP4 (for example with `ffmpeg`).
 
 ## Notes
 

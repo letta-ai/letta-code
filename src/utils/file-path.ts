@@ -8,11 +8,16 @@ import * as path from "node:path";
  *    the token as-is so the downstream error message is still readable).
  * 3. Resolve relative paths against `userCwd`.
  */
-export function expandFilePath(filePath: string, userCwd: string): string {
+export function expandFilePath(
+  filePath: string,
+  userCwd: string,
+  env: NodeJS.ProcessEnv = process.env,
+  homeDir: string = os.homedir(),
+): string {
   // 1. Tilde expansion
   let expanded = filePath;
   if (expanded === "~" || expanded.startsWith("~/")) {
-    expanded = path.join(os.homedir(), expanded.slice(1));
+    expanded = path.join(homeDir, expanded.slice(1));
   }
 
   // 2. Environment-variable expansion ($VAR and ${VAR})
@@ -20,7 +25,7 @@ export function expandFilePath(filePath: string, userCwd: string): string {
     /\$\{([^}]+)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g,
     (match, braced?: string, unbraced?: string) => {
       const name = braced ?? unbraced ?? "";
-      return process.env[name] ?? match; // leave unresolved vars intact
+      return env[name] ?? match; // leave unresolved vars intact
     },
   );
 

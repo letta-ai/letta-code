@@ -34,6 +34,8 @@ mock.module("@/agent/subagents", () => ({
   getAllSubagentConfigs: async () => ({
     "general-purpose": config,
     fork: { ...config, name: "fork", fork: true },
+    reviewer: { ...config, name: "reviewer" },
+    custom: { ...config, name: "custom" },
     memory: { ...config, name: "memory" },
   }),
   clearSubagentConfigCache: () => {},
@@ -129,12 +131,48 @@ afterAll(() => {
 });
 
 const launchArgs = {
-  subagent_type: "general-purpose",
+  fork_context: false,
+  harness: "letta",
   prompt: "Check routing without executing a child",
   description: "Routing contract",
 };
 
+/** A failed launch must be recorded as a tool error, not a success. */
+function toolError(result: Awaited<ReturnType<typeof task>>): string {
+  if (typeof result === "string")
+    throw new Error(`Expected a tool error, got: ${result}`);
+  expect(result.status).toBe("error");
+  return result.content;
+}
+
 describe("task computer routing", () => {
+  test.each(["reviewer", "custom"])(
+    "the %s preset preserves computer and ignores other launch overrides",
+    async (subagent_type) => {
+      const result = await task({
+        ...launchArgs,
+        subagent_type,
+        harness: "codex",
+        fork_context: true,
+        model: "ignored-model",
+        computer: "office-mac",
+        agent_id: "ignored-agent",
+        conversation_id: "ignored-conversation",
+        mcp: { inherit: false },
+      });
+
+      expect(result).toContain("Task running in background");
+      expect(spawn.mock.calls[0]?.slice(0, 3)).toEqual([
+        subagent_type,
+        launchArgs.prompt,
+        undefined,
+      ]);
+      expect(spawn.mock.calls[0]?.slice(5, 7)).toEqual([undefined, undefined]);
+      expect(receivedEnvironment).toBe("office-mac");
+      expect(forkConversation).not.toHaveBeenCalled();
+    },
+  );
+
   test("forwards a whitespace-padded selector trimmed to the child", async () => {
     const result = await task({ ...launchArgs, computer: " \t office-mac \n" });
 
@@ -144,20 +182,20 @@ describe("task computer routing", () => {
     expect(backgroundTasks.size).toBe(1);
   });
 
-  test.each(["general-purpose", "fork"])(
-    "rejects a non-routing backend before spawning or forking %s",
-    async (subagent_type) => {
+  test.each([false, true])(
+    "rejects a non-routing backend before spawning or forking (fork_context=%s)",
+    async (fork_context) => {
       capabilities.environmentRouting = false;
       const result = await task({
         ...launchArgs,
-        subagent_type,
+        fork_context,
         computer: " office-mac ",
       });
 
-      expect(result).toContain(
+      expect(toolError(result)).toContain(
         "Error: The computer option requires a Letta Cloud backend.",
       );
-      expect(result).toContain("omit the computer field");
+      expect(toolError(result)).toContain("omit the computer field");
       expect(spawn).not.toHaveBeenCalled();
       expect(forkConversation).not.toHaveBeenCalled();
       expect(retrieveAgent).not.toHaveBeenCalled();
@@ -174,7 +212,7 @@ describe("task computer routing", () => {
         subagent_type: "memory",
         computer: " office-mac ",
       });
-      expect(result).toContain("memory is harness-only");
+      expect(toolError(result)).toContain("not a selectable subagent_type");
       expect(spawn).not.toHaveBeenCalled();
       expect(forkConversation).not.toHaveBeenCalled();
       expect(retrieveAgent).not.toHaveBeenCalled();
@@ -218,7 +256,7 @@ describe("task computer routing", () => {
       },
     );
 
-    test("a fork ignores the default and does not route", async () => {
+    test("a fork uses the default computer", async () => {
       setDefaultComputer("cloud");
       // The shared fixture rejects forks so other cases can assert none happen;
       // this one needs the fork to land so the spawn below is observable.
@@ -232,12 +270,12 @@ describe("task computer routing", () => {
       await settingsManager.reset();
       await settingsManager.initialize();
       try {
-        const result = await task({ ...launchArgs, subagent_type: "fork" });
+        const result = await task({ ...launchArgs, fork_context: true });
 
         expect(result).toContain("Task running in background with task ID:");
         expect(forkConversation).toHaveBeenCalledTimes(1);
         expect(spawn).toHaveBeenCalledTimes(1);
-        expect(receivedEnvironment).toBeUndefined();
+        expect(receivedEnvironment).toBe("cloud");
       } finally {
         await settingsManager.reset();
         if (originalHome === undefined) {
@@ -255,7 +293,7 @@ describe("task computer routing", () => {
         subagent_type: "memory",
       });
 
-      expect(result).toContain("memory is harness-only");
+      expect(toolError(result)).toContain("not a selectable subagent_type");
       expect(receivedEnvironment).toBeUndefined();
     });
 
@@ -274,7 +312,7 @@ describe("task computer routing", () => {
       capabilities.environmentRouting = false;
       const result = await task({ ...launchArgs, computer: "office-mac" });
 
-      expect(result).toContain(
+      expect(toolError(result)).toContain(
         "Error: The computer option requires a Letta Cloud backend.",
       );
       expect(spawn).not.toHaveBeenCalled();

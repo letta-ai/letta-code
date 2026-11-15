@@ -4,7 +4,7 @@ import {
   summarizeConversation,
   updateConversationDescription,
 } from "@/backend/api/conversations";
-import { DEFAULT_SUMMARIZATION_MODEL } from "@/constants";
+import { DEFAULT_TITLE_SUMMARIZATION_MODEL } from "@/constants";
 import { experimentManager } from "@/experiments/manager";
 import { isDebugEnabled } from "@/utils/debug";
 
@@ -139,7 +139,7 @@ export function buildConversationDescriptionMessages(
 export async function generateConversationDescriptionFromSummary(
   conversationId: string,
   messages: ConversationDescriptionMessage[],
-  model: string = DEFAULT_SUMMARIZATION_MODEL,
+  model: string = DEFAULT_TITLE_SUMMARIZATION_MODEL,
 ): Promise<string | null> {
   if (messages.length === 0) {
     return null;
@@ -202,7 +202,7 @@ export async function regenerateConversationDescription(
     const description = await generateConversationDescriptionFromSummary(
       conversationId,
       messages,
-      DEFAULT_SUMMARIZATION_MODEL,
+      DEFAULT_TITLE_SUMMARIZATION_MODEL,
     );
     if (!description) {
       return false;

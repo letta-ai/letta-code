@@ -49,6 +49,7 @@ test("default mode - treats Agent like Task for safe subagent auto-approval", ()
     "Agent",
     {
       subagent_type: "recall",
+      harness: "codex", // Ignored: the recall preset owns the launch settings.
       prompt: "find prior notes",
       description: "Search history",
     },

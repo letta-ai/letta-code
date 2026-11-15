@@ -147,9 +147,11 @@ function getFileEditInfo(approval: ApprovalRequest): FileEditInfo | null {
 function getTaskInfo(approval: ApprovalRequest): TaskInfo | null {
   try {
     const args = JSON.parse(approval.toolArgs || "{}");
+    // A specialized Letta subagent, else the harness (default `letta`).
+    const requestedType = args.subagent_type ?? args.harness ?? "letta";
     return {
       subagentType:
-        typeof args.subagent_type === "string" ? args.subagent_type : "unknown",
+        typeof requestedType === "string" ? requestedType : "unknown",
       description:
         typeof args.description === "string"
           ? args.description

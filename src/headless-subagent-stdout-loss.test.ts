@@ -329,7 +329,6 @@ function startMockProvider(): {
                             arguments: JSON.stringify({
                               description: "run test subagent",
                               prompt: "produce the test report",
-                              subagent_type: "general-purpose",
                             }),
                           },
                         },

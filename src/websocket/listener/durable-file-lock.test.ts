@@ -406,24 +406,71 @@ test("corrupt and multiple-owner directories fail closed", () => {
   }
 });
 
-test("PID reuse is detected by process-start identity", () => {
-  const f = fixture();
-  try {
-    const reused: DurableLockOwner = {
-      token: "reused",
-      pid: process.pid,
-      processStart: `${getProcessStart(process.pid)}-previous`,
-    };
-    f.install(reused);
-    // Windows process-creation identity lookup can take hundreds of
-    // milliseconds; this case verifies recovery, not the timeout threshold.
-    const release = acquireDurableFileLock(f.path, { waitMs: 1_000 });
-    expect(readdirSync(f.lock)).not.toContain(f.ownerName(reused));
-    release();
-  } finally {
-    rmSync(f.root, { recursive: true, force: true });
-  }
-});
+test.each([
+  { recorded: "previous", actual: "current", recovers: true },
+  { recorded: "current", actual: "current", recovers: false },
+  { recorded: "previous", actual: null, recovers: false },
+  { recorded: null, actual: "current", recovers: false },
+])(
+  "PID reuse recovery: recorded=$recorded actual=$actual recovers=$recovers",
+  ({ recorded, actual, recovers }) => {
+    const f = fixture();
+    try {
+      const incumbent: DurableLockOwner = {
+        token: "incumbent",
+        pid: process.pid,
+        processStart: recorded,
+      };
+      f.install(incumbent);
+      // Identity availability is an input to recovery. A real bounded OS probe
+      // may return null, which must preserve the incumbent rather than evict it.
+      let clock = 0;
+      const budgets: number[] = [];
+      const waitMs = recovers ? 1_000 : 10;
+      const acquire = () =>
+        acquireDurableFileLock(f.path, {
+          waitMs,
+          now: () => clock,
+          sleep: (milliseconds) => {
+            clock += milliseconds;
+          },
+          owner: {
+            token: "replacement",
+            pid: process.pid,
+            processStart: "current",
+          },
+          readProcessStart: (pid, timeoutMs) => {
+            expect(pid).toBe(incumbent.pid);
+            budgets.push(timeoutMs);
+            return getProcessStart(
+              pid,
+              "win32",
+              (_command, _args, options) => {
+                expect(options?.timeout).toBe(timeoutMs);
+                if (actual === null) throw new Error("identity unavailable");
+                return actual;
+              },
+              timeoutMs,
+            );
+          },
+        });
+      if (recovers) {
+        const release = acquire();
+        expect(readdirSync(f.lock)).not.toContain(f.ownerName(incumbent));
+        release();
+      } else {
+        expect(acquire).toThrow("Timed out acquiring durable filesystem lock");
+        expect(readdirSync(f.lock)).toEqual([f.ownerName(incumbent)]);
+      }
+      expect(budgets.length).toBeGreaterThan(0);
+      expect(budgets.every((budget) => budget > 0 && budget <= waitMs)).toBe(
+        true,
+      );
+    } finally {
+      rmSync(f.root, { recursive: true, force: true });
+    }
+  },
+);
 
 test("EPERM still checks PID reuse while unknown identity fails closed", () => {
   const inaccessible = () => {

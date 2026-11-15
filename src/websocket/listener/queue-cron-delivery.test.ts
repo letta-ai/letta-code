@@ -17,6 +17,8 @@ import type { ListenerTransport } from "./transport";
 
 test("a fired cron records queued then delivered with the same queue item ID", async () => {
   const home = mkdtempSync(path.join(tmpdir(), "cron-delivery-"));
+  const originalDesktopMode = process.env.LETTA_DESKTOP_MODE;
+  process.env.LETTA_DESKTOP_MODE = "1";
   const originalHome = process.env.LETTA_HOME;
   const originalSandbox = process.env.LETTA_MANAGED_CLOUD_RUNTIME;
   const originalRuntime = getActiveRuntime();
@@ -75,6 +77,9 @@ test("a fired cron records queued then delivered with the same queue item ID", a
       runAtMs: expect.any(Number),
     });
   } finally {
+    if (originalDesktopMode === undefined)
+      delete process.env.LETTA_DESKTOP_MODE;
+    else process.env.LETTA_DESKTOP_MODE = originalDesktopMode;
     stopScheduler();
     setActiveRuntime(originalRuntime);
     if (originalHome === undefined) delete process.env.LETTA_HOME;

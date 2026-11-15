@@ -1,13 +1,17 @@
 import type {
   LaunchSubagentCommand,
+  LaunchSubagentWireArgs,
   ReadSubagentEventsCommand,
+  SubagentLaunchArgs,
   SubagentMessageCommand,
   SubagentStopCommand,
 } from "@/types/subagent-protocol";
 import { isAgentRuntimeScope } from "./protocol-validation";
 
 const ARGUMENTS = new Set([
+  "harness",
   "subagent_type",
+  "fork_context",
   "prompt",
   "description",
   "model",
@@ -50,7 +54,10 @@ export function isLaunchSubagentCommand(
     !args.description.trim()
   )
     return false;
+  if (args.fork_context !== undefined && typeof args.fork_context !== "boolean")
+    return false;
   for (const key of [
+    "harness",
     "subagent_type",
     "model",
     "agent_id",
@@ -76,6 +83,45 @@ export function isLaunchSubagentCommand(
       Number.isSafeInteger(args.max_turns) &&
       args.max_turns > 0)
   );
+}
+
+// The external worker names an older client could send as `subagent_type`.
+// Frozen: new workers are only selectable through `harness`.
+const LEGACY_EXTERNAL_SUBAGENT_TYPES = new Set([
+  "claude-code",
+  "codex",
+  "cursor",
+  "opencode",
+]);
+
+/**
+ * Translate wire launch arguments into Agent launch arguments.
+ *
+ * A command with `harness` or `fork_context` uses the current shape and passes
+ * through unchanged. A command with only `subagent_type` may come from an older
+ * client, where that field had its original meaning, so its value is mapped:
+ * an external worker name becomes `harness`, `fork` becomes
+ * `fork_context: true`, `general-purpose` becomes the default agent, and any
+ * other name stays a Letta `subagent_type`. Those clients never forked an
+ * external worker or `general-purpose`, so both map to `fork_context: false`
+ * rather than inheriting the current fork-by-default.
+ */
+export function toSubagentLaunchArgs(
+  args: LaunchSubagentWireArgs,
+): SubagentLaunchArgs {
+  if (
+    args.subagent_type === undefined ||
+    args.harness !== undefined ||
+    args.fork_context !== undefined
+  )
+    return args;
+  const { subagent_type: wireType, ...launchArgs } = args;
+  const type = wireType.trim();
+  if (LEGACY_EXTERNAL_SUBAGENT_TYPES.has(type))
+    return { ...launchArgs, harness: type, fork_context: false };
+  if (type === "fork") return { ...launchArgs, fork_context: true };
+  if (type === "general-purpose") return { ...launchArgs, fork_context: false };
+  return { ...launchArgs, subagent_type: type };
 }
 
 function hasValidControlBase(value: unknown): value is Record<
@@ -116,7 +162,22 @@ export function isSubagentMessageCommand(
 export function isSubagentStopCommand(
   value: unknown,
 ): value is SubagentStopCommand {
-  return hasValidControlBase(value) && value.type === "subagent_stop";
+  if (!hasValidControlBase(value) || value.type !== "subagent_stop")
+    return false;
+  if (
+    value.client_message_id !== undefined &&
+    (typeof value.client_message_id !== "string" ||
+      !value.client_message_id.trim())
+  )
+    return false;
+  if (value.conversation === undefined) return true;
+  const scope = value.conversation as Record<string, unknown> | null;
+  return Boolean(
+    scope &&
+      typeof scope === "object" &&
+      typeof scope.conversation_id === "string" &&
+      (scope.agent_id === null || typeof scope.agent_id === "string"),
+  );
 }
 
 export function isReadSubagentEventsCommand(

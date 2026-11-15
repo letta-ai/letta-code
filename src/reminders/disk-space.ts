@@ -1,6 +1,12 @@
 import { statfs } from "node:fs/promises";
+import { join } from "node:path";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { isManagedCloudRuntime } from "@/managed-cloud-runtime";
+import {
+  DiskReserve,
+  setDiskReserve,
+  updateDiskReserve,
+} from "@/utils/disk-reserve";
 import {
   addToMessageQueue,
   isQueueBridgeConnected,
@@ -145,13 +151,14 @@ export async function checkDiskSpaceNow(
       availableBytes: stats.bavail * stats.bsize,
     };
     cache.sample = sample;
+    const reserveReleased = updateDiskReserve(sample);
     const level = alertLevel(sample);
     if (level <= pushedLevel) {
       if (level === 0) pushedLevel = 0;
       return null;
     }
     pushedLevel = level;
-    return formatLowDiskSpaceReminder(sample);
+    return reserveReleased ? null : formatLowDiskSpaceReminder(sample);
   } catch {
     return null;
   }
@@ -206,12 +213,23 @@ export function watchSandboxDiskSpace(
     env?: NodeJS.ProcessEnv;
     statfsFn?: StatfsFn;
     intervalMs?: number;
+    reserveDirectory?: string;
   } = {},
 ): () => void {
   try {
     if (!isManagedCloudRuntime(options.env)) return () => {};
     if (sandboxPollTimer) clearInterval(sandboxPollTimer);
-    const timer = setInterval(() => {
+    if (options.reserveDirectory) {
+      setDiskReserve(
+        new DiskReserve(join(options.reserveDirectory, "disk-reserve"), () => {
+          pushedLevel = 2;
+          deliver(`${SYSTEM_REMINDER_OPEN}
+LOW DISK SPACE: The sandbox disk filled or reached critical usage. The 512 MB emergency reserve has been released and is the only headroom left. Free space now before continuing disk-heavy work. Delete regenerable caches, build outputs, and temporary files; do not delete the user's source files, uncommitted work, or memory without asking.
+${SYSTEM_REMINDER_CLOSE}`);
+        }),
+      );
+    }
+    const check = () => {
       try {
         void checkDiskSpaceNow(getPath(), options)
           .then((text) => {
@@ -219,12 +237,20 @@ export function watchSandboxDiskSpace(
           })
           .catch(() => {});
       } catch {}
-    }, options.intervalMs ?? DISK_SPACE_POLL_INTERVAL_MS);
+    };
+    check();
+    const timer = setInterval(
+      check,
+      options.intervalMs ?? DISK_SPACE_POLL_INTERVAL_MS,
+    );
     timer.unref?.();
     sandboxPollTimer = timer;
     return () => {
       clearInterval(timer);
-      if (sandboxPollTimer === timer) sandboxPollTimer = null;
+      if (sandboxPollTimer === timer) {
+        sandboxPollTimer = null;
+        setDiskReserve(null);
+      }
     };
   } catch {
     return () => {};
@@ -267,6 +293,7 @@ export function takePendingDiskSpaceReminder(): string | null {
 
 export function resetDiskSpaceAlertForTests(): void {
   pushedLevel = 0;
+  setDiskReserve(null);
   if (sandboxPollTimer) clearInterval(sandboxPollTimer);
   sandboxPollTimer = null;
   pendingRequestReminder = null;

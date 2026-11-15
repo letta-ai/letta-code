@@ -11,6 +11,8 @@ export interface EnvironmentMetadata {
   supported_commands?: string[];
   /** Accepts `launch_subagent` with `notify: "caller"`. */
   launch_subagent_notify_caller?: boolean;
+  /** Prepares external-worker fork history on the destination filesystem. */
+  external_fork_context?: boolean;
   /** Supports steering and stopping remote external subagents. */
   subagent_message?: boolean;
   [key: string]: unknown;
@@ -171,13 +173,30 @@ export function environmentMatchesSelector(
   );
 }
 
+export class ComputerResolutionError extends Error {
+  constructor(
+    public readonly code:
+      | "computer_selector_empty"
+      | "computer_not_found"
+      | "computer_offline"
+      | "computer_ambiguous",
+    message: string,
+  ) {
+    super(message);
+    this.name = "ComputerResolutionError";
+  }
+}
+
 export async function resolveEnvironmentConnectionId(
   selector: string,
   list: typeof listEnvironments = listEnvironments,
 ): Promise<{ connectionId: string; environment: EnvironmentConnection }> {
   const trimmed = selector.trim();
   if (!trimmed) {
-    throw new Error("Computer selector must not be empty");
+    throw new ComputerResolutionError(
+      "computer_selector_empty",
+      "Computer selector must not be empty",
+    );
   }
 
   const response = await list({ limit: 100 });
@@ -186,14 +205,16 @@ export async function resolveEnvironmentConnectionId(
   );
 
   if (matches.length === 0) {
-    throw new Error(
+    throw new ComputerResolutionError(
+      "computer_not_found",
       `Computer "${trimmed}" not found. Run \`letta computers list\` to discover available computers.`,
     );
   }
 
   const onlineMatches = matches.filter(isEnvironmentOnline);
   if (onlineMatches.length === 0) {
-    throw new Error(
+    throw new ComputerResolutionError(
+      "computer_offline",
       `Computer "${trimmed}" is offline. Matched: ${matches.map(describeEnvironment).join(", ")}`,
     );
   }
@@ -201,7 +222,8 @@ export async function resolveEnvironmentConnectionId(
   if (
     new Set(onlineMatches.map((environment) => environment.deviceId)).size > 1
   ) {
-    throw new Error(
+    throw new ComputerResolutionError(
+      "computer_ambiguous",
       `Computer "${trimmed}" is ambiguous. Matched: ${onlineMatches.map(describeEnvironment).join(", ")}`,
     );
   }
@@ -215,7 +237,10 @@ export async function resolveEnvironmentConnectionId(
   );
   const environment = onlineMatches[0];
   if (!environment) {
-    throw new Error(`Computer "${trimmed}" is offline`);
+    throw new ComputerResolutionError(
+      "computer_offline",
+      `Computer "${trimmed}" is offline`,
+    );
   }
   if (!environment.connectionId) {
     throw new Error(`Computer "${trimmed}" has no active connection id`);

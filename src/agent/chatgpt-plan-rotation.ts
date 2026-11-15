@@ -5,7 +5,8 @@
  * the same models; when a plan reports `usage_limit_reached` the consumers
  * (TUI / listener / headless) call `rotateChatGPTPlanOnQuotaLimit` from
  * their post-stop retry handling to swap the active conversation onto a
- * sibling plan and resend. No swap-back; quota errors only (no auth failover).
+ * sibling plan and resend. A plan that lists a model but rejects it
+ * (`model_not_found`) rotates the same way. No swap-back; no auth failover.
  */
 
 import {
@@ -15,6 +16,7 @@ import {
 } from "@/agent/available-models";
 import { resolveModelHandleFromLlmConfig } from "@/agent/model-handles";
 import {
+  isChatGPTModelUnsupportedError,
   parseChatGPTUsageLimitDetail,
   selectChatGPTQuotaFailoverHandle,
 } from "@/agent/turn-recovery-policy";
@@ -50,6 +52,8 @@ export interface ChatGPTPlanRotationResult {
   toProvider: string;
   toHandle: string;
   resetsAt: number | null;
+  /** Set when the plan rejected the model instead of hitting its limit. */
+  unsupportedModel?: string;
 }
 
 function providerFromHandle(handle: string): string | null {
@@ -187,7 +191,8 @@ async function resolveScopedModelState(
  * Attempt to rotate the active conversation to the same model on a sibling
  * ChatGPT plan. The default conversation still uses the agent's base model,
  * matching the scope rules used by `/model`.
- * Returns null when the detail is not a usage-limit error, the current
+ * Returns null when the detail is not a usage-limit or unsupported-model
+ * (`model_not_found`) error, the current
  * handle is not a ChatGPT BYOK handle, no eligible sibling exists, or the
  * model update fails; callers fall through to existing error handling.
  */
@@ -202,7 +207,9 @@ export async function rotateChatGPTPlanOnQuotaLimit(params: {
   const { agentId, conversationId, error, exhaustedProviders, signal } = params;
 
   const parsedDetail = parseChatGPTUsageLimitDetail(error);
-  if (!parsedDetail) return null;
+  const modelUnsupported =
+    !parsedDetail && isChatGPTModelUnsupportedError(error);
+  if (!parsedDetail && !modelUnsupported) return null;
 
   let models = getCachedAvailableModels();
   if (!models) {
@@ -229,7 +236,8 @@ export async function rotateChatGPTPlanOnQuotaLimit(params: {
   const fromProvider = providerFromHandle(currentHandle);
   if (!fromProvider) return null;
 
-  // The current plan is out of quota regardless of whether a sibling exists.
+  // The current plan is out of quota (or cannot serve this model) regardless
+  // of whether a sibling exists.
   exhaustedProviders.add(fromProvider);
 
   // Check candidates before changing the model, not by spending a swap/run on
@@ -301,7 +309,10 @@ export async function rotateChatGPTPlanOnQuotaLimit(params: {
     fromProvider,
     toProvider,
     toHandle,
-    resetsAt: parsedDetail.resetsAt,
+    resetsAt: parsedDetail?.resetsAt ?? null,
+    ...(modelUnsupported
+      ? { unsupportedModel: currentHandle.slice(fromProvider.length + 1) }
+      : {}),
   };
 }
 
@@ -310,8 +321,12 @@ export function formatPlanRotationNotice(params: {
   fromProvider: string;
   toProvider: string;
   resetsAt: number | null;
+  unsupportedModel?: string;
 }): string {
-  const { fromProvider, toProvider, resetsAt } = params;
+  const { fromProvider, toProvider, resetsAt, unsupportedModel } = params;
+  if (unsupportedModel) {
+    return `${fromProvider} doesn't support ${unsupportedModel} — switched to ${toProvider}`;
+  }
   const resetSuffix =
     resetsAt !== null
       ? ` (resets ${new Date(resetsAt).toLocaleTimeString([], {

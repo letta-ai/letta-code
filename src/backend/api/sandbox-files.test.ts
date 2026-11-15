@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   createSandboxDesktopSession,
+  createSandboxExposure,
   downloadFileFromSandbox,
   ensureConversationSandbox,
   type SandboxFilesApiDeps,
@@ -24,6 +25,56 @@ function createDeps(
 }
 
 describe("sandbox file API", () => {
+  test.each([
+    ["private by default", {}, true, {}],
+    [
+      "explicit sandbox",
+      { sandboxId: "sandbox-current" },
+      true,
+      { sandboxId: "sandbox-current" },
+    ],
+    [
+      "public when explicitly requested",
+      { public: true },
+      undefined,
+      { public: true },
+    ],
+  ] as const)(
+    "creates an exposure for the current managed sandbox: %s",
+    async (_name, options, privateResponse, expectedRequestOptions) => {
+      const calls: Array<{ input: string; init?: RequestInit }> = [];
+      const result = await createSandboxExposure(
+        3000,
+        { expiresInSeconds: 7200 },
+        options,
+        createDeps(
+          Response.json({
+            url: "https://opaque.dream.site",
+            port: 3000,
+            expiresAt: "2026-11-04T20:00:00.000Z",
+            private: privateResponse,
+          }),
+          calls,
+        ),
+      );
+
+      expect(result.url).toBe("https://opaque.dream.site");
+      expect(result.private).toBe(privateResponse);
+      expect(calls[0]?.input).toBe(
+        "https://api.letta.test/v1/sandbox-exposures",
+      );
+      expect(calls[0]?.init?.method).toBe("POST");
+      expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+        port: 3000,
+        expiresInSeconds: 7200,
+        ...expectedRequestOptions,
+      });
+      expect(new Headers(calls[0]?.init?.headers).get("Authorization")).toBe(
+        "Bearer secret",
+      );
+    },
+  );
+
   test("selects agent scope for default rather than looking up a literal conversation", async () => {
     const calls: Array<{ input: string; init?: RequestInit }> = [];
     await ensureConversationSandbox(
@@ -115,13 +166,14 @@ describe("sandbox file API", () => {
     );
   });
 
-  test("creates a desktop session for the sandbox", async () => {
+  test("creates a desktop session with the relay token kept out of the URL", async () => {
     const calls: Array<{ input: string; init?: RequestInit }> = [];
     const result = await createSandboxDesktopSession(
       "sandbox-1",
       createDeps(
         Response.json({
-          url: "https://api.letta.test/v1/sandboxes/sandbox-1/desktop-session/ws?token=abc",
+          url: "https://api.letta.test/v1/sandboxes/sandbox-1/desktop-session/ws",
+          protocols: ["binary", "letta-desktop-token.abc"],
           expiresAt: "2026-09-28T23:00:00.000Z",
         }),
         calls,
@@ -129,14 +181,17 @@ describe("sandbox file API", () => {
     );
 
     expect(result).toEqual({
-      url: "https://api.letta.test/v1/sandboxes/sandbox-1/desktop-session/ws?token=abc",
+      url: "https://api.letta.test/v1/sandboxes/sandbox-1/desktop-session/ws",
+      protocols: ["binary", "letta-desktop-token.abc"],
       expiresAt: "2026-09-28T23:00:00.000Z",
     });
     expect(calls[0]?.input).toBe(
       "https://api.letta.test/v1/sandboxes/sandbox-1/desktop-session",
     );
     expect(calls[0]?.init?.method).toBe("POST");
-    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({});
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+      websocketProtocolAuth: true,
+    });
     expect(new Headers(calls[0]?.init?.headers).get("Authorization")).toBe(
       "Bearer secret",
     );

@@ -114,6 +114,62 @@ describe("app-server client", () => {
     ).toBe(0);
   });
 
+  test.each(["message", "error"] as const)(
+    "keeps late socket errors handled and reports ErrorEvent.%s",
+    async (field) => {
+      class FailedSocket extends EventEmitter {
+        constructor(_url: string) {
+          super();
+        }
+        readyState = 0;
+        send() {}
+        close() {
+          this.readyState = 3;
+          this.emit("error", new Error("aborted during close"));
+          this.emit("close", {});
+        }
+      }
+      const client = createAppServerClient({
+        url: "http://localhost:4500",
+        WebSocket: FailedSocket,
+      });
+      const pending = client.connect();
+      const socket = client.socket as FailedSocket;
+      socket.emit("error", {
+        [field]:
+          field === "error"
+            ? new Error("connection reset")
+            : "connection reset",
+      });
+      expect(() =>
+        socket.emit("error", new Error("second error")),
+      ).not.toThrow();
+      await expect(pending).rejects.toThrow(
+        "App-server WebSocket failed to open: connection reset",
+      );
+      expect(socket.readyState).toBe(3);
+      expect(() => socket.emit("error", new Error("late error"))).not.toThrow();
+    },
+  );
+
+  test("rejects connect when the socket never opens", async () => {
+    const { client } = createFakeClient();
+    const started = Date.now();
+    await expect(client.connect()).rejects.toThrow(
+      "App-server WebSocket failed to open: timed out after 25ms",
+    );
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  test("rejects connect when the socket closes before opening", async () => {
+    const { client, control } = createFakeClient();
+    const pending = client.connect();
+    control.close();
+    await expect(pending).rejects.toThrow(
+      "App-server WebSocket failed to open: closed before opening",
+    );
+  });
+
   test("launches a subagent and correlates success and failure responses", async () => {
     const { client, control } = createFakeClient();
     const opened = client.connect();
@@ -577,7 +633,6 @@ describe("app-server client", () => {
       create_conversation: { body: {} },
       external_tools: [
         {
-          scope_id: "scope-1",
           tools: [
             {
               name: "lookup_ticket",
@@ -593,7 +648,6 @@ describe("app-server client", () => {
       type: "runtime_start",
       external_tools: [
         {
-          scope_id: "scope-1",
           tools: [{ name: "lookup_ticket" }],
         },
       ],
@@ -616,7 +670,6 @@ describe("app-server client", () => {
       type: "external_tool_call_request",
       request_id: "external-tool-1",
       runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
-      scope_id: "scope-1",
       tool_call_id: "call-1",
       tool_name: "lookup_ticket",
       input: { id: "ABC-123" },

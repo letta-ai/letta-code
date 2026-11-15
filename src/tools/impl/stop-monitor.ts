@@ -35,6 +35,13 @@ export async function stopMonitor(
 
   if (!killBackgroundProcess(command.process_id))
     return { ...response, error: "Monitor could not be stopped" };
+  let persistenceError: string | undefined;
+  try {
+    await process.persistState?.();
+  } catch {
+    persistenceError =
+      "Monitor stopped, but its server state could not be saved";
+  }
 
   addToMessageQueue({
     kind: "task_notification",
@@ -47,5 +54,10 @@ export async function stopMonitor(
         "The user cancelled this Monitor. Do not restart it unless the user asks.",
     }),
   });
-  return { ...response, success: true, stopped: true };
+  return {
+    ...response,
+    success: !persistenceError,
+    stopped: true,
+    ...(persistenceError ? { error: persistenceError } : {}),
+  };
 }

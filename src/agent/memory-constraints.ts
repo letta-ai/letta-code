@@ -18,6 +18,11 @@
  *   path and Git mode against changes relative to HEAD
  *
  * File limits count the complete staged file, including frontmatter.
+ *
+ * Commits are blocked only by problems in files they add, change or remove.
+ * Problems confined to untouched files predate the commit and print as
+ * warnings, matching server-side push validation. `--audit`, a repository's
+ * first commit and an approved config change validate the whole tree.
  */
 
 import {
@@ -90,6 +95,16 @@ function readLayoutPolicy() {
   }
 }
 
+let scopedToChanges = false;
+
+function warn(warnings) {
+  if (warnings.length === 0) return;
+  console.error("Memory validation warnings (existing problems this commit does not change):");
+  for (const warning of warnings) console.error("  " + warning);
+  console.error("A later commit that changes these files must also fix these problems.");
+  console.error("");
+}
+
 function report(errors) {
   if (errors.length === 0) return;
   if (AUDIT_MODE) {
@@ -98,7 +113,9 @@ function report(errors) {
     console.error("Memory validation blocked this commit.");
     console.error("No files were committed. Your staged changes are still present.");
     console.error(
-      "Validation checks the complete repository, so these problems may predate your staged changes.",
+      scopedToChanges
+        ? "These problems are in files this commit adds, changes or removes."
+        : "Validation checks the complete repository, so these problems may predate your staged changes.",
     );
     console.error("");
     console.error("Fix these problems:");
@@ -171,6 +188,14 @@ async function main() {
         : parsedConfig;
   }
 
+  // Block only problems this commit introduces, matching server-side push
+  // validation. Pre-existing problems elsewhere are reported as warnings.
+  // Audits, first commits and approved policy changes check the whole tree.
+  const changedPaths = !AUDIT_MODE && acceptedRevision && !configChanged
+    ? runGit(["diff", "--cached", "--name-only", "--no-renames", "-z", acceptedRevision, "--"]).split("\0").filter(Boolean)
+    : undefined;
+  scopedToChanges = changedPaths !== undefined;
+  const warnings = [];
   errors.push(...await validateMemoryTreeConstraints({
     async countCharacters(path) {
       return new Promise((resolveCount, reject) => {
@@ -205,6 +230,8 @@ async function main() {
     config,
     layout: layoutPolicy,
     requireRootMarker: AUDIT_MODE || gitSucceeds(["cat-file", "-e", "HEAD:MEMORY.md"]),
+    changedPaths,
+    warnings,
     acceptedTree: {
       async listFiles() {
         if (!acceptedRevision) return [];
@@ -220,6 +247,7 @@ async function main() {
     },
   }));
 
+  warn(warnings);
   report(errors);
 }
 

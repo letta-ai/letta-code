@@ -1,5 +1,5 @@
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
-import { updateSubagent } from "@/agent/subagent-state.js";
+import { getSubagents, updateSubagent } from "@/agent/subagent-state.js";
 import type { SubagentResult } from "@/agent/subagents";
 import { getBackend } from "@/backend";
 import {
@@ -10,13 +10,24 @@ import {
 } from "@/backend/api/conversation-enqueue";
 import { buildAgentReference } from "@/cli/helpers/app-urls";
 import { INTERRUPTED_BY_USER } from "@/constants";
-import { cancelAcceptedListenerInput } from "@/headless-listener-launch";
 import {
+  cancelAcceptedListenerInput,
+  stopAcceptedListenerConversation,
+} from "@/headless-listener-launch";
+import {
+  readConversationRuntimeStatus,
   type SuperRunWaitDeps,
   waitForAcceptedSuperRun,
 } from "@/headless-super-run-wait";
+import { backgroundTasks } from "@/tools/impl/process_manager";
 import { recordTaskEvent } from "@/tools/impl/task-transcript";
 import { getErrorMessage } from "@/utils/error";
+import { addToMessageQueue } from "@/utils/message-queue-bridge";
+import {
+  formatTaskNotification,
+  resolveNotificationScope,
+  taskNotificationMessage,
+} from "@/utils/task-notifications";
 import {
   type ExecutionState,
   processStreamEvent,
@@ -25,9 +36,43 @@ import {
 
 export interface RemoteTurnWaitDeps
   extends Partial<
-    Pick<SuperRunWaitDeps, "exact" | "run" | "pollMs" | "progressMs" | "sleep">
+    Pick<
+      SuperRunWaitDeps,
+      "exact" | "run" | "pollMs" | "progressMs" | "sleep" | "runtimeStatus"
+    >
   > {
   listMessages?: (runId: string, signal: AbortSignal) => Promise<Message[]>;
+}
+
+/** Capture the initiating parent scope before the remote wait outlives its turn. */
+export function createRemoteIdleNotifier(
+  subagentId: string,
+  parentScope?: { agentId: string; conversationId: string },
+): (text: string, count: number) => void {
+  const entry = getSubagents().find((agent) => agent.id === subagentId);
+  const scope = resolveNotificationScope(
+    parentScope ??
+      (entry?.parentAgentId
+        ? {
+            agentId: entry.parentAgentId,
+            conversationId: entry.parentConversationId ?? "default",
+          }
+        : undefined),
+  );
+  return (text, count) => {
+    addToMessageQueue({
+      kind: "task_notification",
+      ...scope,
+      ...taskNotificationMessage(
+        formatTaskNotification({
+          taskId: subagentId,
+          status: "running",
+          summary: `Agent loop stopped with ${count} background process${count === 1 ? "" : "es"} still running`,
+          result: `${text}\n\nThe child agent's loop has stopped with ${count} background process${count === 1 ? "" : "es"} still running. It will resume when they finish, and a final notification will follow.`,
+        }),
+      ),
+    });
+  };
 }
 
 function messageText(content: unknown): string {
@@ -99,6 +144,17 @@ export async function collectRemoteTurnResult(
   signal = new AbortController().signal,
   deps: RemoteTurnWaitDeps = {},
 ): Promise<SubagentResult> {
+  const task = [...backgroundTasks.values()].find(
+    (task) => task.subagentId === subagentId,
+  );
+  let stopConfirmed = false;
+  if (task) {
+    task.remote = true;
+    task.stop = async () => {
+      await stopAcceptedListenerConversation(receipt);
+      stopConfirmed = true;
+    };
+  }
   const startedAt = Date.now();
   updateSubagent(subagentId, {
     agentId: receipt.agent_id ?? undefined,
@@ -113,6 +169,13 @@ export async function collectRemoteTurnResult(
     const finishedRuns = new Set<string>();
     const reply = await waitForAcceptedSuperRun(receipt, signal, {
       exact: deps.exact ?? getExactSuperRun,
+      runtimeStatus: deps.runtimeStatus ?? readConversationRuntimeStatus,
+      // Only a background task's parent can act on an interim notice. A
+      // foreground Task blocks its parent in this wait, so the notice would
+      // queue behind the final result and promise a follow-up that never comes.
+      ...(getSubagents().find((agent) => agent.id === subagentId)?.isBackground
+        ? { onIdle: createRemoteIdleNotifier(subagentId) }
+        : {}),
       run:
         deps.run ??
         ((runId, readSignal) =>
@@ -151,9 +214,9 @@ export async function collectRemoteTurnResult(
   } catch (error) {
     let detail = getErrorMessage(error);
     if (signal.aborted) {
-      const cancelled = await cancelAcceptedListenerInput(receipt).catch(
-        () => false,
-      );
+      const cancelled =
+        stopConfirmed ||
+        (await cancelAcceptedListenerInput(receipt).catch(() => false));
       detail = cancelled
         ? INTERRUPTED_BY_USER
         : `${INTERRUPTED_BY_USER} (could not confirm cancellation of remote Super Run ${receipt.super_run_id})`;

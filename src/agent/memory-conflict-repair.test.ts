@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -88,8 +88,11 @@ test("an attempt whose process is gone before the worker ran is retried", async 
   await claim(root);
   const path = join(root, ".git", "letta-memory-repair.json");
   const attempt = JSON.parse(readFileSync(path, "utf8"));
-  // The recording process crashed: its pid was reused.
-  writeFileSync(path, JSON.stringify({ ...attempt, started: "1970-01-01" }));
+  // The recording process exited. A dead pid needs no start-time lookup,
+  // which can time out on slow Windows runners (pid reuse is covered in
+  // process-liveness.test.ts).
+  const exited = spawnSync(process.execPath, ["-e", ""]);
+  writeFileSync(path, JSON.stringify({ ...attempt, pid: exited.pid }));
   await claim(root);
 });
 

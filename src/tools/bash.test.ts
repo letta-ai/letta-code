@@ -48,6 +48,18 @@ describe("Bash tool", () => {
     expect(result.status).toBe("success");
   });
 
+  test("runs without a description", async () => {
+    const result = await bash({
+      command:
+        process.platform === "win32"
+          ? "node -e \"console.log('no description')\""
+          : "echo 'no description'",
+    });
+
+    expect(result.content[0]?.text).toContain("no description");
+    expect(result.status).toBe("success");
+  });
+
   test("captures stderr in output", async () => {
     const result = await bash({
       command:
@@ -219,6 +231,21 @@ describe("Bash tool", () => {
 
     expect(result.status).toBe("success");
     expect(result.content[0]?.text).toContain("running in background");
+  });
+
+  test("blocks a background wait loop whose pgrep -f pattern matches itself", async () => {
+    if (process.platform !== "linux") return;
+    const before = backgroundProcesses.size;
+    const result = await bash({
+      command: "while pgrep -f runall.py >/dev/null; do sleep 3; done",
+      description: "Test self-matching pgrep block",
+      run_in_background: true,
+    });
+
+    expect(result.status).toBe("error");
+    expect(result.content[0]?.text).toContain("wait <pid>");
+    // Nothing was started, so no leftover process can hold the conversation.
+    expect(backgroundProcesses.size).toBe(before);
   });
 
   test("does not block sleep in argument or quoted position", async () => {

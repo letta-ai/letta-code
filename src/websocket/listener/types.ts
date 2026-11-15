@@ -92,6 +92,8 @@ export type SyncReplayOptions = {
 };
 
 export interface IncomingMessage {
+  /** Epoch milliseconds when this input arrived at the listener. */
+  receivedAt?: number;
   type: "message";
   /**
    * Transport connection that delivered this message. Queueing carries this
@@ -118,7 +120,6 @@ export interface IncomingMessage {
   clientToolAllowlist?: string[];
   clientToolset?: ClientToolsetConfig;
   clientPreferences?: import("@/types/client-preferences").ClientPreferences;
-  externalToolScopeIds?: string[];
   /** Exclude interactive user-input tools (AskUserQuestion) from this turn's toolset. */
   excludeInteractiveTools?: boolean;
   responseFormat?: Record<string, unknown>;

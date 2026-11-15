@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -7,6 +7,7 @@ import {
   retryAfterMsFromBody,
 } from "@/providers/chatgpt-provider-auth";
 import { settingsManager } from "@/settings-manager";
+import { removeTestDir } from "@/test-utils/test-fs";
 
 const originalHome = process.env.HOME;
 const originalUserProfile = process.env.USERPROFILE;
@@ -23,7 +24,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await settingsManager.reset();
-  if (testHomeDir) await rm(testHomeDir, { recursive: true, force: true });
+  if (testHomeDir) await removeTestDir(testHomeDir);
   testHomeDir = "";
   process.env.HOME = originalHome;
   if (originalUserProfile === undefined) delete process.env.USERPROFILE;

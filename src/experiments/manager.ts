@@ -13,6 +13,13 @@ const ENABLED_TOGGLE_VALUES = new Set(["1", "true", "yes"]);
 
 const EXPERIMENT_DEFINITIONS: readonly ExperimentDefinition[] = [
   {
+    id: "cloud_monitors",
+    label: "Cloud monitors",
+    description:
+      "Use Cloud URL monitors instead of local command, WebSocket, and script monitors.",
+    envVar: "LETTA_CLOUD_MONITORS",
+  },
+  {
     id: "artifacts",
     label: "artifacts",
     description:

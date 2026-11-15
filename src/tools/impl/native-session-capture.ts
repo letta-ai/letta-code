@@ -14,6 +14,12 @@ import { ApiRequestError, apiRequest } from "@/backend/api/request";
 import { getServerUrl, isCloudServerUrl } from "@/backend/api/server-url";
 import { debugWarn } from "@/utils/debug";
 
+import {
+  clearNativeSessionOwnersForTests,
+  persistNativeSessionOwner,
+  readNativeSessionOwner,
+} from "./native-session-owner";
+
 export type NativeSessionSource = "claude_code" | "codex";
 export interface NativeSessionScope {
   agentId: string;
@@ -822,7 +828,10 @@ export function getNativeSessionOwner(
   source: NativeSessionSource,
   sessionId: string,
 ): NativeSessionScope | undefined {
-  return owners.get(key(source, sessionId));
+  return (
+    owners.get(key(source, sessionId)) ??
+    readNativeSessionOwner(source, sessionId)
+  );
 }
 
 export function rememberNativeSession(
@@ -834,7 +843,8 @@ export function rememberNativeSession(
   scavengeStaleSpoolDirectories();
   const id = key(source, sessionId);
   if (!owners.has(id)) {
-    owners.set(id, { ...scope });
+    persistNativeSessionOwner(source, sessionId, scope);
+    owners.set(id, readNativeSessionOwner(source, sessionId) ?? { ...scope });
     if (owners.size > MAX_NATIVE_SESSION_OWNERS) {
       const oldest = owners.keys().next().value;
       if (oldest !== undefined) owners.delete(oldest);
@@ -861,6 +871,7 @@ export async function clearNativeSessionCaptureForTests(): Promise<void> {
   const captured = [...states.values()];
   states.clear();
   owners.clear();
+  clearNativeSessionOwnersForTests();
   for (const admission of admissions.values()) admission.release();
   admissions.clear();
   for (const state of captured) {
