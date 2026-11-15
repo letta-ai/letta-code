@@ -61,7 +61,7 @@ export type TaskNotificationQueueItem = QueueItemBase & {
   kind: "task_notification";
   /** XML notification string. */
   text: string;
-  /** Original tool content, including image parts, delivered after the XML header. */
+  /** Complete model-facing notification parts; text remains the display fallback. */
   content?: MessageCreate["content"];
   /** Client message ids of the listener turn that started the work. */
   clientMessageIds?: string[];
