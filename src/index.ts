@@ -884,9 +884,9 @@ async function main(): Promise<void> {
     ? "memfs"
     : undefined;
   const shouldAutoEnableMemfsForNewAgent = !memfsFlag;
-
-  // Initialize telemetry (enabled by default, opt-out via LETTA_CODE_TELEM=0)
-  // Surface is set here so session_start captures the correct mode.
+  process.env.LETTA_RUNTIME_SESSION_SOURCE = isHeadless
+    ? "headless"
+    : "interactive-cli";
   telemetry.setSurface(getTerminalTelemetrySurface(isHeadless));
   telemetry.init({ handleSigint: !isHeadless });
 
