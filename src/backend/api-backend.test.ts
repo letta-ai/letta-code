@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { forkParentConversation } from "@/agent/subagents/fork-conversation";
 import type {
   AgentCreateBody,
   AgentMessageListBody,
@@ -12,6 +13,8 @@ import type {
   ConversationUpdateBody,
   RunMessageStreamBody,
 } from "@/backend";
+import { type Settings, settingsManager } from "@/settings-manager";
+import { createEphemeralConversation } from "./api/ephemeral-conversations";
 
 const retrieveAgentMock = mock(
   async (_agentId: string, _options?: unknown) => ({ id: "agent-1" }),
@@ -526,4 +529,67 @@ describe("APIBackend", () => {
       undefined,
     );
   });
+});
+
+test("sends preset headers only for subagent creation and fork requests", async () => {
+  const received: Array<[string, string | null]> = [];
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch(request) {
+      received.push([
+        new URL(request.url).pathname,
+        request.headers.get("x-letta-subagent-type"),
+      ]);
+      return Response.json({ id: "conv-child" });
+    },
+  });
+  const settings = spyOn(
+    settingsManager,
+    "getSettingsWithSecureTokens",
+  ).mockResolvedValue({
+    env: { LETTA_API_KEY: "test-only" },
+  } as unknown as Settings);
+  const originalBase = process.env.LETTA_BASE_URL;
+  const originalType = process.env.LETTA_CODE_SUBAGENT_TYPE;
+  process.env.LETTA_BASE_URL = server.url.origin;
+  process.env.LETTA_CODE_SUBAGENT_TYPE = "reflection";
+  try {
+    const body = { model: "letta/auto", system: "test" };
+    await createEphemeralConversation({ ...body, is_subagent: true });
+    await createEphemeralConversation(body);
+    await forkParentConversation(
+      {
+        backend: new APIBackend(),
+        parentAgentId: "agent-parent",
+        parentConversationId: "conv-parent",
+        config: {
+          name: "explore",
+          description: "",
+          systemPrompt: "",
+          allowedTools: [],
+          recommendedModel: "letta/auto",
+          skills: [],
+          fork: true,
+          launchProfile: "default",
+        },
+      },
+      {
+        resolveModelOverride: async () => null,
+        inheritToolset: async () => {},
+      },
+    );
+    expect(received).toEqual([
+      ["/v1/conversations/ephemeral", "reflection"],
+      ["/v1/conversations/ephemeral", null],
+      ["/v1/conversations/conv-parent/fork", "explore"],
+    ]);
+  } finally {
+    if (originalBase === undefined) delete process.env.LETTA_BASE_URL;
+    else process.env.LETTA_BASE_URL = originalBase;
+    if (originalType === undefined) delete process.env.LETTA_CODE_SUBAGENT_TYPE;
+    else process.env.LETTA_CODE_SUBAGENT_TYPE = originalType;
+    settings.mockRestore();
+    await server.stop(true);
+  }
 });
