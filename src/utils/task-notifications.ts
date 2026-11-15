@@ -127,16 +127,24 @@ export function formatTaskNotification(notification: TaskNotification): string {
 </task-notification>${notification.outputFile ? `\nFull transcript available at: ${notification.outputFile}` : ""}`;
 }
 
+/** Optional deployment-owned guidance for subagent receipts and results. */
+export function subagentResultReminder(): string {
+  const reminder = process.env.LETTA_SUBAGENT_RESULT_REMINDER;
+  return reminder
+    ? `\n\n<system-reminder>\n${reminder}\n</system-reminder>`
+    : "";
+}
+
 /** Preserve the display text while sending the XML and transcript as separate parts. */
 export function taskNotificationMessage(
   text: string,
 ): Pick<QueuedMessage, "text" | "content"> {
-  return {
-    text,
-    content: text
-      .split(/(?<=<\/task-notification>)\n(?=Full transcript available at:)/)
-      .map((part) => ({ type: "text" as const, text: part })),
-  };
+  const parts = text
+    .split(/(?<=<\/task-notification>)\n(?=Full transcript available at:)/)
+    .map((part) => ({ type: "text" as const, text: part }));
+  const reminder = subagentResultReminder();
+  if (reminder) parts.push({ type: "text", text: reminder.trimStart() });
+  return { text, content: parts };
 }
 
 export function formatMonitorEventNotification(notification: {
