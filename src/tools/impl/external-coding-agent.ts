@@ -84,8 +84,8 @@ export interface ExternalCodingAgentCommand {
   stdin?: string;
 }
 
-/** `fork` marks a worker launched with the parent's transcript, which, like a
- * Letta fork, keeps it off the ambient default computer. */
+/** `fork` marks a worker launched with the parent's transcript, including
+ * when the ambient default computer routes it to a remote sandbox. */
 export function createExternalCodingAgentConfig(
   type: ExternalCodingAgentType,
   fork = false,

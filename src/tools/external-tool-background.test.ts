@@ -178,7 +178,14 @@ describe("external tool auto-backgrounding", () => {
     complete({ status: "success", toolReturn: richResult });
     await Bun.sleep(0);
     expect(notifications).toHaveLength(1);
-    expect(notifications[0]?.content).toEqual(richResult);
+    expect(notifications[0]?.content).toEqual([
+      { type: "text", text: notifications[0]?.text },
+      { type: "text", text: "\n<external-tool-result>" },
+      { type: "text", text: "<text>before</text>" },
+      richResult[1],
+      { type: "text", text: "<text>after</text>" },
+      { type: "text", text: "</external-tool-result>" },
+    ]);
     const [, entry] = backgroundEntry(receipt);
     expect(readFileSync(entry?.outputFile as string, "utf8")).toBe(
       "before\n[Image result; see completion notification]\nafter\n",

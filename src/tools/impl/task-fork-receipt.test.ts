@@ -376,6 +376,8 @@ describe("fork launch receipt", () => {
 describe("nested Agent launch", () => {
   test("a subagent's Agent call returns a background receipt without waiting for the child", async () => {
     const originalDepth = process.env.LETTA_SUBAGENT_DEPTH;
+    const originalReminder = process.env.LETTA_SUBAGENT_RESULT_REMINDER;
+    process.env.LETTA_SUBAGENT_RESULT_REMINDER = "Keep this work internal.";
     process.env.LETTA_SUBAGENT_DEPTH = "1";
     try {
       // The stubbed child never exits, so a blocking call would time out.
@@ -390,9 +392,15 @@ describe("nested Agent launch", () => {
       );
       expect(receipt).toContain("Task running in background with task ID:");
       expect(receipt).toContain("<task-notification>");
+      expect(receipt).toContain(
+        "\n\n<system-reminder>\nKeep this work internal.\n</system-reminder>",
+      );
       expect(spawnProcess).toHaveBeenCalledTimes(1);
       expect([...backgroundTasks.values()][0]?.status).toBe("running");
     } finally {
+      if (originalReminder === undefined)
+        delete process.env.LETTA_SUBAGENT_RESULT_REMINDER;
+      else process.env.LETTA_SUBAGENT_RESULT_REMINDER = originalReminder;
       if (originalDepth === undefined) delete process.env.LETTA_SUBAGENT_DEPTH;
       else process.env.LETTA_SUBAGENT_DEPTH = originalDepth;
     }

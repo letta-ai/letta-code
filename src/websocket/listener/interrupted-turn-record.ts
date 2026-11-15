@@ -12,6 +12,7 @@ import type { ApprovalResult } from "@/agent/approval-execution";
 import { reportListenerStateWriteFailure } from "@/telemetry/error-reporting";
 import { debugWarn } from "@/utils/debug";
 import { acquireDurableFileLock } from "./durable-file-lock";
+import { withInterruptedTurnDiskReserve } from "./interrupted-turn-disk-reserve";
 import {
   collectInterruptedTurnInputOwnershipWithSidecars,
   listInterruptedTurnMainSnapshot as snapshotMain,
@@ -133,7 +134,7 @@ export function createInterruptedTurnStore(
     snapshotSidecar,
   });
   const rawSnapshot = () => snapshotMain(directory, readRecord);
-  return {
+  return withInterruptedTurnDiskReserve(directory, {
     list(): InterruptedTurnRecord[] {
       try {
         const rawRecords = rawSnapshot().records;
@@ -708,7 +709,7 @@ export function createInterruptedTurnStore(
         release();
       }
     },
-  };
+  });
 }
 export function recordListenerWork(
   runtime: ConversationRuntime,
@@ -906,7 +907,6 @@ export function recordListenerWork(
     throw error;
   }
 }
-
 export async function recordListenerWorkRetriably(
   runtime: ConversationRuntime,
   update: Parameters<typeof recordListenerWork>[1],
@@ -978,7 +978,6 @@ export async function recordListenerWorkRetriably(
   }
   throw new Error("Interrupted durable write lost authority before commit");
 }
-
 export function forgetListenerWork(
   runtime: ConversationRuntime,
   expectedRevision?: string | null,

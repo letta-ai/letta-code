@@ -1,4 +1,5 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import { buildExternalToolNotificationContent } from "@/queue/turn-queue-runtime";
 import { resolveForegroundYieldMs } from "@/tools/foreground-yield";
 import {
   appendToOutputFile,
@@ -292,16 +293,24 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
       LIMITS.TOOL_RETURN_MAX_CHARS + 1_000,
       toolName,
     );
+    const text = formatTaskNotification({
+      taskId,
+      status,
+      summary: `${label} ${toolName} ${status}`,
+      result: content.content,
+      usage: { durationMs: Date.now() - startedAt },
+    });
     enqueue({
       kind: "task_notification",
-      text: formatTaskNotification({
-        taskId,
-        status,
-        summary: `${label} ${toolName} ${status}`,
-        result: content.content,
-        usage: { durationMs: Date.now() - startedAt },
-      }),
-      ...(richContent ? { content: richContent } : {}),
+      text,
+      ...(richContent
+        ? {
+            content: buildExternalToolNotificationContent({
+              text,
+              content: richContent,
+            }),
+          }
+        : {}),
       ...scope,
     });
   });

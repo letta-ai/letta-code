@@ -61,7 +61,8 @@ test("managed Cloud sandbox neither starts nor manually runs local schedules", a
   expect(await runCronTaskNow(task.id)).toEqual({
     success: false,
     found: false,
-    error: "Local schedules cannot run in a managed Cloud sandbox",
+    error:
+      "This schedule cannot run here. Create a replacement with Wake or letta cron.",
   });
   expect(getTask(task.id)?.status).toBe("active");
 });

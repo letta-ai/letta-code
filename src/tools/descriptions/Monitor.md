@@ -16,3 +16,5 @@ Exit ends the watch (exit code is reported). Timeout → killed. Set `persistent
 When someone is waiting on the result, set `backup_after_seconds` (e.g. 900). If the monitor goes that long without an event, a durable Wake brings you back to check the real state, so a queued, hung, or dead watch can't leave them waiting in silence.
 
 Instead of `command`, `ws` streams each WebSocket text frame as an event (prefer it over `websocat`), and `script` runs a JavaScript watch loop with CodeMode's globals plus `emit(text)` and `sleep(ms)`; `decide()` spends money on every call, so call it only when an observed change needs judgment.
+
+Pass `resume` with a paused monitor id to restart it with its saved arguments.

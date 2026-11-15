@@ -3,9 +3,15 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import {
+  __headlessTestUtils,
   type BidirectionalQueuedInput,
   mergeBidirectionalQueuedInput,
 } from "@/headless";
+import { serializeQueuedMessageAsUserLine } from "@/queue/queued-message-line";
+import {
+  formatTaskNotification,
+  taskNotificationMessage,
+} from "@/utils/task-notifications";
 
 describe("headless bidirectional queue merging", () => {
   test("merges queued user and task notification inputs into one content payload", () => {
@@ -28,6 +34,31 @@ describe("headless bidirectional queue merging", () => {
     expect(textParts.join("")).toContain("first user message");
     expect(textParts.join("")).toContain("<task-notification>");
     expect(textParts.join("")).toContain("second user message");
+  });
+
+  test("keeps subagent notification parts through the bidirectional JSON line", () => {
+    const notification = taskNotificationMessage(
+      formatTaskNotification({
+        taskId: "task-1",
+        status: "completed",
+        summary: "Done",
+        result: "Report",
+        outputFile: "/tmp/task-1.log",
+      }),
+    );
+    const line = serializeQueuedMessageAsUserLine({
+      kind: "task_notification",
+      ...notification,
+    });
+    const parsed = JSON.parse(line);
+    const input = __headlessTestUtils.toBidirectionalQueuedInput(
+      parsed.message.content,
+      parsed._queuedKind,
+    );
+    const content = notification.content;
+    if (!Array.isArray(content)) throw new Error("Expected notification parts");
+    expect(mergeBidirectionalQueuedInput([input])).toEqual(content);
+    expect(input.kind).toBe("task_notification");
   });
 
   test("preserves multimodal user content parts", () => {
