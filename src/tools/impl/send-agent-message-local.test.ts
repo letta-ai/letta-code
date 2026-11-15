@@ -159,7 +159,17 @@ test("real detached local CLI delivers once and settles the parent's child entry
     LETTA_SKIP_KEYCHAIN_CHECK: "1",
     LETTA_DISABLE_MODS: "1",
     LETTA_CODE_BIN: cli ? "node" : process.execPath,
+    // The child runs in the fixture directory, where Bun 1.3 does not
+    // discover the repository config that loads Markdown prompts as text.
     LETTA_CODE_BIN_ARGS_JSON: JSON.stringify([
+      ...(cli
+        ? []
+        : [
+            "--loader=.md:text",
+            "--loader=.mdx:text",
+            "--loader=.txt:text",
+            "run",
+          ]),
       cli ?? resolve("src/index.ts"),
       "--tools=",
       "--no-skills",
@@ -170,14 +180,16 @@ test("real detached local CLI delivers once and settles the parent's child entry
   try {
     for (const key of Object.keys(process.env)) delete process.env[key];
     Object.assign(process.env, overrides);
-    const result = await runWithRuntimeContext(caller, () =>
-      send_agent_message(
-        {
-          conversation_id: conversation.id,
-          message: "Check local delivery once.",
-        },
-        { backend },
-      ),
+    const result = await runWithRuntimeContext(
+      { ...caller, workingDirectory: root },
+      () =>
+        send_agent_message(
+          {
+            conversation_id: conversation.id,
+            message: "Check local delivery once.",
+          },
+          { backend },
+        ),
     );
     expect(result.status).toBe("success");
     expect(getSubagents()).toHaveLength(1);
@@ -189,7 +201,9 @@ test("real detached local CLI delivers once and settles the parent's child entry
     const deadline = Date.now() + 20000;
     while (getSubagents()[0]?.status === "running" && Date.now() < deadline)
       await Bun.sleep(25);
-    expect(getSubagents()[0]?.status).toBe("completed");
+    expect(getSubagents()[0]?.status, getSubagents()[0]?.error).toBe(
+      "completed",
+    );
     const store = new LocalStore(child.id, {
       storageDir,
       seedDefaultAgent: false,
