@@ -396,6 +396,7 @@ test("subagent reminders are opt-in and do not alter other background notificati
     status: "completed" as const,
     summary: "Finished",
     result: "Report",
+    outputFile: "/tmp/task-1.log",
   };
   const original = formatTaskNotification(notification);
   try {
@@ -407,9 +408,25 @@ test("subagent reminders are opt-in and do not alter other background notificati
         ? `\n\n<system-reminder>\n${value}\n</system-reminder>`
         : "";
       expect(subagentResultReminder()).toBe(suffix);
-      expect(formatSubagentTaskNotification(notification)).toBe(
-        original + suffix,
-      );
+      expect(taskNotificationMessage(original)).toEqual({
+        text: original,
+        content: [
+          {
+            type: "text",
+            text: original.slice(
+              0,
+              original.indexOf("\nFull transcript available at:"),
+            ),
+          },
+          {
+            type: "text",
+            text: "Full transcript available at: /tmp/task-1.log",
+          },
+          ...(value
+            ? [{ type: "text" as const, text: suffix.trimStart() }]
+            : []),
+        ],
+      });
       expect(formatTaskNotification(notification)).toBe(original);
     }
   } finally {
