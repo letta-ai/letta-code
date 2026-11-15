@@ -24,6 +24,7 @@ export function killBackgroundProcess(shell_id: string): boolean {
     // The kill below still fires the child's "exit" event; suppress the
     // completion notification so a deliberate stop does not wake the agent.
     proc.completionNotificationSuppressed = true;
+    if (proc.kind === "monitor") proc.monitorEndStatus = "stopped";
     if (retainsEntry) {
       proc.status = "failed";
     }
@@ -39,6 +40,7 @@ export function killBackgroundProcess(shell_id: string): boolean {
     notifyBackgroundProcessStateChanged(proc.runtimeScope);
     return true;
   } catch {
+    proc.monitorEndStatus = undefined;
     proc.status = previousStatus;
     proc.completionNotificationSuppressed = previousNotificationSuppression;
     return false;
