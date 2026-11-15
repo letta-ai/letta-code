@@ -161,6 +161,30 @@ describe("app-server client", () => {
     expect(Date.now() - started).toBeLessThan(1_000);
   });
 
+  test("reports the close reason after an opaque socket error", async () => {
+    class FailedSocket extends EventEmitter {
+      constructor(_url: string) {
+        super();
+      }
+      readyState = 0;
+      send() {}
+      close() {}
+    }
+    const client = createAppServerClient({
+      url: "http://localhost:4500",
+      WebSocket: FailedSocket,
+    });
+    const pending = client.connect();
+    const socket = client.socket as FailedSocket;
+    socket.emit("error", new Event("error"));
+    socket.emit("close", {
+      code: 1006,
+      reason: "NSOSStatusErrorDomain Code=-9836: TLS protocol version",
+    });
+    await expect(pending).rejects.toThrow("-9836");
+    await expect(pending).rejects.not.toThrow("[object Event]");
+  });
+
   test("rejects connect when the socket closes before opening", async () => {
     const { client, control } = createFakeClient();
     const pending = client.connect();
