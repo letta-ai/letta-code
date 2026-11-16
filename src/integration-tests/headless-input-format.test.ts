@@ -690,7 +690,7 @@ describe("input-format stream-json", () => {
         const results = objects.filter(
           (o): o is ResultMessage => o.type === "result",
         );
-        expect(results).toHaveLength(2);
+        expect(results, JSON.stringify(results, null, 2)).toHaveLength(2);
         const result = results.at(-1);
         expect(result).toBeDefined();
         expect(result?.subtype).toBe("success");

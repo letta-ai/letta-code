@@ -18,6 +18,13 @@ export const CLAUDE_CONTROL_RESPONSE_TIMEOUT_MS = 30_000;
 export const REMOTE_SUBAGENT_MESSAGE_TIMEOUT_MS =
   CLAUDE_TURN_START_TIMEOUT_MS + CLAUDE_CONTROL_RESPONSE_TIMEOUT_MS + 30_000;
 
+/**
+ * Bound pending listener dedupe entries, including a stuck steer. Five caller
+ * timeouts cover the initial send, one reconnect and resend, plus ample margin.
+ */
+export const REMOTE_SUBAGENT_MESSAGE_DEDUPE_PENDING_TTL_MS =
+  5 * REMOTE_SUBAGENT_MESSAGE_TIMEOUT_MS;
+
 /** Listener error when Claude's turn didn't become interruptible in time. */
 export const CLAUDE_TURN_START_TIMEOUT_ERROR =
   "Claude turn did not become interruptible";
