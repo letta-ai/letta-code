@@ -18,6 +18,7 @@ import { LocalPiModelsRuntime } from "@/backend/dev/pi-models-runtime";
 import { resolvePiRequestHeaders } from "@/backend/dev/pi-request-headers";
 import { estimateLocalMessagesTokens } from "@/backend/local/local-context-estimate";
 import { isRecord } from "@/utils/type-guards";
+import { stripSummaryControlChars } from "./compaction-sanitize";
 import { emptyLocalUsage, type LocalMessage } from "./local-message";
 import { resolveAvailableLocalModelForTurn } from "./local-model-config";
 import type { LocalAgentRecord } from "./local-types";
@@ -543,11 +544,13 @@ export function formatLocalMessagesForSummary(
   messages: LocalMessage[],
   options: { truncationChars?: number; maxChars?: number } = {},
 ): string {
-  const transcript = simpleFormatter(
-    localMessagesToSummaryOpenAIDicts(messages, {
-      toolReturnTruncationChars:
-        options.truncationChars ?? LOCAL_SUMMARY_TOOL_RETURN_TRUNCATION_CHARS,
-    }),
+  const transcript = stripSummaryControlChars(
+    simpleFormatter(
+      localMessagesToSummaryOpenAIDicts(messages, {
+        toolReturnTruncationChars:
+          options.truncationChars ?? LOCAL_SUMMARY_TOOL_RETURN_TRUNCATION_CHARS,
+      }),
+    ),
   );
   return options.maxChars
     ? middleTruncateText(transcript, options.maxChars)

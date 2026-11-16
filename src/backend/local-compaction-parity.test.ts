@@ -158,6 +158,21 @@ describe("local compaction API parity", () => {
     expect(transcript).not.toContain("prior messages have been hidden");
   });
 
+  test("strips C0 control characters and DEL from summary transcripts while keeping whitespace", () => {
+    const transcript = formatLocalMessagesForSummary([
+      toolResult("tool-bin", [
+        {
+          type: "text",
+          text: "ok\tcol2\r\nline2\u0000\u0007\u000B\u000C\u001B[31mred\u007Fend",
+        },
+      ]),
+    ]);
+
+    expect(transcript).toBe(
+      " \n[tool] ok\tcol2\r\nline2     [31mred end\n \n. Generate the summary.",
+    );
+  });
+
   test("packs all-mode summaries like API package_summarize_message_no_counts", () => {
     const stats: LocalCompactionStats = {
       trigger: "manual",
