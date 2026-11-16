@@ -30,6 +30,25 @@ const RUN_ID_PATTERNS = [
   /\(run:\s*([A-Za-z0-9_-]+)\)/i,
 ];
 
+export type ChannelErrorRepliesMode = "post" | "generic" | "off";
+
+export function isChannelErrorRepliesMode(
+  value: unknown,
+): value is ChannelErrorRepliesMode {
+  return value === "post" || value === "generic" || value === "off";
+}
+
+export function resolveChannelErrorRepliesMode(
+  ...candidates: Array<ChannelErrorRepliesMode | undefined>
+): ChannelErrorRepliesMode {
+  for (const candidate of candidates) {
+    if (isChannelErrorRepliesMode(candidate)) {
+      return candidate;
+    }
+  }
+  return "post";
+}
+
 export type ChannelLifecycleErrorKind =
   | "approval_pending"
   | "conversation_busy"
@@ -38,6 +57,7 @@ export type ChannelLifecycleErrorKind =
 
 export interface ChannelLifecycleErrorDisplayOptions {
   automaticRetry?: boolean;
+  mode?: ChannelErrorRepliesMode;
   runId?: string | null;
 }
 
@@ -168,6 +188,14 @@ export function getChannelLifecycleErrorDisplay(
   errorText: string | null | undefined,
   options: ChannelLifecycleErrorDisplayOptions = {},
 ): ChannelLifecycleErrorDisplay {
+  if (options.mode === "generic") {
+    return {
+      kind: "generic",
+      title: "Turn failed",
+      body: CHANNEL_LIFECYCLE_FALLBACK_ERROR_MESSAGE,
+    };
+  }
+
   const normalized = sanitizeChannelLifecycleErrorText(errorText);
   const optionsRunId = options.runId?.trim();
   const runId = optionsRunId || extractChannelLifecycleRunId(errorText);

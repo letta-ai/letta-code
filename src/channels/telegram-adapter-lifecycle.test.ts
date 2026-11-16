@@ -485,3 +485,69 @@ test("telegram adapter forwards reaction updates through onMessage", async () =>
     raw: expect.objectContaining({ message_id: 77 }),
   });
 });
+
+test("telegram adapter respects errorReplies generic and off modes", async () => {
+  const offAdapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+    errorReplies: "off",
+  });
+
+  await offAdapter.start();
+  await offAdapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-off",
+    outcome: "error",
+    stopReason: "error",
+    error: "Sensitive provider error",
+    runId: "run-off",
+    sources: [
+      {
+        channel: "telegram",
+        accountId: "telegram-test-account",
+        chatId: "123",
+        chatType: "direct",
+        messageId: "10",
+        threadId: null,
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ],
+  });
+
+  const offBot = FakeBot.instances[0];
+  expect(offBot?.api.sendMessage).not.toHaveBeenCalled();
+
+  await offAdapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-generic",
+    outcome: "error",
+    stopReason: "error",
+    error: "Sensitive provider error",
+    runId: "run-generic",
+    sources: [
+      {
+        channel: "telegram",
+        accountId: "telegram-test-account",
+        chatId: "123",
+        chatType: "direct",
+        messageId: "11",
+        threadId: null,
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        errorReplies: "generic",
+      },
+    ],
+  });
+
+  expect(offBot?.api.sendMessage).toHaveBeenCalledTimes(1);
+  expect(offBot?.api.sendMessage).toHaveBeenCalledWith(
+    "123",
+    "Turn failed:\nSomething went wrong while processing that message. Please try again.",
+    expect.objectContaining({ reply_parameters: { message_id: 11 } }),
+  );
+});

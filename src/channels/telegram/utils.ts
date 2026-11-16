@@ -1,4 +1,7 @@
-import { formatChannelLifecycleErrorMessage } from "@/channels/lifecycle-error";
+import {
+  type ChannelErrorRepliesMode,
+  formatChannelLifecycleErrorMessage,
+} from "@/channels/lifecycle-error";
 import type { ChannelTurnOutcome, ChannelTurnSource } from "@/channels/types";
 import type {
   GrammYModule,
@@ -85,9 +88,11 @@ export function getTelegramLifecycleErrorReplyKey(
 export function formatTelegramLifecycleErrorMessage(
   errorText: string,
   runId?: string | null,
+  mode?: ChannelErrorRepliesMode,
 ): string {
   return formatChannelLifecycleErrorMessage(errorText, {
     maxLength: TELEGRAM_LIFECYCLE_ERROR_TEXT_MAX,
+    mode,
     runId,
   });
 }

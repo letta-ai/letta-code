@@ -14,9 +14,12 @@ import type {
   ListModelsResponseModelEntry,
   StopReasonType,
 } from "@/types/protocol_v2";
+import type { ChannelErrorRepliesMode } from "./lifecycle-error";
 import type { ChannelTurnProgressUpdate } from "./progress-types";
 import type { WhatsAppAttachmentPolicyConfig } from "./whatsapp/attachment-policy-types";
 import type { WhatsAppWaitingBehavior } from "./whatsapp/waiting-behavior-config-types";
+
+export type { ChannelErrorRepliesMode } from "./lifecycle-error";
 
 export type {
   ChannelTurnProgressKind,
@@ -161,6 +164,8 @@ export interface ChannelTurnSource {
   senderTeamId?: string;
   /** The host already showed startup activity before delivering this input. */
   showStartupStatus?: boolean;
+  /** Policy for posting lifecycle error replies back to this source. */
+  errorReplies?: ChannelErrorRepliesMode;
   messageId?: string;
   threadId?: string | null;
   agentId: string;
@@ -467,6 +472,8 @@ export interface ChannelRoute {
   enabled: boolean;
   /** Whether this route permits outbound MessageChannel sends. Defaults true. */
   outboundEnabled?: boolean;
+  /** Policy for posting lifecycle error replies on this route ("post" | "generic" | "off"). */
+  errorReplies?: ChannelErrorRepliesMode;
   /** Slack-only: a detached thread stays silent until the app is mentioned again. */
   detached?: boolean;
   /** ISO 8601 creation timestamp. */
@@ -522,6 +529,8 @@ interface ChannelAccountBase {
   adminUsers?: string[];
   /** Extra slash commands (no leading slash) non-admins may run. */
   userAllowedCommands?: string[];
+  /** Default policy for posting lifecycle error replies ("post" | "generic" | "off"). */
+  errorReplies?: ChannelErrorRepliesMode;
   createdAt: string;
   updatedAt: string;
 }

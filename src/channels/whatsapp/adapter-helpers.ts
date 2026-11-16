@@ -1,3 +1,8 @@
+import {
+  type ChannelErrorRepliesMode,
+  formatChannelLifecycleErrorMessage,
+  resolveChannelErrorRepliesMode,
+} from "@/channels/lifecycle-error";
 import type {
   ChannelTurnSource,
   WhatsAppChannelAccount,
@@ -162,4 +167,63 @@ export function getWhatsAppLifecycleErrorReplyKey(
 ): string | null {
   if (!source.chatId) return null;
   return `${source.chatId}:${source.messageId ?? ""}`;
+}
+
+export function formatWhatsAppLifecycleErrorReply(
+  errorText: string,
+  options: {
+    sourceErrorReplies?: ChannelErrorRepliesMode;
+    accountErrorReplies?: ChannelErrorRepliesMode;
+    runId?: string | null;
+  },
+): string | null {
+  const mode = resolveChannelErrorRepliesMode(
+    options.sourceErrorReplies,
+    options.accountErrorReplies,
+  );
+  if (mode === "off") return null;
+  return formatChannelLifecycleErrorMessage(errorText, {
+    mode,
+    runId: options.runId,
+  });
+}
+
+export async function sendWhatsAppLifecycleErrorReplies(params: {
+  sources: ChannelTurnSource[];
+  errorText: string;
+  accountId: string;
+  accountErrorReplies?: ChannelErrorRepliesMode;
+  runId?: string | null;
+  sendDirectReply: (
+    chatId: string,
+    text: string,
+    options: { replyToMessageId?: string },
+  ) => Promise<unknown>;
+}): Promise<void> {
+  const uniqueSources = new Map<string, ChannelTurnSource>();
+  for (const source of params.sources) {
+    const key = getWhatsAppLifecycleErrorReplyKey(source);
+    if (!key || uniqueSources.has(key)) continue;
+    uniqueSources.set(key, source);
+  }
+  await Promise.all(
+    Array.from(uniqueSources.values()).map(async (source) => {
+      const replyText = formatWhatsAppLifecycleErrorReply(params.errorText, {
+        sourceErrorReplies: source.errorReplies,
+        accountErrorReplies: params.accountErrorReplies,
+        runId: params.runId,
+      });
+      if (!replyText) return;
+      try {
+        await params.sendDirectReply(source.chatId, replyText, {
+          replyToMessageId: source.messageId,
+        });
+      } catch (error) {
+        console.warn(
+          `[WhatsApp:${params.accountId}] Failed to send lifecycle error reply for ${source.chatId}:`,
+          error instanceof Error ? error.message : error,
+        );
+      }
+    }),
+  );
 }

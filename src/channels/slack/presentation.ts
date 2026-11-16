@@ -1,5 +1,8 @@
 import { isLocalAgentId } from "@/agent/agent-id";
-import { formatChannelLifecycleErrorMessage } from "@/channels/lifecycle-error";
+import {
+  type ChannelErrorRepliesMode,
+  formatChannelLifecycleErrorMessage,
+} from "@/channels/lifecycle-error";
 import type { ChannelControlRequestEvent } from "@/channels/types";
 import type { SlackApprovalActionPayload, SlackBlock } from "./internal-types";
 
@@ -160,9 +163,13 @@ export function shouldPostSlackTerminalError(stopReason: string): boolean {
   );
 }
 
-export function formatSlackLifecycleErrorMessage(errorText: string): string {
+export function formatSlackLifecycleErrorMessage(
+  errorText: string,
+  mode?: ChannelErrorRepliesMode,
+): string {
   return formatChannelLifecycleErrorMessage(errorText, {
     codeBlock: true,
     maxLength: SLACK_LIFECYCLE_ERROR_TEXT_MAX,
+    mode,
   });
 }

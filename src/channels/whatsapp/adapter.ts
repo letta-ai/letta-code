@@ -1,11 +1,9 @@
 import { join } from "node:path";
 import { formatChannelControlRequestPrompt } from "@/channels/interactive";
-import { formatChannelLifecycleErrorMessage } from "@/channels/lifecycle-error";
 import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
   ChannelTurnLifecycleEvent,
-  ChannelTurnSource,
   InboundChannelMessage,
   OutboundChannelMessage,
   WhatsAppChannelAccount,
@@ -15,10 +13,10 @@ import {
   asRecord,
   buildWhatsAppQuotedOptions,
   getWhatsAppDisplayName,
-  getWhatsAppLifecycleErrorReplyKey,
   isWhatsAppConflictDisconnect,
   isWhatsAppReactionMessage,
   previewWhatsAppText,
+  sendWhatsAppLifecycleErrorReplies,
   shouldProcessWhatsAppGroup,
   timestampToMs,
   withWhatsAppPayloadMessagePrefix,
@@ -931,31 +929,15 @@ export function createWhatsAppAdapter(
       const errorText = event.outcome === "error" ? event.error?.trim() : null;
       if (!errorText) return;
 
-      const uniqueSources = new Map<string, ChannelTurnSource>();
-      for (const source of event.sources) {
-        const key = getWhatsAppLifecycleErrorReplyKey(source);
-        if (!key || uniqueSources.has(key)) continue;
-        uniqueSources.set(key, source);
-      }
-
-      await Promise.all(
-        Array.from(uniqueSources.values()).map(async (source) => {
-          try {
-            await adapter.sendDirectReply(
-              source.chatId,
-              formatChannelLifecycleErrorMessage(errorText, {
-                runId: event.runId,
-              }),
-              { replyToMessageId: source.messageId },
-            );
-          } catch (error) {
-            console.warn(
-              `[WhatsApp:${account.accountId}] Failed to send lifecycle error reply for ${source.chatId}:`,
-              error instanceof Error ? error.message : error,
-            );
-          }
-        }),
-      );
+      await sendWhatsAppLifecycleErrorReplies({
+        sources: event.sources,
+        errorText,
+        accountId: account.accountId,
+        accountErrorReplies: account.errorReplies,
+        runId: event.runId,
+        sendDirectReply: (chatId, text, options) =>
+          adapter.sendDirectReply(chatId, text, options),
+      });
     },
   };
 
