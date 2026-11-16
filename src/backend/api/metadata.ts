@@ -11,19 +11,6 @@ export interface BalanceMetadata {
   organization_id?: string;
 }
 
-type QuotaBucket = "empty" | "low" | "medium" | "high" | "full";
-
-interface ModelTierQuota {
-  bucket: QuotaBucket;
-  dailyBucket?: QuotaBucket;
-}
-
-export interface ModelQuotaMetadata {
-  lettaTier: ModelTierQuota;
-  quotaWindowEnd: string;
-  dailyQuotaWindowEnd?: string;
-}
-
 export type FeedbackClientType = "desktop" | "chat.letta.com" | "cli";
 
 export function getFeedbackClientType(
@@ -47,10 +34,6 @@ export async function getBalanceMetadata(
     undefined,
     options.signal ? { signal: options.signal } : {},
   );
-}
-
-export async function getModelQuotaMetadata(): Promise<ModelQuotaMetadata> {
-  return apiRequest<ModelQuotaMetadata>("GET", "/v1/organizations/self/quotas");
 }
 
 export async function getBillingTier(): Promise<string | null> {
