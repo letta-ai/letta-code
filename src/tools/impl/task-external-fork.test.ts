@@ -367,14 +367,29 @@ describe("fork prompt limit", () => {
 });
 
 describe("external worker MCP discovery", () => {
-  test("a timed-out inventory read still launches without a reminder", async () => {
+  test("a timed-out inventory read still launches with discovery instructions", async () => {
     inventoryError = new Error(
-      "Listing agent MCP servers timed out after 3000ms",
+      "Listing agent MCP servers timed out after 5000ms",
     );
     const result = await launchSubagent({ ...brief, harness: "codex" });
     expect(result.success).toBe(true);
     expect(workerPrompts).toHaveLength(1);
-    expect(workerReminders).toEqual([undefined]);
+    expect(workerReminders[0]).toContain("MCP server list could not be loaded");
+    expect(workerReminders[0]).toContain("letta mcp search");
+    expect(workerReminders[0]).toContain("Do not automatically store results");
+  });
+
+  test("unknown requested servers reject the launch", async () => {
+    await expect(
+      launchSubagent({
+        ...brief,
+        harness: "codex",
+        mcp: { inherit: true, servers: ["missing"] },
+      }),
+    ).rejects.toThrow(
+      "Requested MCP server is not available to the parent agent: missing",
+    );
+    expect(workerPrompts).toHaveLength(0);
   });
 
   test("invalid MCP options still reject the launch", async () => {

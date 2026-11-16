@@ -42,7 +42,6 @@ import type {
   SubagentLaunchArgs,
   SubagentLaunchResult,
 } from "@/types/subagent-protocol";
-import { debugLog } from "@/utils/debug";
 import { addToMessageQueue } from "@/utils/message-queue-bridge.js";
 import {
   formatTaskNotification,
@@ -794,15 +793,10 @@ export async function launchSubagent(
       signal,
     });
     if ("error" in worker) return { success: false, error: worker.error };
-    let mcpReminder: string | undefined;
-    try {
-      mcpReminder = await resolveExternalCodingAgentMcpReminder(
-        parentAgentId,
-        args.mcp,
-      );
-    } catch (error) {
-      debugLog("task", "Skipping MCP discovery reminder: %s", error);
-    }
+    const mcpReminder = await resolveExternalCodingAgentMcpReminder(
+      parentAgentId,
+      args.mcp,
+    );
 
     const { taskId, outputFile, subagentId } = spawnBackgroundSubagentTask({
       subagentType: configName,
