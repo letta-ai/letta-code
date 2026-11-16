@@ -1,0 +1,50 @@
+import type { AppServerClient } from "@/app-server-client";
+import { REMOTE_SUBAGENT_MESSAGE_TIMEOUT_MS } from "./claude-steer-timeouts";
+
+/** No answer to a follow-up in time; the listener may still deliver it. */
+export class RemoteFollowUpTimeoutError extends Error {}
+
+/** Both sockets closed before confirming whether the follow-up was delivered. */
+export class RemoteFollowUpSocketClosedError extends Error {}
+
+export async function sendRemoteFollowUpWithReconnect(
+  client: AppServerClient,
+  command: Parameters<AppServerClient["sendSubagentMessage"]>[0],
+  connect: () => Promise<AppServerClient>,
+  attach: (client: AppServerClient) => void,
+  computer: string,
+) {
+  try {
+    try {
+      return await client.sendSubagentMessage(command, {
+        timeoutMs: REMOTE_SUBAGENT_MESSAGE_TIMEOUT_MS,
+      });
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        error.message !== "App-server socket closed"
+      )
+        throw error;
+      client.close();
+      const reconnected = await connect();
+      attach(reconnected);
+      // Reuse the whole command: the listener deduplicates pending and completed requests.
+      return await reconnected.sendSubagentMessage(command, {
+        timeoutMs: REMOTE_SUBAGENT_MESSAGE_TIMEOUT_MS,
+      });
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message === "App-server socket closed")
+      throw new RemoteFollowUpSocketClosedError(
+        `${computer} closed the connection before confirming the follow-up after one retry. The message may not have been delivered; check the worker's output, or send it again.`,
+      );
+    if (
+      error instanceof Error &&
+      error.message === `Timed out waiting for ${command.request_id}`
+    )
+      throw new RemoteFollowUpTimeoutError(
+        `${computer} didn't confirm the follow-up within ${Math.round(REMOTE_SUBAGENT_MESSAGE_TIMEOUT_MS / 1000)}s. The message may not have been delivered; check the worker's output, or send it again.`,
+      );
+    throw error;
+  }
+}

@@ -326,12 +326,19 @@ export async function handleSubagentMessageCommand(
     }
   })();
   responses.set(key, {
-    expiresAt: now + DEDUPE_TTL_MS,
+    // Pending steers must not expire while a reconnect retries the same request.
+    expiresAt: Number.POSITIVE_INFINITY,
     response,
   });
   const result = await response;
-  if (!result.success && responses.get(key)?.response === response)
-    responses.delete(key);
+  if (responses.get(key)?.response === response) {
+    if (!result.success) responses.delete(key);
+    else
+      responses.set(key, {
+        expiresAt: (deps.now ?? Date.now)() + DEDUPE_TTL_MS,
+        response,
+      });
+  }
   return result;
 }
 
