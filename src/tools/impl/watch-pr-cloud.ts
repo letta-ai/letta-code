@@ -92,7 +92,11 @@ export async function startCloudPullRequestWatch(args: Args, deps: Deps = {}) {
       } catch {
         /* Preserve malformed errors. */
       }
-      if (body.errorCode === "REPOSITORY_INACCESSIBLE") return undefined;
+      if (
+        body.errorCode === "REPOSITORY_INACCESSIBLE" ||
+        body.errorCode === "CLOUD_WATCH_PR_DISABLED"
+      )
+        return undefined;
     }
     throw error;
   }

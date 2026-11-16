@@ -72,6 +72,18 @@ describe("cloud WatchPR registration", () => {
     );
     expect(resumed?.taskId).toBe("cmon-1");
     expect(resumed?.content[0]?.text).toContain("running");
+    expect(
+      await startCloudPullRequestWatch(args, {
+        enabled: () => true,
+        request: async () => {
+          throw new ApiRequestError(
+            "disabled",
+            400,
+            JSON.stringify({ errorCode: "CLOUD_WATCH_PR_DISABLED" }),
+          );
+        },
+      }),
+    ).toBeUndefined();
     await expect(
       startCloudPullRequestWatch(args, {
         enabled: () => true,
