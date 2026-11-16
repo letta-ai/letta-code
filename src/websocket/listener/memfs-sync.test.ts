@@ -1,4 +1,14 @@
 import { expect, spyOn, test } from "bun:test";
+import { execFileSync } from "node:child_process";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import * as memoryFilesystem from "@/agent/memory-filesystem";
 import * as memoryGit from "@/agent/memory-git";
@@ -173,5 +183,57 @@ test("listener sync preserves MemFS guards and detects refusals at the guarded G
     ])
       stub.mockRestore();
     __testSetBackend(backend);
+  }
+});
+
+test("only HTTP 403 removes a verified local memory checkout", async () => {
+  const configDir = mkdtempSync(join(tmpdir(), "memfs-refusal-"));
+  const previous = process.env.LETTA_CONFIG_DIR;
+  process.env.LETTA_CONFIG_DIR = configDir;
+  const retrieve = spyOn(getBackend(), "retrieveAgent").mockImplementation(
+    async (id) =>
+      ({
+        id,
+        tags: ["git-memory-enabled"],
+      }) as AgentState,
+  );
+  const disabled = spyOn(
+    settingsManager,
+    "isMemfsExplicitlyDisabled",
+  ).mockReturnValue(false);
+  const apply = spyOn(memoryFilesystem, "applyMemfsFlags");
+  try {
+    for (const [suffix, error, remoteMatches, removed] of [
+      ["403", "The requested URL returned error: 403", true, true],
+      ["401", "HTTP 401", true, false],
+      ["500", "HTTP 500", true, false],
+      ["auth", "Authentication failed", true, false],
+      ["other-origin", "HTTP 403", false, false],
+    ] as const) {
+      const id = `checkout-${suffix}`;
+      const checkout = join(configDir, "agents", id, "memory");
+      mkdirSync(checkout, { recursive: true });
+      execFileSync("git", ["init", "--quiet", checkout]);
+      execFileSync("git", [
+        "-C",
+        checkout,
+        "remote",
+        "add",
+        "origin",
+        `https://api.letta.com/v1/git/${remoteMatches ? id : "another-agent"}/state.git`,
+      ]);
+      writeFileSync(join(checkout, "stale.txt"), "stale");
+      apply.mockRejectedValue(new Error(error));
+      const listener = { memfsSyncedAgents: new Map() } as ListenerRuntime;
+      expect(await ensureMemfsSyncedForAgent(listener, id)).toBe(false);
+      expect(existsSync(checkout)).toBe(!removed);
+    }
+  } finally {
+    retrieve.mockRestore();
+    disabled.mockRestore();
+    apply.mockRestore();
+    if (previous === undefined) delete process.env.LETTA_CONFIG_DIR;
+    else process.env.LETTA_CONFIG_DIR = previous;
+    rmSync(configDir, { recursive: true, force: true });
   }
 });

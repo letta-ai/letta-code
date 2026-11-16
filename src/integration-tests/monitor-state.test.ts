@@ -7,6 +7,7 @@ import {
   resolveBackendMode,
   setConfiguredBackendMode,
 } from "@/backend/backend-mode";
+import { isManagedCloudRuntime } from "@/managed-cloud-runtime";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { monitor, shutdownMonitors } from "@/tools/impl/monitor";
@@ -82,11 +83,15 @@ test("cloud monitors persist their real lifecycle through the monitor API", asyn
           secretEnv: { MONITOR_SENTINEL: secret },
         });
         ids.push(running.taskId);
-        expect((await read(running.taskId)).command).not.toContain(secret);
+        const saved = await read(running.taskId);
+        const expandedLifecycle = saved.args !== undefined;
+        expect(saved.command).not.toContain(secret);
         expect(await task_stop({ task_id: running.taskId })).toMatchObject({
           killed: true,
         });
-        expect((await read(running.taskId)).status).toBe("failed");
+        expect((await read(running.taskId)).status).toBe(
+          expandedLifecycle ? "stopped" : "failed",
+        );
 
         const socket = await monitor({
           description: "Socket lifecycle",
@@ -138,7 +143,13 @@ test("cloud monitors persist their real lifecycle through the monitor API", asyn
         });
         ids.push(shutdown.taskId);
         await shutdownMonitors();
-        expect((await read(shutdown.taskId)).status).toBe("failed");
+        expect((await read(shutdown.taskId)).status).toBe(
+          expandedLifecycle
+            ? isManagedCloudRuntime()
+              ? "paused"
+              : "stopped"
+            : "failed",
+        );
         // Durable records remain readable after the host discards its handles.
         backgroundProcesses.delete(shutdown.taskId);
         expect((await read(shutdown.taskId)).monitor_id).toBe(shutdown.taskId);

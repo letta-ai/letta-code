@@ -31,6 +31,16 @@ export function buildAgentSendContent(
   ];
 }
 
+/** `letta -p` target flags; `--agent` with a conv-... ID is rejected by startup validation. */
+export function buildAgentSendCliTarget(
+  agentId: string,
+  conversationId: string,
+): string {
+  return conversationId === "default"
+    ? `--agent ${agentId} --conversation default`
+    : `--conversation ${conversationId}`;
+}
+
 export function buildAgentSendReminder(
   sender: { agentId?: string; conversationId?: string },
   noWait: boolean,

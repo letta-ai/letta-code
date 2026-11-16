@@ -14,6 +14,7 @@ import {
   buildQueuedContentParts,
 } from "@/cli/helpers/queued-message-parts";
 import { QueueRuntime } from "@/queue/queue-runtime";
+import { buildExternalToolNotificationContent } from "@/queue/turn-queue-runtime";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
 
 // ── Helpers ───────────────────────────────────────────────────────
@@ -132,7 +133,13 @@ describe("buildContentFromQueueBatch parity with buildQueuedContentParts", () =>
       { type: "text", text: "after" },
     ] satisfies Exclude<MessageCreate["content"], string>;
     const text = "<task-notification>image ready</task-notification>";
-    const items = [{ kind: "task_notification" as const, text, content }];
+    const items = [
+      {
+        kind: "task_notification" as const,
+        text,
+        content: buildExternalToolNotificationContent({ text, content }),
+      },
+    ];
     const merged = buildContentFromQueueBatch(makeBatch(items));
     expect(merged).toEqual(buildQueuedContentParts(makeQueued(items)));
     expect(merged).toEqual([

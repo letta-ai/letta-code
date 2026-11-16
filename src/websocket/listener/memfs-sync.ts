@@ -7,13 +7,76 @@
  * correctly — mirroring what the local headless path does during bootstrap.
  */
 
+import { execFileSync } from "node:child_process";
+import { lstat, realpath, rm } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
 import { debugLog, debugWarn } from "@/utils/debug";
 import {
   isMemoryAccessRefusal,
   isMemoryUnavailable,
   markMemoryUnavailable,
 } from "@/utils/memory-access";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 import type { ListenerRuntime } from "./types";
+
+/** Remove only a verified agent checkout after an explicit HTTP 403. */
+async function removeRefusedCheckout(
+  agentId: string,
+  error: unknown,
+): Promise<void> {
+  const message = error instanceof Error ? error.message : String(error);
+  if (
+    isLocalBackendEnvEnabled() ||
+    !/(?:returned error:|HTTP(?: status)?)[ :]*403\b/i.test(message)
+  )
+    return;
+
+  try {
+    const { getScopedMemoryFilesystemRoot } = await import(
+      "@/agent/memory-filesystem"
+    );
+    const { isMemfsRemoteUrlForAgent } = await import("@/agent/memory-git");
+    const configDir = await realpath(resolveGlobalConfigDir());
+    if (
+      !agentId ||
+      agentId === "." ||
+      agentId === ".." ||
+      /[/\\]/.test(agentId)
+    )
+      return;
+    const expected = join(configDir, "agents", agentId, "memory");
+    const checkout = resolve(getScopedMemoryFilesystemRoot(agentId));
+    // Reject redirected parents and symlinks, including another agent's checkout.
+    if (
+      (await realpath(checkout)) !== expected ||
+      !(await lstat(checkout)).isDirectory()
+    )
+      return;
+    const cwdRelative = relative(expected, await realpath(process.cwd()));
+    if (
+      !cwdRelative ||
+      (!cwdRelative.startsWith(`..${sep}`) &&
+        cwdRelative !== ".." &&
+        !isAbsolute(cwdRelative))
+    )
+      return;
+    if (!(await lstat(join(checkout, ".git"))).isDirectory()) return;
+    const origin = execFileSync(
+      "git",
+      ["-C", checkout, "remote", "get-url", "origin"],
+      {
+        encoding: "utf8",
+        timeout: 5000,
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    ).trim();
+    if (!isMemfsRemoteUrlForAgent(origin, agentId)) return;
+    await rm(checkout, { recursive: true, force: true });
+  } catch {
+    // Missing or unverifiable checkouts are left alone; access is still disabled.
+  }
+}
 
 /**
  * Core sync logic — fetches agent, checks tag, clones/pulls repo.
@@ -113,13 +176,14 @@ export async function ensureMemfsSyncedForAgent(
 
   const promise = syncMemfsForAgent(agentId).then(
     () => true,
-    (err) => {
+    async (err) => {
       // Non-fatal — agent can still process messages, just without local memory.
       debugWarn(
         "memfs-sync",
         `Failed to sync memfs for agent ${agentId}: ${err instanceof Error ? err.message : String(err)}`,
       );
       if (isMemoryAccessRefusal(err)) {
+        await removeRefusedCheckout(agentId, err);
         markMemoryUnavailable(agentId);
       } else {
         // Transient failures may succeed on the next turn.

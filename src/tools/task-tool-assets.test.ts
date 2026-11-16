@@ -144,6 +144,7 @@ describe("Monitor experiment assets", () => {
       expect(Object.keys(local.inputSchema.properties ?? {}).sort()).toEqual(
         [
           "description",
+          "resume",
           "timeout_ms",
           "persistent",
           "backup_after_seconds",
@@ -210,20 +211,57 @@ describe("Monitor experiment assets", () => {
   });
 });
 
-test("local Monitor assets remain byte-identical to v0.34.56", async () => {
+test("local Monitor assets pin the resume-enabled schema and description", async () => {
   for (const [path, hash] of [
     [
       "./descriptions/Monitor.md",
-      "c86a9f99f14c5c6b1f4688dc8f60583fee7bb6e35c85bc3e1aeb9d67308ecdc4",
+      "912f7f5f8161c44e357fa6d248e5b0af68bb559e9886c41bb453011f10edddae",
     ],
     [
       "./schemas/Monitor.json",
-      "2a24864b9e926634a427bb372a77592ac6d8b957f1fbc8d06a4efaaf58edddd3",
+      "48e07b777c824598ff2bf0dae2c2fbfb439e0f341fde91affeaa0389c8ea8a35",
     ],
   ] as const) {
     const bytes = await Bun.file(new URL(path, import.meta.url)).arrayBuffer();
     expect(new Bun.CryptoHasher("sha256").update(bytes).digest("hex")).toBe(
       hash,
     );
+  }
+});
+
+test("Wake session warning appears only in the interactive TUI", async () => {
+  const { runWithRuntimeContext } = await import("@/runtime-context");
+  const { resolveBackendSpecificToolAssets } = await import(
+    "./task-tool-assets"
+  );
+  const previousDesktop = process.env.LETTA_DESKTOP_MODE;
+  try {
+    for (const sessionSource of [
+      "interactive-cli",
+      "listen",
+      "headless",
+      undefined,
+    ] as const) {
+      for (const desktop of ["1", undefined]) {
+        if (desktop) process.env.LETTA_DESKTOP_MODE = desktop;
+        else delete process.env.LETTA_DESKTOP_MODE;
+        const assets = await runWithRuntimeContext({ sessionSource }, () =>
+          resolveBackendSpecificToolAssets(
+            "Wake",
+            "Schedule a future turn.",
+            {},
+          ),
+        );
+        expect(
+          assets.description.includes(
+            "Wakes fire only while this session is running.",
+          ),
+        ).toBe(sessionSource === "interactive-cli" && !desktop);
+        expect(assets.description).not.toMatch(/local|cloud|runner/i);
+      }
+    }
+  } finally {
+    if (previousDesktop === undefined) delete process.env.LETTA_DESKTOP_MODE;
+    else process.env.LETTA_DESKTOP_MODE = previousDesktop;
   }
 });

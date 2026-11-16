@@ -59,21 +59,35 @@ export function installProcessEventRouting(params: {
     }
     emitSubagentStateUpdate(transport, runtime, scope, TO_SUBSCRIBERS, options);
   };
+  type SnapshotScope = { agent_id: string | null; conversation_id: string };
+  let previousOwnerScopes = new Map<string, SnapshotScope>();
   runtime._unsubscribeSubagentState = subscribeToSubagentState(() => {
-    if (runtime.conversationRuntimes.size === 0) {
+    const ownerScopes = new Map<string, SnapshotScope>();
+    for (const subagent of getSubagents()) {
+      if (!subagent.parentAgentId) continue;
+      const scope = {
+        agent_id: subagent.parentAgentId,
+        conversation_id: subagent.parentConversationId ?? "default",
+      };
+      ownerScopes.set(JSON.stringify(scope), scope);
+    }
+    // A launch runtime can be evicted before its final subagent update.
+    // Keep the previous owners for one update so removal also sends empty state.
+    const scopes = new Map([...previousOwnerScopes, ...ownerScopes]);
+    previousOwnerScopes = ownerScopes;
+    for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+      const scope = {
+        agent_id: conversationRuntime.agentId,
+        conversation_id: conversationRuntime.conversationId,
+      };
+      scopes.set(JSON.stringify(scope), scope);
+    }
+    if (scopes.size === 0) {
       emitSubagentState();
       return;
     }
-    // Each snapshot is scoped to its parent conversation, so only send it to
-    // conversations whose snapshot changed instead of fanning out to all.
-    for (const conversationRuntime of runtime.conversationRuntimes.values()) {
-      emitSubagentState(
-        {
-          agent_id: conversationRuntime.agentId,
-          conversation_id: conversationRuntime.conversationId,
-        },
-        { onlyIfChanged: true },
-      );
+    for (const scope of scopes.values()) {
+      emitSubagentState(scope, { onlyIfChanged: true });
     }
   });
 

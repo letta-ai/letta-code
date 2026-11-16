@@ -88,12 +88,14 @@ export interface SubagentMessageCommand {
   tool_call_id?: string;
 }
 
+// `queued`: the worker is in a long tool call and hasn't acknowledged the
+// interrupt yet; the message is queued and handled when the call stops.
 export type SubagentMessageResponse = {
   type: "subagent_message_response";
   request_id: string;
   runtime?: AgentRuntimeScope;
 } & (
-  | { success: true; delivery: "steered" | "resumed" }
+  | { success: true; delivery: "steered" | "queued" | "resumed" }
   | { success: false; error: string }
 );
 

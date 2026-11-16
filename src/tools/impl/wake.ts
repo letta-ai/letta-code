@@ -22,7 +22,6 @@ import {
 } from "@/cron";
 import {
   buildCloudScheduleInput,
-  CLOUD_EXECUTION_TARGET,
   resolveCronCreatePlacement,
 } from "@/cron/runner";
 import { getRuntimeActingUserId, getRuntimeContext } from "@/runtime-context";
@@ -47,7 +46,6 @@ interface WakeScope {
 
 interface WakeRecord {
   id: string;
-  runner: "local" | "cloud";
   name: string | null;
   prompt: string | null;
   recurring: boolean;
@@ -188,7 +186,6 @@ function promptFromCloudSchedule(schedule: CloudSchedule): string | null {
 function localWakeRecord(task: CronTask): WakeRecord {
   return {
     id: task.id,
-    runner: "local",
     name: task.name,
     prompt: task.prompt,
     recurring: task.recurring,
@@ -201,7 +198,6 @@ function localWakeRecord(task: CronTask): WakeRecord {
 function cloudWakeRecord(schedule: CloudSchedule): WakeRecord {
   return {
     id: schedule.id,
-    runner: "cloud",
     name: schedule.name ?? null,
     prompt: promptFromCloudSchedule(schedule),
     recurring: schedule.schedule.type === "recurring",
@@ -250,7 +246,7 @@ async function listCurrentWakes(
       return { wakes, warnings };
     }
     warnings.push(
-      `Cloud wakes could not be listed: ${error instanceof Error ? error.message : String(error)}`,
+      `Wakes could not be listed: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 
@@ -323,8 +319,7 @@ async function createWake(
       action: "created",
       id: created.id,
       name,
-      runner: "cloud",
-      execution_target: targetDeviceId ?? CLOUD_EXECUTION_TARGET,
+      ...(targetDeviceId && { execution_target: targetDeviceId }),
       conversation_id: scope.conversationId,
       recurring: timing.recurring,
       ...(created.next_scheduled_at && {
@@ -346,14 +341,16 @@ async function createWake(
     scheduled_for: timing.scheduledFor,
   };
   const created = (deps.addLocal ?? addTask)(input);
-  const warnings = [...current.warnings, created.warning].filter(
-    (warning): warning is string => Boolean(warning),
-  );
+  const warnings = [
+    ...current.warnings,
+    created.warning
+      ? "This wake only fires while this session is running."
+      : undefined,
+  ].filter((warning): warning is string => Boolean(warning));
   return result("success", {
     action: "created",
     id: created.task.id,
     name,
-    runner: "local",
     conversation_id: scope.conversationId,
     recurring: timing.recurring,
     scheduled_at: created.task.scheduled_for,
@@ -382,7 +379,7 @@ async function cancelWake(
     return result("success", {
       action: "cancelled",
       id,
-      runner: "local",
+
       warnings: [],
     });
   }
@@ -420,7 +417,7 @@ async function cancelWake(
   return result("success", {
     action: "cancelled",
     id,
-    runner: "cloud",
+
     warnings: [],
   });
 }

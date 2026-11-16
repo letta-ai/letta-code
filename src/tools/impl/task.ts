@@ -46,6 +46,8 @@ import { addToMessageQueue } from "@/utils/message-queue-bridge.js";
 import {
   formatTaskNotification,
   resolveNotificationScope,
+  subagentResultReminder,
+  taskNotificationMessage,
 } from "@/utils/task-notifications.js";
 import {
   classifyExternalCodingAgentStartupError,
@@ -55,6 +57,7 @@ import {
   validateExternalCodingAgentMcpOptions,
 } from "./external-coding-agent";
 import { prepareExternalWorkerPrompt } from "./external-fork-context";
+import { validateForkPrompt } from "./fork-prompt";
 import { copyGitHubPullRequestTags } from "./github-pull-request-tracker.js";
 import {
   ensureMemoryRepair,
@@ -511,7 +514,7 @@ export function spawnBackgroundSubagentTask(
         });
         addToMessageQueueFn({
           kind: "task_notification",
-          text: notificationXml,
+          ...taskNotificationMessage(notificationXml),
           agentId: resolvedParentScope?.agentId,
           conversationId: resolvedParentScope?.conversationId,
           actingUserId: bgTask.actingUserId,
@@ -604,7 +607,7 @@ export function spawnBackgroundSubagentTask(
         });
         addToMessageQueueFn({
           kind: "task_notification",
-          text: notificationXml,
+          ...taskNotificationMessage(notificationXml),
           agentId: resolvedParentScope?.agentId,
           conversationId: resolvedParentScope?.conversationId,
           actingUserId: bgTask.actingUserId,
@@ -695,7 +698,6 @@ export async function launchSubagent(
 
   const inputPrompt = args.prompt as string;
   const description = args.description as string;
-
   const allConfigs =
     prepared || isExternalCodingAgent
       ? {}
@@ -714,6 +716,8 @@ export async function launchSubagent(
       error: `Invalid subagent_type "${configName}". Available subagent types: ${listSubagentTypes(Object.keys(allConfigs))}. Omit subagent_type for the default agent.`,
     };
   }
+  const promptError = validateForkPrompt(inputPrompt, Boolean(config.fork));
+  if (promptError) return { success: false, error: promptError };
   if (
     prepared &&
     (!args.conversation_id ||
@@ -971,7 +975,6 @@ export async function launchSubagent(
       linkedAgent?.conversationId ?? effectiveConversationId ?? null,
   };
 }
-
 /** Agent's text adapter; App Server callers consume launchSubagent directly. */
 export async function task(
   args: TaskArgs,
@@ -993,5 +996,5 @@ export async function task(
   const conversationIdLine = result.conversation_id
     ? `\nConversation ID: ${result.conversation_id}`
     : "";
-  return `Task running in background with task ID: ${result.task_id}${agentIdLine}${conversationIdLine}\nOutput file: ${result.output_file}\nEvent log: ${taskEventsFileFor(result.output_file)}\n\nYou will be notified automatically when this task completes — a <task-notification> message will be delivered with the result. No need to poll or sleep-wait; continue with your current work. To see what it is doing meanwhile, Read the output file: one line per tool call, tool result, and message, live. For exact details (full tool arguments and outputs, such as a command's error), read the event log.`;
+  return `Task running in background with task ID: ${result.task_id}${agentIdLine}${conversationIdLine}\nOutput file: ${result.output_file}\nEvent log: ${taskEventsFileFor(result.output_file)}\n\nYou will be notified automatically when this task completes — a <task-notification> message will be delivered with the result. No need to poll or sleep-wait; continue with your current work. To see what it is doing meanwhile, Read the output file: one line per tool call, tool result, and message, live. For exact details (full tool arguments and outputs, such as a command's error), read the event log.${subagentResultReminder()}`;
 }

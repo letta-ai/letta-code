@@ -1,4 +1,3 @@
-import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
 import type { Writable } from "node:stream";
@@ -9,126 +8,34 @@ import {
 } from "@/agent/subagents/subagent-process";
 import { confirmProcessExit } from "@/utils/confirm-process-exit";
 import { withNativeCliPath } from "@/utils/native-cli-env";
-import { traceClaudeLaunch } from "./external-llm-trace-launch";
-import type { ExternalTraceContext } from "./external-llm-trace-session";
 import {
-  type ExternalTextListener,
-  type ExternalToolCallListener,
-  type ExternalWorkerListeners,
+  CLAUDE_CONTROL_RESPONSE_TIMEOUT_MS,
+  CLAUDE_INTERRUPT_ACK_TIMEOUT_ERROR,
+  CLAUDE_TURN_START_TIMEOUT_ERROR,
+  CLAUDE_TURN_START_TIMEOUT_MS,
+} from "./claude-steer-timeouts";
+import type {
+  ClaudeMessageReceipt,
+  ClaudeSession,
+  ClaudeSessionDependencies,
+  ClaudeSessionTransport,
+  ClaudeTurnOptions,
+} from "./claude-stream-session-types";
+import { traceClaudeLaunch } from "./external-llm-trace-launch";
+import {
   emitProgress,
   formatExternalToolCallArgs,
   toolOutputText,
 } from "./external-tool-call";
 
-export interface ClaudeSessionTransport {
-  process: Pick<ChildProcessWithoutNullStreams, "stdout" | "stderr" | "stdin">;
-  completion: Promise<{
-    exitCode: number | null;
-    exitSignal: NodeJS.Signals | null;
-  }>;
-  wasAborted(): boolean;
-}
-
-interface PendingControl {
-  resolve: () => void;
-  reject: (error: Error) => void;
-}
-
-interface TurnWaiter {
-  resolve: () => void;
-  reject: (error: Error) => void;
-}
-
-interface ClaudeSession {
-  sessionId: string;
-  transport: ClaudeSessionTransport;
-  model?: string;
-  startedAt: number;
-  stderr: string;
-  report: string;
-  protocolError?: string;
-  settled: boolean;
-  exited: boolean;
-  exit: Promise<void>;
-  /** UUID of the most recent user input written to stdin. */
-  latestInputUuid?: string;
-  /** True once Claude has picked up {@link latestInputUuid}. */
-  latestInputStarted: boolean;
-  /** True once Claude has acknowledged any of our inputs by UUID. */
-  acknowledgesInputs: boolean;
-  pendingSteers: number;
-  interruptible: boolean;
-  awaitingReplacementStart: boolean;
-  suppressedResult?: Record<string, unknown>;
-  resultCount: number;
-  /** Latest `background_tasks_changed.tasks` list; empty until one is seen. */
-  backgroundTasks: unknown[];
-  /** Last result held back while background tasks were still listed. */
-  provisionalResult?: Record<string, unknown>;
-  /** True while Claude is idle between turns, waiting on background tasks. */
-  idleOnBackgroundTasks: boolean;
-  backgroundCapMs: number;
-  backgroundCapTimer?: ReturnType<typeof setTimeout>;
-  turnWaiters: Set<TurnWaiter>;
-  writeLock: Promise<void>;
-  completion: Promise<SubagentResult>;
-  resolve: (result: SubagentResult) => void;
-  pendingControls: Map<string, PendingControl>;
-  abortController: AbortController;
-  removeUpstreamAbort: () => void;
-  onToolCall?: ExternalToolCallListener;
-  seenToolCallIds: Set<string>;
-  onText?: ExternalTextListener;
-  /** Message ID + text of blocks already reported, since messages can repeat. */
-  seenTextBlocks: Set<string>;
-  onToolResult?: ExternalWorkerListeners["onToolResult"];
-  onReasoning?: ExternalWorkerListeners["onReasoning"];
-  /** Tool names by `tool_use` ID; an ID leaves once its result is reported. */
-  toolNames: Map<string, string>;
-}
-
-export interface ClaudeTurnOptions
-  extends Pick<ExternalWorkerListeners, "onToolResult" | "onReasoning"> {
-  traceContext?: ExternalTraceContext;
-  prompt: string;
-  parentAgentId: string;
-  cwd: string;
-  model?: string;
-  mcpReminder?: string;
-  signal?: AbortSignal;
-  resumeSessionId?: string;
-  sessionId?: string;
-  onStarted?: (sessionId: string) => void;
-  onToolCall?: ExternalToolCallListener;
-  onText?: ExternalTextListener;
-  beforeStart?: () => Promise<void>;
-}
-
-export interface ClaudeMessageReceipt {
-  mode: "steered" | "resumed";
-  sessionId: string;
-  completion?: Promise<SubagentResult>;
-  interrupt?: () => Promise<void>;
-}
-
-export interface ClaudeSessionDependencies {
-  createTransport?: (options: {
-    args: string[];
-    cwd: string;
-    env: NodeJS.ProcessEnv;
-    signal?: AbortSignal;
-  }) => ClaudeSessionTransport;
-  env?: NodeJS.ProcessEnv;
-  createSessionId?: () => string;
-  /** Override for {@link BACKGROUND_TASK_WAIT_CAP_MS} (tests). */
-  backgroundTaskWaitCapMs?: number;
-  /** Override for {@link SETTLED_EXIT_GRACE_MS} (tests). */
-  settledExitGraceMs?: number;
-}
+export type {
+  ClaudeMessageReceipt,
+  ClaudeSessionDependencies,
+  ClaudeSessionTransport,
+  ClaudeTurnOptions,
+} from "./claude-stream-session-types";
 
 const sessions = new Map<string, ClaudeSession>();
-const CONTROL_RESPONSE_TIMEOUT_MS = 30_000;
-const TURN_START_TIMEOUT_MS = 60_000;
 /**
  * How long to keep waiting after a result while background tasks are still
  * listed. Claude Code's own background-task limit is 30 minutes.
@@ -229,6 +136,7 @@ function markTurnStarted(session: ClaudeSession): void {
   if (session.awaitingReplacementStart) {
     session.awaitingReplacementStart = false;
     session.pendingSteers = 0;
+    session.queuedSteer = false;
     session.suppressedResult = undefined;
   }
   resolveTurnWaiters(session);
@@ -252,8 +160,8 @@ function waitForTurnStart(
   return new Promise((resolve, reject) => {
     const waiter = { resolve: finishResolve, reject: finishReject };
     const timeout = setTimeout(
-      () => finishReject(new Error("Claude turn did not become interruptible")),
-      TURN_START_TIMEOUT_MS,
+      () => finishReject(new Error(CLAUDE_TURN_START_TIMEOUT_ERROR)),
+      CLAUDE_TURN_START_TIMEOUT_MS,
     );
     timeout.unref?.();
     const abort = () =>
@@ -536,8 +444,18 @@ function handleResult(
 ): void {
   session.interruptible = false;
   session.resultCount++;
-  if (session.pendingSteers > 0) {
+  if (
+    session.queuedSteer &&
+    session.acknowledgesInputs &&
+    session.latestInputStarted
+  ) {
+    // Claude picked the queued prompt up inside the running turn, so this
+    // result already answers it; there is no separate interrupted turn.
+    session.pendingSteers = 0;
+    session.queuedSteer = false;
+  } else if (session.pendingSteers > 0) {
     session.pendingSteers--;
+    if (session.pendingSteers === 0) session.queuedSteer = false;
     session.suppressedResult = value;
     return;
   }
@@ -614,6 +532,7 @@ async function launchSession(
     latestInputStarted: false,
     acknowledgesInputs: false,
     pendingSteers: 0,
+    queuedSteer: false,
     interruptible: false,
     awaitingReplacementStart: false,
     suppressedResult: undefined,
@@ -623,6 +542,8 @@ async function launchSession(
     idleOnBackgroundTasks: false,
     backgroundCapMs:
       deps.backgroundTaskWaitCapMs ?? BACKGROUND_TASK_WAIT_CAP_MS,
+    controlResponseTimeoutMs:
+      deps.controlResponseTimeoutMs ?? CLAUDE_CONTROL_RESPONSE_TIMEOUT_MS,
     backgroundCapTimer: undefined,
     turnWaiters: new Set(),
     writeLock: Promise.resolve(),
@@ -820,12 +741,19 @@ export async function runClaudeTurn(
   }
 }
 
+/**
+ * Interrupts the running turn and sends `prompt`. Resolves `"queued"` when
+ * Claude didn't acknowledge the interrupt in time (e.g. a long foreground
+ * tool call): the prompt is written anyway, so Claude has it once the late
+ * interrupt lands or the turn ends, and the interrupted turn's result is
+ * still suppressed.
+ */
 async function steerSession(
   session: ClaudeSession,
   prompt: string,
   signal?: AbortSignal,
-): Promise<void> {
-  await withWriteLock(session, async () => {
+): Promise<"steered" | "queued"> {
+  return withWriteLock(session, async () => {
     signal?.throwIfAborted();
     await waitForTurnStart(session, signal);
     if (session.idleOnBackgroundTasks) {
@@ -836,7 +764,7 @@ async function steerSession(
       }
       session.idleOnBackgroundTasks = false;
       await writeInput(session, prompt);
-      return;
+      return "steered";
     }
     if (session.settled || sessions.get(session.sessionId) !== session) {
       throw new Error("Claude Code session is no longer active");
@@ -849,6 +777,7 @@ async function steerSession(
     session.interruptible = false;
     const resultCount = session.resultCount;
     let interruptAcknowledged = false;
+    let ackTimedOut = false;
     const rejectOnAbort = () => {
       session.pendingControls
         .get(requestId)
@@ -860,10 +789,10 @@ async function steerSession(
     };
     signal?.addEventListener("abort", rejectOnAbort, { once: true });
     const timeout = setTimeout(() => {
-      session.pendingControls
-        .get(requestId)
-        ?.reject(new Error("Claude interrupt acknowledgement timed out"));
-    }, CONTROL_RESPONSE_TIMEOUT_MS);
+      const pending = session.pendingControls.get(requestId);
+      ackTimedOut = Boolean(pending);
+      pending?.reject(new Error(CLAUDE_INTERRUPT_ACK_TIMEOUT_ERROR));
+    }, session.controlResponseTimeoutMs);
     timeout.unref?.();
     try {
       await writeRaw(
@@ -876,7 +805,16 @@ async function steerSession(
       await writeInput(session, prompt);
       session.awaitingReplacementStart = true;
       session.suppressedResult = undefined;
+      return "steered";
     } catch (error) {
+      if (
+        ackTimedOut &&
+        !signal?.aborted &&
+        !session.settled &&
+        sessions.get(session.sessionId) === session &&
+        (await queueSteerPrompt(session, prompt))
+      )
+        return "queued";
       session.pendingSteers = Math.max(0, session.pendingSteers - 1);
       if (interruptAcknowledged) {
         session.abortController.abort(error);
@@ -902,6 +840,29 @@ async function steerSession(
 }
 
 /**
+ * Writes a steer's prompt while its interrupt is still unacknowledged. The
+ * steer stays counted in `pendingSteers`, so the interrupted turn's result is
+ * suppressed and the queued prompt's turn is the one reported. A late ack
+ * finds no pending control and is ignored, so nothing is written twice.
+ */
+async function queueSteerPrompt(
+  session: ClaudeSession,
+  prompt: string,
+): Promise<boolean> {
+  try {
+    await writeInput(session, prompt);
+  } catch {
+    return false;
+  }
+  // If the interrupted turn already ended, its suppressed result is moot and
+  // the prompt simply starts the next turn.
+  session.suppressedResult = undefined;
+  session.awaitingReplacementStart = false;
+  session.queuedSteer = session.pendingSteers > 0;
+  return true;
+}
+
+/**
  * Steers the live process for this session, waiting out a settled one that
  * hasn't exited yet. With no process left, calls `launch` in the same
  * continuation so concurrent senders can't both start a `claude --resume`.
@@ -911,7 +872,8 @@ async function deliverClaudeMessage(
   deps: ClaudeSessionDependencies,
   launch?: () => Promise<ClaudeSession>,
 ): Promise<
-  { mode: "steered" | "resumed"; session: ClaudeSession } | undefined
+  | { mode: "steered" | "resumed"; queued?: boolean; session: ClaudeSession }
+  | undefined
 > {
   for (;;) {
     const existing = sessions.get(options.sessionId);
@@ -921,8 +883,16 @@ async function deliverClaudeMessage(
       continue;
     }
     try {
-      await steerSession(existing, options.prompt, options.signal);
-      return { mode: "steered", session: existing };
+      const delivery = await steerSession(
+        existing,
+        options.prompt,
+        options.signal,
+      );
+      return {
+        mode: "steered",
+        queued: delivery === "queued",
+        session: existing,
+      };
     } catch (error) {
       if (sessions.get(options.sessionId) === existing && !existing.settled)
         throw error;
@@ -935,6 +905,13 @@ async function deliverClaudeMessage(
     throw new Error("Claude Code resumed with an unexpected session ID");
   }
   return { mode: "resumed", session };
+}
+
+function steeredReceipt(
+  sessionId: string,
+  queued?: boolean,
+): ClaudeMessageReceipt {
+  return { mode: "steered", sessionId, ...(queued ? { queued: true } : {}) };
 }
 
 function trackedReceipt(session: ClaudeSession): ClaudeMessageReceipt {
@@ -959,7 +936,7 @@ export async function sendClaudeMessage(
 ): Promise<ClaudeMessageReceipt> {
   options.signal?.throwIfAborted();
   const steered = await deliverClaudeMessage(options, deps);
-  if (steered) return { mode: "steered", sessionId: options.sessionId };
+  if (steered) return steeredReceipt(options.sessionId, steered.queued);
   if (options.beforeStart) await options.beforeStart();
   // Another send may have started a process while beforeStart ran. If so,
   // steer it, but still hand back its completion so the caller can release
@@ -969,7 +946,7 @@ export async function sendClaudeMessage(
   );
   if (!delivered) throw new Error("Claude Code session did not start");
   if (delivered.mode === "steered" && !options.beforeStart)
-    return { mode: "steered", sessionId: options.sessionId };
+    return steeredReceipt(options.sessionId, delivered.queued);
   return trackedReceipt(delivered.session);
 }
 export async function stopClaudeSession(sessionId: string): Promise<boolean> {

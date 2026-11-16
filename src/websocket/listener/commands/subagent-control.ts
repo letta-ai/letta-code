@@ -266,7 +266,12 @@ export async function handleSubagentMessageCommand(
         }),
       );
       if (receipt.mode === "steered")
-        return { ...base, success: true, delivery: "steered" };
+        return {
+          ...base,
+          success: true,
+          delivery:
+            "queued" in receipt && receipt.queued ? "queued" : "steered",
+        };
       if (!receipt.completion || !receipt.interrupt)
         throw new Error("External coding agent returned an incomplete receipt");
       const secretEnv = worker?.secretEnv;

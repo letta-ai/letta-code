@@ -9,10 +9,7 @@ import {
 import { checkPermission } from "@/permissions/checker";
 import { TOOL_DEFINITIONS } from "@/tools/tool-definitions";
 import { TOOLSET_CATALOG } from "@/tools/toolset-catalog";
-import {
-  clearPendingMessages,
-  setMessageQueueAdder,
-} from "@/utils/message-queue-bridge";
+import { setMessageQueueAdder } from "@/utils/message-queue-bridge";
 import { GitHubPullRequestSnapshotPending } from "./github-pull-request-cloud";
 import type { GitHubPullRequestSnapshot } from "./github-pull-request-types";
 import { backgroundProcesses } from "./process_manager";
@@ -74,7 +71,6 @@ afterEach(() => {
     }
   }
   backgroundProcesses.clear();
-  clearPendingMessages();
 });
 
 describe("WatchPR background lifecycle", () => {

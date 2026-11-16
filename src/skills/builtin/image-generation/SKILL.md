@@ -157,7 +157,8 @@ and refine one thing at a time.
 9. **Edits: separate the change from what must stay.** "Change only X", then
    list what to preserve (identity, face, pose, geometry, layout, lighting,
    labels, camera angle) and what to exclude. Repeat the preserve list on every
-   follow-up edit.
+   follow-up edit. When matching a reference's look, also describe what is wrong
+   with the current image so the model knows what to correct.
 10. **Give each reference image a role by number**: "image 1 is the scene,
     image 2 is the dog; put the dog on the sofa in image 1, keep everything else
     unchanged". For style references, say which part to borrow (palette,
