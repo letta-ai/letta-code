@@ -342,7 +342,7 @@ A [plugin subagent](https://code.claude.com/docs/en/plugins/components.md#agents
 
 ##### Check an `agents` directory before a session
 
-To find files in an `agents` directory whose frontmatter doesn't parse, run `claude plugin validate` against the directory, for example `.claude/agents` or `~/.claude/agents`. Claude Code checks only [the directory you name](https://code.claude.com/docs/en/plugins/cli-reference.md#validate-a-directory), and doesn't flag a file whose frontmatter parses but has no `name`. Requires Claude Code v2.1.233 or later.
+To find files in an `agents` directory whose frontmatter doesn't parse, run `claude plugin validate` against the directory, for example `.claude/agents` or `~/.claude/agents`. Claude Code checks only [the directory you name](https://code.claude.com/docs/en/plugins/cli-reference.md#validate-a-directory), and doesn't flag a file whose frontmatter parses but has no `name`.
 
 ### Choose a model
 
