@@ -146,6 +146,7 @@ export async function runProviderOAuthLogin(
   };
 
   const credential = await oauth.login(interaction, {
+    agentName: "Letta Code",
     getDeviceId:
       callbacks.getDeviceId ?? (() => settingsManager.getOrCreateDeviceId()),
   });
