@@ -212,7 +212,9 @@ describe("fork_context for external coding workers", () => {
     expect(metadata.shown).toBe(3);
     expect(metadata).not.toHaveProperty("full_history_path");
     expect(prompt).toContain("Use Postgres.");
-    expect(prompt).toEndWith("Task:\nDo the work");
+    expect(prompt).toContain(
+      "Task:\nDo the work\n\nWhen you open a pull request",
+    );
   });
 
   test("a Claude Code worker's receipt gives its worker ID as the Conversation ID", async () => {
@@ -231,7 +233,7 @@ describe("fork_context for external coding workers", () => {
     expect(receipt).not.toContain("Agent ID");
   });
 
-  test("an unforked codex worker gets the prompt verbatim", async () => {
+  test("an unforked codex worker gets the prompt and the report-back line", async () => {
     await task({
       ...brief,
       harness: "codex",
@@ -240,7 +242,13 @@ describe("fork_context for external coding workers", () => {
     });
 
     expect(listConversationMessages).not.toHaveBeenCalled();
-    expect(workerPrompts).toEqual(["Do the work"]);
+    expect(workerPrompts).toHaveLength(1);
+    expect(workerPrompts[0]).toStartWith(
+      "Do the work\n\nWhen you open a pull request",
+    );
+    expect(workerPrompts[0]).toContain(
+      "letta -p --agent agent-parent --conversation default --no-wait",
+    );
   });
 
   test("a remote worker forks by default and prepares history at the destination, not the caller", async () => {
