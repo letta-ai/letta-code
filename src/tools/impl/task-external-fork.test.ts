@@ -380,15 +380,16 @@ describe("external worker MCP discovery", () => {
   });
 
   test("unknown requested servers reject the launch", async () => {
-    await expect(
-      launchSubagent({
-        ...brief,
-        harness: "codex",
-        mcp: { inherit: true, servers: ["missing"] },
-      }),
-    ).rejects.toThrow(
-      "Requested MCP server is not available to the parent agent: missing",
-    );
+    const result = await launchSubagent({
+      ...brief,
+      harness: "codex",
+      mcp: { inherit: true, servers: ["missing"] },
+    });
+    expect(result).toMatchObject({
+      success: false,
+      error:
+        "Requested MCP server is not available to the parent agent: missing",
+    });
     expect(workerPrompts).toHaveLength(0);
   });
 

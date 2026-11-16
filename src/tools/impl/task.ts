@@ -793,10 +793,18 @@ export async function launchSubagent(
       signal,
     });
     if ("error" in worker) return { success: false, error: worker.error };
-    const mcpReminder = await resolveExternalCodingAgentMcpReminder(
-      parentAgentId,
-      args.mcp,
-    );
+    let mcpReminder: string | undefined;
+    try {
+      mcpReminder = await resolveExternalCodingAgentMcpReminder(
+        parentAgentId,
+        args.mcp,
+      );
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
 
     const { taskId, outputFile, subagentId } = spawnBackgroundSubagentTask({
       subagentType: configName,
