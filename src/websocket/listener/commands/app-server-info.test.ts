@@ -57,6 +57,7 @@ describe("app-server info protocol", () => {
         runtime_external_tools_update: true,
         runtime_tool_policy: true,
         runtime_tool_policy_foreground_yield: true,
+        external_tool_foreground_yield: true,
         structured_outputs: false,
         write_file_base64: true,
         split_channels: false,

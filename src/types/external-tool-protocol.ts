@@ -10,6 +10,13 @@ export interface ExternalToolDefinitionPayload {
   timeout_ms?: number;
   /** Yield to a scoped task notification after 10s by default; false waits inline. */
   auto_background?: boolean;
+  /**
+   * Milliseconds this tool waits before a long-running call is returned as a
+   * background task. Clamped to 1–30s. Overrides the conversation's
+   * `tool_policy.foreground_yield_ms`; when omitted, that value or the 10s
+   * default applies.
+   */
+  foreground_yield_ms?: number;
 }
 
 /**

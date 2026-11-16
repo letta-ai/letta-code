@@ -33,6 +33,8 @@ export interface AppServerInfoResponseMessage {
     runtime_tool_policy?: boolean;
     /** `tool_policy` accepts `foreground_yield_ms`. */
     runtime_tool_policy_foreground_yield?: boolean;
+    /** External tool definitions accept a per-tool `foreground_yield_ms`. */
+    external_tool_foreground_yield?: boolean;
     structured_outputs?: boolean;
     /** `write_file` accepts `encoding: "base64"`, `append`, and `move_to`. */
     write_file_base64?: boolean;

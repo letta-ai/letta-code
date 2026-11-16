@@ -31,6 +31,10 @@ function isExternalToolDefinitionPayload(value: unknown): boolean {
     isRecord(value.parameters) &&
     (value.auto_background === undefined ||
       typeof value.auto_background === "boolean") &&
+    (value.foreground_yield_ms === undefined ||
+      (typeof value.foreground_yield_ms === "number" &&
+        Number.isFinite(value.foreground_yield_ms) &&
+        value.foreground_yield_ms > 0)) &&
     (value.timeout_ms === undefined ||
       (typeof value.timeout_ms === "number" &&
         Number.isSafeInteger(value.timeout_ms) &&
