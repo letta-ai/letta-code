@@ -31,6 +31,16 @@ export function buildAgentSendContent(
   ];
 }
 
+/** `letta -p` target flags; `--agent` with a conv-... ID is rejected by startup validation. */
+export function buildAgentSendCliTarget(
+  agentId: string,
+  conversationId: string,
+): string {
+  return conversationId === "default"
+    ? `--agent ${agentId} --conversation default`
+    : `--conversation ${conversationId}`;
+}
+
 export function buildAgentSendReminder(
   sender: { agentId?: string; conversationId?: string },
   noWait: boolean,
@@ -39,11 +49,11 @@ export function buildAgentSendReminder(
   const address = sender.conversationId
     ? `, conversation ${sender.conversationId}`
     : "";
-  // `--agent` with a conv-... ID is rejected by startup validation.
   const isDefault = sender.conversationId === "default";
-  const cliTarget = isDefault
-    ? `--agent ${sender.agentId} --conversation default`
-    : `--conversation ${sender.conversationId}`;
+  const cliTarget = buildAgentSendCliTarget(
+    sender.agentId,
+    sender.conversationId ?? "",
+  );
   const toolTarget = isDefault
     ? `agent_id ${sender.agentId} and conversation_id default`
     : `conversation_id ${sender.conversationId}`;
