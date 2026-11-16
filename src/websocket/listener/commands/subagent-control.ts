@@ -4,6 +4,7 @@ import {
   runOutsideRuntimeContext,
   runWithRuntimeContext,
 } from "@/runtime-context";
+import { REMOTE_SUBAGENT_MESSAGE_DEDUPE_PENDING_TTL_MS } from "@/tools/impl/claude-steer-timeouts";
 import {
   sendClaudeMessage,
   stopClaudeSession,
@@ -326,8 +327,8 @@ export async function handleSubagentMessageCommand(
     }
   })();
   responses.set(key, {
-    // Pending steers must not expire while a reconnect retries the same request.
-    expiresAt: Number.POSITIVE_INFINITY,
+    // Keep retries deduplicated, but let a stuck steer expire eventually.
+    expiresAt: now + REMOTE_SUBAGENT_MESSAGE_DEDUPE_PENDING_TTL_MS,
     response,
   });
   const result = await response;

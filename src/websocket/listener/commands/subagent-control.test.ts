@@ -9,6 +9,7 @@ import {
 import type { SubagentResult } from "@/agent/subagents";
 import type { AppServerClient } from "@/app-server-client";
 import { telemetry } from "@/telemetry";
+import { REMOTE_SUBAGENT_MESSAGE_DEDUPE_PENDING_TTL_MS } from "@/tools/impl/claude-steer-timeouts";
 import type { sendClaudeMessage } from "@/tools/impl/claude-stream-session";
 import {
   clearNativeSessionCaptureForTests,
@@ -417,6 +418,57 @@ describe("remote external subagent control", () => {
     expect(JSON.parse(report.mock.calls[0]?.[2] as string).error_code).toBe(
       "socket_closed",
     );
+  });
+
+  test("evicts a stuck pending steer after the caller retry budget cap", async () => {
+    const { parent } = fixture();
+    const started = [
+      Promise.withResolvers<void>(),
+      Promise.withResolvers<void>(),
+    ] as const;
+    const receipts = [
+      Promise.withResolvers<{ mode: "steered"; sessionId: string }>(),
+      Promise.withResolvers<{ mode: "steered"; sessionId: string }>(),
+    ] as const;
+    let now = 0;
+    let steers = 0;
+    const command: SubagentMessageCommand = {
+      type: "subagent_message",
+      request_id: "stuck-steer",
+      runtime,
+      agent_id: nativeId,
+      message: "Only retry after the cap",
+    };
+    const deps = {
+      workerEnv,
+      now: () => now,
+      sendClaude: async () => {
+        const attempt = steers++;
+        started[attempt]?.resolve();
+        const receipt = receipts[attempt];
+        if (!receipt) throw new Error("Unexpected extra steer");
+        return receipt.promise;
+      },
+    };
+    const original = handleSubagentMessageCommand(command, parent, deps);
+    await started[0].promise;
+    now = REMOTE_SUBAGENT_MESSAGE_DEDUPE_PENDING_TTL_MS - 1;
+    const beforeCap = handleSubagentMessageCommand(command, parent, deps);
+    expect(steers).toBe(1);
+
+    now = REMOTE_SUBAGENT_MESSAGE_DEDUPE_PENDING_TTL_MS + 1;
+    const afterCap = handleSubagentMessageCommand(command, parent, deps);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(steers).toBe(2);
+
+    // A late completion from the expired request must not replace the new entry.
+    receipts[0].resolve({ mode: "steered", sessionId: nativeId });
+    await Promise.all([original, beforeCap]);
+    now += 31_000;
+    const retry = handleSubagentMessageCommand(command, parent, deps);
+    receipts[1].resolve({ mode: "steered", sessionId: nativeId });
+    await Promise.all([afterCap, retry]);
+    expect(steers).toBe(2);
   });
 
   test("delivers the same request ID from different parents", async () => {
