@@ -9,6 +9,7 @@ import {
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { updateMonitorState } from "@/backend/api/monitors";
+import { experimentManager } from "@/experiments/manager";
 import { isManagedCloudRuntime } from "@/managed-cloud-runtime";
 import {
   getCurrentWorkingDirectory,
@@ -243,7 +244,8 @@ export async function watch_pr(
       ? createGitHubWorkflowRunFetcher()
       : createGitHubPullRequestSnapshotFetcher({
           allowInaccessibleFallback:
-            process.env.LETTA_CLOUD_WATCH_PR === "1" && isManagedCloudRuntime(),
+            experimentManager.isEnabled("cloud_watch_pr") &&
+            isManagedCloudRuntime(),
         }));
   const runtimeContext = getRuntimeContext();
   const parentScope =

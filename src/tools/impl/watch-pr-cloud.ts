@@ -2,6 +2,7 @@ import { actingUserRequestOptions } from "@/agent/acting-user";
 import { ApiRequestError, apiRequest } from "@/backend/api/request";
 import { isCloudServerUrl } from "@/backend/api/server-url";
 import { resolveBackendMode } from "@/backend/backend-mode";
+import { experimentManager } from "@/experiments/manager";
 import { isManagedCloudRuntime } from "@/managed-cloud-runtime";
 import { resolveNotificationScope } from "@/utils/task-notifications";
 import type { PullRequestEventKind } from "./github-pull-request-diff";
@@ -26,7 +27,7 @@ export async function startCloudPullRequestWatch(args: Args, deps: Deps = {}) {
   const enabled =
     deps.enabled ??
     (() =>
-      process.env.LETTA_CLOUD_WATCH_PR === "1" &&
+      experimentManager.isEnabled("cloud_watch_pr") &&
       isManagedCloudRuntime() &&
       resolveBackendMode() === "api" &&
       isCloudServerUrl());

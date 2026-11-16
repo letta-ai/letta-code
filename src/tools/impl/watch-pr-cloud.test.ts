@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { ApiRequestError } from "@/backend/api/request";
+import { experimentManager } from "@/experiments/manager";
 import { startCloudPullRequestWatch } from "./watch-pr-cloud";
 
 const args = {
@@ -8,6 +9,27 @@ const args = {
   parentScope: { agentId: "agent-1", conversationId: "conv-1" },
 };
 describe("cloud WatchPR registration", () => {
+  test("uses the registered experiment instead of bypassing it with the env flag", async () => {
+    const originalFlag = process.env.LETTA_CLOUD_WATCH_PR;
+    process.env.LETTA_CLOUD_WATCH_PR = "1";
+    expect(experimentManager.getSnapshot("cloud_watch_pr")).toMatchObject({
+      id: "cloud_watch_pr",
+      envVar: "LETTA_CLOUD_WATCH_PR",
+      enabled: true,
+      source: "env",
+    });
+    const enabled = spyOn(experimentManager, "isEnabled").mockReturnValue(
+      false,
+    );
+    try {
+      expect(await startCloudPullRequestWatch(args)).toBeUndefined();
+      expect(enabled).toHaveBeenCalledWith("cloud_watch_pr");
+    } finally {
+      enabled.mockRestore();
+      if (originalFlag === undefined) delete process.env.LETTA_CLOUD_WATCH_PR;
+      else process.env.LETTA_CLOUD_WATCH_PR = originalFlag;
+    }
+  });
   test("registers with filters and falls back only when the repository is inaccessible", async () => {
     const calls: unknown[] = [];
     const result = await startCloudPullRequestWatch(args, {
