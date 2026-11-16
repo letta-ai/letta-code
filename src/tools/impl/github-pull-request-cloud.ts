@@ -88,6 +88,7 @@ type CloudSnapshotResult =
   | { status: 404 | 429 | 501 };
 
 interface CloudSnapshotDeps {
+  allowInaccessibleFallback?: boolean;
   isCloud?: () => boolean;
   fetchGh?: FetchSnapshot;
   request?: (
@@ -265,6 +266,10 @@ export function createGitHubPullRequestSnapshotFetcher(
           continue;
         }
         if (entry?.inaccessible) {
+          if (!hasSnapshot && deps.allowInaccessibleFallback) {
+            unsupported = true;
+            return fetchGh(ref, options);
+          }
           throw new Error(`Cloud could not access ${ref.url}`);
         }
         if (!entry?.snapshot) {

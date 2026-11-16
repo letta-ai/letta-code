@@ -65,6 +65,7 @@ import {
   notifyBackgroundProcessStateChanged,
   unrefTimer,
 } from "./process_manager";
+import { startCloudPullRequestWatch } from "./watch-pr-cloud";
 
 const WATCH_POLL_MS = 30_000;
 const WATCH_MAX_POLL_MS = 5 * 60_000;
@@ -209,6 +210,8 @@ export async function watch_pr(
   args: WatchPullRequestArgs,
   deps: WatchPullRequestDeps = {},
 ): Promise<WatchPullRequestResult> {
+  const cloud = await startCloudPullRequestWatch(args);
+  if (cloud) return cloud;
   const resumeRecord = args.resume
     ? await readResumableMonitor(args.resume, args.parentScope)
     : undefined;
@@ -238,7 +241,10 @@ export async function watch_pr(
     deps.fetchSnapshot ??
     (isRun
       ? createGitHubWorkflowRunFetcher()
-      : createGitHubPullRequestSnapshotFetcher());
+      : createGitHubPullRequestSnapshotFetcher({
+          allowInaccessibleFallback:
+            process.env.LETTA_CLOUD_WATCH_PR === "1" && isManagedCloudRuntime(),
+        }));
   const runtimeContext = getRuntimeContext();
   const parentScope =
     args.parentScope ??
