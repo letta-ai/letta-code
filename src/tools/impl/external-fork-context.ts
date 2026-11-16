@@ -100,7 +100,7 @@ export async function prependParentContext(params: {
     prompt: [
       "The following JSONL is a read-only record of the parent's conversation. The task after the history block tells you what to do now; use the history as the source for everything else. If the task conflicts with what people said in the history, follow what people said in the history. Do not resume unrelated work from the history.",
       "Records marked injected came from the harness, not the human. Tool calls and results are linked by call_id. Records marked truncated have omitted content; use the commands below to read further.",
-      `This shows the parent's current context: the latest compaction summary when available, followed by its most recent in-context messages, up to 50,000 characters (an oversized summary is kept whole). If context lookup failed, it shows a recent-history fallback instead. For earlier or omitted history, search with \`letta messages search --query "<words>" --agent ${params.parentAgentId} --conversation ${params.parentConversationId}\`, or page back with \`letta messages list --agent ${params.parentAgentId} --conversation ${params.parentConversationId}\`. To ask the parent something or report back mid-task, run \`letta -p --agent ${params.parentAgentId} --conversation ${params.parentConversationId} --no-wait "<message>"\`.`,
+      `This shows the parent's current context: the latest compaction summary when available, followed by its most recent in-context messages, up to 50,000 characters (an oversized summary is kept whole). If context lookup failed, it shows a recent-history fallback instead. For earlier or omitted history, search with \`letta messages search --query "<words>" --agent ${params.parentAgentId} --conversation ${params.parentConversationId}\`, or page back with \`letta messages list --agent ${params.parentAgentId} --conversation ${params.parentConversationId}\`.`,
       "<parent_history>",
       serializeHistoryRecord({
         type: "metadata",
@@ -117,6 +117,24 @@ export async function prependParentContext(params: {
   };
 }
 
+/**
+ * Attach the report-back instruction to an external worker's task. The parent
+ * only hears from a background worker when it finishes, so a PR opened or a
+ * blocker hit mid-run would otherwise wait for the final report.
+ */
+export function withReportBackInstruction(
+  prompt: string,
+  parentAgentId: string,
+  parentConversationId: string | undefined,
+): string {
+  if (!parentConversationId) return prompt;
+  return [
+    prompt,
+    "",
+    `When you open a pull request (draft or ready) or hit a blocker you can't get past, tell the parent right away, then keep working: run \`letta -p --agent ${parentAgentId} --conversation ${parentConversationId} --no-wait "<one line: what happened, with the link>"\`. Use the same command to ask the parent something mid-task.`,
+  ].join("\n");
+}
+
 /** The external worker's initial prompt, with the parent context when forked. */
 export async function prepareExternalWorkerPrompt(params: {
   prompt: string;
@@ -125,12 +143,20 @@ export async function prepareExternalWorkerPrompt(params: {
   parentConversationId?: string;
   signal?: AbortSignal;
 }): Promise<{ prompt: string } | { error: string }> {
-  if (!params.forkContext) return { prompt: params.prompt };
+  const parentConversationId =
+    params.parentConversationId ??
+    getConversationId() ??
+    (params.forkContext ? "default" : undefined);
+  const prompt = withReportBackInstruction(
+    params.prompt,
+    params.parentAgentId,
+    parentConversationId,
+  );
+  if (!params.forkContext || !parentConversationId) return { prompt };
   return prependParentContext({
-    prompt: params.prompt,
+    prompt,
     parentAgentId: params.parentAgentId,
-    parentConversationId:
-      params.parentConversationId ?? getConversationId() ?? "default",
+    parentConversationId,
     signal: params.signal,
   });
 }
