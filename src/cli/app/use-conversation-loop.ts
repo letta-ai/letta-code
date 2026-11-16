@@ -36,6 +36,7 @@ import {
   parseRetryAfterHeaderMs,
   rebuildInputWithFreshDenials,
   refreshInputOtidsForNewRequest,
+  reportBusyRetryExhausted,
   resumeConversationBusyRequest,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldAttemptApprovalRecovery,
@@ -888,7 +889,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   modelId: currentModelId || undefined,
                 },
               );
-
               const resumeStream = await resumeConversationBusyRequest(
                 conversationIdRef.current ?? "default",
                 agentIdRef.current ?? undefined,
@@ -907,7 +907,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   "Pre-stream OTID resume unavailable; falling back to blocker wait or retry",
                 );
               }
-
               if (!stream) {
                 const statusId = uid("status");
                 buffersRef.current.byId.set(statusId, {
@@ -921,7 +920,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 });
                 buffersRef.current.order.push(statusId);
                 refreshDerived();
-
                 if (blockingRunId) {
                   conversationBusyDeadlineMs ??=
                     Date.now() + CONVERSATION_BUSY_WAIT_TIMEOUT_MS;
@@ -950,7 +948,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                     continue;
                   }
                 }
-
                 if (preStreamAction === "retry_conversation_busy") {
                   conversationBusyRetriesRef.current += 1;
                   const retryDelayMs = getRetryDelayMs({
@@ -969,7 +966,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                     }
                     await new Promise((resolve) => setTimeout(resolve, 100));
                   }
-
                   if (!blockingRunId) {
                     buffersRef.current.byId.delete(statusId);
                     buffersRef.current.order = buffersRef.current.order.filter(
@@ -977,7 +973,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                     );
                     refreshDerived();
                   }
-
                   if (!cancelled) {
                     buffersRef.current.interrupted = false;
                     restorePinnedPermissionMode();
@@ -987,12 +982,10 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               }
               // User pressed ESC - fall through to error handling
             }
-
             // Retry pre-stream transient errors (429/5xx/network) with shared LLM retry budget
             if (preStreamAction === "retry_transient") {
               llmApiErrorRetriesRef.current += 1;
               const attempt = llmApiErrorRetriesRef.current;
-
               const retryAfterMs =
                 preStreamError instanceof APIError
                   ? parseRetryAfterHeaderMs(
@@ -1150,7 +1143,14 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             }
 
             // Not a recoverable desync - re-throw to outer catch
-            if (!stream) throw preStreamError;
+            if (!stream) {
+              reportBusyRetryExhausted(
+                errorDetail,
+                conversationBusyRetriesRef.current,
+                CONVERSATION_BUSY_MAX_RETRIES,
+              );
+              throw preStreamError;
+            }
           }
 
           conversationBusyDeadlineMs = null;

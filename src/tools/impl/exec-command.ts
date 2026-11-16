@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import { isUsableDirectory } from "@/helpers/usable-directory";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { resolveForegroundYieldMs } from "@/tools/foreground-yield";
 import {
   captureSecretRedactions,
   createSecretStreamScrubber,
@@ -20,6 +21,7 @@ import {
   backgroundProcesses,
   createBackgroundOutputFile,
   getNextExecSessionId,
+  notifyBackgroundProcessStateChanged,
   scheduleBackgroundProcessCleanup,
   scrubCompletedBackgroundOutput,
 } from "./process_manager.js";
@@ -40,7 +42,6 @@ import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
 import { assertSafeWindowsCommand } from "./windows-command-safety.js";
 
-const DEFAULT_EXEC_YIELD_TIME_MS = 10_000;
 const DEFAULT_WRITE_STDIN_YIELD_TIME_MS = 250;
 const MIN_YIELD_TIME_MS = 250;
 const MIN_EMPTY_WRITE_STDIN_YIELD_TIME_MS = 5_000;
@@ -69,6 +70,7 @@ interface ExecCommandArgs {
   signal?: AbortSignal;
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
   secretEnv?: Record<string, string>;
+  variableEnv?: Record<string, string>;
   parentScope?: { agentId: string; conversationId: string };
 }
 
@@ -386,13 +388,14 @@ function buildExplicitShellLauncher(
 
 function buildExecLaunchers(args: ExecCommandArgs): string[][] {
   const login = args.login ?? true;
-  const envAliases = args.secretEnv ? Object.keys(args.secretEnv) : undefined;
+  const envAliases =
+    args.secretEnv || args.variableEnv
+      ? Object.keys({ ...args.variableEnv, ...args.secretEnv })
+      : undefined;
   if (!args.shell?.trim() || isPowerShell(args.shell)) {
     assertSafeWindowsCommand(args.cmd, {
       cwd: resolveShellWorkdir(args.workdir),
-      env: args.secretEnv
-        ? { ...getShellEnv(), ...args.secretEnv }
-        : getShellEnv(),
+      env: { ...getShellEnv(), ...args.variableEnv, ...args.secretEnv },
     });
   }
   if (args.shell?.trim()) {
@@ -526,6 +529,8 @@ function markSessionFailed(session: ExecSession, detail: string): void {
     scheduleBackgroundProcessCleanup(session.id);
   }
   notifyExecCompletion(session);
+  // Publish even when the notification was suppressed or deferred.
+  if (bgProcess) notifyBackgroundProcessStateChanged(bgProcess.runtimeScope);
   scheduleExecSessionCleanup(session.id);
 }
 
@@ -552,6 +557,8 @@ function markSessionClosed(
     scheduleBackgroundProcessCleanup(session.id);
   }
   notifyExecCompletion(session);
+  // Publish even when the notification was suppressed or deferred.
+  if (bgProcess) notifyBackgroundProcessStateChanged(bgProcess.runtimeScope);
   scheduleExecSessionCleanup(session.id);
 }
 
@@ -616,7 +623,7 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
   const id = getNextExecSessionId();
   const outputFile = createBackgroundOutputFile(`exec_${id}`);
   const cwd = resolveShellWorkdir(args.workdir);
-  const env = { ...getShellEnv(), ...(args.secretEnv ?? {}) };
+  const env = { ...getShellEnv(), ...args.variableEnv, ...args.secretEnv };
   const redactions = captureSecretRedactions(
     args.parentScope?.agentId,
     args.secretEnv ?? {},
@@ -683,6 +690,8 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
 
   backgroundProcesses.set(id, {
     process: runningProcess.process,
+    completion: runningProcess.completion,
+    terminate: runningProcess.terminate,
     command: args.cmd,
     status: session.status,
     exitCode: session.exitCode,
@@ -727,7 +736,7 @@ export async function exec_command(
   const session = await startExecSession(args);
   const yieldTimeMs = clampYieldTime(
     args.yield_time_ms,
-    DEFAULT_EXEC_YIELD_TIME_MS,
+    resolveForegroundYieldMs(),
   );
   const { output, wallTimeMs } = await waitForSessionOutput({
     session,

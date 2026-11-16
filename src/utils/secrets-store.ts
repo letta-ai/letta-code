@@ -418,6 +418,29 @@ export async function initSecretsFromServer(agentId: string): Promise<void> {
   setCache(agentId, secrets);
 }
 
+const VAULT_LINKS_KEY = Symbol.for("@letta/secretsVaultLinks");
+
+function getVaultLinks(): Map<string, string> {
+  const global = globalThis as typeof globalThis & {
+    [VAULT_LINKS_KEY]?: Map<string, string>;
+  };
+  global[VAULT_LINKS_KEY] ??= new Map();
+  return global[VAULT_LINKS_KEY];
+}
+
+/**
+ * Read `sessionId`'s secrets from `vaultAgentId`'s vault. A detached subagent
+ * conversation has no vault of its own and uses its parent agent's. Only
+ * reads follow the link; writes still target the session's own ID.
+ */
+export function linkSecretsVault(sessionId: string, vaultAgentId: string) {
+  getVaultLinks().set(sessionId, vaultAgentId);
+}
+
+function readVaultId(agentId: string): string {
+  return getVaultLinks().get(agentId) ?? agentId;
+}
+
 /**
  * Load secrets from the in-memory cache.
  * Returns an empty object if secrets have not been initialized yet.
@@ -427,7 +450,7 @@ export function loadSecrets(agentId?: string): Record<string, string> {
   if (!resolvedAgentId) {
     return {};
   }
-  return { ...(getCache().get(resolvedAgentId) ?? {}) };
+  return { ...(getCache().get(readVaultId(resolvedAgentId)) ?? {}) };
 }
 
 /**
@@ -438,19 +461,20 @@ export function loadSecrets(agentId?: string): Record<string, string> {
  * seen. A failed refresh keeps the previous entry.
  */
 export async function ensureSecretsLoaded(agentId: string): Promise<void> {
-  if (!getCache().has(agentId)) {
-    await initSecretsFromServer(agentId);
+  const vaultId = readVaultId(agentId);
+  if (!getCache().has(vaultId)) {
+    await initSecretsFromServer(vaultId);
     return;
   }
-  const loadedAt = getLoadedAt().get(agentId) ?? 0;
+  const loadedAt = getLoadedAt().get(vaultId) ?? 0;
   const maxAge = testSecretsMaxAgeOverride ?? DEFAULT_SECRETS_MAX_AGE_MS;
   if (Date.now() - loadedAt < maxAge) return;
-  let refresh = staleRefreshes.get(agentId);
+  let refresh = staleRefreshes.get(vaultId);
   if (!refresh) {
-    refresh = initSecretsFromServer(agentId)
+    refresh = initSecretsFromServer(vaultId)
       .catch(() => undefined)
-      .finally(() => staleRefreshes.delete(agentId));
-    staleRefreshes.set(agentId, refresh);
+      .finally(() => staleRefreshes.delete(vaultId));
+    staleRefreshes.set(vaultId, refresh);
   }
   await refresh;
 }

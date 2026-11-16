@@ -497,6 +497,12 @@ function createProviderLettaStream(
           }
 
           if (part.type === "toolcall_end") {
+            if (part.toolCall.argumentsError) {
+              yield* createProviderErrorChunks(
+                new Error(part.toolCall.argumentsError),
+              );
+              return;
+            }
             sawToolCall = true;
             yield {
               message_type: "approval_request_message",

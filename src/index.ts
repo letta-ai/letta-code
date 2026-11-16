@@ -72,6 +72,7 @@ import {
   validatePrimaryStartupFlagConflicts,
 } from "./cli/startup-flag-validation";
 import { isHeadlessStartup } from "./cli/startup-mode";
+import * as startupReflection from "./cli/startup-reflection-settings";
 import {
   runSubcommand,
   subcommandNeedsEarlyBackendMode,
@@ -883,9 +884,9 @@ async function main(): Promise<void> {
     ? "memfs"
     : undefined;
   const shouldAutoEnableMemfsForNewAgent = !memfsFlag;
-
-  // Initialize telemetry (enabled by default, opt-out via LETTA_CODE_TELEM=0)
-  // Surface is set here so session_start captures the correct mode.
+  process.env.LETTA_RUNTIME_SESSION_SOURCE = isHeadless
+    ? "headless"
+    : "interactive-cli";
   telemetry.setSurface(getTerminalTelemetrySurface(isHeadless));
   telemetry.init({ handleSigint: !isHeadless });
 
@@ -2059,14 +2060,7 @@ async function main(): Promise<void> {
           process.exit(1);
         }
 
-        // Ensure local project settings are loaded before updating
-        // (they may not have been loaded if we didn't try to resume from project settings)
-        try {
-          settingsManager.getLocalProjectSettings();
-        } catch {
-          await settingsManager.loadLocalProjectSettings();
-        }
-
+        await startupReflection.ensureLocalProjectSettingsLoaded();
         // Set agent context for tools that need it (e.g., Skill tool)
         setAgentContext(
           agent.id,
@@ -2134,6 +2128,12 @@ async function main(): Promise<void> {
         if (!shouldBlockOnMemfsStartup) {
           void memfsSyncBackgroundPromise;
         }
+
+        await startupReflection.applyInteractiveReflectionStartup(
+          agentId,
+          values,
+          memfsSyncPromise,
+        );
 
         // Init secrets cache — runs in parallel with memfs sync below.
         const secretsInitPromise = import("@/utils/secrets-store")

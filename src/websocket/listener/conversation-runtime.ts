@@ -213,6 +213,7 @@ function queueRemovalTransition(
   return {
     client_message_id: item.clientMessageId ?? `cm-${item.id}`,
     disposition,
+    source: item.source,
   };
 }
 export function ensureConversationQueueRuntime(

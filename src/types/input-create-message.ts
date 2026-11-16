@@ -33,8 +33,6 @@ export interface InputCreateMessagePayload {
    * client tools before the allowlist is applied.
    */
   client_toolset?: ClientToolsetConfig;
-  /** Scoped runtime-start tools to expose for this turn; unscoped tools remain available. */
-  external_tool_scope_ids?: string[];
   /** Exclude interactive tools even when included by preferences or this input. */
   exclude_interactive_tools?: boolean;
   response_format?: Record<string, unknown>;

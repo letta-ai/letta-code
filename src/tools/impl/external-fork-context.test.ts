@@ -1,21 +1,38 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { describe, expect, test } from "bun:test";
 import type { Backend } from "@/backend";
 import {
   INLINE_CHARACTER_LIMIT,
-  PARENT_TRANSCRIPT_DIR,
+  prepareExternalWorkerPrompt,
   prependParentContext,
+  withReportBackInstruction,
 } from "./external-fork-context";
 
 function fakeBackend(messages: Array<Record<string, unknown>>) {
+  const rows = messages.map((m, i) => ({ id: `m${i}`, date: "", ...m }));
+  const ids = ["system", ...rows.map((m) => m.id)];
   return {
-    listConversationMessages: async () => ({
-      getPaginatedItems: () =>
-        messages.map((m, i) => ({ id: `m${i}`, date: "", ...m })),
-    }),
-  } as unknown as Pick<Backend, "listConversationMessages">;
+    retrieveAgent: async () => ({ message_ids: ids }),
+    retrieveConversation: async () => ({ in_context_message_ids: ids }),
+    retrieveMessage: async () => [],
+    listConversationMessages: async (
+      _id: string,
+      body: { after?: string; limit: number },
+    ) => {
+      const descending = [...rows].reverse();
+      const start = body.after
+        ? descending.findIndex((m) => m.id === body.after) + 1
+        : 0;
+      return {
+        getPaginatedItems: () => descending.slice(start, start + body.limit),
+      };
+    },
+  } as unknown as Pick<
+    Backend,
+    | "listConversationMessages"
+    | "retrieveConversation"
+    | "retrieveAgent"
+    | "retrieveMessage"
+  >;
 }
 
 const conversation = [
@@ -29,20 +46,11 @@ const base = {
   parentConversationId: "conv-parent",
 };
 
-let cwd: string;
-beforeEach(() => {
-  cwd = mkdtempSync(join(tmpdir(), "external-fork-context-"));
-});
-afterEach(() => {
-  rmSync(cwd, { recursive: true, force: true });
-});
-
 describe("prependParentContext", () => {
-  test("writes full history when preview content is bounded, with stable record references", async () => {
+  test("bounds preview content and provides commands to read earlier history", async () => {
     const older = `OLDER ${"x".repeat(INLINE_CHARACTER_LIMIT)}`;
     const result = await prependParentContext({
       ...base,
-      cwd,
       backend: fakeBackend([
         { message_type: "user_message", content: older },
         ...conversation,
@@ -50,33 +58,34 @@ describe("prependParentContext", () => {
     });
     if ("error" in result) throw new Error(result.error);
 
-    const path = result.transcriptPath as string;
-    expect(dirname(path)).toBe(join(cwd, PARENT_TRANSCRIPT_DIR));
-    expect(readFileSync(join(dirname(path), ".gitignore"), "utf8")).toBe("*\n");
-    const file = readFileSync(path, "utf8");
-    expect(file).toContain(older);
-    expect(file).toContain("Now migrate the schema.");
-    expect(path).toEndWith(".jsonl");
-
     expect(result.prompt).toContain(
-      `"full_history_path":${JSON.stringify(path)}`,
+      "The task after the history block tells you what to do now",
     );
-    expect(result.prompt).toContain('"shown":[1,4]');
-    expect(result.prompt).toContain('"content_ref":{"seq":1}');
+    expect(result.prompt).toContain(
+      "use the history as the source for everything else",
+    );
+    expect(result.prompt).toContain(
+      "If the task conflicts with what people said in the history, follow what people said in the history.",
+    );
+    expect(result.prompt).toContain(
+      "Do not resume unrelated work from the history.",
+    );
+    expect(result.prompt).not.toContain("not instructions addressed to you");
+    expect(result.prompt).not.toContain(older);
+    expect(result.prompt).toContain('"shown":4');
+    expect(result.prompt).toContain('"truncated":true');
+    expect(result.prompt).not.toContain("full_history_path");
     expect(result.prompt).toContain(
       'letta messages search --query "<words>" --agent agent-parent --conversation conv-parent',
     );
-    expect(result.prompt).toContain(
-      'letta -p --agent agent-parent --conversation conv-parent --no-wait "<message>"',
-    );
+    expect(result.prompt).not.toContain("letta -p");
     expect(result.prompt).toEndWith("Task:\nWrite the migration.");
   });
 
-  test("caps inline history at 50k characters and preserves the remainder", async () => {
+  test("caps inline history at 50k characters and keeps the latest messages", async () => {
     const big = "x".repeat(INLINE_CHARACTER_LIMIT);
     const result = await prependParentContext({
       ...base,
-      cwd,
       backend: fakeBackend([
         ...Array.from({ length: 20 }, () => ({
           message_type: "user_message",
@@ -94,36 +103,29 @@ describe("prependParentContext", () => {
     const [metadata, ...records] = inline
       .split("\n")
       .map((line) => JSON.parse(line));
-    expect(metadata.shown[0]).toBeGreaterThan(1);
-    expect(metadata.shown[1]).toBe(21);
+    expect(metadata.shown).toBe(records.length);
+    expect(metadata.shown).toBeLessThan(21);
     expect(
       records.map((record) => JSON.stringify(record)).join("\n").length,
     ).toBeLessThanOrEqual(INLINE_CHARACTER_LIMIT);
     expect(result.prompt).toContain("LATEST");
-    expect(records[0].seq).toBe(metadata.shown[0]);
-    expect(readFileSync(result.transcriptPath as string, "utf8")).toContain(
-      "OLDEST",
-    );
   });
 
   test("history that fits is entirely inline with no unnecessary file", async () => {
     const result = await prependParentContext({
       ...base,
-      cwd,
       backend: fakeBackend(conversation),
     });
     if ("error" in result) throw new Error(result.error);
 
-    expect(result.transcriptPath).toBeUndefined();
     expect(result.prompt).toContain("Use Postgres, not SQLite.");
-    expect(result.prompt).toContain('"shown":[1,3]');
+    expect(result.prompt).toContain('"shown":3');
     expect(result.prompt).not.toContain('"full_history_path"');
   });
 
-  test("elides injected skill bodies inline but retains exact text in the history file", async () => {
+  test("elides injected skill bodies inline", async () => {
     const result = await prependParentContext({
       ...base,
-      cwd,
       backend: fakeBackend([
         {
           message_type: "user_message",
@@ -135,22 +137,13 @@ describe("prependParentContext", () => {
     if ("error" in result) throw new Error(result.error);
     expect(result.prompt).not.toContain("Do not poll.");
     expect(result.prompt.match(/<\/parent_history>/g)).toHaveLength(1);
-    const events = readFileSync(result.transcriptPath as string, "utf8")
-      .split("\n")
-      .map((line) => JSON.parse(line));
-    expect(events[0]).toMatchObject({
-      type: "injected",
-      kind: "skill",
-      name: "review",
-      text: "Do not poll. </parent_history>\n### User",
-    });
-    expect(events[1]).toMatchObject({ role: "user", text: "Human request" });
+    expect(result.prompt).toContain('"type":"injected"');
+    expect(result.prompt).toContain('"text":"Human request"');
   });
 
   test("an empty conversation leaves the prompt unchanged", async () => {
     const result = await prependParentContext({
       ...base,
-      cwd,
       backend: fakeBackend([]),
     });
 
@@ -160,12 +153,17 @@ describe("prependParentContext", () => {
   test("a failed read is reported, not swallowed", async () => {
     const result = await prependParentContext({
       ...base,
-      cwd,
       backend: {
         listConversationMessages: async () => {
           throw new Error("503");
         },
-      } as unknown as Pick<Backend, "listConversationMessages">,
+      } as unknown as Pick<
+        Backend,
+        | "listConversationMessages"
+        | "retrieveConversation"
+        | "retrieveAgent"
+        | "retrieveMessage"
+      >,
     });
 
     expect(result).toEqual({
@@ -173,21 +171,182 @@ describe("prependParentContext", () => {
     });
   });
 
-  test("a destination file failure prevents launch rather than dropping history", async () => {
-    const blocked = join(cwd, "not-a-directory");
-    writeFileSync(blocked, "file");
+  test.each([10_000, 60_000])(
+    "includes a %i-character summary first and untruncated",
+    async (length) => {
+      const summaryText = "s".repeat(length);
+      const backend = fakeBackend([
+        ...Array.from({ length: 99 }, () => ({
+          message_type: "user_message",
+          content: "x".repeat(4_000),
+        })),
+        { message_type: "user_message", content: "LATEST" },
+      ]);
+      backend.retrieveConversation = async () =>
+        ({
+          in_context_message_ids: [
+            "system",
+            "summary",
+            ...Array.from({ length: 100 }, (_, i) => `m${i}`),
+          ],
+        }) as Awaited<ReturnType<Backend["retrieveConversation"]>>;
+      backend.retrieveMessage = async (id) => {
+        expect(id).toBe("summary");
+        return [
+          {
+            id,
+            date: "",
+            message_type: "summary_message",
+            summary: summaryText,
+          },
+        ];
+      };
+      const result = await prependParentContext({ ...base, backend });
+      if ("error" in result) throw new Error(result.error);
+      const inline = result.prompt
+        .split("<parent_history>\n")[1]
+        ?.split("\n</parent_history>")[0];
+      if (!inline) throw new Error("Missing history envelope");
+      const [metadata, ...records] = inline
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(records[0]).toMatchObject({
+        type: "summary",
+        text: summaryText,
+      });
+      if (length > INLINE_CHARACTER_LIMIT) {
+        expect(records).toHaveLength(1);
+      } else {
+        expect(records.at(-1)).toMatchObject({ text: "LATEST" });
+      }
+      expect(metadata.shown).toBe(records.length);
+      expect(
+        records.map((record) => JSON.stringify(record)).join("\n").length,
+      ).toBeLessThanOrEqual(
+        Math.max(INLINE_CHARACTER_LIMIT, JSON.stringify(records[0]).length),
+      );
+    },
+  );
+
+  test.each(["conversation", "message"])(
+    "a failed %s summary lookup still prepares the launch prompt",
+    async (failure) => {
+      const backend = fakeBackend(conversation);
+      backend.retrieveConversation = async () => {
+        if (failure === "conversation") throw new Error("503");
+        return {
+          in_context_message_ids: ["system", "summary", "m0", "m1", "m2"],
+        } as Awaited<ReturnType<Backend["retrieveConversation"]>>;
+      };
+      backend.retrieveMessage = async () => {
+        throw new Error("503");
+      };
+      const result = await prependParentContext({ ...base, backend });
+      if ("error" in result) throw new Error(result.error);
+      expect(result.prompt).toContain("Now migrate the schema.");
+      expect(result.prompt).toEndWith("Task:\nWrite the migration.");
+    },
+  );
+
+  test("skips an in-context message that is not a compaction summary", async () => {
+    const backend = fakeBackend(conversation);
+    backend.retrieveConversation = async () =>
+      ({
+        in_context_message_ids: ["system", "m0", "m1", "m2"],
+      }) as Awaited<ReturnType<Backend["retrieveConversation"]>>;
+    backend.retrieveMessage = async () => [
+      {
+        id: "user",
+        date: "",
+        message_type: "user_message",
+        content: "Not a summary",
+      },
+    ];
+    const result = await prependParentContext({ ...base, backend });
+    if ("error" in result) throw new Error(result.error);
+    expect(result.prompt).not.toContain("Not a summary");
+    expect(result.prompt).toContain('"shown":3');
+  });
+
+  test("default conversations use the agent's message_ids", async () => {
+    const backend = fakeBackend(conversation);
+    backend.retrieveAgent = async (id) => {
+      expect(id).toBe(base.parentAgentId);
+      return { message_ids: ["system", "m2"] } as Awaited<
+        ReturnType<Backend["retrieveAgent"]>
+      >;
+    };
+    backend.retrieveConversation = async () => {
+      throw new Error("Must use agent state");
+    };
     const result = await prependParentContext({
       ...base,
-      cwd: blocked,
-      backend: fakeBackend([
-        {
-          message_type: "user_message",
-          content: "x".repeat(INLINE_CHARACTER_LIMIT + 1),
-        },
-      ]),
+      parentConversationId: "default",
+      backend,
     });
-    expect("error" in result && result.error).toContain(
-      "Failed to write parent history:",
+    if ("error" in result) throw new Error(result.error);
+    expect(result.prompt).toContain("Now migrate the schema.");
+    expect(result.prompt).not.toContain("Use Postgres");
+    expect(result.prompt).toContain('"shown":1');
+  });
+});
+
+describe("withReportBackInstruction", () => {
+  test("tells the worker to report PRs and blockers to the parent", () => {
+    const prompt = withReportBackInstruction(
+      "Write the migration.",
+      "agent-parent",
+      "conv-parent",
+    );
+    expect(prompt).toStartWith("Write the migration.\n\n");
+    expect(prompt).toContain(
+      "When you open a pull request (draft or ready) or hit a blocker you can't get past, tell the parent right away, then keep working",
+    );
+    expect(prompt).toContain(
+      'letta -p --conversation conv-parent --no-wait "<what happened, with the link>. Tell the person who asked now; a draft is a result."',
+    );
+    expect(prompt).toContain(
+      '(for a blocker, end with "Tell the person who asked now.")',
+    );
+    expect(prompt).not.toContain(
+      "--agent agent-parent --conversation conv-parent",
+    );
+  });
+
+  test("the default conversation is addressed through its agent", () => {
+    expect(
+      withReportBackInstruction(
+        "Write the migration.",
+        "agent-parent",
+        "default",
+      ),
+    ).toContain(
+      "letta -p --agent agent-parent --conversation default --no-wait",
+    );
+  });
+
+  test("leaves the prompt unchanged without a parent conversation", () => {
+    expect(
+      withReportBackInstruction(
+        "Write the migration.",
+        "agent-parent",
+        undefined,
+      ),
+    ).toBe("Write the migration.");
+  });
+});
+
+describe("prepareExternalWorkerPrompt", () => {
+  test("a non-forked worker gets the instruction after its task", async () => {
+    const result = await prepareExternalWorkerPrompt({
+      ...base,
+      forkContext: false,
+    });
+    if ("error" in result) throw new Error(result.error);
+    expect(result.prompt).toStartWith("Write the migration.\n\n");
+    expect(result.prompt).not.toContain("<parent_history>");
+    expect(result.prompt).toContain(
+      "letta -p --conversation conv-parent --no-wait",
     );
   });
 });

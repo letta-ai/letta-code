@@ -53,14 +53,15 @@ import {
 import { getRuntimeExecutionEnv } from "@/runtime-execution-settings";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
-import { messageChannelTelemetry } from "@/telemetry/channel";
-import { autoBackgroundExternalTool } from "@/tools/external-tool-background";
+import { autoBackgroundClientTool } from "@/tools/client-tool-background";
 import { listenerExternalToolBackgroundOptions } from "@/tools/external-tool-background-eligibility";
+import { executeExternalToolRequest } from "@/tools/external-tool-execution";
 import type {
   ClientTool,
   ExternalToolDefinition,
   ExternalToolExecutor,
 } from "@/tools/external-tool-types";
+import { autoBackgroundRemoteExternalTool } from "@/tools/remote-external-tool-background";
 import * as contextRetention from "@/tools/tool-context-retention";
 
 export type {
@@ -78,7 +79,6 @@ import {
   selectModelFacingExternalTools,
   serializeClientTools,
 } from "./client-tool-serialization";
-import { normalizeExternalToolResultContent } from "./external-tool-content";
 import { toolFilter } from "./filter";
 import {
   appendHookFeedbackToText,
@@ -96,7 +96,7 @@ import {
   createScrubbedOutputStreamer,
   getAmbientRedactionSecrets,
   type InvocationSecretRedactions,
-  resolveSecretEnvFromCommand,
+  resolveShellEnvironment,
   type ScrubbedOutputStreamer,
   sanitizeOutputLines,
   sanitizeToolReturnContent,
@@ -127,6 +127,7 @@ const STREAMING_SHELL_TOOLS = new Set([
 ]);
 /** Background tools whose completion notification targets the invoking scope. */
 const SCOPED_BACKGROUND_TOOLS = new Set(["Monitor", "Workflow", "CodeMode"]);
+const TOOL_CALL_ID_TOOLS = new Set(["Task", "Skill", "Monitor"]); // executor ids, never model-supplied
 // Tools that write files — used to trigger onFileWrite broadcast after execution.
 const FILE_MUTATING_TOOLS = new Set(["Edit", "Write"]);
 
@@ -256,30 +257,15 @@ function filterExternalToolsByRuntimeContext(
         !tool.runtime ||
         ((tool.runtime.agentId ?? null) === (runtimeContext.agentId ?? null) &&
           tool.runtime.conversationId === runtimeContext.conversationId);
-      // An unscoped runtime tool belongs to its agent/conversation. The
-      // registration connection remains its execution return path, but turns
-      // for that runtime may originate from another connection or the process
-      // queue (for example, cron). Scoped tools remain connection-owned.
+      // A runtime tool belongs to its agent/conversation while its
+      // connection is open. The registration connection remains its execution
+      // return path, but turns for that runtime may originate from another
+      // connection or the process queue (for example, cron).
       const matchesConnection =
         tool.connectionId === undefined ||
         tool.connectionId === runtimeContext.connectionId ||
-        (tool.runtime !== undefined && tool.scopeId === undefined);
+        tool.runtime !== undefined;
       return matchesRuntime && matchesConnection;
-    }),
-  );
-}
-
-function filterExternalToolsByScopeIds(
-  externalTools: Map<string, ExternalToolDefinition>,
-  externalToolScopeIds?: string[],
-): Map<string, ExternalToolDefinition> {
-  const selectedScopes = new Set(externalToolScopeIds ?? []);
-  return new Map(
-    Array.from(externalTools.entries()).filter(([, tool]) => {
-      if (tool.scopeId === undefined) {
-        return true;
-      }
-      return selectedScopes.has(tool.scopeId);
     }),
   );
 }
@@ -373,6 +359,7 @@ const toolRegistry = getRegistry();
 let toolExecutionContextCounter = 0;
 
 type ToolExecutionContextSnapshot = {
+  shouldEnqueueBackground?: () => Promise<boolean>;
   toolRegistry: ToolRegistry;
   externalTools: Map<string, ExternalToolDefinition>;
   externalExecutor?: ExternalToolExecutor;
@@ -671,51 +658,14 @@ export async function executeExternalTool(
   toolDefinition?: ExternalToolDefinition,
   signal?: AbortSignal,
 ): Promise<ToolExecutionResult> {
-  const executor = executorOverride ?? getExternalToolExecutor();
-  if (!executor) {
-    return {
-      toolReturn: `External tool executor not set for tool: ${toolName}`,
-      status: "error",
-    };
-  }
-
-  const startedAt = Date.now();
-  let success = false;
-  try {
-    const tool = toolDefinition ?? getExternalToolDefinition(toolName);
-    const result = await executor(
-      toolCallId,
-      toolName,
-      input,
-      tool ? { tool, signal } : undefined,
-    );
-    success = !result.isError;
-    return {
-      toolReturn: clampToolReturnContent(
-        normalizeExternalToolResultContent(result.content),
-        toolName,
-      ),
-      status: result.isError ? "error" : "success",
-    };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    return {
-      toolReturn: `External tool execution error: ${errorMessage}`,
-      status: "error",
-    };
-  } finally {
-    if (toolName === "MessageChannel" || toolName === "message_channel") {
-      telemetry.trackToolUsage(
-        toolName,
-        success,
-        Date.now() - startedAt,
-        undefined,
-        success ? undefined : "tool_error",
-        undefined,
-        messageChannelTelemetry(input),
-      );
-    }
-  }
+  return executeExternalToolRequest(
+    toolCallId,
+    toolName,
+    input,
+    executorOverride ?? getExternalToolExecutor(),
+    toolDefinition ?? getExternalToolDefinition(toolName),
+    signal,
+  );
 }
 
 /**
@@ -758,7 +708,7 @@ function capturePreparedToolExecutionContext(
   },
   options?: {
     clientToolAllowlist?: string[];
-    externalToolScopeIds?: string[];
+    externalToolOwnerConnectionId?: string;
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
     modContext?: ModContext;
@@ -785,16 +735,13 @@ function capturePreparedToolExecutionContext(
     toolRegistry: toolRegistrySnapshot,
     externalTools: selectModelFacingExternalTools(
       filterExternalToolsByClientAllowlist(
-        filterExternalToolsByScopeIds(
-          filterExternalToolsByRuntimeContext(
-            snapshot.externalTools,
-            runtimeContext,
-          ),
-          options?.externalToolScopeIds,
+        filterExternalToolsByRuntimeContext(
+          snapshot.externalTools,
+          runtimeContext,
         ),
         clientToolAllowlist,
       ),
-      runtimeContext.connectionId,
+      options?.externalToolOwnerConnectionId ?? runtimeContext.connectionId,
     ),
     externalExecutor: snapshot.externalExecutor,
     modContext: options?.modContext ?? snapshot.modContext,
@@ -897,7 +844,7 @@ export async function prepareToolExecutionContextForSpecificTools(
   toolNames: string[],
   options?: {
     clientToolAllowlist?: string[];
-    externalToolScopeIds?: string[];
+    externalToolOwnerConnectionId?: string;
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
     modContext?: ModContext;
@@ -938,7 +885,7 @@ type ModelToolsetOptions = {
 export async function prepareToolExecutionContextForModel(
   modelIdentifier?: string,
   options?: ModelToolsetOptions & {
-    externalToolScopeIds?: string[];
+    externalToolOwnerConnectionId?: string;
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
     modContext?: ModContext;
@@ -2025,6 +1972,12 @@ async function executeToolInner(
         workingDirectory: context?.workingDirectory,
         permissionModeState: context?.permissionModeState,
       });
+  const backgroundOptions = {
+    shouldEnqueue: context?.shouldEnqueueBackground,
+    runtimeScope: executionScope,
+    signal: options?.signal,
+    onOutput: options?.onOutput,
+  };
   const workingDirectory =
     executionScope.workingDirectory ?? getCurrentWorkingDirectory();
   const scopedAgentId = executionScope.agentId ?? undefined;
@@ -2086,14 +2039,20 @@ async function executeToolInner(
         return createModPermissionToolResult(permissionDecision);
       }
     }
-    return executeModTool(name, modTool, eventArgs, executionScope, {
-      signal: options?.signal,
-      toolCallId: options?.toolCallId,
-      onOutput: options?.onOutput,
-      workingDirectory,
-      scopedAgentId,
-      modContext,
-    });
+    return autoBackgroundClientTool(
+      name,
+      (signal, onOutput) =>
+        executeModTool(name, modTool, eventArgs, executionScope, {
+          signal,
+          toolCallId: options?.toolCallId,
+          onOutput,
+          workingDirectory,
+          scopedAgentId,
+          modContext,
+        }),
+      backgroundOptions,
+      modEvents,
+    );
   }
   // Check if this is an external tool (SDK-executed)
   if (activeExternalTools.has(name)) {
@@ -2125,17 +2084,35 @@ async function executeToolInner(
     ) {
       return createModPermissionToolResult(permissionDecision);
     }
+    if (externalTool?.executor && externalTool.autoBackground === undefined) {
+      return runWithRuntimeContext(executionScope, () =>
+        autoBackgroundClientTool(
+          name,
+          (signal) =>
+            executeExternalTool(
+              options?.toolCallId ?? `ext-${Date.now()}`,
+              name,
+              eventArgs as Record<string, unknown>,
+              externalTool.executor,
+              externalTool,
+              signal,
+            ),
+          backgroundOptions,
+          modEvents,
+        ),
+      );
+    }
     return runWithRuntimeContext(executionScope, () =>
-      autoBackgroundExternalTool(
+      autoBackgroundRemoteExternalTool(
         name,
         externalTool,
-        executeExternalTool(
+        executeExternalTool.bind(
+          null,
           options?.toolCallId ?? `ext-${Date.now()}`,
           name,
           eventArgs as Record<string, unknown>,
           externalTool?.executor ?? activeExternalExecutor,
           externalTool,
-          options?.signal,
         ),
         listenerExternalToolBackgroundOptions(
           externalTool,
@@ -2192,7 +2169,10 @@ async function executeToolInner(
   }
   const startTime = Date.now();
 
-  const run = async (): Promise<ToolExecutionResult> => {
+  const run = async (
+    signal: AbortSignal,
+    onOutput: NonNullable<typeof options>["onOutput"],
+  ): Promise<ToolExecutionResult> => {
     // Run PreToolUse hooks - can block tool execution
     const preHookResult = await runPreToolUseHooks(
       internalName,
@@ -2225,36 +2205,29 @@ async function executeToolInner(
     try {
       let enhancedArgs = expandPathArgs(internalName, args, workingDirectory);
 
-      if (options?.signal) {
-        enhancedArgs = { ...enhancedArgs, signal: options.signal };
-      }
+      enhancedArgs = { ...enhancedArgs, signal };
 
       if (STREAMING_SHELL_TOOLS.has(internalName)) {
         // Redact only this invocation's secrets.
         const command = enhancedArgs.command ?? enhancedArgs.cmd;
-        invocationSecrets =
-          typeof command === "string" ||
-          (Array.isArray(command) &&
-            command.every((part) => typeof part === "string"))
-            ? await resolveSecretEnvFromCommand(command, scopedAgentId)
-            : {};
-        // Referenced secrets redact regardless of length; merge them over
-        // the always-on vault + ambient set.
+        const environment = await resolveShellEnvironment(
+          command,
+          scopedAgentId,
+        );
+        invocationSecrets = environment.secretEnv;
         invocationRedactions = captureSecretRedactions(
           scopedAgentId,
           invocationSecrets,
         );
-        if (options?.onOutput) {
+        if (onOutput) {
           outputStreamer = createScrubbedOutputStreamer(
             invocationRedactions,
-            options.onOutput,
+            onOutput,
             stripAnsi,
           );
           enhancedArgs = { ...enhancedArgs, onOutput: outputStreamer.onOutput };
         }
-        if (Object.keys(invocationSecrets).length > 0) {
-          enhancedArgs = { ...enhancedArgs, secretEnv: invocationSecrets };
-        }
+        enhancedArgs = { ...enhancedArgs, ...environment };
       }
       const parentScope =
         options?.parentScope ??
@@ -2272,10 +2245,9 @@ async function executeToolInner(
         enhancedArgs = { ...enhancedArgs, parentScope };
       }
 
-      // Correlate receipts with executor identity, never model-supplied fields.
       if (
         internalName === "AskUserQuestionAsync" ||
-        (["Task", "Skill"].includes(internalName) && options?.toolCallId)
+        (TOOL_CALL_ID_TOOLS.has(internalName) && options?.toolCallId)
       ) {
         enhancedArgs = { ...enhancedArgs, toolCallId: options?.toolCallId };
       }
@@ -2449,7 +2421,9 @@ async function executeToolInner(
     }
   };
 
-  return runWithRuntimeContext(executionScope, run);
+  return runWithRuntimeContext(executionScope, () =>
+    autoBackgroundClientTool(internalName, run, backgroundOptions, modEvents),
+  );
 }
 
 /**

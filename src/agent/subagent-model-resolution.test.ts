@@ -6,11 +6,7 @@ import {
   estimateStartupContextTokens,
   REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT,
 } from "@/agent/subagents/context-budget";
-import {
-  buildSubagentArgs,
-  recallPromptForBackend,
-  shouldPrependDeploySystemReminder,
-} from "@/agent/subagents/manager";
+import { buildSubagentArgs } from "@/agent/subagents/manager";
 import {
   resolveSubagentLauncher,
   resolveSubagentWorkingDirectory,
@@ -19,6 +15,10 @@ import {
   getModelHandleFromAgent,
   resolveSubagentModel,
 } from "@/agent/subagents/subagent-model";
+import {
+  recallPromptForBackend,
+  shouldPrependDeploySystemReminder,
+} from "@/agent/subagents/subagent-reminders";
 
 describe("recallPromptForBackend", () => {
   test("uses separate API and local recall prompts", () => {

@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
 import WebSocket from "ws";
+import { removeTestDir } from "@/test-utils/test-fs";
 import {
   markListenerConnectionInitialized,
   openListenerConnection,
@@ -43,9 +44,7 @@ describe("listener cwd change handling", () => {
       process.env.HOME = originalHome;
     }
     if (tempHome) {
-      // Bun on Windows CI has failed this removal with EFAULT after the test
-      // passed. A leftover temp dir is harmless; don't fail the test for it.
-      await rm(tempHome, { recursive: true, force: true }).catch(() => {});
+      await removeTestDir(tempHome);
       tempHome = null;
     }
   });

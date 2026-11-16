@@ -36,22 +36,31 @@ export function buildChatUrl(
   return qs ? `${base}?${qs}` : base;
 }
 
+const DESKTOP_TOKEN_PROTOCOL_PREFIX = "letta-desktop-token.";
+
 /**
  * Build the chat.letta.com desktop viewer URL for a sandbox desktop-session
- * relay URL. Chat reads the relay path and expiry from the hash, so they never
- * reach a server log as a query string. Anyone holding the result can view and
- * control the desktop until it expires.
+ * relay URL. Chat reads the relay path, token and expiry from the hash, so
+ * they never reach a server log as a query string, and sends the token in
+ * Sec-WebSocket-Protocol when it opens the relay. Anyone holding the result
+ * can view and control the desktop until it expires.
  */
 export function buildDesktopViewerUrl(
   relayUrl: string,
   expiresAt: string,
+  protocols?: string[],
 ): string {
   const relay = new URL(relayUrl);
   const viewer = new URL("/desktop", CHAT_BASE);
-  viewer.hash = new URLSearchParams({
-    path: `${relay.pathname}${relay.search}`,
-    expiresAt,
-  }).toString();
+  const token = protocols
+    ?.find((protocol) => protocol.startsWith(DESKTOP_TOKEN_PROTOCOL_PREFIX))
+    ?.slice(DESKTOP_TOKEN_PROTOCOL_PREFIX.length);
+  viewer.hash = new URLSearchParams(
+    token
+      ? { path: relay.pathname, token, expiresAt }
+      : // Older servers still return the token in the relay URL's query.
+        { path: `${relay.pathname}${relay.search}`, expiresAt },
+  ).toString();
   return viewer.toString();
 }
 

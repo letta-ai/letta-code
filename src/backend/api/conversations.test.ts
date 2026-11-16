@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { forkConversation } from "@/backend/api/conversations";
 import { settingsManager } from "@/settings-manager";
+import { removeTestDir } from "@/test-utils/test-fs";
 
 describe("conversation API requests", () => {
   const originalHome = process.env.HOME;
@@ -17,7 +18,7 @@ describe("conversation API requests", () => {
 
   afterEach(async () => {
     await settingsManager.reset();
-    await rm(testHome, { recursive: true, force: true });
+    await removeTestDir(testHome);
     process.env.HOME = originalHome;
   });
 

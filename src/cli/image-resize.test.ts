@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { execFileSync, spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
 import {
+  MAX_IMAGE_BYTES,
   MAX_IMAGE_HEIGHT,
   MAX_IMAGE_WIDTH,
   resizeImageIfNeeded,
@@ -31,6 +33,24 @@ describe("resizeImageIfNeeded", () => {
     expect(result.height).toBeLessThanOrEqual(MAX_IMAGE_HEIGHT);
     expect(metadata.width).toBe(result.width);
     expect(metadata.height).toBe(result.height);
+  });
+
+  test("compresses images whose base64 encoding exceeds the 5MB limit", async () => {
+    // Noise PNG under the dimension caps: ~4.3MB decoded, ~5.7MB as base64.
+    // Providers enforce the 5MB limit on the base64 data.
+    const width = 1300;
+    const height = 1100;
+    const png = await sharp(randomBytes(width * height * 3), {
+      raw: { width, height, channels: 3 },
+    })
+      .png()
+      .toBuffer();
+    expect(png.length).toBeLessThan(MAX_IMAGE_BYTES);
+    expect(png.toString("base64").length).toBeGreaterThan(MAX_IMAGE_BYTES);
+
+    const result = await resizeImageIfNeeded(png, "image/png");
+
+    expect(result.data.length).toBeLessThanOrEqual(MAX_IMAGE_BYTES);
   });
 
   test("canonicalizes passthrough media types from decoded image bytes", async () => {

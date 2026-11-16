@@ -134,10 +134,10 @@ export async function startTraceProxy(options: {
       } catch {
         oversized = true;
       }
-      const assembled = assembleTraceResponse(
-        oversized ? "" : responseRaw.toString("utf8"),
-        streaming,
-      );
+      const responseText = oversized ? "" : responseRaw.toString("utf8");
+      // Some Responses endpoints omit or mislabel the SSE content type.
+      streaming ||= /(?:^|\r?\n)data:/.test(responseText);
+      const assembled = assembleTraceResponse(responseText, streaming);
       let responseJson = sanitizeTraceJson(
         JSON.stringify(
           oversized

@@ -1,5 +1,9 @@
 import { getBackend } from "@/backend";
+import { experimentManager } from "@/experiments/manager";
+import { getRuntimeSessionSource } from "@/runtime-context";
+import MonitorCloudDescription from "./descriptions/MonitorCloud.md";
 import type { JsonSchema } from "./model-facing-tool";
+import MonitorCloudSchema from "./schemas/MonitorCloud.json";
 
 /**
  * Remove the `computer` parameter from the Task tool schema. Used when the
@@ -17,15 +21,31 @@ export function stripComputerFromTaskSchema(schema: JsonSchema): JsonSchema {
 }
 
 /**
- * Adjust a bundled tool's model-facing assets for the active backend. Only
- * Task varies today: it advertises `computer` only when the backend can route
- * work to another environment.
+ * Adjust a bundled tool's model-facing assets for the active backend. Monitor selects Cloud assets when its experiment is enabled.
+ * Task varies by backend: it advertises `computer` only when the backend can route
+ * work to another environment. Wake adds a session-lifetime reminder only in the TUI.
  */
 export async function resolveBackendSpecificToolAssets(
   name: string,
   description: string,
   inputSchema: JsonSchema,
 ): Promise<{ description: string; inputSchema: JsonSchema }> {
+  if (name === "Monitor" && experimentManager.isEnabled("cloud_monitors")) {
+    return {
+      description: (MonitorCloudDescription as string).trim(),
+      inputSchema: MonitorCloudSchema as JsonSchema,
+    };
+  }
+  if (
+    name === "Wake" &&
+    getRuntimeSessionSource() === "interactive-cli" &&
+    process.env.LETTA_DESKTOP_MODE !== "1"
+  ) {
+    return {
+      description: `${description.trimEnd()}\n\nWakes fire only while this session is running.`,
+      inputSchema,
+    };
+  }
   if (name !== "Task") {
     return { description, inputSchema };
   }

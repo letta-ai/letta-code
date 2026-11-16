@@ -1,0 +1,45 @@
+name: Unlock GNOME Keyring
+description: Install the keyring packages with bounded, retried apt-get calls, then unlock the keyring
+runs:
+  using: composite
+  steps:
+    # t1m0thyj/unlock-keyring runs an unbounded `apt-get install dbus-x11
+    # gnome-keyring`. A stalled mirror or dpkg lock can then consume the whole
+    # job timeout. Install the packages here first so its own install is a no-op.
+    - name: Install keyring packages
+      shell: bash
+      run: |
+        install_packages() {
+          timeout -k 10 140 sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+            apt-get install -y -o Dpkg::Use-Pty=0 \
+            -o Acquire::http::Timeout=20 \
+            -o Acquire::Retries=3 -o DPkg::Lock::Timeout=60 \
+            dbus-x11 gnome-keyring
+        }
+        for attempt in 1 2 3; do
+          if install_packages; then
+            exit 0
+          else
+            status=$?
+          fi
+          echo "Keyring package install attempt $attempt failed (exit $status)"
+          if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+            ps -eo pid,etime,cmd | grep -E 'apt|dpkg|needrestart|debconf|systemctl' | grep -v grep || true
+            sudo tail -n 30 /var/log/apt/term.log || true
+            sudo tail -n 20 /var/log/dpkg.log || true
+          fi
+          if [ "$attempt" -lt 3 ]; then
+            if [ "$attempt" -eq 1 ]; then
+              for source in /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list; do
+                if [ -f "$source" ]; then
+                  sudo sed -i 's#http://azure.archive.ubuntu.com/ubuntu#http://archive.ubuntu.com/ubuntu#g' "$source"
+                fi
+              done
+            fi
+            timeout -k 10 30 sudo DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
+            timeout -k 10 45 sudo apt-get update -qq -o Acquire::Retries=3 || true
+          fi
+        done
+        exit 1
+
+    - uses: t1m0thyj/unlock-keyring@v1

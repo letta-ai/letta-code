@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/letta-code",
-  "version": "0.34.45",
+  "version": "0.34.63",
   "lettaStartupLogProtocol": 1,
   "lettaConfigDirProtocol": 1,
   "description": "Letta Code is a CLI tool for interacting with stateful Letta agents from the terminal.",
@@ -14,6 +14,8 @@
     "README.md",
     "letta.js",
     "image-resize-worker.js",
+    "image-resize.js",
+    "image-resize.js.map",
     "cursor-worker.js",
     "npm-shrinkwrap.json",
     "assets/tutor-profile.png",
@@ -136,6 +138,11 @@
       "browser": "./dist/channels-telegram.js",
       "import": "./dist/channels-telegram.js",
       "default": "./dist/channels-telegram.js"
+    },
+    "./image-resize": {
+      "types": "./dist/types/image-resize-public.d.ts",
+      "import": "./image-resize.js",
+      "default": "./image-resize.js"
     }
   },
   "repository": {
@@ -152,7 +159,7 @@
   },
   "dependencies": {
     "@cursor/sdk": "1.1.0",
-    "@earendil-works/pi-ai": "^0.99.1",
+    "@earendil-works/pi-ai": "^1.5.2",
     "@letta-ai/letta-agent-sdk": "0.8.38",
     "@letta-ai/letta-client": "^1.10.2",
     "@letta-ai/trajectory": "0.2.0",
@@ -270,6 +277,9 @@
       "channels/telegram": [
         "./dist/types/channels-telegram.d.ts"
       ],
+      "image-resize": [
+        "./dist/types/image-resize-public.d.ts"
+      ],
       "protocol": [
         "./dist/types/types/protocol.d.ts"
       ]
@@ -277,8 +287,8 @@
   },
   "lettaLifecycleProtocol": 1,
   "lettaRuntimeGraphProtocol": 1,
-  "lettaRuntimeGraphSha512": "sha512-WIZjjGgnUTIQDdGkiMGGmYxhKDr34pXqcEUPqh9YvmdauZnqYCj0OeYE8ltjcpPNYevvXHP32Edeo+arrylfXA==",
+  "lettaRuntimeGraphSha512": "sha512-llGcPR13/WPW010yGdtNGC7Apobzktid+4Ka3zhviUWYP60+sHx9ovVyADbq+eHG9wrgZn9zRpo+7kdJ4mnElw==",
   "patchedDependencies": {
-    "@earendil-works/pi-ai@0.99.1": "patches/@earendil-works%2Fpi-ai@0.99.1.patch"
+    "@earendil-works/pi-ai@1.5.2": "patches/@earendil-works%2Fpi-ai@1.5.2.patch"
   }
 }
