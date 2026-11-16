@@ -3889,7 +3889,7 @@ This example answers one recurring question for the user. An MCP server named `i
 > }
 > ```
 
-To confirm the hook works, start Claude Code with `claude --debug` and give Claude a task that makes the server ask for the project key. No dialog appears, and the [debug log](#debug-hooks) has a line that ends with `Elicitation resolved by hook: {"action":"accept","content":{"project_key":"DOCS"}}`.
+To confirm the hook works, start Claude Code with `claude --debug` and give Claude a task that makes the server ask for the project key. No dialog appears, and the [debug log](#debug-hooks) has a line that contains `Elicitation resolved by hook:` and `accept`.
 
 ### ElicitationResult
 
