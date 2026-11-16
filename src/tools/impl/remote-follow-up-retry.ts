@@ -36,7 +36,7 @@ export async function sendRemoteFollowUpWithReconnect(
   } catch (error) {
     if (error instanceof Error && error.message === "App-server socket closed")
       throw new RemoteFollowUpSocketClosedError(
-        `${computer} closed the connection before confirming the follow-up after one retry. The message may not have been delivered; check the worker's output, or send it again.`,
+        `The connection to ${computer} dropped before it confirmed the follow-up, even after one retry. The message may not have been delivered; check the worker's output, or send it again.`,
       );
     if (
       error instanceof Error &&
