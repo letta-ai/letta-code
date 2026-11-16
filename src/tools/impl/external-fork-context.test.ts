@@ -303,7 +303,25 @@ describe("withReportBackInstruction", () => {
       "When you open a pull request (draft or ready) or hit a blocker you can't get past, tell the parent right away, then keep working",
     );
     expect(prompt).toContain(
-      'letta -p --agent agent-parent --conversation conv-parent --no-wait "<one line: what happened, with the link>"',
+      'letta -p --conversation conv-parent --no-wait "<what happened, with the link>. Tell the person who asked now; a draft is a result."',
+    );
+    expect(prompt).toContain(
+      '(for a blocker, end with "Tell the person who asked now.")',
+    );
+    expect(prompt).not.toContain(
+      "--agent agent-parent --conversation conv-parent",
+    );
+  });
+
+  test("the default conversation is addressed through its agent", () => {
+    expect(
+      withReportBackInstruction(
+        "Write the migration.",
+        "agent-parent",
+        "default",
+      ),
+    ).toContain(
+      "letta -p --agent agent-parent --conversation default --no-wait",
     );
   });
 
@@ -328,7 +346,7 @@ describe("prepareExternalWorkerPrompt", () => {
     expect(result.prompt).toStartWith("Write the migration.\n\n");
     expect(result.prompt).not.toContain("<parent_history>");
     expect(result.prompt).toContain(
-      "letta -p --agent agent-parent --conversation conv-parent --no-wait",
+      "letta -p --conversation conv-parent --no-wait",
     );
   });
 });

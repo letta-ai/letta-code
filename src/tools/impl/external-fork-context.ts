@@ -15,6 +15,7 @@ import {
   serializeHistoryRecord,
 } from "@/agent/subagents/parent-transcript";
 import { type Backend, getBackend } from "@/backend";
+import { buildAgentSendCliTarget } from "@/backend/api/agent-message";
 
 /** Maximum rendered history in the prompt, independent of message count. */
 export const INLINE_CHARACTER_LIMIT = 50_000;
@@ -131,7 +132,7 @@ export function withReportBackInstruction(
   return [
     prompt,
     "",
-    `When you open a pull request (draft or ready) or hit a blocker you can't get past, tell the parent right away, then keep working: run \`letta -p --agent ${parentAgentId} --conversation ${parentConversationId} --no-wait "<one line: what happened, with the link>"\`. Use the same command to ask the parent something mid-task.`,
+    `When you open a pull request (draft or ready) or hit a blocker you can't get past, tell the parent right away, then keep working: run \`letta -p ${buildAgentSendCliTarget(parentAgentId, parentConversationId)} --no-wait "<what happened, with the link>. Tell the person who asked now; a draft is a result."\` (for a blocker, end with "Tell the person who asked now."). Use the same command to ask the parent something mid-task.`,
   ].join("\n");
 }
 
