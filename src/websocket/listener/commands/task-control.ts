@@ -1,4 +1,4 @@
-import type WebSocket from "ws";
+import WebSocket from "ws";
 import type { ConversationRuntimeScope } from "@/types/runtime-scope";
 import type {
   LaunchSubagentCommand,
@@ -47,6 +47,17 @@ export async function handleTaskControlCommand(
     runDetachedListenerTask,
     safeSocketSend,
   } = context;
+  const arrivedOnRelay =
+    connectionId !== undefined && connectionId === runtime.connectionId;
+  const sendReply = (response: { type: string }) => {
+    const replySocket =
+      socket.readyState !== WebSocket.OPEN &&
+      arrivedOnRelay &&
+      runtime.socket?.readyState === WebSocket.OPEN
+        ? runtime.socket
+        : socket;
+    safeSocketSend(replySocket, response, response.type, command.type);
+  };
   const execute = async () => {
     if (command.type === "subagent_stop" && command.conversation) {
       const response = await stopListenerConversation(
@@ -56,7 +67,7 @@ export async function handleTaskControlCommand(
             throw new Error("Listener cancellation is unavailable");
           }),
       );
-      safeSocketSend(socket, response, response.type, command.type);
+      sendReply(response);
       return;
     }
     if (command.type === "monitor_stop") {
@@ -80,7 +91,7 @@ export async function handleTaskControlCommand(
         : command.type === "subagent_message"
           ? await handleSubagentMessageCommand(command, parent)
           : await handleSubagentStopCommand(command, parent);
-    safeSocketSend(socket, response, response.type, command.type);
+    sendReply(response);
   };
   if (
     command.type === "launch_subagent" ||
