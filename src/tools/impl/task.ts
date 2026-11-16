@@ -42,6 +42,7 @@ import type {
   SubagentLaunchArgs,
   SubagentLaunchResult,
 } from "@/types/subagent-protocol";
+import { debugLog } from "@/utils/debug";
 import { addToMessageQueue } from "@/utils/message-queue-bridge.js";
 import {
   formatTaskNotification,
@@ -800,10 +801,7 @@ export async function launchSubagent(
         args.mcp,
       );
     } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : String(error),
-      };
+      debugLog("task", "Skipping MCP discovery reminder: %s", error);
     }
 
     const { taskId, outputFile, subagentId } = spawnBackgroundSubagentTask({
