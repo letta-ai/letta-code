@@ -18,7 +18,7 @@
 - [Extend Claude Code](https://code.claude.com/docs/en/features-overview.md): Understand when to use CLAUDE.md, Skills, subagents, hooks, MCP, and plugins.
 - [Explore the .claude directory](https://code.claude.com/docs/en/claude-directory.md): Where Claude Code reads CLAUDE.md, settings.json, hooks, skills, commands, subagents, workflows, rules, and auto memory. Explore the .claude directory in your project and ~/.claude in your home directory.
 - [Explore the context window](https://code.claude.com/docs/en/context-window.md): An interactive simulation of how Claude Code's context window fills during a session. See what loads automatically, what each file read costs, and when rules and hooks fire.
-- [How Claude Code uses prompt caching](https://code.claude.com/docs/en/prompt-caching.md): Claude Code manages prompt caching automatically. See why a model switch triggers a slow uncached turn, what `/compact` costs, why CLAUDE.md edits don't apply mid-session, and how to check your cache hit rate.
+- [How Claude Code uses prompt caching](https://code.claude.com/docs/en/prompt-caching.md): See why a model switch triggers a slow uncached turn in Claude Code, what `/compact` costs, and how to check your prompt cache hit rate.
 
 #### Use Claude Code
 
@@ -448,7 +448,7 @@
 - [Agent SDK overview](https://code.claude.com/docs/en/agent-sdk/overview.md): Build production AI agents with Claude Code as a library
 - [Quickstart](https://code.claude.com/docs/en/agent-sdk/quickstart.md): Get started with the Python or TypeScript Agent SDK to build AI agents that work autonomously
 - [Migrate to Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/migration-guide.md): Guide for migrating the Claude Code TypeScript and Python SDKs to the Claude Agent SDK
-- [Troubleshoot the Agent SDK](https://code.claude.com/docs/en/agent-sdk/troubleshooting.md): Fix Agent SDK errors: the Claude Code CLI fails to start or exits, a tool message is too large, or a result arrives without structured output.
+- [Troubleshoot the Agent SDK](https://code.claude.com/docs/en/agent-sdk/troubleshooting.md): Fix Agent SDK errors: the Claude Code CLI fails to start or exits, your prompt generator throws, a tool message is too large, or structured output is missing.
 
 #### Build agents
 
@@ -464,7 +464,7 @@
 
 #### Input and output
 
-- [Streaming Input](https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode.md): Understanding the two input modes for Claude Agent SDK and when to use each
+- [Send messages to a running agent](https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode.md): Send follow-up messages and images to one Agent SDK session with streaming input, read each response, and interrupt a response to redirect Claude.
 - [Handle approvals and user input](https://code.claude.com/docs/en/agent-sdk/user-input.md): Surface Claude's approval requests and clarifying questions to users, then return their decisions to the SDK.
 - [Stream responses in real-time](https://code.claude.com/docs/en/agent-sdk/streaming-output.md): Get real-time responses from the Agent SDK as text and tool calls stream in
 - [Get structured output from agents](https://code.claude.com/docs/en/agent-sdk/structured-outputs.md): Return validated JSON from agent workflows using JSON Schema, Zod, or Pydantic. Get type-safe, structured data after multi-turn tool use.
@@ -512,7 +512,7 @@
 
 ### Input and output
 
-- [Streaming Input](https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode.md): Understanding the two input modes for Claude Agent SDK and when to use each
+- [Send messages to a running agent](https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode.md): Send follow-up messages and images to one Agent SDK session with streaming input, read each response, and interrupt a response to redirect Claude.
 
 ### Extend with tools
 

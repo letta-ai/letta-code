@@ -169,7 +169,10 @@ A `/<name>` that matches a built-in Claude Code command that isn't available in 
 
 > [!NOTE]
 >
-> A command can hit the `maxTurns` / `max_turns` limit like any other prompt, ending the query with an error result instead of `success`. For the error-result contract, see [Handle the result](https://code.claude.com/docs/en/agent-sdk/agent-loop.md#handle-the-result). If your command might hit the limit, wrap the loop in a `try`/`catch` in TypeScript or `try`/`except` in Python, as shown in [Single Message Input](https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode.md#single-message-input), or set `maxTurns` high enough for the work to complete.
+> When a command reaches the `maxTurns` / `max_turns` limit, the query ends with an error result instead of `success`. For the error-result contract, see [Handle the result](https://code.claude.com/docs/en/agent-sdk/agent-loop.md#handle-the-result). If your command might hit the limit, do one of these:
+>
+> * Set `maxTurns` high enough for the work to complete.
+> * Wrap the `query()` loop in `try`/`catch` in TypeScript or `try`/`except` in Python.
 
 ### Compact history with `/compact`
 

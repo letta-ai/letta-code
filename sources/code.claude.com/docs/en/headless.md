@@ -63,7 +63,7 @@ Hooks still don't run in bare mode when you pass them with `--settings`, or in t
 Bare mode also limits what happens while the session runs:
 
 * **MCP servers**: only servers supplied on the command line connect, for example with `--mcp-config`. In an interactive session, Claude Code also skips the automatic IDE connection unless you pass `--ide`.
-* **System reminders**: Claude gets your prompts and the tool results without the [system reminders](https://code.claude.com/docs/en/glossary.md#system-reminder) Claude Code would add alongside them. For example, Claude isn't told when a file it read earlier changes on disk, and it doesn't get the list of available skills, including skills from an `--add-dir` folder.
+* **System reminders**: Claude receives your prompts and the tool results without the [system reminders](https://code.claude.com/docs/en/glossary.md#system-reminder) Claude Code would add alongside them. For example, Claude isn't told when a file it edited earlier changes on disk, and it doesn't get the list of available skills, including skills from an `--add-dir` folder.
 * **Background tasks**: Claude can't run background commands or background subagents, and the other features that [`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS`](https://code.claude.com/docs/en/env-vars) turns off are off too. A command that reaches its [timeout](https://code.claude.com/docs/en/tools-reference.md#timeout-and-output-limits) stops instead of [moving to the background](https://code.claude.com/docs/en/tools-reference.md#background-commands).
 
 Before v2.1.286, these limits held only partly: an interactive `--bare` session connected the MCP servers that a normal session would, every `--bare` session sent system reminders, and background tasks stayed available.

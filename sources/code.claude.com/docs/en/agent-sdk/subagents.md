@@ -211,19 +211,17 @@ An API error that ends the subagent early, such as a rate limit, is never delive
 
 ### Automatic invocation
 
-Claude automatically decides when to invoke subagents based on the task and each subagent's `description`. For example, if you define a `performance-optimizer` subagent with the description "Performance optimization specialist for query tuning", Claude will invoke it when your prompt mentions optimizing queries.
+Claude automatically decides when to invoke subagents based on the task and each subagent's `description`. For example, a `performance-optimizer` subagent with the description "Performance optimization specialist for query tuning" fits a prompt about optimizing queries.
 
 Write clear, specific descriptions so Claude can match tasks to the right subagent.
 
 ### Explicit invocation
 
-To guarantee Claude uses a specific subagent, mention it by name in your prompt:
+To ask for a specific subagent, mention it by name in your prompt:
 
 ```text theme={null}
 "Use the code-reviewer agent to check the authentication module"
 ```
-
-This bypasses automatic matching and directly invokes the named subagent.
 
 ### Forked subagents
 

@@ -8,9 +8,12 @@
 
 By default, the Agent SDK yields a complete `AssistantMessage` for each non-empty content block, such as a text block or a tool call, after Claude finishes generating that block. To receive incremental updates as text and tool calls are generated, enable partial message streaming.
 
-> [!TIP]
+> [!NOTE]
 >
-> This page covers output streaming (receiving tokens in real-time). For input modes (how you send messages), see [Send messages to agents](https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode.md). You can also [stream responses using the Agent SDK via the CLI](https://code.claude.com/docs/en/headless.md).
+> These cases are covered on other pages:
+>
+> * **Sending messages to a running session**: see [Send messages to a running agent](https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode.md)
+> * **Streaming responses from the CLI**: see [stream responses using the Agent SDK via the CLI](https://code.claude.com/docs/en/headless.md)
 
 ## Enable streaming output
 
@@ -327,6 +330,6 @@ for await (const message of query({
 
 Now that you can stream text and tool calls in real-time, explore these related topics:
 
-* [Interactive vs one-shot queries](https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode.md): choose between input modes for your use case
+* [Send messages to a running agent](https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode.md): interrupt Claude's response or attach an image to a message
 * [Structured outputs](https://code.claude.com/docs/en/agent-sdk/structured-outputs.md): get typed JSON responses from the agent
 * [Permissions](https://code.claude.com/docs/en/agent-sdk/permissions.md): control which tools the agent can use

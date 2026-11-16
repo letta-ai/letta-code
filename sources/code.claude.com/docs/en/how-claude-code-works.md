@@ -124,7 +124,7 @@ If Claude follows a rule you didn't write, such as adding a `Co-Authored-By` tra
 
 * Your CLAUDE.md files
 * The instructions of your [output style](https://code.claude.com/docs/en/output-styles.md)
-* A note when a file Claude read earlier changes on disk
+* A note that a file Claude edited earlier has since changed on disk
 * The commit and pull request attribution lines
 
 To change or remove the attribution lines, set [`attribution`](https://code.claude.com/docs/en/settings-reference#attribution). To remove Claude Code's built-in commit and pull request instructions, set [`includeGitInstructions`](https://code.claude.com/docs/en/settings-reference#includegitinstructions) to `false`. For the other switches, see [Turn off the context your agent replaces](https://code.claude.com/docs/en/agent-sdk/modifying-system-prompts.md#turn-off-the-context-your-agent-replaces).
