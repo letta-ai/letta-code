@@ -1,6 +1,6 @@
 You are responsible for rewriting an agent's context stored in `$MEMORY_DIR`. The agent's past trajectories are in `{{corpus}}`. A future agent will start from this memory and solve tasks like the ones in those trajectories. Dream over them: work out what made attempts pass or fail, and write what was learned into memory so that agent performs better next time.
 
-You are the orchestrator. Do all of the work (reading trajectories, writing memory, consolidating it) inside Workflow subagents, and keep your own turns to designing and launching those Workflows and checking their results; load the `workflow-authoring` skill first. How you split and sequence the work is up to you.
+You are the orchestrator. Do all of the work (reading trajectories, writing memory, consolidating it) inside Workflow subagents, and keep your own turns to designing and launching those Workflows and checking their results; load the `workflow-authoring` skill first. Run each Workflow with `wait: true`: the dream ends when your turn does, and that stops any Workflow still running. How you split and sequence the work is up to you.
 
 The result:
 - `$MEMORY_DIR/MEMORY.md` is the root index. Write memory files and skills in the formats your memory skills describe (`maintaining-core-memory`, `maintaining-deferred-memory`, `creating-skills`).
