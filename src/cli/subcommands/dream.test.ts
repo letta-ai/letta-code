@@ -45,6 +45,7 @@ describe("expandDreamCommand", () => {
     expect(rest).not.toContain("--dynamic");
     expect(prompt).toContain(resolve("trajectories"));
     expect(prompt).toContain("Your budget is $250 (USD)");
+    expect(prompt).toContain("You are the orchestrator.");
     expect(prompt).toContain("maxCostUsd");
     expect(prompt).not.toContain("worktree add");
     expect(prompt).not.toMatch(/\{\{\w+\}\}/);

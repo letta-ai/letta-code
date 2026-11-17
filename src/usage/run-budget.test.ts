@@ -28,5 +28,7 @@ test("the run budget counts the agent's own cost and its Workflow subagents", ()
     spent_usd: 10,
     limit_usd: 10,
     remaining_usd: 0,
+    agent_usd: 5,
+    workflow_usd: 5,
   });
 });

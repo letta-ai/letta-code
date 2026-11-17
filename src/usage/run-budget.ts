@@ -26,7 +26,7 @@ function publish(): void {
   try {
     writeFileSync(
       file,
-      `${JSON.stringify({ spent_usd: +spent.toFixed(4), limit_usd: limit, remaining_usd: +Math.max(0, limit - spent).toFixed(4) })}\n`,
+      `${JSON.stringify({ spent_usd: +spent.toFixed(4), limit_usd: limit, remaining_usd: +Math.max(0, limit - spent).toFixed(4), agent_usd: +agentUsd.toFixed(4), workflow_usd: +workflowUsd.toFixed(4) })}\n`,
     );
   } catch {
     // Reporting spend is best effort; enforcement does not depend on it.
