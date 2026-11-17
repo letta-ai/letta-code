@@ -8,7 +8,10 @@ import {
   buildMcpServersInfoReminderText,
   type McpServersReminderDependencies,
 } from "./engine";
-import { createSharedReminderState } from "./state";
+import {
+  createSharedReminderState,
+  markPostCompactionContextRemindersPending,
+} from "./state";
 
 const MCP_AGENT_ID = "agent-reminder-mcp";
 
@@ -51,11 +54,27 @@ describe("mcp servers info reminder", () => {
     );
     expect(text).toContain("filesystem, linear (3 tools)");
   });
-  test("reports None once when no servers are available", async () => {
+  test("skips the reminder when the backend has no server-side MCP and no local servers exist", async () => {
     const state = createSharedReminderState();
     const deps: McpServersReminderDependencies = {
       getLocalServerNames: () => [],
       listServerSideServers: async () => null,
+    };
+
+    expect(await buildReminder(state, deps)).toBeNull();
+    expect(state.lastSentMcpServerNamesKey).toBeNull();
+    expect(await buildReminder(state, deps)).toBeNull();
+
+    // Compaction re-arms the reminder but still has nothing to announce.
+    markPostCompactionContextRemindersPending(state);
+    expect(await buildReminder(state, deps)).toBeNull();
+  });
+
+  test("reports None once when server-side MCP returns no servers", async () => {
+    const state = createSharedReminderState();
+    const deps: McpServersReminderDependencies = {
+      getLocalServerNames: () => [],
+      listServerSideServers: async () => [],
     };
 
     const initial = await buildReminder(state, deps);
@@ -65,6 +84,37 @@ describe("mcp servers info reminder", () => {
     );
 
     expect(await buildReminder(state, deps)).toBeNull();
+  });
+
+  test("announces local servers added later and reports None once they are removed", async () => {
+    const state = createSharedReminderState();
+    let localNames: string[] = [];
+    const deps: McpServersReminderDependencies = {
+      getLocalServerNames: () => [...localNames],
+      listServerSideServers: async () => null,
+    };
+
+    expect(await buildReminder(state, deps)).toBeNull();
+
+    localNames = ["filesystem"];
+    expect(await buildReminder(state, deps)).toContain(
+      "MCP servers with available tools: filesystem",
+    );
+    expect(await buildReminder(state, deps)).toBeNull();
+
+    localNames = [];
+    const removed = await buildReminder(state, deps);
+    expect(removed).toContain("MCP servers with available tools: None");
+    expect(removed).toContain(
+      "Do not automatically store results of principal-restricted operations in shared memory.",
+    );
+    expect(await buildReminder(state, deps)).toBeNull();
+
+    // Servers were announced in this session, so compaction re-sends None.
+    markPostCompactionContextRemindersPending(state);
+    expect(await buildReminder(state, deps)).toContain(
+      "MCP servers with available tools: None",
+    );
   });
 
   test("lists local and cloud servers with tool counts and usage instructions", async () => {
@@ -158,6 +208,35 @@ describe("mcp servers info reminder", () => {
         listServerSideServers: async () => [],
       }),
     ).toContain("MCP servers with available tools: None");
+  });
+
+  test("a failed first discovery does not count as announced", async () => {
+    const state = createSharedReminderState();
+    let localNames = ["filesystem"];
+    const deps: McpServersReminderDependencies = {
+      getLocalServerNames: () => [...localNames],
+      listServerSideServers: async () => {
+        throw new Error("api down");
+      },
+    };
+    expect(await buildReminder(state, deps)).toBeNull();
+    expect(state.lastSentMcpServerNamesKey).toBeNull();
+
+    localNames = [];
+    expect(
+      await buildReminder(state, {
+        ...deps,
+        listServerSideServers: async () => null,
+      }),
+    ).toBeNull();
+
+    localNames = ["filesystem"];
+    expect(
+      await buildReminder(state, {
+        ...deps,
+        listServerSideServers: async () => null,
+      }),
+    ).toContain("MCP servers with available tools: filesystem");
   });
 });
 

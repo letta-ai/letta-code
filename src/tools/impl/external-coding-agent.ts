@@ -243,12 +243,12 @@ export async function resolveExternalCodingAgentMcpReminder(
   );
   let inventory: ExternalCodingAgentMcpEntry[];
   try {
-    inventory = await listMcpServersForAgent(
+    ({ entries: inventory } = await listMcpServersForAgent(
       scopeAgentId,
       createSharedReminderState(),
       deps,
       5_000,
-    );
+    ));
   } catch (error) {
     debugLog("mcp", "Failed to load worker MCP inventory: %s", error);
     return buildMcpServersReminderText(null);
