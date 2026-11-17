@@ -190,6 +190,7 @@ async function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
   operation: string,
+  timeoutMessage?: string,
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -198,7 +199,11 @@ async function withTimeout<T>(
       new Promise<never>((_resolve, reject) => {
         timer = setTimeout(
           () =>
-            reject(new Error(`${operation} timed out after ${timeoutMs}ms`)),
+            reject(
+              new Error(
+                timeoutMessage ?? `${operation} timed out after ${timeoutMs}ms`,
+              ),
+            ),
           timeoutMs,
         );
       }),
@@ -332,6 +337,7 @@ export async function runUnifiedMcpTool(params: {
     ),
     params.timeoutMs ?? 60_000,
     "Running agent MCP tool",
+    `MCP tool call hit the cloud server's ${(params.timeoutMs ?? 60_000) / 1000}-second limit; the MCP server may still be processing the request. Retry with a smaller or more selective request, or set the tool's own timeout argument below ${(params.timeoutMs ?? 60_000) / 1000} seconds if it has one.`,
   );
   return parseRunResult(value);
 }

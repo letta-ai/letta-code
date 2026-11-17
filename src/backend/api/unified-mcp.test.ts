@@ -208,6 +208,36 @@ describe("unified MCP API adapter", () => {
     ).rejects.toThrow("Invalid MCP tool search result");
   });
 
+  test("explains execution timeouts without changing upstream errors", async () => {
+    const client = {
+      post: () => new Promise<never>(() => {}),
+    } as unknown as UnifiedMcpClient;
+    await expect(
+      runUnifiedMcpTool({
+        client,
+        agentId: "agent-1",
+        mcpServerId: "mcp-1",
+        toolId: "tool-1",
+        args: {},
+        timeoutMs: 1,
+      }),
+    ).rejects.toThrow(
+      "MCP tool call hit the cloud server's 0.001-second limit; the MCP server may still be processing the request. Retry with a smaller or more selective request, or set the tool's own timeout argument below 0.001 seconds if it has one.",
+    );
+    const error = new Error("provider failure");
+    await expect(
+      runUnifiedMcpTool({
+        client: {
+          post: () => Promise.reject(error),
+        } as unknown as UnifiedMcpClient,
+        agentId: "agent-1",
+        mcpServerId: "mcp-1",
+        toolId: "tool-1",
+        args: {},
+      }),
+    ).rejects.toBe(error);
+  });
+
   test("uses SDK request options for tool execution", async () => {
     const posts: Array<{ path: string; body: unknown }> = [];
     const runPath = "/v1/agents/agent-1/mcp-servers/mcp-1/tools/tool-1/run";
