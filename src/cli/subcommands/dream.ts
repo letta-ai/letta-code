@@ -1,4 +1,5 @@
-import { resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import dreamPrompt from "@/cli/subcommands/dream/dream-prompt.md";
 import dynamicDreamPrompt from "@/cli/subcommands/dream/dynamic-dream-prompt.md";
 
@@ -46,7 +47,13 @@ export function expandDreamCommand(args: string[]): string[] {
     if (budget === undefined || !Number.isFinite(usd) || usd <= 0) {
       usageError("--dynamic needs --budget-usd <positive number>.");
     }
-    prompt = dynamicDreamPrompt.replaceAll("{{budget}}", String(usd));
+    // The headless run stops at the budget and keeps the spend in this file.
+    const spendFile = join(tmpdir(), `letta-dream-spend-${process.pid}.json`);
+    process.env.LETTA_RUN_MAX_COST_USD = String(usd);
+    process.env.LETTA_RUN_SPEND_FILE = spendFile;
+    prompt = dynamicDreamPrompt
+      .replaceAll("{{budget}}", String(usd))
+      .replaceAll("{{spendFile}}", spendFile);
   } else if (budget !== undefined) {
     usageError("--budget-usd only applies with --dynamic.");
   }

@@ -17,6 +17,7 @@ import { disableLocalBackendMemfsForProcess } from "@/backend/local/paths";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { buildHeadlessSenderReminder } from "@/headless-message-sender";
 import { createHeadlessResponseState } from "@/headless-response-state";
+import { createHeadlessRunLimits } from "@/headless-run-limits";
 import { createStartupBackend } from "@/headless-startup-backend";
 import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
 import {
@@ -2064,26 +2065,14 @@ export async function handleHeadlessCommand(
   const chatgptExhaustedProviders = new Set<string>();
   markMilestone("HEADLESS_FIRST_STREAM_START");
   measureSinceMilestone("headless-setup-total", "HEADLESS_CLIENT_READY");
-  // Helper to check max turns limit using server-side step count from buffers
-  const checkMaxTurns = async (): Promise<void> => {
-    if (maxTurns !== undefined && buffers.usage.stepCount >= maxTurns) {
-      if (outputFormat === "stream-json") {
-        const errorMsg: ErrorMessage = {
-          type: "error",
-          message: `Maximum turns limit reached (${buffers.usage.stepCount}/${maxTurns} steps)`,
-          stop_reason: "max_steps",
-          session_id: sessionId,
-          uuid: `error-max-turns-${randomUUID()}`,
-        };
-        await writeWireMessageAsync(errorMsg);
-      } else {
-        console.error(
-          `Maximum turns limit reached (${buffers.usage.stepCount}/${maxTurns} steps)`,
-        );
-      }
-      await exitHeadless(1, "headless_max_steps_reached");
-    }
-  };
+  const { checkMaxTurns, checkRunBudget } = createHeadlessRunLimits({
+    maxTurns,
+    buffers,
+    outputFormat,
+    sessionId,
+    model: agent.llm_config?.handle ?? undefined,
+    exit: exitHeadless,
+  });
 
   // One-shot mode has no input loop, so wire SIGINT directly into the turn.
   const sigintSignal = createSigintAbortSignal();
@@ -2429,6 +2418,7 @@ export async function handleHeadlessCommand(
         await exitInterrupted();
       }
 
+      await checkRunBudget();
       if (
         stopReason !== "requires_approval" &&
         !approvalPendingRecovery &&

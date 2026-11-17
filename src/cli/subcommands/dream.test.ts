@@ -48,5 +48,7 @@ describe("expandDreamCommand", () => {
     expect(prompt).toContain("maxCostUsd");
     expect(prompt).not.toContain("worktree add");
     expect(prompt).not.toMatch(/\{\{\w+\}\}/);
+    expect(process.env.LETTA_RUN_MAX_COST_USD).toBe("250");
+    expect(prompt).toContain(String(process.env.LETTA_RUN_SPEND_FILE));
   });
 });
