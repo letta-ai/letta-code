@@ -1,5 +1,11 @@
 import { estimateLocalMessagesTokens } from "@/backend/local/local-context-estimate";
 import type { LocalMessage } from "./local-message";
+import {
+  addToolCallIdLookupKeys,
+  assistantMessageCanContributeToolCalls,
+  hasToolCallIdLookupKey,
+  isLocalToolCallContent,
+} from "./local-message-projection";
 
 export interface LocalAllCompactionPlan {
   messagesToSummarize: LocalMessage[];
@@ -32,24 +38,28 @@ export function findTrailingLocalToolExchange(
   if (
     start === messages.length ||
     call?.role !== "assistant" ||
-    call.stopReason === "error" ||
-    call.stopReason === "aborted"
+    !assistantMessageCanContributeToolCalls(call)
   ) {
     return undefined;
   }
-  const callIds = call.content.flatMap((part) =>
-    part.type === "toolCall" ? [part.id] : [],
-  );
-  const resultIds = new Set(
-    messages
-      .slice(start)
-      .flatMap((message) =>
-        message.role === "toolResult" ? [message.toolCallId] : [],
-      ),
-  );
+  const callIds = call.content
+    .filter(isLocalToolCallContent)
+    .map((part) => part.id);
+  const resultIds = messages
+    .slice(start)
+    .flatMap((message) =>
+      message.role === "toolResult" ? [message.toolCallId] : [],
+    );
+  // A result answers a call as removeOrphanLocalToolResults pairs them, which
+  // also matches the part of an id before a `|`.
+  const callKeys = new Set<string>();
+  for (const id of callIds) addToolCallIdLookupKeys(callKeys, id);
+  const resultKeys = new Set<string>();
+  for (const id of resultIds) addToolCallIdLookupKeys(resultKeys, id);
   const complete =
-    callIds.length === messages.length - start &&
-    callIds.every((id) => resultIds.has(id));
+    callIds.length === resultIds.length &&
+    resultIds.every((id) => hasToolCallIdLookupKey(callKeys, id)) &&
+    callIds.every((id) => hasToolCallIdLookupKey(resultKeys, id));
   return complete ? start - 1 : undefined;
 }
 
@@ -73,19 +83,15 @@ export function planLocalAllCompaction(
   }
 
   const budget = options.toolExchangeBudget;
-  const start =
-    budget === undefined ? undefined : findTrailingLocalToolExchange(messages);
-  if (
-    budget !== undefined &&
-    start !== undefined &&
-    start > 0 &&
-    estimateLocalMessagesTokens(messages.slice(start)) <= budget
-  ) {
-    return {
-      messagesToSummarize: messages.slice(0, start),
-      messagesToKeep: messages.slice(start),
-      keepsToolExchange: true,
-    };
+  if (budget !== undefined) {
+    const start = findTrailingLocalToolExchange(messages);
+    if (start && estimateLocalMessagesTokens(messages.slice(start)) <= budget) {
+      return {
+        messagesToSummarize: messages.slice(0, start),
+        messagesToKeep: messages.slice(start),
+        keepsToolExchange: true,
+      };
+    }
   }
 
   return {

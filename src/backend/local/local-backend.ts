@@ -668,9 +668,6 @@ export class LocalBackend extends HeadlessBackend {
     const settings = {
       ...resolveLocalCompactionSettings(agent, body),
       maxMessageTokens,
-      // Only pressure compaction has a budget to check a kept tool exchange
-      // against; manual and overflow compaction summarise it as before.
-      keepToolExchange: maxMessageTokens !== undefined,
     };
     const self = isLocalSelfCompactionMode(settings.mode)
       ? await this.selfCompactionContext(conversationId, agentId, turn)
@@ -729,6 +726,7 @@ export class LocalBackend extends HeadlessBackend {
     trigger: string,
     settings: ResolvedLocalCompactionSettings,
     self?: LocalSelfCompactionContext,
+    keepToolExchange = true,
   ): Promise<LocalCompactionResult> {
     const slidingWindow = isLocalSlidingWindowMode(settings.mode);
     const messages = this.store.listLocalMessages(conversationId, agentId);
@@ -739,7 +737,7 @@ export class LocalBackend extends HeadlessBackend {
           contextWindow,
         })
       : planLocalAllCompaction(messages, {
-          toolExchangeBudget: settings.keepToolExchange
+          toolExchangeBudget: keepToolExchange
             ? settings.maxMessageTokens
             : undefined,
         });
@@ -802,14 +800,15 @@ export class LocalBackend extends HeadlessBackend {
           throw error;
         }
         // With the summary the kept exchange is over budget, or keeping it
-        // would not shrink the context: summarise it too, as before.
+        // would not shrink the context: summarise it too.
         return this.compactLocalConversationPass(
           conversationId,
           agentId,
           agent,
           trigger,
-          { ...settings, keepToolExchange: false },
+          settings,
           self,
+          false,
         );
       }
     }

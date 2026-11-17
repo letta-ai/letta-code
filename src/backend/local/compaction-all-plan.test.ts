@@ -64,61 +64,74 @@ const prefix = [
 ];
 
 describe("findTrailingLocalToolExchange", () => {
-  test("finds a single call followed by its result", () => {
-    const messages = [
-      ...prefix,
-      assistant("a2", ["call-2"]),
-      result("r2", "call-2"),
-    ];
-    expect(findTrailingLocalToolExchange(messages)).toBe(3);
-  });
-
-  test("finds parallel calls whose results arrive in any order", () => {
-    const messages = [
-      ...prefix,
-      assistant("a2", ["call-a", "call-b", "call-c"]),
-      result("rc", "call-c"),
-      result("ra", "call-a"),
-      result("rb", "call-b"),
-    ];
-    expect(findTrailingLocalToolExchange(messages)).toBe(3);
-  });
-
-  test("ignores an exchange in which a call still lacks its result", () => {
-    const messages = [
-      ...prefix,
-      assistant("a2", ["call-a", "call-b"]),
-      result("ra", "call-a"),
-    ];
-    expect(findTrailingLocalToolExchange(messages)).toBeUndefined();
-  });
-
-  test("ignores results that answer a different call", () => {
-    const messages = [
-      ...prefix,
-      assistant("a2", ["call-a"]),
-      result("rx", "call-x"),
-    ];
-    expect(findTrailingLocalToolExchange(messages)).toBeUndefined();
-  });
-
-  test("ignores a conversation that does not end in a tool result", () => {
-    expect(
-      findTrailingLocalToolExchange([...prefix, user("u2", "and now?")]),
-    ).toBeUndefined();
-    expect(
-      findTrailingLocalToolExchange([...prefix, assistant("a2", ["call-2"])]),
-    ).toBeUndefined();
-    expect(findTrailingLocalToolExchange([])).toBeUndefined();
-  });
-
-  test("ignores the calls of an assistant message the request would drop", () => {
-    const messages = [
-      user("u1", "inspect the logs"),
-      assistant("a1", ["call-1"], "aborted"),
-      result("r1", "call-1"),
-    ];
-    expect(findTrailingLocalToolExchange(messages)).toBeUndefined();
+  test.each<[string, LocalMessage[], number | undefined]>([
+    [
+      "finds a single call followed by its result",
+      [...prefix, assistant("a2", ["call-2"]), result("r2", "call-2")],
+      3,
+    ],
+    [
+      "finds parallel calls whose results arrive in any order",
+      [
+        ...prefix,
+        assistant("a2", ["call-a", "call-b", "call-c"]),
+        result("rc", "call-c"),
+        result("ra", "call-a"),
+        result("rb", "call-b"),
+      ],
+      3,
+    ],
+    [
+      "matches a `|`-suffixed call id by the part before the `|`",
+      [...prefix, assistant("a2", ["call-2|fc-2"]), result("r2", "call-2")],
+      3,
+    ],
+    [
+      "ignores an exchange in which a call still lacks its result",
+      [
+        ...prefix,
+        assistant("a2", ["call-a", "call-b"]),
+        result("ra", "call-a"),
+      ],
+      undefined,
+    ],
+    [
+      "ignores an exchange in which one call has two results",
+      [
+        ...prefix,
+        assistant("a2", ["call-a", "call-b"]),
+        result("ra", "call-a"),
+        result("ra2", "call-a"),
+      ],
+      undefined,
+    ],
+    [
+      "ignores results that answer a different call",
+      [...prefix, assistant("a2", ["call-a"]), result("rx", "call-x")],
+      undefined,
+    ],
+    [
+      "ignores a conversation that ends in a user message",
+      [...prefix, user("u2", "and now?")],
+      undefined,
+    ],
+    [
+      "ignores a conversation that ends in a pending call",
+      [...prefix, assistant("a2", ["call-2"])],
+      undefined,
+    ],
+    ["ignores an empty conversation", [], undefined],
+    [
+      "ignores the calls of an assistant message the request would drop",
+      [
+        user("u1", "inspect the logs"),
+        assistant("a1", ["call-1"], "aborted"),
+        result("r1", "call-1"),
+      ],
+      undefined,
+    ],
+  ])("%s", (_name, messages, expected) => {
+    expect(findTrailingLocalToolExchange(messages)).toBe(expected);
   });
 });
 

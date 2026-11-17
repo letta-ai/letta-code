@@ -367,15 +367,15 @@ function toolCallIdLookupKeys(id: string): string[] {
   return baseId && baseId !== id ? [id, baseId] : [id];
 }
 
-function addToolCallIdLookupKeys(ids: Set<string>, id: string): void {
+export function addToolCallIdLookupKeys(ids: Set<string>, id: string): void {
   for (const key of toolCallIdLookupKeys(id)) ids.add(key);
 }
 
-function hasToolCallIdLookupKey(ids: Set<string>, id: string): boolean {
+export function hasToolCallIdLookupKey(ids: Set<string>, id: string): boolean {
   return toolCallIdLookupKeys(id).some((key) => ids.has(key));
 }
 
-function assistantMessageCanContributeToolCalls(
+export function assistantMessageCanContributeToolCalls(
   message: LocalAssistantMessage,
 ): boolean {
   return message.stopReason !== "error" && message.stopReason !== "aborted";

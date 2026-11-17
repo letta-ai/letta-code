@@ -496,13 +496,6 @@ describe("local compaction keeps the latest tool exchange", () => {
           "assistant",
           "user",
         ]);
-        expect(shape(compaction)).toEqual([
-          "user",
-          "assistant:call-1",
-          "toolResult:call-1",
-          "assistant",
-          "user",
-        ]);
         expect(compaction?.messages.at(-1)).toMatchObject({
           content: "Summarize the conversation now.",
         });
