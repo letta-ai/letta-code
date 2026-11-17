@@ -85,7 +85,8 @@ describe("OpenAI bridge durable admission", () => {
         "x-letta-chat-key": "admission-test-chat",
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(3000),
+      // Cold local turns include durable writes that can exceed 3s on Windows.
+      signal: AbortSignal.timeout(10_000),
     });
   }
 
@@ -119,7 +120,7 @@ describe("OpenAI bridge durable admission", () => {
         };
         expect(Object.keys(store.entries)).toHaveLength(1);
         expect(listener.streamObservers?.size).toBe(0);
-      });
+      }, 20_000);
     }
 
     test(`${endpoint} terminates a rejected stream before executing input`, async () => {
