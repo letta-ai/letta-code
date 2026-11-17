@@ -19,6 +19,7 @@ import {
   isProvenCloudApiShutdownRejection,
 } from "@/backend/api/conversation-enqueue";
 import { ApiRequestError } from "@/backend/api/request";
+import { readConversationRuntimeStatus } from "@/headless-super-run-wait";
 import {
   getCurrentWorkingDirectory,
   getRuntimeActingUserAttribution,
@@ -70,6 +71,7 @@ interface SendAgentMessageDeps {
     | "retrieveAgent"
   >;
   enqueue?: typeof enqueueConversationMessage;
+  runtimeStatus?: typeof readConversationRuntimeStatus;
   trackChildSend?: typeof trackChildSend;
   sendClaudeMessage?: typeof sendClaudeMessage;
   sendCodexMessage?: typeof sendCodexMessage;
@@ -544,6 +546,31 @@ export async function send_agent_message(
       signal,
     );
     signal.throwIfAborted();
+    const child = destination.agentId
+      ? await resolveChildSubagent(backend, destination.agentId, sender.agentId)
+      : null;
+    if (child?.isSubagent && destination.conversationId === "default") {
+      const status = await (
+        deps.runtimeStatus ?? readConversationRuntimeStatus
+      )(
+        destination.agentId as string,
+        destination.conversationId,
+        signal,
+      ).catch(() => null);
+      if (
+        status &&
+        status.active_run_ids.length === 0 &&
+        (status.active_bash_count ?? 0) === 0 &&
+        (status.state === "IDLE" ||
+          (status.state === "ACTIVE" &&
+            status.loop_state?.status === "WAITING_ON_INPUT"))
+      ) {
+        throw new Error(
+          "That subagent finished its job. Start the next job with a fresh Agent, briefed with the current method, the skill to load, and what's been tried or rejected. SendAgentMessage steers a subagent only while its run is in progress.",
+        );
+      }
+    }
+    signal.throwIfAborted();
     submissionAttempted = true;
     if (!backend.capabilities.environmentRouting) {
       const launcher = resolveSubagentLauncher(
@@ -571,13 +598,15 @@ export async function send_agent_message(
       },
       signal,
     );
-    const child = receipt.agent_id
-      ? await resolveChildSubagent(backend, receipt.agent_id, sender.agentId)
+    const trackedChild = receipt.agent_id
+      ? receipt.agent_id === destination.agentId
+        ? child
+        : await resolveChildSubagent(backend, receipt.agent_id, sender.agentId)
       : null;
-    if (child) {
+    if (trackedChild) {
       (deps.trackChildSend ?? trackChildSend)({
         receipt,
-        child,
+        child: trackedChild,
         prompt: args.message,
         parentScope: {
           agentId: sender.agentId,
