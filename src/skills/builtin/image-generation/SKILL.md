@@ -125,6 +125,8 @@ multi-image edits well. To build a data URL from a local file:
 DATA_URL="data:image/png;base64,$(base64 < input.png | tr -d '\n')"
 ```
 
+Post the model's whole output as the result. Pasting or blending a generated region back onto the original leaves a visible seam and mismatched light and scale; to fix one part, run another full edit with the previous output as the input image and say what to keep.
+
 ## Prompting (applies to every provider)
 
 Write the prompt like a brief for the image you need, then inspect the result
