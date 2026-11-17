@@ -60,6 +60,12 @@ import {
   localToolArgumentsFromUnknown,
 } from "./local-message";
 import {
+  getCursor,
+  getIncludedMessageTypes,
+  getListLimit,
+  getListOrder,
+} from "./local-message-list-options";
+import {
   clipOversizedLocalToolResults,
   cloneLocalMessage,
   isLocalToolCallContent,
@@ -123,7 +129,10 @@ import {
   validateUnreadTranscriptHead,
   writeLocalTranscriptManifest,
 } from "./local-transcript";
-import { readLocalTranscriptRowsForHistory } from "./local-transcript-history";
+import {
+  countLocalTranscriptMessagesOutsideContext,
+  readLocalTranscriptRowsForHistory,
+} from "./local-transcript-history";
 import type {
   LocalAgentRecord,
   StoredConversation,
@@ -202,41 +211,6 @@ function parseToolInput(input: unknown): unknown {
   } catch {
     return input;
   }
-}
-
-function getListLimit(
-  body?: ConversationMessageListBody | AgentMessageListBody,
-) {
-  const limit = (body as { limit?: unknown } | undefined)?.limit;
-  return typeof limit === "number" && limit > 0 ? limit : undefined;
-}
-
-function getListOrder(
-  body?: ConversationMessageListBody | AgentMessageListBody,
-) {
-  const order = (body as { order?: unknown } | undefined)?.order;
-  return order === "asc" ? "asc" : "desc";
-}
-
-function getCursor(
-  body: ConversationMessageListBody | AgentMessageListBody | undefined,
-  key: "before" | "after",
-): string | undefined {
-  const value = (body as Record<string, unknown> | undefined)?.[key];
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-function getIncludedMessageTypes(
-  body?: ConversationMessageListBody | AgentMessageListBody,
-): Set<string> | undefined {
-  const value = (body as Record<string, unknown> | undefined)
-    ?.include_return_message_types;
-  if (!Array.isArray(value)) return undefined;
-
-  const messageTypes = value.filter(
-    (item): item is string => typeof item === "string" && item.length > 0,
-  );
-  return messageTypes.length > 0 ? new Set(messageTypes) : undefined;
 }
 
 export interface StoredTurnInput {
@@ -1020,6 +994,21 @@ export class LocalStore {
       conversationId,
       resolvedAgentId,
     ).map(cloneLocalMessage);
+  }
+
+  /** Stored messages of the conversation that compaction took out of context. */
+  countMessagesOutsideContext(conversationId: string, agentId: string): number {
+    const conversation = this.findConversation(conversationId, agentId);
+    if (!conversation) return 0;
+    const key = this.conversationKey(conversation.id, agentId);
+    const metadata = this.validateTranscriptMetadata(key);
+    return metadata
+      ? countLocalTranscriptMessagesOutsideContext(
+          metadata.messagesPath,
+          metadata.messageFormat,
+          conversation.in_context_message_ids,
+        )
+      : 0;
   }
 
   settleInterruptedToolCalls(

@@ -13,7 +13,6 @@ import type {
   ConversationCreateBody,
   ConversationMessageCompactBody,
   ConversationMessageCreateBody,
-  ConversationMessageListBody,
   ConversationMessageStreamBody,
   ConversationRecompileBody,
 } from "@/backend/backend";
@@ -455,7 +454,6 @@ export class LocalBackend extends HeadlessBackend {
       input.conversationId,
       input.agentId,
       input.agent,
-      input.history.length,
     );
     const clientSkills = Array.isArray(
       (input.body as Record<string, unknown>).client_skills,
@@ -827,7 +825,6 @@ export class LocalBackend extends HeadlessBackend {
     conversationId: string,
     agentId: string,
     agent = this.store.retrieveAgentRecord(agentId),
-    previousMessageCount = 0,
   ): Promise<LocalCompiledSystemPrompt> {
     const existing = this.store.getCompiledSystemPrompt(
       conversationId,
@@ -850,10 +847,9 @@ export class LocalBackend extends HeadlessBackend {
       const compiled = await this.compileAndMaybePersistSystemPrompt(
         conversationId,
         agentId,
-        {
-          dryRun: true,
-          previousMessageCount,
-        },
+        // Only the memory sections of this compile are used, so skip the
+        // transcript read behind the recall count.
+        { dryRun: true, previousMessageCount: 0 },
       );
       if (compiled.memfsRevision !== existing.memfsRevision) {
         const midConversationSystemPrompt =
@@ -871,7 +867,6 @@ export class LocalBackend extends HeadlessBackend {
 
     return this.compileAndMaybePersistSystemPrompt(conversationId, agentId, {
       dryRun: false,
-      previousMessageCount,
     });
   }
 
@@ -887,10 +882,7 @@ export class LocalBackend extends HeadlessBackend {
     }
     const previousMessageCount =
       options.previousMessageCount ??
-      this.store.listConversationMessages(conversationId, {
-        agent_id: agentId,
-        order: "asc",
-      } as ConversationMessageListBody).length;
+      this.store.countMessagesOutsideContext(conversationId, agentId);
     const compiled = compileLocalSystemPrompt({
       agent,
       conversationId,
