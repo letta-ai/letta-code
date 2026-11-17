@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
@@ -14,6 +14,7 @@ import {
   LOCAL_TRANSCRIPT_MESSAGE_FORMAT,
 } from "@/backend/local/local-transcript";
 import { countLocalTranscriptMessagesOutsideContext } from "@/backend/local/local-transcript-history";
+import { TestDirectory } from "@/test-utils/test-fs";
 
 const TIMESTAMP = "2026-11-17T00:00:00.000Z";
 
@@ -31,25 +32,22 @@ function messageEntry(id: string, parentId: string | null, text?: string) {
   };
 }
 
-async function withTranscript(
-  rows: unknown[],
-  run: (path: string) => void,
-): Promise<void> {
-  const dir = await mkdtemp(join(tmpdir(), "local-transcript-history-"));
+function withTranscript(rows: unknown[], run: (path: string) => void): void {
+  const dir = new TestDirectory();
   try {
-    const path = join(dir, "messages.jsonl");
-    await writeFile(
-      path,
-      `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`,
+    run(
+      dir.createFile(
+        "messages.jsonl",
+        `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`,
+      ),
     );
-    run(path);
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    dir.cleanup();
   }
 }
 
 describe("countLocalTranscriptMessagesOutsideContext", () => {
-  test("counts each message outside context once, including summaries", async () => {
+  test("counts each message outside context once, including summaries", () => {
     const rows = [
       { type: "session", version: 3, id: "s", timestamp: TIMESTAMP, cwd: "/" },
       messageEntry("m1", null),
@@ -78,7 +76,7 @@ describe("countLocalTranscriptMessagesOutsideContext", () => {
         message: message("summary-2"),
       },
     ];
-    await withTranscript(rows, (path) => {
+    withTranscript(rows, (path) => {
       expect(
         countLocalTranscriptMessagesOutsideContext(
           path,
@@ -89,23 +87,20 @@ describe("countLocalTranscriptMessagesOutsideContext", () => {
     });
   });
 
-  test("reads legacy message rows", async () => {
-    await withTranscript(
-      [message("m1"), message("m2"), message("m3")],
-      (path) => {
-        expect(
-          countLocalTranscriptMessagesOutsideContext(
-            path,
-            LOCAL_TRANSCRIPT_LEGACY_MESSAGE_FORMAT,
-            ["m3"],
-          ),
-        ).toBe(2);
-      },
-    );
+  test("reads legacy message rows", () => {
+    withTranscript([message("m1"), message("m2"), message("m3")], (path) => {
+      expect(
+        countLocalTranscriptMessagesOutsideContext(
+          path,
+          LOCAL_TRANSCRIPT_LEGACY_MESSAGE_FORMAT,
+          ["m3"],
+        ),
+      ).toBe(2);
+    });
   });
 
-  test("treats an empty in-context list as everything in context", async () => {
-    await withTranscript([messageEntry("m1", null)], (path) => {
+  test("treats an empty in-context list as everything in context", () => {
+    withTranscript([messageEntry("m1", null)], (path) => {
       expect(
         countLocalTranscriptMessagesOutsideContext(
           path,

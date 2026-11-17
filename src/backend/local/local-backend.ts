@@ -847,9 +847,7 @@ export class LocalBackend extends HeadlessBackend {
       const compiled = await this.compileAndMaybePersistSystemPrompt(
         conversationId,
         agentId,
-        // Only the memory sections of this compile are used, so skip the
-        // transcript read behind the recall count.
-        { dryRun: true, previousMessageCount: 0 },
+        { dryRun: true },
       );
       if (compiled.memfsRevision !== existing.memfsRevision) {
         const midConversationSystemPrompt =
@@ -873,20 +871,19 @@ export class LocalBackend extends HeadlessBackend {
   private async compileAndMaybePersistSystemPrompt(
     conversationId: string,
     agentId: string,
-    options: { dryRun: boolean; previousMessageCount?: number },
+    options: { dryRun: boolean },
   ): Promise<LocalCompiledSystemPrompt> {
     const agent = this.store.retrieveAgentRecord(agentId);
     const memfsEnabled = this.isMemfsEnabledForAgent(agentId);
     if (memfsEnabled) {
       await this.ensureLocalMemoryRepo(agentId, [], agent.name);
     }
-    const previousMessageCount =
-      options.previousMessageCount ??
-      this.store.countMessagesOutsideContext(conversationId, agentId);
     const compiled = compileLocalSystemPrompt({
       agent,
       conversationId,
-      previousMessageCount,
+      // Scans the transcript, so only when <memory_metadata> is rendered.
+      previousMessageCount: () =>
+        this.store.countMessagesOutsideContext(conversationId, agentId),
       memoryDir: memfsEnabled ? this.memoryDirForAgent(agentId) : undefined,
       includeMemfs: memfsEnabled,
     });
