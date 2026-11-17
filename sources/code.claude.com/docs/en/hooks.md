@@ -265,9 +265,11 @@ See [what runs under `allowManagedHooksOnly`](https://code.claude.com/docs/en/se
 
 Hook entries merge across settings levels rather than replacing each other: user, project, and local settings add their own hooks without removing managed ones, and the [`disableAllHooks`](#disable-or-remove-hooks) setting can't disable managed hooks from outside managed settings.
 
-The [HTTP hook allowlists](https://code.claude.com/docs/en/settings-reference.md#hook-and-skill-settings) apply to hooks from every source, including managed policy settings:
+#### Limit HTTP hooks
 
-* `allowedHttpHookUrls`: when defined at any settings level, Claude Code runs an HTTP hook handler only if its URL matches the merged allowlist
+Set these [HTTP hook allowlists](https://code.claude.com/docs/en/settings-reference.md#hook-and-skill-settings) in managed settings to cover hooks your organization deploys, or in any settings file to cover other hooks:
+
+* `allowedHttpHookUrls`: when defined, Claude Code runs an HTTP hook handler only if its URL matches the merged allowlist
 * `httpHookAllowedEnvVars`: when defined, Claude Code interpolates only the environment variables on that list into hook headers
 
 ### Matcher patterns

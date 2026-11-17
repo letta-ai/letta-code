@@ -3072,12 +3072,13 @@ The output takes one of the following shapes depending on what Claude read. Chec
     "totalLines": int | None,  # Optional total before head_limit and offset, in content mode
     "appliedLimit": int | None,  # Present when head_limit truncated the result
     "appliedOffset": int | None,  # Present when an offset was applied
+    "timedOut": bool | None,  # True when the search ran out of time, so results may be incomplete
 }
 ```
 
 Grep returns this dict shape in each output mode. Which optional keys are present depends on `output_mode`.
 
-`totalFiles` requires Claude Code v2.1.208 or later. `totalLines` requires Claude Code v2.1.210 or later.
+`totalFiles` requires Claude Code v2.1.208 or later. `totalLines` requires Claude Code v2.1.210 or later. `timedOut` requires Claude Code v2.1.317 or later.
 
 ### NotebookEdit
 

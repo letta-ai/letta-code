@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.326:docs:3dfd50c42e8e03144966914e6d6769189c194cae2b9863f5545b4c9642aa0c2d:runtime:2feb3b77009f26a3defd72058ee56dfd1e64c91c3a9052b51eea104f65c5de9d",
+  "candidate_id": "claude@2.1.326:docs:1e6dad25f749bbc84a2d3864cce3a9a339a679b88db4b7daa9df2edc2e0550ec:runtime:2feb3b77009f26a3defd72058ee56dfd1e64c91c3a9052b51eea104f65c5de9d",
   "package_version": "2.1.326",
   "npm_integrity": "sha512-F7OqxXKogQYUs+RN1903IWlXGuxn8iwAykx+umRbDKvoBeK0Xm6cdgQx9auu5dtsB+DczN58/EFrlaU8pLfgJg==",
   "npm_published_at": "2026-11-16T18:43:39.005Z",
@@ -14,7 +14,7 @@
   },
   "docs": {
     "index_url": "https://code.claude.com/docs/llms.txt",
-    "index_hash": "a2ff8ff96ad8e1a6b744189e14245dec8fe224de3cd8a0e435341d6316570dcf",
+    "index_hash": "468a11b1c1889729b23ace48a74eaf1cd2e720eac14709ca02b750a34db6e272",
     "full_scan": false,
     "scanned_at": "2026-11-16T22:18:41.761Z",
     "pages": {
@@ -134,7 +134,7 @@
       },
       "https://code.claude.com/docs/en/agent-sdk/python.md": {
         "url": "https://code.claude.com/docs/en/agent-sdk/python.md",
-        "hash": "ed7dd1ab4deda29186aa9b9897374305bbfce217f040bc7a874c3f8251b916c3",
+        "hash": "446a823c3206520317f11b8862b64f24d2b6ba4d67a509b6726542a5e5a2cc9e",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/agent-sdk/python.md"
       },
@@ -218,7 +218,7 @@
       },
       "https://code.claude.com/docs/en/agent-sdk/typescript.md": {
         "url": "https://code.claude.com/docs/en/agent-sdk/typescript.md",
-        "hash": "cdb8ee7258e8bbd884a8f26a32a9b46ee2e5f79dae40a5124d96e0a5cfd1bc2d",
+        "hash": "48109a84aec8370c1cbc1aa488339fd3a4dd06e17ea3c9165a3c294b2de83cc3",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/agent-sdk/typescript.md"
       },
@@ -404,7 +404,7 @@
       },
       "https://code.claude.com/docs/en/cli-reference.md": {
         "url": "https://code.claude.com/docs/en/cli-reference.md",
-        "hash": "eb38473cd24800c8e9bbf03e091d30d3a0de131ce08ff7a540b2b1b2202cfb5d",
+        "hash": "b6a66e3251f453298fa649f93b4c2811c3728082e6b00970eda47303e7c72bc6",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/cli-reference.md"
       },
@@ -572,7 +572,7 @@
       },
       "https://code.claude.com/docs/en/env-vars.md": {
         "url": "https://code.claude.com/docs/en/env-vars.md",
-        "hash": "a24a90eedaff614c964b8196dfb35b618c4eca853410636e29d921091c12cd95",
+        "hash": "4c21f8205d32f1179e6d05e7eb49cea60bc963c31fa248f59fdacd312a3d744b",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/env-vars.md"
       },
@@ -656,7 +656,7 @@
       },
       "https://code.claude.com/docs/en/headless.md": {
         "url": "https://code.claude.com/docs/en/headless.md",
-        "hash": "b57c1dc43ebb56d607ff38e3db7f50b37c4976a667ed4daf8879cfd161992438",
+        "hash": "83f0a357848f1e7d660af635ebe4c6f3d598837443ae5fd54b550b1161e361cd",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/headless.md"
       },
@@ -674,7 +674,7 @@
       },
       "https://code.claude.com/docs/en/hooks.md": {
         "url": "https://code.claude.com/docs/en/hooks.md",
-        "hash": "a1cc3f82511cfbb06eb9b8641bfb63526d0f2086d87cc338e5d012d14b246abf",
+        "hash": "59af23f611d9d750a30f23087af9ca385a0bce215025b65cdd3b642995b101c6",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/hooks.md"
       },
@@ -1136,7 +1136,7 @@
       },
       "https://code.claude.com/docs/en/settings-reference.md": {
         "url": "https://code.claude.com/docs/en/settings-reference.md",
-        "hash": "7817edfb51a85bfab3fb0b06fc9e7263c626f663169c1031ebeddda8576a6f2f",
+        "hash": "e21f35b55e3e99112b30ec19c0b426c4e86c87f05d9cd91566e6d0c46a9e0093",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/settings-reference.md"
       },
@@ -1172,7 +1172,7 @@
       },
       "https://code.claude.com/docs/en/sub-agents.md": {
         "url": "https://code.claude.com/docs/en/sub-agents.md",
-        "hash": "b9fa9efd317c92efc0c2ca331a2ecb08a22eb735aad0844b90e9435a45f66cd6",
+        "hash": "5466954a992870d13715b1e5a933a49bebba9ddcfee2e72f7a19b3e4aacc6990",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/sub-agents.md"
       },
@@ -1255,7 +1255,7 @@
         "source_path": "sources/raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
       }
     },
-    "digest": "3dfd50c42e8e03144966914e6d6769189c194cae2b9863f5545b4c9642aa0c2d"
+    "digest": "1e6dad25f749bbc84a2d3864cce3a9a339a679b88db4b7daa9df2edc2e0550ec"
   },
   "runtime": {
     "probe_contract_version": 2,
@@ -1491,7 +1491,7 @@
           {
             "name": "TaskCreate",
             "input": {
-              "description": "Probe task for exercising task tools metadata handling.",
+              "description": "Probe task for exercising task tool metadata handling.",
               "metadata": {
                 "keep": "yes",
                 "probe": "remove"
@@ -1542,7 +1542,7 @@
         "tool_results": [
           "Task #1 created successfully: probe-task",
           "Updated task #1 metadata",
-          "Task #1: probe-task\nStatus: pending\nDescription: Probe task for exercising task tools metadata handling.",
+          "Task #1: probe-task\nStatus: pending\nDescription: Probe task for exercising task tool metadata handling.",
           "Updated task #1 deleted",
           "Task not found",
           "No tasks found"
@@ -1553,8 +1553,8 @@
     ],
     "digest": "2feb3b77009f26a3defd72058ee56dfd1e64c91c3a9052b51eea104f65c5de9d"
   },
-  "fetched_at": "2026-11-17T18:21:42.182Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/44146779943",
-  "state_commit_parent": "16f65d94a4036c4360c421a8356c7c66139527db",
-  "analysis_parent_sha": "16f65d94a4036c4360c421a8356c7c66139527db"
+  "fetched_at": "2026-11-17T20:19:17.304Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/44167838475",
+  "state_commit_parent": "80fef3d4dcbd0e3e07fa41b7763137a78b49a44f",
+  "analysis_parent_sha": "80fef3d4dcbd0e3e07fa41b7763137a78b49a44f"
 }
