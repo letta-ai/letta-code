@@ -137,21 +137,35 @@ ACTION REQUIRED: Resolve pending reflection memory merge.
       });
     });
 
+    test.each([undefined, "", "   "])(
+      "uses a generic monitor summary for %p",
+      (description) => {
+        const formatted = formatMonitorEventNotification({
+          taskId: "monitor_1",
+          description,
+          event: "unique event",
+        });
+        expect(formatted).toContain("<summary>Monitor event</summary>");
+        expect(formatted.match(/unique event/g)).toHaveLength(1);
+      },
+    );
+
     test("formats monitor events as task notifications and escapes output", () => {
       const formatted = formatMonitorEventNotification({
         taskId: "monitor_1",
+        description: "Deploy & verify",
         event: "failed & needs <attention>",
       });
 
       expect(formatted).toContain("<task-id>monitor_1</task-id>");
       expect(formatted).toContain(
-        '<summary>Monitor event: "failed &amp; needs &lt;attention&gt;"</summary>',
+        "<summary>Monitor: Deploy &amp; verify</summary>",
       );
       expect(formatted).toContain(
         "<event>failed &amp; needs &lt;attention&gt;</event>",
       );
       expect(extractTaskNotificationsForDisplay(formatted)).toEqual({
-        notifications: ['Monitor event: "failed & needs <attention>"'],
+        notifications: ["Monitor: Deploy & verify"],
         cleanedText: "",
       });
     });

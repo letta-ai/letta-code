@@ -103,6 +103,9 @@ describe("stopMonitor", () => {
       conversationId: scope.conversation_id,
       actingUserId: scope.acting_user_id,
     });
+    expect(notices[0]?.text).toContain(
+      "<summary>Monitor: CI results</summary>",
+    );
     const [retry, second] = await Promise.all([
       stopMonitor(command(id)),
       stopMonitor(command(id)),

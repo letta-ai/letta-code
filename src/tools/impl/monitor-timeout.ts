@@ -53,6 +53,6 @@ export function getMonitorTimeoutEvent(
   tool = "Monitor",
 ): string {
   return isManagedCloudRuntime() && timeoutMs === getMonitorMaxTimeoutMs()
-    ? `${tool} stopped at the ${timeoutMs / 3_600_000}-hour Cloud sandbox limit. If you still need to watch, simply re-arm it by calling ${tool} again. For much longer waits, schedule a Wake or cron, which does not keep the sandbox running between turns.`
+    ? `${tool} stopped at the ${timeoutMs / 3_600_000}-hour Cloud sandbox limit. If you still need to watch, re-arm it by calling ${tool} again.`
     : "[Monitor timed out — re-arm if needed.]";
 }

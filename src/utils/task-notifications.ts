@@ -150,10 +150,11 @@ export function taskNotificationMessage(
 export function formatMonitorEventNotification(notification: {
   taskId: string;
   event: string;
+  description?: string;
 }): string {
   return `<task-notification>
 <task-id>${escapeXml(notification.taskId)}</task-id>
-<summary>${escapeXml(`Monitor event: "${notification.event}"`)}</summary>
+<summary>${escapeXml(notification.description?.trim() ? `Monitor: ${notification.description}` : "Monitor event")}</summary>
 <result>
 <event>${escapeXml(notification.event)}</event>
 </result>
