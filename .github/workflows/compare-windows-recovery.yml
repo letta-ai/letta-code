@@ -1,0 +1,40 @@
+name: Compare Windows recovery
+on:
+  push:
+    branches: [ci/compare-windows-recovery]
+permissions:
+  contents: read
+jobs:
+  compare:
+    name: Windows shard / ${{ matrix.source }} / ${{ matrix.trace }}
+    runs-on: windows-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        source: [base, patch]
+        trace: [plain, trace]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ matrix.source == 'base' && 'd6e3f532c52a1eeb62fbdee328a72f2180b076de' || 'b562e371f6866200a77ecbf129a78a8403b7c67e' }}
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Trace recorded recovery
+        if: matrix.trace == 'trace'
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('src/websocket/listener/recorded-run-resolution.ts')
+          s = p.read_text().replace('  const requiresResolution =', '  console.error("TRACE OTID resolution", record.requestOtid);\n  const requiresResolution =')
+          p.write_text(s)
+          p = Path('src/websocket/listener/recover-recorded-turn.ts')
+          s = p.read_text().replace('  const store = deps.store ?? createInterruptedTurnStore();', '  const store = deps.store ?? createInterruptedTurnStore();\n  console.error("TRACE recovery records", store.list().length);')
+          p.write_text(s)
+          PY
+      - name: Run identical selected shard
+        shell: bash
+        run: node scripts/run-unit-tests.cjs --base d6e3f532c52a1eeb62fbdee328a72f2180b076de --head b562e371f6866200a77ecbf129a78a8403b7c67e --shard 1/8
