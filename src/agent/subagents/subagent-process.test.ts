@@ -214,3 +214,31 @@ test.skipIf(process.platform !== "win32")(
   },
   10_000,
 );
+
+test("subagent launch inherits an ephemeral broker and closes it on process exit", async () => {
+  const { runWithRuntimeContext } = await import("@/runtime-context");
+  const { createMcpSubprocessBrokerClient } = await import(
+    "@/backend/api/mcp-subprocess-broker"
+  );
+  const running = runWithRuntimeContext({ agentId: "parent" }, () =>
+    spawnSubagentProcess(
+      process.execPath,
+      [
+        "-e",
+        "process.stdout.write(JSON.stringify({ LETTA_MCP_SUBPROCESS_BROKER_KEY: process.env.LETTA_MCP_SUBPROCESS_BROKER_KEY, LETTA_MCP_SUBPROCESS_BROKER_SOCKET: process.env.LETTA_MCP_SUBPROCESS_BROKER_SOCKET }));",
+      ],
+      { cwd: process.cwd(), env: process.env },
+    ),
+  );
+  let output = "";
+  running.process.stdout.on("data", (chunk) => {
+    output += chunk;
+  });
+  await running.completion;
+  const env = JSON.parse(output);
+  expect(env.LETTA_MCP_SUBPROCESS_BROKER_KEY).toHaveLength(64);
+  expect(env.LETTA_MCP_SUBPROCESS_BROKER_SOCKET).toBeTruthy();
+  const client = createMcpSubprocessBrokerClient(env);
+  if (!client) throw new Error("missing broker");
+  await expect(client.post("/v1/subagent-tools/list")).rejects.toThrow();
+});

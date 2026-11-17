@@ -14,6 +14,10 @@ import {
 import { scrubSecretsFromString } from "@/tools/secret-substitution";
 import { resolveGlobalConfigDir } from "@/utils/settings-path";
 import { SUBAGENT_DEPTH_ENV } from "@/utils/subagent-depth-env";
+import {
+  discoverCloudToolsConfig,
+  nativeCloudToolsConfig,
+} from "./cloud-tools-config";
 import type { CursorWorkerEvent, CursorWorkerStart } from "./cursor-worker";
 import {
   type ExternalToolCallListener,
@@ -233,6 +237,7 @@ export async function runCursorTurn(
       stateDir: join(resolveGlobalConfigDir(), "cursor-sessions", sessionKey),
       cwd: options.cwd,
       model: options.model,
+      mcpServers: nativeCloudToolsConfig(await discoverCloudToolsConfig(env)),
       reminder: options.mcpReminder,
       prompt: options.prompt,
     };

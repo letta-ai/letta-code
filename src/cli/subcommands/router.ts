@@ -112,6 +112,10 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
     case "steps":
       return runStepsSubcommand(rest);
     case "mcp":
+      if (rest[0] === "serve") {
+        const { runMcpServeSubcommand } = await import("./mcp-serve");
+        return runMcpServeSubcommand();
+      }
       return runMcpSubcommand(rest);
     case "computers":
     case "environments": // legacy alias

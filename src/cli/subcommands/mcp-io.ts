@@ -88,6 +88,7 @@ export async function printMcpUsage(stdout: McpOutput): Promise<void> {
   await stdout(
     `
 Usage:
+  letta mcp serve (stdio relay for caller-scoped tools)
   letta mcp list [--agent <id>]
   letta mcp get <server> [--agent <id>]
   letta mcp tools [server] [--full] [--agent <id>]

@@ -21,6 +21,10 @@ import type {
   ClaudeSessionTransport,
   ClaudeTurnOptions,
 } from "./claude-stream-session-types";
+import {
+  discoverCloudToolsConfig,
+  nativeCloudToolsConfig,
+} from "./cloud-tools-config";
 import { traceClaudeLaunch } from "./external-llm-trace-launch";
 import {
   emitProgress,
@@ -55,6 +59,10 @@ function errorMessage(error: unknown): string {
 export function buildClaudeStreamArgs(options: {
   model?: string;
   mcpReminder?: string;
+  mcpServers?: Record<
+    string,
+    { command: string; args?: string[]; env?: Record<string, string> }
+  >;
   resumeSessionId?: string;
   sessionId?: string;
 }): string[] {
@@ -74,6 +82,11 @@ export function buildClaudeStreamArgs(options: {
     "--permission-mode",
     "bypassPermissions",
   ];
+  if (options.mcpServers && Object.keys(options.mcpServers).length)
+    args.push(
+      "--mcp-config",
+      JSON.stringify({ mcpServers: options.mcpServers }),
+    );
   if (options.model) args.push("--model", options.model);
   if (options.resumeSessionId) args.push("--resume", options.resumeSessionId);
   else if (options.sessionId) args.push("--session-id", options.sessionId);
@@ -495,6 +508,9 @@ async function launchSession(
   try {
     transport = (deps.createTransport ?? createTransport)({
       args: buildClaudeStreamArgs({
+        mcpServers: deps.createTransport
+          ? undefined
+          : nativeCloudToolsConfig(await discoverCloudToolsConfig(env)),
         model: options.model,
         mcpReminder: options.mcpReminder,
         resumeSessionId: options.resumeSessionId,
