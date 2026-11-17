@@ -24,6 +24,7 @@ interface Deps {
 /** Register a durable watch without starting a sandbox process or timer. */
 export async function startCloudPullRequestWatch(args: Args, deps: Deps = {}) {
   const resuming = Boolean(args.resume && isCloudMonitorId(args.resume));
+  if (args.resume && !resuming) return undefined;
   const enabled =
     deps.enabled ??
     (() =>

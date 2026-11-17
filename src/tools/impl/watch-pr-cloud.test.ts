@@ -9,6 +9,23 @@ const args = {
   parentScope: { agentId: "agent-1", conversationId: "conv-1" },
 };
 describe("cloud WatchPR registration", () => {
+  test("leaves local resume IDs on the local path when cloud watches are enabled", async () => {
+    let requests = 0;
+    for (const url of [undefined, args.url]) {
+      const result = await startCloudPullRequestWatch(
+        { resume: "monitor_local", parentScope: args.parentScope, url },
+        {
+          enabled: () => true,
+          request: async () => {
+            requests++;
+            throw new Error("Local resume must not make a cloud request");
+          },
+        },
+      );
+      expect(result).toBeUndefined();
+    }
+    expect(requests).toBe(0);
+  });
   test("uses the registered experiment instead of bypassing it with the env flag", async () => {
     const originalFlag = process.env.LETTA_CLOUD_WATCH_PR;
     process.env.LETTA_CLOUD_WATCH_PR = "1";
