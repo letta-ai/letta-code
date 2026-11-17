@@ -1,56 +1,85 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { NotFoundError } from "@letta-ai/letta-client/core/error";
 import { createInterruptedTurnStore } from "./interrupted-turn-record";
 import { createRuntime } from "./lifecycle";
 import { recoverRecordedTurns } from "./recover-recorded-turn";
 
-test("an empty OTID lookup never proves an accepted request ended", async () => {
-  const directory = mkdtempSync(join(tmpdir(), "recorded-otid-empty-"));
-  const store = createInterruptedTurnStore(directory);
-  const listener = createRuntime();
-  listener.connectionId = "conn-replacement";
-  let starts = 0;
-  try {
-    store.write({
-      agentId: "agent-1",
-      conversationId: "conv-1",
-      runId: null,
-      toolCallIds: [],
-      results: [],
-      requestOtid: "accepted-request",
-      workingDirectory: "/project",
-    });
-    await recoverRecordedTurns(listener, {
-      store,
-      backend: {
-        retrieveAgent: async () => ({ id: "agent-1" }),
-        streamConversationMessages: async () => ({
-          controller: new AbortController(),
-          async *[Symbol.asyncIterator]() {},
-        }),
-      } as never,
-      resume: (async () => ({ pendingApprovals: [] })) as never,
-      canRecover: async () => true,
-      acquireClaim: (async () => ({
-        owned: true,
-        complete: async () => true,
-        abandon: () => {},
-      })) as never,
-      processTurn: async () => {
-        starts += 1;
-      },
-    });
-    expect(starts).toBe(0);
-    expect(store.read("agent-1", "conv-1")?.requestOtid).toBe(
-      "accepted-request",
-    );
-  } finally {
-    listener.intentionallyClosed = true;
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
+test.each(["empty", "missing", "late_run", "transient"])(
+  "OTID lookup preserves empty streams and retires repeated 404s (missing=%s)",
+  async (outcome) => {
+    const directory = mkdtempSync(join(tmpdir(), "recorded-otid-empty-"));
+    const store = createInterruptedTurnStore(directory);
+    const listener = createRuntime();
+    listener.connectionId = "conn-replacement";
+    let starts = 0;
+    let now = 0;
+    let lookups = 0;
+    const clock = spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      store.write({
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        runId: null,
+        toolCallIds: [],
+        results: [],
+        requestOtid: "accepted-request",
+        workingDirectory: "/project",
+      });
+      const deps = {
+        store,
+        backend: {
+          retrieveAgent: async () => ({ id: "agent-1" }),
+          retrieveRun: async () => ({ status: "running" }),
+          streamConversationMessages: async () => {
+            lookups++;
+            if (outcome === "transient") throw new Error("temporary failure");
+            if (outcome === "missing" || (outcome === "late_run" && now === 0))
+              throw new NotFoundError(404, {}, "not found", new Headers());
+            return {
+              controller: new AbortController(),
+              async *[Symbol.asyncIterator]() {
+                if (outcome === "late_run") yield { run_id: "run-late" };
+              },
+            };
+          },
+        } as never,
+        resume: (async () => ({ pendingApprovals: [] })) as never,
+        canRecover: async () => true,
+        acquireClaim: (async () => ({
+          owned: true,
+          complete: async () => true,
+          abandon: () => {},
+        })) as never,
+        processTurn: async () => {
+          starts += 1;
+        },
+      };
+      for (now of [0, 5000, 15_000]) {
+        await recoverRecordedTurns(listener, deps);
+        expect(store.read("agent-1", "conv-1")).not.toBeNull();
+      }
+      now = 30_000;
+      await recoverRecordedTurns(listener, deps);
+      expect(lookups).toBe(
+        outcome === "missing" || outcome === "late_run" ? 3 : 4,
+      );
+      expect(starts).toBe(0);
+      if (outcome === "missing")
+        expect(store.read("agent-1", "conv-1")).toBeNull();
+      else
+        expect(store.read("agent-1", "conv-1")?.requestOtid).toBe(
+          "accepted-request",
+        );
+    } finally {
+      clock.mockRestore();
+      listener.intentionallyClosed = true;
+      rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 test("empty OTID re-resolution never falls back to a retained old run", async () => {
   const directory = mkdtempSync(join(tmpdir(), "recorded-old-run-empty-"));

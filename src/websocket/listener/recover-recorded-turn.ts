@@ -18,7 +18,10 @@ import {
   createInterruptedTurnStore,
   recordedToolResults,
 } from "./interrupted-turn-record";
-import { resolveRecordedRunId } from "./recorded-run-resolution";
+import {
+  resolveRecordedRunId,
+  retireMissingRun,
+} from "./recorded-run-resolution";
 import {
   hasCompletedTeleportInput,
   hasRecordedTerminalEvidence,
@@ -513,15 +516,18 @@ export async function recoverRecordedTurns(
           deferred = true;
           continue;
         }
-        const recordedRunId = await resolveRecordedRunId(
+        const resolution = await resolveRecordedRunId(
           backend,
           recoveryRecord,
           pending,
+          runtime,
         );
-        if (!recordedRunId) {
-          deferred = true;
+        if (resolution.status !== "found") {
+          const missing = resolution.status === "not_found" && unchanged();
+          deferred = !retireMissingRun(store, record, missing) || deferred;
           continue;
         }
+        const recordedRunId = resolution.runId;
         const recordedRun =
           recordedRunId && typeof backend.retrieveRun === "function"
             ? await backend.retrieveRun(recordedRunId)
