@@ -182,7 +182,7 @@ describe("planLocalAllCompaction", () => {
     ).toEqual({ messagesToSummarize: incomplete, messagesToKeep: [] });
   });
 
-  test("still keeps only a pending call, with or without a budget", () => {
+  test("keeps only a pending call, with or without a budget", () => {
     const pendingCall = assistant("a2", ["call-2"]);
     const pending = [...prefix, pendingCall];
     const expected = {

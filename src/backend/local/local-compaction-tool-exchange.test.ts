@@ -353,7 +353,7 @@ describe("local compaction keeps the latest tool exchange", () => {
     );
   });
 
-  test("post-turn compaction still keeps only the pending call", async () => {
+  test("post-turn compaction keeps only the pending call", async () => {
     await withHarness(
       {
         mode: "all",
@@ -438,7 +438,7 @@ describe("local compaction keeps the latest tool exchange", () => {
     );
   });
 
-  test("manual compaction still summarises a trailing exchange", async () => {
+  test("manual compaction summarises a trailing exchange", async () => {
     await withHarness(
       {
         mode: "all",
