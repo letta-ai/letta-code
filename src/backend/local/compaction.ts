@@ -17,12 +17,10 @@ import {
 import { LocalPiModelsRuntime } from "@/backend/dev/pi-models-runtime";
 import { resolvePiRequestHeaders } from "@/backend/dev/pi-request-headers";
 import { estimateLocalMessagesTokens } from "@/backend/local/local-context-estimate";
-import {
-  formatLocalMessagesForSummary,
-  LOCAL_SUMMARY_TOOL_RETURN_TRUNCATION_CHARS,
-} from "./compaction-transcript";
+import { formatLocalMessagesForSummary } from "./compaction-transcript";
 import {
   emptyLocalUsage,
+  type LocalCompactionStats,
   type LocalCompactionSummarySource,
   type LocalMessage,
 } from "./local-message";
@@ -307,17 +305,6 @@ export const LOCAL_SELF_SLIDING_WINDOW_COMPACTION_PROMPT = `${slidingWindowCompa
 // the server's self-compaction does, so the model doesn't continue the turn.
 const SELF_COMPACTION_ACKNOWLEDGEMENT = "I understand. Let me summarize.";
 
-export interface LocalCompactionStats {
-  trigger?: string;
-  context_tokens_before?: number;
-  context_tokens_after?: number;
-  context_window?: number;
-  messages_count_before?: number;
-  messages_count_after?: number;
-  /** Unset when no summary request ran or its text was discarded. */
-  summary_source?: LocalCompactionSummarySource;
-}
-
 /** A summary and the request that wrote it (unset when none ran). */
 export interface LocalCompactionSummary {
   summary: string;
@@ -545,7 +532,8 @@ async function summarizeInSelfContext(
   input: LocalAllCompactionInput & { self: LocalSelfCompactionContext },
   defaultPrompt: string,
 ): Promise<
-  { text: string } | "transcript_after_overflow" | "transcript_after_no_text"
+  | { text: string }
+  | Exclude<LocalCompactionSummarySource, "self" | "transcript">
 > {
   const prompt = input.prompt ?? defaultPrompt;
   try {
@@ -570,16 +558,16 @@ async function summarizeLocalMessagesWithPrompt(
   if (input.messages.length === 0) {
     return { summary: "No prior conversation messages." };
   }
-  let result = input.self
+  const self = input.self
     ? await summarizeInSelfContext(
         { ...input, self: input.self },
         defaultSelfPrompt,
       )
     : ("transcript" as const);
-  const source = typeof result === "string" ? result : "self";
-  if (typeof result === "string") {
-    result = await summarizeTranscript(input, defaultPrompt);
-  }
+  const [result, source] =
+    typeof self === "string"
+      ? [await summarizeTranscript(input, defaultPrompt), self]
+      : [self, "self" as const];
   let summary = result.text.trim();
   const clipChars = input.clipChars === undefined ? 50000 : input.clipChars;
   if (clipChars !== null && summary.length > clipChars) {
@@ -593,9 +581,7 @@ async function summarizeTranscript(
   defaultPrompt: string,
 ): Promise<{ text: string }> {
   const systemPrompt = input.prompt ?? defaultPrompt;
-  const primaryTranscript = formatLocalMessagesForSummary(input.messages, {
-    truncationChars: LOCAL_SUMMARY_TOOL_RETURN_TRUNCATION_CHARS,
-  });
+  const primaryTranscript = formatLocalMessagesForSummary(input.messages);
   let result: { text: string } | undefined;
   try {
     result = await runGenerateText(input, () =>
@@ -607,7 +593,6 @@ async function summarizeTranscript(
     let previousTranscript: string | undefined;
     for (const maxChars of TRANSCRIPT_FALLBACK_MAX_CHAR_STEPS) {
       const fallbackTranscript = formatLocalMessagesForSummary(input.messages, {
-        truncationChars: LOCAL_SUMMARY_TOOL_RETURN_TRUNCATION_CHARS,
         maxChars,
       });
       if (fallbackTranscript === previousTranscript) continue;

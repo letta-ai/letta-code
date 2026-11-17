@@ -254,23 +254,17 @@ describe("self-compaction", () => {
       replies: () => Array<AssistantMessage | Error>;
       overrides?: Partial<LocalAllCompactionInput>;
       source: LocalCompactionSummarySource;
-      summary: string;
-      requests: number;
     }> = [
       {
         name: "a self summary",
         replies: () => [text("self summary")],
         source: "self",
-        summary: "self summary",
-        requests: 1,
       },
       {
         name: "a transcript-mode summary",
         replies: () => [text("transcript summary")],
         overrides: { self: undefined },
         source: "transcript",
-        summary: "transcript summary",
-        requests: 1,
       },
       {
         name: "a self request that throws a context-window overflow",
@@ -279,8 +273,6 @@ describe("self-compaction", () => {
           text("transcript summary"),
         ],
         source: "transcript_after_overflow",
-        summary: "transcript summary",
-        requests: 2,
       },
       {
         name: "a self request the provider refuses as over the window",
@@ -294,8 +286,6 @@ describe("self-compaction", () => {
           text("transcript summary"),
         ],
         source: "transcript_after_overflow",
-        summary: "transcript summary",
-        requests: 2,
       },
       {
         name: "a self answer with only a tool call",
@@ -311,22 +301,24 @@ describe("self-compaction", () => {
           text("transcript summary"),
         ],
         source: "transcript_after_no_text",
-        summary: "transcript summary",
-        requests: 2,
       },
     ];
 
     for (const testCase of cases) {
       test(`${testCase.source} for ${testCase.name}`, async () => {
+        // Each reply answers one request; the last one writes the summary.
+        const replies = testCase.replies();
         const { summary, source, contexts } = await summarize(
           TOOL_TURN,
-          testCase.replies(),
+          [...replies],
           testCase.overrides,
         );
 
         expect(source).toBe(testCase.source);
-        expect(summary).toBe(testCase.summary);
-        expect(contexts).toHaveLength(testCase.requests);
+        expect(replies.at(-1)).toMatchObject({
+          content: [{ type: "text", text: summary }],
+        });
+        expect(contexts).toHaveLength(replies.length);
         expect(contexts.at(-1)?.systemPrompt).toBe(
           testCase.source === "self"
             ? "compiled agent system"

@@ -38,6 +38,17 @@ export type LocalCompactionSummarySource =
   | "transcript_after_overflow"
   | "transcript_after_no_text";
 
+export interface LocalCompactionStats {
+  trigger?: string;
+  context_tokens_before?: number;
+  context_tokens_after?: number;
+  context_window?: number;
+  messages_count_before?: number;
+  messages_count_after?: number;
+  /** Unset when no summary request ran or its text was discarded. */
+  summary_source?: LocalCompactionSummarySource;
+}
+
 export interface LocalMessageMetadata {
   created_at?: string;
   updated_at?: string;
@@ -46,15 +57,7 @@ export interface LocalMessageMetadata {
   provider?: LocalMessageProviderMetadata;
   compaction?: {
     summary: string;
-    stats?: {
-      trigger?: string;
-      context_tokens_before?: number;
-      context_tokens_after?: number;
-      context_window?: number;
-      messages_count_before?: number;
-      messages_count_after?: number;
-      summary_source?: LocalCompactionSummarySource;
-    };
+    stats?: LocalCompactionStats;
   };
 }
 

@@ -27,7 +27,6 @@ import type {
 } from "@/backend/backend";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { isRecord } from "@/utils/type-guards";
-import type { LocalCompactionStats } from "./compaction";
 import {
   createDefaultAgentRecord,
   createLocalAgentRecord,
@@ -51,6 +50,7 @@ import {
 import {
   emptyLocalUsage,
   type LocalAssistantMessage,
+  type LocalCompactionStats,
   type LocalImageContent,
   type LocalMessage,
   type LocalTextContent,

@@ -45,7 +45,6 @@ import {
   isLocalSlidingWindowCompactionPlanningError,
   isLocalSlidingWindowMode,
   type LocalCompactionResult,
-  type LocalCompactionStats,
   type LocalCompleteFunction,
   type LocalSelfCompactionContext,
   packageLocalSummaryMessage,
@@ -67,7 +66,7 @@ import {
   createLocalExecutor,
   type LocalBackendExecutionMode,
 } from "./local-executor-factory";
-import type { LocalMessage } from "./local-message";
+import type { LocalCompactionStats, LocalMessage } from "./local-message";
 import {
   listLocalModels,
   localModelSettingsForHandle,

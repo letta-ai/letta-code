@@ -6,17 +6,16 @@ export {
   LOCAL_DEFAULT_SLIDING_WINDOW_PERCENTAGE,
   LOCAL_SLIDING_WINDOW_COMPACTION_PROMPT,
   type LocalCompactionMode,
-  type LocalCompactionStats,
   LocalSlidingWindowCompactionPlanningError,
   planLocalSlidingWindowCompaction,
 } from "./compaction";
-export { formatLocalMessagesForSummary } from "./compaction-transcript";
 export {
   isHiddenLocalAgentRecord,
   projectLocalAgentState,
 } from "./local-agent-record";
 export { LocalBackend, type LocalBackendOptions } from "./local-backend";
 export type {
+  LocalCompactionStats,
   LocalMessage,
   LocalMessageMetadata,
   LocalMessageProviderMetadata,
