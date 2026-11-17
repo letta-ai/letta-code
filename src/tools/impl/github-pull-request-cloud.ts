@@ -36,7 +36,7 @@ interface CloudComment {
   updated_at: string;
 }
 
-interface CloudPullRequestSnapshot {
+export interface CloudPullRequestSnapshot {
   ref: GitHubPullRequestRef;
   head_sha: string;
   state: PullRequestState;
@@ -154,7 +154,7 @@ function toComment(comment: CloudComment): PullRequestComment {
   };
 }
 
-function toClientSnapshot(
+export function toClientSnapshot(
   ref: GitHubPullRequestRef,
   snapshot: CloudPullRequestSnapshot,
 ): GitHubPullRequestSnapshot {

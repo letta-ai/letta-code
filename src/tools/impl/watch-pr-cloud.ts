@@ -5,13 +5,19 @@ import { resolveBackendMode } from "@/backend/backend-mode";
 import { experimentManager } from "@/experiments/manager";
 import { isManagedCloudRuntime } from "@/managed-cloud-runtime";
 import { resolveNotificationScope } from "@/utils/task-notifications";
+import {
+  type CloudPullRequestSnapshot,
+  toClientSnapshot,
+} from "./github-pull-request-cloud";
 import type { PullRequestEventKind } from "./github-pull-request-diff";
+import { describeGitHubPullRequestSnapshot } from "./github-pull-request-state";
 import { parseGitHubPullRequestUrl } from "./github-pull-request-watch";
 import { getMonitorMaxTimeoutMs } from "./monitor-timeout";
 import { isCloudMonitorId } from "./monitor-url-cloud";
 
 interface Args {
   resume?: string;
+  toolCallId?: string;
   url?: string;
   notify_on?: PullRequestEventKind[];
   parentScope?: { agentId: string; conversationId: string };
@@ -68,9 +74,12 @@ export async function startCloudPullRequestWatch(args: Args, deps: Deps = {}) {
   }
   if (typeof args.url !== "string") throw new Error("WatchPR url is required");
   const ref = parseGitHubPullRequestUrl(args.url);
-  let created: { id: string };
+  let created: { id: string; initial_snapshot: CloudPullRequestSnapshot };
   try {
-    created = await request<{ id: string }>(
+    created = await request<{
+      id: string;
+      initial_snapshot: CloudPullRequestSnapshot;
+    }>(
       "POST",
       path,
       {
@@ -83,6 +92,7 @@ export async function startCloudPullRequestWatch(args: Args, deps: Deps = {}) {
           ...(args.notify_on && { notify_on: args.notify_on }),
         },
         timeout_ms: getMonitorMaxTimeoutMs(),
+        ...(args.toolCallId && { tool_call_id: args.toolCallId }),
       },
       actingUserRequestOptions(scope.actingUserId),
     );
@@ -102,16 +112,17 @@ export async function startCloudPullRequestWatch(args: Args, deps: Deps = {}) {
     }
     throw error;
   }
+  const initial = toClientSnapshot(ref, created.initial_snapshot);
   return {
     content: [
       {
         type: "text" as const,
-        text: `WatchPR started (task ${created.id}). You will be notified on PR events. It stops when the PR merges/closes, on TaskStop, or at its timeout. Keep working — do not poll or sleep.`,
+        text: `WatchPR started (task ${created.id}). You will be notified on PR events. It stops when the PR merges/closes, on TaskStop, or at its timeout. Keep working — do not poll or sleep.\n\nCurrent state:\n${describeGitHubPullRequestSnapshot(initial)}`,
       },
     ],
     taskId: created.id,
     url: ref.url,
-    headSha: "",
+    headSha: initial.headSha,
     persistent: false,
   };
 }
