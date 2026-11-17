@@ -175,7 +175,7 @@ If the failure line continues with `"formatter" was not uninstalled:` and names 
 
 #### What an uninstall deletes and keeps
 
-When you uninstall a plugin from the last scope it's installed at, Claude Code also deletes the plugin's stored [options and secrets](https://code.claude.com/docs/en/plugins/manifest-reference.md#user-configuration) and its data directory, `~/.claude/plugins/data/<id>/`. There are three exceptions:
+When you uninstall a plugin from the last scope it's installed at, Claude Code also deletes the plugin's stored [options and secrets](https://code.claude.com/docs/en/plugins/manifest-reference.md#user-configuration) and its data directory, `~/.claude/plugins/data/<id>/`. Some or all of them can stay, such as in these cases:
 
 * With `--keep-data`, the data directory stays
 * When another installed plugin uses the same folder, such as one whose ID differs from this one only in letter case, the data directory stays
