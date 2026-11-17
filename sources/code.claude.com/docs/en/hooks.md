@@ -303,7 +303,7 @@ Each event type matches on a different field:
 | `CwdChanged` | no matcher support | always fires on every occurrence |
 | `DirectoryAdded` | how the directory was added | `slash_command`, `register_repo_root` |
 | `FileChanged` | literal filenames to watch (see [FileChanged](#filechanged)) | `.envrc\|.env` |
-| `StopFailure` | error type | `rate_limit`, `overloaded`, `authentication_failed`, `oauth_org_not_allowed`, `account_on_hold`, `billing_error`, `invalid_request`, `model_not_found`, `server_error`, `max_output_tokens`, `cloud_credential_error`, `unknown` |
+| `StopFailure` | error type | `rate_limit`, `authentication_failed`, `oauth_org_not_allowed`, `account_on_hold`, `billing_error`, `invalid_request`, `model_not_found`, `server_error`, `max_output_tokens`, `cloud_credential_error`, `unknown` |
 | `InstructionsLoaded` | load reason | `session_start`, `nested_traversal`, `path_glob_match`, `include`, `compact` |
 | `UserPromptExpansion` | command name | your skill or command names |
 | `Elicitation` | MCP server name | your configured MCP server names |
@@ -807,7 +807,7 @@ What your hook prints to stdout can change the outcome. For example, when a `Pre
 
 | Stdout | Exit 0 | Exit 2 | Any other exit code |
 | :- | :- | :- | :- |
-| JSON object that passes [schema validation](#json-output) | Success. The fields apply | Blocking error. Claude Code still reads the fields, but they can't override the block | Success. Claude Code ignores the exit code, and the fields alone decide. For hooks [whose failure blocks the action](#block-the-action-when-a-hook-fails), the run counts as a failure instead |
+| JSON object that passes [schema validation](#json-output) | Success. The fields apply | Blocking error. Claude Code still reads the fields, but a `PreToolUse` call stays blocked even if you return `"allow"` or `continue: false`. For other events, see [Exit code 2](#exit-code-2) | Success. Claude Code ignores the exit code, and the fields alone decide. For hooks [whose failure blocks the action](#block-the-action-when-a-hook-fails), the run counts as a failure instead |
 | JSON that [can't be parsed](#exit-code-0) or fails schema validation | Non-blocking error. The notice carries the parse or validation message | Blocking error. Your stderr is the reason | Non-blocking error. The notice carries the parse or validation message |
 | [Plain text](#exit-code-0), or nothing | Success | Blocking error. Your stderr is the reason | Non-blocking error. The notice carries the first line of your stderr |
 
@@ -844,9 +844,10 @@ Exit with code 2 to block the action. On [events that can block](#exit-code-2-be
 
 The message that comes with the block is your hook's stderr. If your hook also printed JSON that makes a blocking decision, Claude Code uses that decision's reason instead.
 
-Exit 2 blocks even when your hook prints JSON:
+Exit code 2 still blocks with most JSON your hook prints:
 
-* **JSON that passes schema validation**: Claude Code still reads the [JSON output](#json-output) fields, but they can't override the block. Even a `permissionDecision` of `"allow"` doesn't let the action through. On `Elicitation` and `ElicitationResult`, an exit-2 hook's `hookSpecificOutput` is ignored.
+* **JSON that sets `continue: false`**: on events such as `Stop` and `SubagentStop`, the field takes precedence over exit code 2, so Claude or the subagent ends its turn. To keep Claude or the subagent working, leave the field out. On `PreToolUse`, the tool call stays blocked with or without the field.
+* **Other JSON that passes schema validation**: Claude Code still reads the [JSON output](#json-output) fields. Even a `permissionDecision` of `"allow"` doesn't let the action through. On `Elicitation` and `ElicitationResult`, an exit-2 hook's `hookSpecificOutput` is ignored.
 * **JSON that fails schema validation**: the hook still blocks. Claude Code uses your stderr as the blocking reason and records the validation failure in the debug log.
 
 This script blocks `rm` commands by exiting 2 and leaves every other command to the normal permission flow:
@@ -1022,6 +1023,8 @@ A hook with this error ran in PowerShell, which prints a `command` that is only 
 
 Exit code 2 is the way a hook signals "stop, don't do this." The effect depends on the event, because some events represent actions that can be blocked (like a tool call that hasn't happened yet) and others represent things that already happened or can't be prevented.
 
+If your hook exits 2 and also sets `continue: false`, check [Exit code 2](#exit-code-2) first, because the result can differ from your event's row.
+
 | Hook event | Can block? | What happens on exit 2 |
 | :- | :- | :- |
 | `PreToolUse` | Yes | Blocks the tool call |
@@ -1079,7 +1082,7 @@ Exit codes only let you block or stay silent, but JSON output gives you finer-gr
 
 > [!NOTE]
 >
-> Choose one approach per hook: either use exit codes alone for signaling, or exit 0 and print JSON for structured control. If you mix them, exit 2 keeps its [blocking effect](#exit-code-2-behavior-per-event), and Claude Code still reads the JSON fields, with the one elicitation exception noted under [Exit code 2](#exit-code-2).
+> Choose one approach per hook: either use exit codes alone for signaling, or exit 0 and print JSON for structured control. For what happens when you mix them, see [Exit code output](#exit-code-output).
 
 Print nothing but the JSON object to stdout. For a hook that isn't [async](#how-async-hooks-execute), other text there, such as a line your shell profile echoes at startup, keeps Claude Code from reading the object as JSON, and [Hook JSON has no effect](https://code.claude.com/docs/en/hooks-guide.md#hook-json-has-no-effect) shows how to find and silence that text.
 
@@ -1200,7 +1203,7 @@ Not every event supports blocking or controlling behavior through JSON. The even
 | Events | Decision pattern | Key fields |
 | :- | :- | :- |
 | UserPromptSubmit, UserPromptExpansion, PostToolUse, PostToolUseFailure, PostToolBatch, Stop, SubagentStop, ConfigChange, PreCompact | Top-level `decision` | `decision: "block"`, `reason`. Stop and SubagentStop also accept `hookSpecificOutput.additionalContext` for [non-error feedback that continues the conversation](#stop-decision-control) |
-| TeammateIdle, TaskCompleted | Exit code or `continue: false` | Exit code 2 blocks the action with stderr feedback. JSON `{"continue": false, "stopReason": "..."}` also stops the teammate entirely, matching `Stop` hook behavior; [TaskCompleted ignores it when the `TaskUpdate` tool triggered the event](#taskcompleted-decision-control) |
+| TeammateIdle, TaskCompleted | Exit code or top-level `decision` | Exit code 2 or `decision: "block"` keeps the teammate working or the task open. With `continue: false`, the teammate goes idle. [Claude Code ignores `continue: false` on a `TaskUpdate` call](#taskcompleted-decision-control) |
 | TaskCreated | Exit code or top-level `decision` | Exit code 2 or `decision: "block"` [cancels the task](#taskcreated-decision-control) and returns the message to Claude. `continue: false` is ignored |
 | PreToolUse | `hookSpecificOutput` | `permissionDecision` (allow/deny/ask/defer), `permissionDecisionReason` |
 | PreModelSwitch | `hookSpecificOutput` or top-level `decision` | `permissionDecision` (allow/deny/ask), `permissionDecisionReason`. `decision: "block"` also [cancels the switch](#premodelswitch-decision-control) |
@@ -1520,7 +1523,7 @@ block certain types of prompts.
 * A [session-scoped scheduled task](https://code.claude.com/docs/en/scheduled-tasks.md) firing, including a `/loop` iteration
 * A [background subagent](https://code.claude.com/docs/en/sub-agents.md#run-subagents-in-foreground-or-background) reporting back to the session that started it
 * A [message another session sends](https://code.claude.com/docs/en/cross-session-messaging.md) to your main conversation
-* The output of Claude's code in a [Code Mode](https://code.claude.com/docs/en/code-mode.md#code-output-withheld-by-a-hook) session, for `command`, `http`, and `mcp_tool` hooks, when code can run in the background
+* The output of code that Claude runs in a [Code Mode](https://code.claude.com/docs/en/code-mode.md#code-output-withheld-by-a-hook) session, for `command`, `http`, and `mcp_tool` hooks, when code can run in the background
 
 `UserPromptSubmit` hooks have a default timeout of 30 seconds for `command`, `http`, and `mcp_tool` types, shorter than the 600-second default for those types on most other events. Because this hook runs before every prompt and blocks model processing until it completes, a stuck hook stalls the session. If your hook needs more time, set the `timeout` field in the hook entry.
 
@@ -1605,7 +1608,7 @@ Matches on `command_name`. Leave the matcher empty to fire on every prompt-type 
 
 #### UserPromptExpansion input
 
-In addition to the [common input fields](#common-input-fields), UserPromptExpansion hooks receive `expansion_type`, `command_name`, `command_args`, `command_source`, and the original `prompt` string. The `expansion_type` field is `slash_command` for skill and custom commands, or `mcp_prompt` for MCP server prompts.
+In addition to the [common input fields](#common-input-fields), UserPromptExpansion hooks receive `expansion_type`, `command_name`, `command_args`, `command_source`, and the `prompt` string. The `expansion_type` field is `slash_command` for skill and custom commands, or `mcp_prompt` for MCP server prompts.
 
 ```json theme={null}
 {
@@ -1615,10 +1618,10 @@ In addition to the [common input fields](#common-input-fields), UserPromptExpans
   "permission_mode": "default",
   "hook_event_name": "UserPromptExpansion",
   "expansion_type": "slash_command",
-  "command_name": "example-skill",
+  "command_name": "my-plugin:example-skill",
   "command_args": "arg1 arg2",
   "command_source": "plugin",
-  "prompt": "/example-skill arg1 arg2"
+  "prompt": "/my-plugin:example-skill arg1 arg2"
 }
 ```
 
@@ -2633,7 +2636,6 @@ In addition to the [common input fields](#common-input-fields), Notification hoo
   "cwd": "/Users/...",
   "hook_event_name": "Notification",
   "message": "Claude needs your permission",
-  "title": "Permission needed",
   "notification_type": "permission_prompt"
 }
 ```
@@ -2804,10 +2806,11 @@ In addition to the [common input fields](#common-input-fields), TaskCompleted ho
 
 #### TaskCompleted decision control
 
-TaskCompleted hooks support two ways to control task completion:
+With a TaskCompleted hook, you can keep the task open or let a teammate go idle:
 
 * **Exit code 2**: the task is not marked as completed and the stderr message is fed back to the model as feedback.
-* **JSON `{"continue": false, "stopReason": "..."}`**: when a teammate finishing its turn triggered the event, stops the teammate entirely, matching `Stop` hook behavior. The `stopReason` is shown to the user. When the `TaskUpdate` tool triggered the event, Claude Code ignores `continue: false`; exit code 2 still blocks the completion.
+* **JSON `{"decision": "block", "reason": "..."}`**: the task stays open. Claude receives `reason` and keeps working.
+* **JSON `{"continue": false, "stopReason": "..."}`**: at the end of a teammate's turn, the teammate goes idle with the task still in progress, even if another of your TaskCompleted hooks blocks. The `stopReason` appears in the teammate's transcript. On a `TaskUpdate` call, Claude Code ignores `continue: false`.
 
 This example runs tests and blocks task completion if they fail:
 
@@ -2939,7 +2942,7 @@ In addition to the [common input fields](#common-input-fields), StopFailure hook
 
 | Field | Description |
 | :- | :- |
-| `error` | Error type: `rate_limit`, `overloaded`, `authentication_failed`, `oauth_org_not_allowed`, `account_on_hold`, `billing_error`, `invalid_request`, `model_not_found`, `server_error`, `max_output_tokens`, `cloud_credential_error`, or `unknown` |
+| `error` | Error type: `rate_limit`, `authentication_failed`, `oauth_org_not_allowed`, `account_on_hold`, `billing_error`, `invalid_request`, `model_not_found`, `server_error`, `max_output_tokens`, `cloud_credential_error`, or `unknown`. For an HTTP `529` overloaded response, the value is `server_error` |
 | `error_details` | Additional details about the error, when available |
 | `last_assistant_message` | The rendered error text shown in the conversation. Unlike `Stop` and `SubagentStop`, where this field holds Claude's conversational output, for `StopFailure` it contains the API error string itself, such as `"API Error: Rate limit reached"` |
 
@@ -2987,10 +2990,11 @@ In addition to the [common input fields](#common-input-fields), TeammateIdle hoo
 
 #### TeammateIdle decision control
 
-TeammateIdle hooks support two ways to control teammate behavior:
+With a TeammateIdle hook, you can keep the teammate working or let it go idle:
 
-* **Exit code 2**: the teammate receives the stderr message as feedback and continues working instead of going idle.
-* **JSON `{"continue": false, "stopReason": "..."}`**: stops the teammate entirely, matching `Stop` hook behavior. The `stopReason` is shown to the user.
+* **Exit code 2**: the teammate receives the stderr message as feedback and continues working.
+* **JSON `{"decision": "block", "reason": "..."}`**: the teammate receives `reason` and continues working.
+* **JSON `{"continue": false, "stopReason": "..."}`**: the teammate [goes idle](https://code.claude.com/docs/en/agent-teams.md#start-your-first-agent-team) even if another of your TeammateIdle hooks blocks. The `stopReason` appears in the teammate's transcript.
 
 This example checks that a build artifact exists before allowing a teammate to go idle:
 
@@ -4011,7 +4015,7 @@ Events that support `command`, `http`, and `mcp_tool` hooks but not `prompt` or 
 * `WorktreeCreate`
 * `WorktreeRemove`
 
-`SessionStart` and `Setup` support `command` and `mcp_tool` hooks, and [MCP tool hook fields](#mcp-tool-hook-fields) describes when their `mcp_tool` hooks run. They don't support `http`, `prompt`, or `agent` hooks.
+`Setup` supports only `command` hooks. `SessionStart` supports only `command` and `mcp_tool` hooks, and [MCP tool hook fields](#mcp-tool-hook-fields) describes when its `mcp_tool` hooks run.
 
 ### How prompt-based hooks work
 
@@ -4079,8 +4083,8 @@ What happens on `ok: false` depends on the event:
 * `PostToolUse`: by default the turn ends and the reason appears in the chat as a warning line. Set `continueOnBlock: true` to feed the reason back to Claude and continue the turn instead
 * `PostToolBatch`, `UserPromptSubmit`, and `UserPromptExpansion`: the turn ends and the reason appears as a warning line. These events end the turn on `decision: "block"` regardless of `continue`
 * `PostToolUseFailure` and `TaskCreated`: the reason is returned to Claude as a tool error and the turn continues, regardless of `continueOnBlock`
-* `TaskCompleted`: when it fires because a task is marked completed during a turn, the reason is returned to Claude as a tool error and the turn continues, regardless of `continueOnBlock`. When it fires because a teammate stops, it behaves like `TeammateIdle` and halts the teammate by default
-* `TeammateIdle`: by default the teammate stops and the reason appears as a warning line. Set `continueOnBlock: true` to feed the reason back to the teammate and keep it working instead
+* `TaskCompleted` on a `TaskUpdate` call: Claude receives the reason as the tool result and the turn continues, regardless of `continueOnBlock`
+* `TeammateIdle`, and `TaskCompleted` at the end of a teammate's turn: by default the teammate goes idle and the reason appears in its transcript. Set `continueOnBlock: true` to send the reason to the teammate and keep it working
 * `PermissionRequest`: `ok: false` has no effect. To deny an approval from a hook, use a [command hook](#command-hook-fields) returning `hookSpecificOutput.decision.behavior: "deny"`
 * `PermissionDenied`: `ok: false` has no effect because the denial already happened. The only output this event reads is `hookSpecificOutput.retry`, which prompt and agent hooks can't set. They run on this event, but their output is discarded. Use a [command hook](#command-hook-fields) to return `retry`
 

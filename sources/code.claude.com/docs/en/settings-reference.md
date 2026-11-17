@@ -927,7 +927,7 @@ The three rule arrays share one syntax; see [Permission rule syntax](#permission
 
 Choose whether Claude Code uses the auto mode classifier to review shell commands in plan mode. With the default `true`, the classifier reviews each command during planning when auto mode is available and you see no prompt, except for [critical-path removals](https://code.claude.com/docs/en/permission-modes.md#critical-paths). Set `false` to get a permission prompt for every command outside the built-in read-only set. Appears in `/config` as **Use auto mode during plan**.
 
-* **Scope**: [`User, local, or managed`](#scopes). A repository can't turn it off for you.
+* **Scope**: [`User, local, or managed`](#scopes).
   * A `false` in any of these files or in `--settings` turns it off, unless you leave that user or local file out with an option such as [`--setting-sources`](https://code.claude.com/docs/en/cli-reference#cli-flags). Ignoring a left-out file requires Claude Code v2.1.314 or later
 * **Type**: Boolean
   * `true`: the same as unset; when auto mode is available, the classifier reviews shell commands during planning
@@ -2685,7 +2685,7 @@ Appears in `/config` as **Continue automatically at usage limit**, which writes 
 
 ### `autoScrollEnabled`
 
-Follow new output to the bottom of the conversation in [fullscreen rendering](https://code.claude.com/docs/en/fullscreen.md). Turn it off to stay where you scrolled while Claude keeps working; permission prompts still scroll into view.
+Follow new output to the bottom of the conversation in [fullscreen rendering](https://code.claude.com/docs/en/fullscreen.md).
 
 * **Scope**: [`Any file`](#scopes)
 * **Type**: Boolean
@@ -3868,7 +3868,7 @@ In managed settings and files passed with `--settings`, a key on a bundled skill
 
 Turn off the download of the [skills enabled for your claude.ai account](https://code.claude.com/docs/en/skills.md#how-synced-skills-behave). Claude Code downloads them into `~/.claude/skills/synced/` in [terminal sessions where you sign in with your claude.ai account](https://code.claude.com/docs/en/skills.md#where-synced-skills-load), interactive or non-interactive, and in Cowork and cloud sessions. Set `false` to stop that download and stop loading the skills it already synced. Claude Code honors only `false`: `true` is the same as unset and doesn't turn syncing on where it's otherwise off.
 
-* **Scope**: [`User, local, or managed`](#scopes), and files passed with `--settings`. A repository can't turn it off for you.
+* **Scope**: [`User, local, or managed`](#scopes), and files passed with `--settings`.
 * **Type**: Boolean
   * `false`: Claude Code stops downloading synced skills and stops loading the ones already in `~/.claude/skills/synced/`. In user or managed settings, it also moves them to `~/.claude/skills/.trash/`
   * `true`: the same as unset
@@ -3886,7 +3886,7 @@ This example keeps a machine from downloading the account's skills in any sessio
 
 Turn off the download of the [plugins enabled for your claude.ai account](https://code.claude.com/docs/en/plugins/loading.md#synced-plugins). Claude Code downloads them into `~/.claude/plugins/synced/` at the start of terminal sessions where you sign in with your claude.ai account and in Cowork sessions, and loads each one as `<name>@synced`. Set `false` to stop that download and stop loading the plugins it already synced. Claude Code honors only `false`: `true` is the same as unset and doesn't turn syncing on where it's otherwise off. Requires Claude Code v2.1.273 or later.
 
-* **Scope**: [`User, local, or managed`](#scopes), and files passed with `--settings`. A repository can't turn it off for you.
+* **Scope**: [`User, local, or managed`](#scopes), and files passed with `--settings`.
 * **Type**: Boolean
   * `false`: Claude Code stops downloading synced plugins and stops loading the ones already in `~/.claude/plugins/synced/`. In user or managed settings, it also moves them to `~/.claude/plugins/.trash/`
   * `true`: the same as unset

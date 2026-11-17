@@ -81,7 +81,7 @@ You can't remap these shortcuts in the [keybindings configuration file](https://
 | :- | :- | :- |
 | Quick escape | `\` + `Enter` | Works in all terminals |
 | Option key | `Option+Enter` | After enabling [Option as Meta](https://code.claude.com/docs/en/terminal-config.md#enable-option-key-shortcuts-on-macos) on macOS |
-| Shift+Enter | `Shift+Enter` | Native in iTerm2, WezTerm, Ghostty, Kitty, Warp, Windows Terminal. For other terminals, see [Enter multiline prompts](https://code.claude.com/docs/en/terminal-config.md#enter-multiline-prompts) |
+| Shift+Enter | `Shift+Enter` | Native in iTerm2, WezTerm, Ghostty, Kitty, Warp, Windows Terminal 1.25 or later. For other terminals, see [Enter multiline prompts](https://code.claude.com/docs/en/terminal-config.md#enter-multiline-prompts) |
 | Control sequence | `Ctrl+J` | Works in any terminal without configuration |
 | Paste mode | Paste directly | For code blocks, logs |
 

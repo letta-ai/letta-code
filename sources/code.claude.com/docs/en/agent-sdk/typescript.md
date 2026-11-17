@@ -1744,7 +1744,7 @@ The `message` field is a [`BetaMessage`](https://platform.claude.com/docs/en/api
 `SDKAssistantMessageError` is one of: `'authentication_failed'`, `'oauth_org_not_allowed'`, `'account_on_hold'`, `'billing_error'`, `'rate_limit'`, `'overloaded'`, `'invalid_request'`, `'model_not_found'`, `'server_error'`, `'max_output_tokens'`, `'cloud_credential_error'`, or `'unknown'`. Four of these values mean more than their names say:
 
 * `'model_not_found'`: the selected model doesn't exist or isn't available to your account or deployment
-* `'overloaded'`: the API returned a 529 because the server is at capacity, as opposed to `'rate_limit'`, which is a 429 against your quota
+* `'overloaded'`: appears on [`api_retry` events](https://code.claude.com/docs/en/headless#handle-api-retries) when the API returns a 529 because the server is at capacity. When an HTTP 529 ends the turn, the assistant message carries `'server_error'`. A 429 against your quota is `'rate_limit'`
 * `'account_on_hold'`: [your account is on hold](https://code.claude.com/docs/en/errors.md#your-account-is-on-hold)
 * `'cloud_credential_error'`: Claude Code couldn't obtain usable AWS or Google Cloud credentials on the machine it runs on, so no request reached the cloud provider. The usual cause is a cloud sign-in that expired or was never completed on that machine, though a briefly unreachable credential service reports the same value. See [Could not load AWS or Google Cloud credentials](https://code.claude.com/docs/en/errors.md#could-not-load-aws-or-google-cloud-credentials). Requires TypeScript Agent SDK v0.3.267 or later, which bundles Claude Code v2.1.267
 
