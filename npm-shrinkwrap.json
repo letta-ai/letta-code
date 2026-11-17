@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/letta-code",
-  "version": "0.34.63",
+  "version": "0.34.64",
   "lockfileVersion": 3,
   "packages": {
     "node_modules/@alcalzone/ansi-tokenize": {
@@ -622,9 +622,9 @@
       }
     },
     "node_modules/@hono/node-server": {
-      "version": "2.1.8",
-      "resolved": "https://registry.npmjs.org/@hono/node-server/-/node-server-2.1.8.tgz",
-      "integrity": "sha512-jdf7FHh6A1lzjpHHQUgxsg2GeER2vMetnAOfeActzcoli6jamlK+NAwL6Dsr5Fl3BS3tYUQzCdtZjU8Qxv7bEA==",
+      "version": "2.1.9",
+      "resolved": "https://registry.npmjs.org/@hono/node-server/-/node-server-2.1.9.tgz",
+      "integrity": "sha512-Sk4NQd3GFY0WZWCzndwFMPwJhtD0y9qjsQ+pjID0/03nK9pxyBCUoUHCho8QYBLBVhi0ssL8UkNPHqbgSOFPIQ==",
       "license": "MIT",
       "engines": {
         "node": ">=20"
@@ -1673,9 +1673,9 @@
       "license": "MIT"
     },
     "node_modules/@smithy/core": {
-      "version": "3.40.0",
-      "resolved": "https://registry.npmjs.org/@smithy/core/-/core-3.40.0.tgz",
-      "integrity": "sha512-DssGno52pzZ5m6RlDtyKuBIpZNPg9pqgs0CnNDKz9IatxCsmvNmJNn5Zn6rf77MthZo9wf89OvZFhTY/RwxhxQ==",
+      "version": "3.41.0",
+      "resolved": "https://registry.npmjs.org/@smithy/core/-/core-3.41.0.tgz",
+      "integrity": "sha512-fuZ34H1uizS3WgcX9VXG7Uy8od5A5/kCc+CR3NkHLNm2H/BE9AUHG02VIdu8ZB7FYhLqsr/RZbqAoXuOCg/Oxg==",
       "license": "Apache-2.0",
       "dependencies": {
         "@smithy/types": "^4.20.0",
@@ -3147,9 +3147,9 @@
       }
     },
     "node_modules/hono": {
-      "version": "4.13.18",
-      "resolved": "https://registry.npmjs.org/hono/-/hono-4.13.18.tgz",
-      "integrity": "sha512-H9q/E1XizaWstJxUW881dmLxEj+t/TrGGnyxINkm4+sK0qUwsMtFdo2BWI9Vs3cIS19MU6b6iCijoUoEf4f3DA==",
+      "version": "4.13.19",
+      "resolved": "https://registry.npmjs.org/hono/-/hono-4.13.19.tgz",
+      "integrity": "sha512-KmXvQAXwcAHV+muzbIwoJ23niEB5nMoDVr9WcRkU8mvjUECm/1+7v4Jgp7P7a+H6MLFrh+vXrGonGrGS+RQfkA==",
       "license": "MIT",
       "engines": {
         "node": ">=16.9.0"
@@ -4252,9 +4252,9 @@
       }
     },
     "node_modules/router": {
-      "version": "2.2.0",
-      "resolved": "https://registry.npmjs.org/router/-/router-2.2.0.tgz",
-      "integrity": "sha512-nLTrUKm2UyiL7rlhapu/Zl45FwNgkZGaCpZbIHajDYgwlJCOzLSk+cIPAnsEqV955GjILJnKbdQC1nVPz+gAYQ==",
+      "version": "2.3.0",
+      "resolved": "https://registry.npmjs.org/router/-/router-2.3.0.tgz",
+      "integrity": "sha512-bpowRfGjEPe8t9R6fJIzhwmyCGAXwKvxBUsgJm+bJukwdcWmUXbMo7p22w7aYmQBPQTUMNqMV39YX0kMou3z8w==",
       "license": "MIT",
       "dependencies": {
         "debug": "^4.4.0",
@@ -4265,6 +4265,10 @@
       },
       "engines": {
         "node": ">= 18"
+      },
+      "funding": {
+        "type": "opencollective",
+        "url": "https://opencollective.com/express"
       }
     },
     "node_modules/run-applescript": {
@@ -5083,7 +5087,7 @@
     },
     "": {
       "name": "@letta-ai/letta-code",
-      "version": "0.34.63",
+      "version": "0.34.64",
       "dependencies": {
         "@cursor/sdk": "1.1.0",
         "@earendil-works/pi-ai": "^1.5.2",
