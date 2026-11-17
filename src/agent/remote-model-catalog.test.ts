@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { clearAvailableModelsCache } from "@/agent/available-models";
-import { models, resolveModel } from "@/agent/model-catalog";
+import { getDefaultModel, models, resolveModel } from "@/agent/model-catalog";
 import {
   __testResetRemoteModelCatalog,
   applyCatalogModels,
@@ -374,6 +374,37 @@ describe("refreshModelCatalog", () => {
 
     expect(loadPersistedModelCatalog("https://api.letta.com")).toBe(true);
     expect(models.find((m) => m.id === "persisted-model")?.label).toBe("GPT-9");
+  });
+
+  test("refreshes and reloads catalogs with defaults for multiple brands", async () => {
+    mockCatalogResponse({
+      models: [
+        remoteEntry(),
+        remoteEntry({
+          id: "provider-a-default",
+          handle: "provider-a/model-a",
+          label: "Model A",
+          brand: "provider-a",
+          isDefault: true,
+        }),
+        remoteEntry({
+          id: "provider-b-default",
+          handle: "provider-b/model-b",
+          label: "Model B",
+          brand: "provider-b",
+          isDefault: true,
+        }),
+      ],
+    });
+
+    expect(await refreshModelCatalog({ force: true })).toBe(true);
+    expect(models.filter((model) => model.isDefault)).toHaveLength(3);
+    expect(getDefaultModel()).toBe("provider-a/model-a");
+
+    restoreSnapshot();
+    expect(loadPersistedModelCatalog("https://api.letta.com")).toBe(true);
+    expect(models.filter((model) => model.isDefault)).toHaveLength(3);
+    expect(getDefaultModel()).toBe("provider-a/model-a");
   });
 
   test("does not load a cache written for another API server", async () => {
