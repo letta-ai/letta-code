@@ -9,6 +9,7 @@ import {
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { updateMonitorState } from "@/backend/api/monitors";
+import { experimentManager } from "@/experiments/manager";
 import { isManagedCloudRuntime } from "@/managed-cloud-runtime";
 import {
   getCurrentWorkingDirectory,
@@ -65,12 +66,14 @@ import {
   notifyBackgroundProcessStateChanged,
   unrefTimer,
 } from "./process_manager";
+import { startCloudPullRequestWatch } from "./watch-pr-cloud";
 
 const WATCH_POLL_MS = 30_000;
 const WATCH_MAX_POLL_MS = 5 * 60_000;
 const WATCH_FRESH_SNAPSHOT_NOTIFY_AFTER_MS = 30 * 60_000;
 
 interface WatchPullRequestArgs {
+  toolCallId?: string;
   resume?: string;
   url?: string;
   notify_on?: PullRequestEventKind[];
@@ -209,6 +212,8 @@ export async function watch_pr(
   args: WatchPullRequestArgs,
   deps: WatchPullRequestDeps = {},
 ): Promise<WatchPullRequestResult> {
+  const cloud = await startCloudPullRequestWatch(args);
+  if (cloud) return cloud;
   const resumeRecord = args.resume
     ? await readResumableMonitor(args.resume, args.parentScope)
     : undefined;
@@ -238,7 +243,11 @@ export async function watch_pr(
     deps.fetchSnapshot ??
     (isRun
       ? createGitHubWorkflowRunFetcher()
-      : createGitHubPullRequestSnapshotFetcher());
+      : createGitHubPullRequestSnapshotFetcher({
+          allowInaccessibleFallback:
+            experimentManager.isEnabled("cloud_watch_pr") &&
+            isManagedCloudRuntime(),
+        }));
   const runtimeContext = getRuntimeContext();
   const parentScope =
     args.parentScope ??
