@@ -52,4 +52,20 @@ describe("expandDreamCommand", () => {
     expect(process.env.LETTA_RUN_MAX_COST_USD).toBe("250");
     expect(prompt).toContain(String(process.env.LETTA_RUN_SPEND_FILE));
   });
+
+  test("takes --reasoning-effort for the new agent instead of passing it on", () => {
+    delete process.env.LETTA_DREAM_REASONING_EFFORT;
+    const [, , ...rest] = expandDreamCommand([
+      "dream",
+      "trajectories",
+      "--reasoning-effort",
+      "xhigh",
+      "--model",
+      "qwen",
+    ]);
+    expect(rest).not.toContain("--reasoning-effort");
+    expect(rest.slice(-2)).toEqual(["--model", "qwen"]);
+    expect(String(process.env.LETTA_DREAM_REASONING_EFFORT)).toBe("xhigh");
+    delete process.env.LETTA_DREAM_REASONING_EFFORT;
+  });
 });

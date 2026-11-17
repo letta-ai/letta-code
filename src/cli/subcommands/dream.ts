@@ -13,7 +13,10 @@ reasoning effort with a catalog ID such as --model opus-5.5-1m-max.
 
   --dynamic            Give the agent only the goal and a budget, and let it
                        decide how to work (alone, or with its own Workflow).
-  --budget-usd <n>     Spending limit in USD for --dynamic (required with it).`;
+  --budget-usd <n>     Spending limit in USD for --dynamic (required with it).
+  --reasoning-effort <level>  Reasoning effort for the new agent, for models
+                              whose catalog ID has no effort tier (for example
+                              BYOK handles such as lc-openrouter/qwen/qwen4-max).`;
 
 function usageError(message: string): never {
   console.error(`${message}\n\n${DREAM_USAGE}`);
@@ -39,6 +42,11 @@ export function expandDreamCommand(args: string[]): string[] {
     if (arg === "--dynamic") dynamic = true;
     else if (arg === "--budget-usd") budget = options[++i] ?? "";
     else if (arg.startsWith("--budget-usd=")) budget = arg.slice(13);
+    // Headless applies this to the agent it creates (getNewAgentUpdateArgs).
+    else if (arg === "--reasoning-effort")
+      process.env.LETTA_DREAM_REASONING_EFFORT = options[++i] ?? "";
+    else if (arg.startsWith("--reasoning-effort="))
+      process.env.LETTA_DREAM_REASONING_EFFORT = arg.slice(19);
     else rest.push(arg);
   }
   let prompt = dreamPrompt;
