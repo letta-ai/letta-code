@@ -9,7 +9,7 @@ Generate images via Letta's hosted endpoint `POST /v1/images/generations`. The A
 usually returns base64 image bytes, but some providers return signed image URLs;
 save either form to a local image file before replying.
 
-If the ask names an existing meme, emoji or character people already share, find and use the real image first (slackmojis.com for Slack emoji), and generate only when none exists.
+If the ask names a real thing (a product, place, meme, emoji or person), look up what it actually looks like before drawing it. If the real image is all they asked for, post it (slackmojis.com for Slack emoji); otherwise pass it to the generator as a reference so the thing looks right in the new image. A name you don't recognize may be newer than you know, so search it rather than guessing from the words.
 
 ## Example
 
