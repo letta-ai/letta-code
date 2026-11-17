@@ -214,19 +214,53 @@ function onceSocketEvent(
   return detach;
 }
 
-function waitForSocketOpen(socket: AppServerSocketLike): Promise<void> {
+/**
+ * Resolves once the socket opens. Rejects on an error, an HTTP upgrade
+ * failure, a close before opening, or after `timeoutMs`, so a connection that
+ * never completes cannot hang the caller.
+ */
+function waitForSocketOpen(
+  socket: AppServerSocketLike,
+  timeoutMs: number,
+): Promise<void> {
   if (socket.readyState === WEBSOCKET_OPEN_STATE) {
     return Promise.resolve();
   }
 
-  return new Promise((resolve, reject) => {
+  return new Promise((resolvePromise, rejectPromise) => {
+    let settled = false;
+    const resolve = () => {
+      if (settled) return;
+      settled = true;
+      resolvePromise();
+    };
+    const reject = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      rejectPromise(error);
+    };
     let detachOpen = () => {};
     let detachError = () => {};
+    let detachClose = () => {};
     let detachResponse = () => {};
     let detachBody = () => {};
+    let upgradeRejected = false;
+    const timer =
+      timeoutMs > 0
+        ? setTimeout(() => {
+            cleanup();
+            reject(
+              new Error(
+                `App-server WebSocket failed to open: timed out after ${timeoutMs}ms`,
+              ),
+            );
+          }, timeoutMs)
+        : undefined;
     const cleanup = () => {
+      clearTimeout(timer);
       detachOpen();
       detachError();
+      detachClose();
       detachResponse();
       detachBody();
     };
@@ -237,6 +271,7 @@ function waitForSocketOpen(socket: AppServerSocketLike): Promise<void> {
     if (socket.on) {
       const onResponse = (_request: unknown, response?: IncomingMessage) => {
         if (!response) return;
+        upgradeRejected = true;
         const request = _request as ClientRequest;
         let body = Buffer.alloc(0);
         let finished = false;
@@ -278,12 +313,38 @@ function waitForSocketOpen(socket: AppServerSocketLike): Promise<void> {
       detachResponse = () => socket.off?.("unexpected-response", onResponse);
     }
     detachError = onceSocketEvent(socket, "error", (event) => {
+      const detail = socketErrorDetail(event);
+      // Opaque errors may be followed by a close with the actual failure reason.
+      if (detail === null) return;
       cleanup();
+      reject(new Error(`App-server WebSocket failed to open: ${detail}`));
+    });
+    detachClose = onceSocketEvent(socket, "close", (event) => {
+      // An HTTP upgrade failure reports its status from the response handler.
+      if (upgradeRejected) return;
+      cleanup();
+      const reason =
+        event && typeof event === "object"
+          ? Reflect.get(event, "reason")
+          : null;
       reject(
-        new Error(`App-server WebSocket failed to open: ${String(event)}`),
+        new Error(
+          `App-server WebSocket failed to open: ${typeof reason === "string" && reason ? reason : "closed before opening"}`,
+        ),
       );
     });
   });
+}
+
+function socketErrorDetail(event: unknown): string | null {
+  if (event instanceof Error) return event.message || null;
+  if (event && typeof event === "object") {
+    const error = Reflect.get(event, "error");
+    if (error instanceof Error && error.message) return error.message;
+    const message = Reflect.get(event, "message");
+    if (typeof message === "string" && message) return message;
+  }
+  return typeof event === "string" && event ? event : null;
 }
 
 function rawEventData(event: unknown): unknown {
@@ -356,6 +417,9 @@ export class AppServerClient {
       resolveAppServerUrl(options.url),
       socketOptions,
     );
+    // EventEmitter sockets can emit again after handshake listeners detach,
+    // including while close() aborts a failed connection. Keep this for life.
+    this.socket.on?.("error", () => {});
     this.control = this.socket;
     this.stream = this.socket;
 
@@ -368,8 +432,13 @@ export class AppServerClient {
   }
 
   async connect(): Promise<this> {
-    await waitForSocketOpen(this.socket);
-    return this;
+    try {
+      await waitForSocketOpen(this.socket, this.requestTimeoutMs);
+      return this;
+    } catch (error) {
+      this.close();
+      throw error;
+    }
   }
 
   close(): void {

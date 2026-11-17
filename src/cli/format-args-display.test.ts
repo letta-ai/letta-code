@@ -79,6 +79,17 @@ describe("formatArgsDisplay compact plan/todo headers", () => {
     });
   });
 
+  test("falls back to the command for Bash calls without a description", () => {
+    const args = JSON.stringify({ command: "git status --short" });
+
+    const formatted = formatArgsDisplay(args, "Bash");
+    expect(formatted.display).toBe("git status --short");
+    expect(formatted.shellSemantic).toMatchObject({
+      kind: "run",
+      rawCommand: "git status --short",
+    });
+  });
+
   test("uses Codex unified exec description when present", () => {
     const args = JSON.stringify({
       cmd: "git status --short",

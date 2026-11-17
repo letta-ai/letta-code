@@ -6,6 +6,7 @@ import {
   existsSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -170,4 +171,46 @@ describe.skipIf(process.platform !== "linux")(
       expect(existsSync(argsFile)).toBe(false);
     }, 10_000);
   },
+);
+
+// Native CLI shims such as codex.cmd run behind cmd.exe on Windows.
+test.skipIf(process.platform !== "win32")(
+  "managed cancellation kills a Windows cmd wrapper and its descendant",
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), "managed-cmd-tree-"));
+    const launcher = join(dir, "launcher.cjs");
+    const shim = join(dir, "codex.cmd");
+    writeFileSync(
+      launcher,
+      [
+        'const { spawn } = require("node:child_process");',
+        'const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });',
+        'child.once("spawn", () => process.stdout.write(String(child.pid) + "\\n"));',
+        "setInterval(() => {}, 1000);",
+      ].join("\n"),
+    );
+    writeFileSync(shim, `@echo off\r\n"${process.execPath}" "${launcher}"\r\n`);
+    const controller = new AbortController();
+    const running = spawnManagedWorkloadProcess(shim, [], {
+      cwd: dir,
+      env: process.env,
+      signal: controller.signal,
+    });
+    try {
+      const [chunk] = await once(running.process.stdout, "data");
+      const descendantPid = Number(String(chunk).trim());
+      expect(descendantPid).toBeGreaterThan(0);
+      expect(() => process.kill(descendantPid, 0)).not.toThrow();
+      controller.abort();
+      await running.completion;
+      expect(running.wasAborted()).toBe(true);
+      await waitForProcessExit(descendantPid);
+      if (running.process.pid) await waitForProcessExit(running.process.pid);
+    } finally {
+      controller.abort();
+      await running.completion;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+  10_000,
 );

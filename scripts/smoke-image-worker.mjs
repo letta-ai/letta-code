@@ -1,4 +1,4 @@
-// Exercise the published Node worker with a newer Sharp installation in an
+// Exercise the published Node worker with a standalone Sharp installation in an
 // ancestor directory. Sharp's JS and native binding must come from the same
 // installed package, rather than mixing bundled JS with a runtime binding.
 import assert from "node:assert/strict";
@@ -20,7 +20,7 @@ try {
       "--ignore-scripts",
       "--no-audit",
       "--no-fund",
-      "sharp@0.35.3",
+      "sharp@0.35.5",
     ],
     { encoding: "utf8" },
   );
@@ -33,7 +33,7 @@ try {
   );
   const require = createRequire(worker);
   const sharp = require("sharp");
-  assert.equal(sharp.versions.sharp, "0.35.3");
+  assert.equal(sharp.versions.sharp, "0.35.5");
   const png = await sharp({
     create: {
       width: 2,
@@ -62,7 +62,32 @@ try {
     assert.deepEqual(Buffer.from(decoded.data, "base64"), image);
   }
 
-  console.log("Published image worker decoded PNG and JPEG with Sharp 0.35.3");
+  const oversized = await sharp({
+    create: {
+      width: 2500,
+      height: 100,
+      channels: 3,
+      background: { r: 70, g: 100, b: 130 },
+    },
+  })
+    .png()
+    .toBuffer();
+  const resized = spawnSync(process.execPath, [worker, "image/png"], {
+    input: oversized,
+    encoding: "utf8",
+  });
+  assert.equal(resized.status, 0, resized.stderr || resized.error?.message);
+  const output = JSON.parse(resized.stdout);
+  assert.equal(output.resized, true);
+  assert.equal(output.width, 2000);
+  assert.equal(output.height, 80);
+  const metadata = await sharp(Buffer.from(output.data, "base64")).metadata();
+  assert.equal(metadata.width, output.width);
+  assert.equal(metadata.height, output.height);
+
+  console.log(
+    "Published image worker decoded PNG/JPEG and resized PNG with Sharp 0.35.5",
+  );
 } finally {
   rmSync(root, { recursive: true, force: true });
 }

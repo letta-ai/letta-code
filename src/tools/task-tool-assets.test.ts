@@ -1,12 +1,9 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import TaskDescriptionRaw from "./descriptions/Task.md";
 import { TASK_HARNESSES } from "./impl/task-agent-selection";
 import type { JsonSchema } from "./model-facing-tool";
 import TaskSchema from "./schemas/Task.json";
-import {
-  stripComputerFromTaskDescription,
-  stripComputerFromTaskSchema,
-} from "./task-tool-assets";
+import { stripComputerFromTaskSchema } from "./task-tool-assets";
 
 const taskSchema = TaskSchema as JsonSchema;
 const taskDescription = (TaskDescriptionRaw as string).trim();
@@ -29,35 +26,6 @@ describe("stripComputerFromTaskSchema", () => {
   test("returns schemas without a computer property unchanged", () => {
     const schema: JsonSchema = { properties: { prompt: { type: "string" } } };
     expect(stripComputerFromTaskSchema(schema)).toBe(schema);
-  });
-});
-
-describe("stripComputerFromTaskDescription", () => {
-  test("removes the Running on Another Computer section from the real description", () => {
-    expect(taskDescription).toContain("## Running on Another Computer");
-    const stripped = stripComputerFromTaskDescription(taskDescription);
-    expect(stripped).not.toContain("## Running on Another Computer");
-    expect(stripped).not.toContain("computer:");
-    expect(stripped).not.toContain("`computer`");
-  });
-
-  test("keeps external coding agent docs but drops their computer routing", () => {
-    const stripped = stripComputerFromTaskDescription(taskDescription);
-    expect(stripped).toContain("## External Coding Agents");
-    expect(stripped).toContain('harness: "claude-code"');
-    expect(stripped).not.toMatch(/\bcomputer\b(?!s)/i);
-  });
-
-  test("keeps the surrounding sections intact", () => {
-    const stripped = stripComputerFromTaskDescription(taskDescription);
-    expect(stripped).toContain("## Forking Parent Context");
-    expect(stripped).toContain("## Concurrency and Safety:");
-    expect(stripped).not.toContain("\n\n\n");
-  });
-
-  test("returns descriptions without the section unchanged", () => {
-    const description = "## Intro\n\nBody text.";
-    expect(stripComputerFromTaskDescription(description)).toBe(description);
   });
 });
 
@@ -109,10 +77,8 @@ describe("Task agent selection fields", () => {
     expect(taskSchema.properties?.agent_type).toBeUndefined();
     expect(taskSchema.additionalProperties).toBe(false);
   });
-  test("the model-facing description uses harness and subagent_type", () => {
+  test("the model-facing description does not mention agent_type", () => {
     expect(taskDescription).not.toMatch(/\bagent_type\b/);
-    expect(taskDescription).toContain('harness: "codex"');
-    expect(taskDescription).toContain('subagent_type: "recall"');
   });
   // Launch behavior is covered by the existing routing and fork-receipt suites.
 });
@@ -139,9 +105,7 @@ describe("resolveBackendSpecificToolAssets Task dispatch", () => {
       taskSchema,
     );
     expect(resolved.inputSchema.properties?.computer).toBeUndefined();
-    expect(resolved.description).not.toContain(
-      "## Running on Another Computer",
-    );
+    expect(resolved.description).toBe(taskDescription);
   });
 
   test("keeps computer for the Cloud server", async () => {
@@ -155,6 +119,149 @@ describe("resolveBackendSpecificToolAssets Task dispatch", () => {
       taskSchema,
     );
     expect(resolved.inputSchema.properties?.computer).toBeDefined();
-    expect(resolved.description).toContain("## Running on Another Computer");
+    expect(resolved.description).toBe(taskDescription);
   });
+});
+
+describe("Monitor experiment assets", () => {
+  test("selects mutually exclusive schemas and rejects inactive arguments", async () => {
+    const { experimentManager } = await import("@/experiments/manager");
+    const { resolveBackendSpecificToolAssets } = await import(
+      "./task-tool-assets"
+    );
+    const { default: schema } = await import("./schemas/Monitor.json");
+    const { default: description } = await import("./descriptions/Monitor.md");
+    const { monitor } = await import("./impl/monitor");
+    const flag = spyOn(experimentManager, "isEnabled");
+    try {
+      flag.mockReturnValue(false);
+      const local = await resolveBackendSpecificToolAssets(
+        "Monitor",
+        description,
+        schema,
+      );
+      expect(local).toEqual({ description, inputSchema: schema });
+      expect(Object.keys(local.inputSchema.properties ?? {}).sort()).toEqual(
+        [
+          "description",
+          "resume",
+          "timeout_ms",
+          "persistent",
+          "backup_after_seconds",
+          "backup_prompt",
+          "command",
+          "ws",
+          "script",
+          "args",
+        ].sort(),
+      );
+      for (const key of [
+        "url",
+        "interval_seconds",
+        "headers",
+        "select",
+        "match",
+        "stop_on_match",
+      ]) {
+        await expect(
+          monitor({ description: "Status", [key]: "unused" }),
+        ).rejects.toThrow(`${key} is not supported in local mode`);
+      }
+      flag.mockReturnValue(true);
+      const cloud = await resolveBackendSpecificToolAssets(
+        "Monitor",
+        description,
+        schema,
+      );
+      expect(Object.keys(cloud.inputSchema.properties ?? {}).sort()).toEqual(
+        [
+          "description",
+          "timeout_ms",
+          "url",
+          "interval_seconds",
+          "headers",
+          "select",
+          "match",
+          "stop_on_match",
+        ].sort(),
+      );
+      expect(cloud.inputSchema.required).toEqual(["description", "url"]);
+      expect(cloud.inputSchema.additionalProperties).toBe(false);
+      expect(cloud.description).not.toBe(local.description);
+      for (const key of [
+        "command",
+        "ws",
+        "script",
+        "args",
+        "persistent",
+        "backup_after_seconds",
+        "backup_prompt",
+      ]) {
+        await expect(
+          monitor({
+            description: "Status",
+            url: "https://example.com",
+            [key]: "unused",
+          }),
+        ).rejects.toThrow(`${key} is not supported in Cloud mode`);
+      }
+    } finally {
+      flag.mockRestore();
+    }
+  });
+});
+
+test("local Monitor assets pin the resume-enabled schema and description", async () => {
+  for (const [path, hash] of [
+    [
+      "./descriptions/Monitor.md",
+      "6928aa96b3fc7fb06fa3028fb5b1d4e16e9596cb3e93e0c90e43559d18fe3eb9",
+    ],
+    [
+      "./schemas/Monitor.json",
+      "48e07b777c824598ff2bf0dae2c2fbfb439e0f341fde91affeaa0389c8ea8a35",
+    ],
+  ] as const) {
+    const bytes = await Bun.file(new URL(path, import.meta.url)).arrayBuffer();
+    expect(new Bun.CryptoHasher("sha256").update(bytes).digest("hex")).toBe(
+      hash,
+    );
+  }
+});
+
+test("Wake session warning appears only in the interactive TUI", async () => {
+  const { runWithRuntimeContext } = await import("@/runtime-context");
+  const { resolveBackendSpecificToolAssets } = await import(
+    "./task-tool-assets"
+  );
+  const previousDesktop = process.env.LETTA_DESKTOP_MODE;
+  try {
+    for (const sessionSource of [
+      "interactive-cli",
+      "listen",
+      "headless",
+      undefined,
+    ] as const) {
+      for (const desktop of ["1", undefined]) {
+        if (desktop) process.env.LETTA_DESKTOP_MODE = desktop;
+        else delete process.env.LETTA_DESKTOP_MODE;
+        const assets = await runWithRuntimeContext({ sessionSource }, () =>
+          resolveBackendSpecificToolAssets(
+            "Wake",
+            "Schedule a future turn.",
+            {},
+          ),
+        );
+        expect(
+          assets.description.includes(
+            "Wakes fire only while this session is running.",
+          ),
+        ).toBe(sessionSource === "interactive-cli" && !desktop);
+        expect(assets.description).not.toMatch(/local|cloud|runner/i);
+      }
+    }
+  } finally {
+    if (previousDesktop === undefined) delete process.env.LETTA_DESKTOP_MODE;
+    else process.env.LETTA_DESKTOP_MODE = previousDesktop;
+  }
 });

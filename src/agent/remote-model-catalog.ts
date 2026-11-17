@@ -197,7 +197,7 @@ export function applyCatalogModels(
     const defaults = next.filter(
       (model) => model.isDefault || model.id === "auto",
     );
-    if (defaults.length !== 1) {
+    if (defaults.length === 0) {
       return false;
     }
   }

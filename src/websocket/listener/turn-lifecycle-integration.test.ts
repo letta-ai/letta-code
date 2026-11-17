@@ -194,6 +194,7 @@ describe("listener turn lifecycle integration", () => {
           auto_allowed_tool_call_ids: [],
           auto_denied_tool_call_ids: [],
           user_input_tool_call_ids: ["call-1"],
+          permission_mode: "strict",
         }),
       }),
     ]);

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { NormalizedRecord } from "@letta-ai/trajectory";
@@ -13,6 +13,7 @@ import type {
   SessionManifestEntry,
   TrajectoryManifest,
 } from "@/cli/subcommands/trajectories/types";
+import { removeTestDir } from "@/test-utils/test-fs";
 
 const RECORDS: NormalizedRecord[] = [
   {
@@ -122,7 +123,7 @@ describe("export directory reads", () => {
   });
 
   afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+    await removeTestDir(dir);
   });
 
   test("resolveSessionFile accepts sessionId, manifest file, and path", async () => {

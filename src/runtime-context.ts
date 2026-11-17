@@ -5,6 +5,8 @@ import type { SkillSource } from "./agent/skills";
 import { isUsableDirectory } from "./helpers/usable-directory";
 import type { RuntimeExecutionSettings } from "./runtime-execution-settings";
 
+export type RuntimeSessionSource = "interactive-cli" | "headless" | "listen";
+
 export type RuntimePermissionMode =
   | "standard"
   | "acceptEdits"
@@ -19,6 +21,9 @@ export interface RuntimeWorkspaceSandbox {
 }
 
 export interface RuntimeContextSnapshot {
+  /** Epoch milliseconds when the current turn input arrived. */
+  turnStartedAt?: number;
+  sessionSource?: RuntimeSessionSource;
   /** Listener transport connection that owns the current turn, when present. */
   connectionId?: string | null;
   /** Registered listener device that owns the current turn, when present. */
@@ -64,12 +69,26 @@ export interface RuntimeContextSnapshot {
   permissionMode?: RuntimePermissionMode;
   workspaceSandbox?: RuntimeWorkspaceSandbox;
   executionSettings?: RuntimeExecutionSettings;
+  /** Foreground yield from the runtime tool policy; unset uses the default. */
+  foregroundYieldMs?: number;
 }
 
 const runtimeContextStorage = new AsyncLocalStorage<RuntimeContextSnapshot>();
 
 export function getRuntimeContext(): RuntimeContextSnapshot | undefined {
   return runtimeContextStorage.getStore();
+}
+
+/** Preserve startup classification for tools and inherited CLI commands. */
+export function getRuntimeSessionSource(): RuntimeSessionSource | undefined {
+  const source =
+    getRuntimeContext()?.sessionSource ??
+    process.env.LETTA_RUNTIME_SESSION_SOURCE;
+  return source === "interactive-cli" ||
+    source === "headless" ||
+    source === "listen"
+    ? source
+    : undefined;
 }
 
 /** Resolve the current turn's customer, including inherited headless env scope. */

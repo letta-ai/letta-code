@@ -14,7 +14,7 @@ const providerAliases: Readonly<Record<string, string>> = {
   "kimi-code": "kimi-coding",
   moonshot_coding: "kimi-coding",
   "zai-coding": "zai",
-  azure: "azure-openai-responses",
+  "azure-openai-responses": "azure",
   zai_coding: "zai",
   "llama.cpp": "llama-cpp",
 };

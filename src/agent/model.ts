@@ -424,13 +424,42 @@ export function preservableContextWindow(
   return matchesPreset ? current : undefined;
 }
 
-export function shouldPreserveContextWindowForModelSelection(input: {
+type ModelSelectionContextWindowInput = {
   currentModelHandle?: string | null;
   currentModelId?: string | null;
   currentLlmConfig?: ModelConfigSnapshot | null;
   selectedModelHandle: string;
   selectedContextWindow?: number;
-}): boolean {
+};
+
+/**
+ * The current context window to re-send for a model selection, or undefined
+ * when the selected catalog entry's window applies.
+ *
+ * Switching to a different model (or a different context-window variant of
+ * the same model, e.g. base <-> 1M dual listings) resets the context window
+ * to the selected entry's preset. Only a tier change within the same variant
+ * preserves the current window, and it preserves by RE-SENDING the current
+ * value explicitly, never by omitting the field: the server treats an omitted
+ * context_window_limit as "re-derive from the handle" and clamps it to a
+ * legacy global default (128k). A current value that looks like that clamp is
+ * not preservable, so poisoned agents heal to the preset even on same-variant
+ * tier changes. See LET-9786.
+ */
+export function contextWindowToPreserveForModelSelection(
+  input: ModelSelectionContextWindowInput,
+): number | undefined {
+  return isSameVariantModelSelection(input)
+    ? preservableContextWindow(
+        input.currentLlmConfig?.context_window,
+        input.selectedModelHandle,
+      )
+    : undefined;
+}
+
+function isSameVariantModelSelection(
+  input: ModelSelectionContextWindowInput,
+): boolean {
   const currentRegistryModelHandle = normalizeModelHandleForRegistry(
     input.currentModelHandle ??
       buildModelHandleFromConfig(input.currentLlmConfig),

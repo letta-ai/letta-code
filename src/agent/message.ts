@@ -18,6 +18,12 @@ import { type Backend, getBackend } from "@/backend";
 import { isCompactionSummaryChunk } from "@/backend/compaction-events";
 import { takePendingDiskSpaceReminder } from "@/reminders/disk-space";
 import { getRuntimeContext } from "@/runtime-context";
+import {
+  getBusyRecoveryHttpStatus,
+  markBusyRequest,
+  reportBusyRecovery,
+  traceBusyRecoveryStream,
+} from "@/telemetry/busy-recovery";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import {
   type ClientTool,
@@ -45,7 +51,12 @@ import {
 import { buildClientSkillsPayload } from "./client-skills";
 import { planClientSkillsRequest } from "./client-skills-baseline";
 import { getSkillSources } from "./context";
-import { parseRetryAfterHeaderMs } from "./turn-recovery-policy";
+import {
+  extractConflictDetail,
+  extractConversationBusyRunId,
+  isConversationBusyError,
+  parseRetryAfterHeaderMs,
+} from "./turn-recovery-policy";
 
 const streamRequestStartTimes = new WeakMap<object, number>();
 const streamToolContextIds = new WeakMap<object, string>();
@@ -667,6 +678,16 @@ export async function sendMessageStreamWithBackend(
       }
 
       abortRelay?.cleanup();
+      const detail = extractConflictDetail(error);
+      if (isConversationBusyError(detail)) {
+        markBusyRequest(backend, resolvedConversationId, firstOtid);
+        reportBusyRecovery("send_rejected", {
+          conversationId: resolvedConversationId,
+          otid: firstOtid,
+          blockerRunId: extractConversationBusyRunId(detail) ?? undefined,
+          httpStatus: getBusyRecoveryHttpStatus(error),
+        });
+      }
       debugWarn(
         "send-message-stream",
         "request_error conversation_id=%s otid=%s status=%s error=%s",
@@ -686,6 +707,13 @@ export async function sendMessageStreamWithBackend(
     firstOtid ?? "none",
   );
 
+  stream = traceBusyRecoveryStream(
+    stream,
+    resolvedConversationId,
+    firstOtid,
+    requestOptions.signal,
+    backend,
+  );
   abortRelay?.attach(stream as object);
 
   if (requestStartTime !== undefined) {

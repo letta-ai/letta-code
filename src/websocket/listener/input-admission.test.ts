@@ -1,4 +1,7 @@
 import { afterEach, expect, mock, test } from "bun:test";
+import { mkdtempSync, rmSync, truncateSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type WebSocket from "ws";
 import {
   markListenerConnectionInitialized,
@@ -11,9 +14,12 @@ import {
 } from "./conversation-runtime";
 import { dispatchInboundMessageWhenReady } from "./inbound-dispatch";
 import {
+  createAcceptedInputDispositionLedger,
   getInputDisposition,
+  MAX_INPUT_DISPOSITION_STORE_BYTES,
   ordinaryInputIdentity,
   rememberInputDisposition,
+  reserveInputDisposition,
   teleportInputIdentity,
 } from "./input-disposition";
 import { createRuntime } from "./lifecycle";
@@ -558,3 +564,84 @@ test("a teleport admission that throws after admission releases its reservation"
   );
   expect(processIncomingMessage).toHaveBeenCalledTimes(1);
 });
+
+for (const [kind, frame] of [
+  ["message", createMessageFrame],
+  ["teleport", teleportContinueFrame],
+] as const) {
+  test(`${kind} rejection reports the durable store error`, async () => {
+    const directory = mkdtempSync(join(tmpdir(), "input-admission-"));
+    try {
+      const path = join(directory, "ledger.json");
+      writeFileSync(path, "");
+      truncateSync(path, MAX_INPUT_DISPOSITION_STORE_BYTES + 1);
+      const listener = createRuntime();
+      listener.acceptedInputDispositionLedger =
+        createAcceptedInputDispositionLedger({ persistentPath: path });
+      const runtime = getOrCreateScopedRuntime(
+        listener,
+        "agent-1",
+        "conversation-1",
+      );
+      const sent: unknown[] = [];
+      const processIncomingMessage = mock(async () => {});
+      const handleMessage = setupRouter({
+        listener,
+        runtime,
+        sent,
+        tasks: [],
+        trackListenerError: () => {},
+        processIncomingMessage,
+      });
+
+      await handleMessage(frame("store-error", "input-1"));
+
+      expect(sent).toContainEqual(
+        expect.objectContaining({
+          request_id: "store-error",
+          accepted: false,
+          error:
+            "Input ledger unavailable: Accepted-input disposition store exceeds its size limit",
+        }),
+      );
+      expect(JSON.stringify(sent)).not.toContain("at capacity");
+      expect(processIncomingMessage).not.toHaveBeenCalled();
+      expect(runtime.queueRuntime.length).toBe(0);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test(`${kind} held reservation still reports capacity`, async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conversation-1",
+    );
+    const identity =
+      kind === "message"
+        ? ordinaryInputIdentity("input-1")
+        : teleportInputIdentity("input-1");
+    expect(reserveInputDisposition(runtime, identity).kind).toBe("reserved");
+    const sent: unknown[] = [];
+    const handleMessage = setupRouter({
+      listener,
+      runtime,
+      sent,
+      tasks: [],
+      trackListenerError: () => {},
+      processIncomingMessage: async () => {},
+    });
+
+    await handleMessage(frame("held", "input-1"));
+
+    expect(sent).toContainEqual(
+      expect.objectContaining({
+        request_id: "held",
+        accepted: false,
+        error: "Stable input ledger is at capacity",
+      }),
+    );
+  });
+}

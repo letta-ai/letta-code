@@ -16,9 +16,9 @@ import type {
 
 /**
  * Escape XML text-node content without over-escaping quotes that should remain
- * readable inside the rendered message body.
+ * readable inside the rendered message body. Apply once to raw, untrusted text.
  */
-function escapeXmlText(text: string): string {
+export function escapeXmlText(text: string): string {
   return text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")

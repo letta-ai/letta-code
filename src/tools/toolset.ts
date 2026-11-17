@@ -10,12 +10,16 @@ import type { ModAdapter } from "@/mods/mod-adapter";
 import type { ModPermissionDefinition } from "@/mods/permission-registry";
 import type { ModToolDefinition } from "@/mods/tool-registry";
 import type { ModContext } from "@/mods/types";
-import type { RuntimeContextSnapshot } from "@/runtime-context";
+import {
+  getRuntimeSessionSource,
+  type RuntimeContextSnapshot,
+} from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { OPENAI_COMPATIBLE_PROXY_UPDATE_ARG } from "@/utils/openai-endpoint";
 import { isRecord } from "@/utils/type-guards";
 import { getStoredClientPreferences } from "./client-preferences";
 import {
+  getExecutionContextById,
   getInternalToolName,
   isOpenAIModel,
   loadTools,
@@ -25,6 +29,7 @@ import {
 import type { PermissionModeState } from "./permission-mode-state";
 import { isRemovedToolName } from "./removed-tools";
 import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
+import { mergeClientToolsetFields } from "./tool-policy";
 import type { ToolsetName, ToolsetPreference } from "./toolset-types";
 
 export type { ToolsetName, ToolsetPreference } from "./toolset-types";
@@ -193,7 +198,8 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
   clientToolset?: ClientToolsetConfig;
   exclude?: ToolName[];
   clientToolAllowlist?: string[];
-  externalToolScopeIds?: string[];
+  /** Connection whose copy wins when two connections register one tool name. */
+  externalToolOwnerConnectionId?: string;
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
   modContext?: ModContext;
@@ -211,7 +217,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     clientToolset,
     exclude,
     clientToolAllowlist: inputToolAllowlist,
-    externalToolScopeIds,
+    externalToolOwnerConnectionId,
     workingDirectory,
     permissionModeState,
     modContext,
@@ -267,7 +273,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
       exclude,
       include: includedToolNames,
       clientToolAllowlist,
-      externalToolScopeIds,
+      externalToolOwnerConnectionId,
       workingDirectory,
       permissionModeState,
       modContext: scopedModContext,
@@ -298,13 +304,15 @@ export async function prepareToolExecutionContextForScope(params: {
   mcpOriginatorSuperRunId?: string;
   /** Client message ids that started the listener turn owning this context. */
   resolveClientMessageIds?: () => string[];
+  turnStartedAt?: number;
   overrideModel?: string | null;
   overrideProviderType?: string | null;
   cachedEffectiveModel?: string | null;
   exclude?: ToolName[];
   clientToolset?: ClientToolsetConfig;
   clientToolAllowlist?: string[];
-  externalToolScopeIds?: string[];
+  /** Connection whose copy wins when two connections register one tool name. */
+  externalToolOwnerConnectionId?: string;
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
   skillsDirectory?: string;
@@ -312,8 +320,13 @@ export async function prepareToolExecutionContextForScope(params: {
   bundledSkills?: string[];
   workspaceSandbox?: RuntimeContextSnapshot["workspaceSandbox"];
   executionSettings?: RuntimeContextSnapshot["executionSettings"];
+  /** Foreground yield from the runtime tool policy; unset uses the default. */
+  foregroundYieldMs?: number;
   cachedAgent?: AgentState | null;
+  /** Caller-owned retry/lease policy, applied only to scope metadata reads. */
+  readScopeState?: <T>(read: () => Promise<T>) => Promise<T>;
   modContext?: ModContext;
+  shouldEnqueueBackground?: () => Promise<boolean>;
   modEvents?: ModEvents;
   modAdapters?: ModAdapter[];
 }): Promise<PreparedScopeToolContext> {
@@ -326,13 +339,14 @@ export async function prepareToolExecutionContextForScope(params: {
     suppressActingUserFallback,
     mcpOriginatorSuperRunId,
     resolveClientMessageIds,
+    turnStartedAt,
     overrideModel,
     overrideProviderType,
     cachedEffectiveModel,
     exclude,
     clientToolset: requestClientToolset,
     clientToolAllowlist,
-    externalToolScopeIds,
+    externalToolOwnerConnectionId,
     workingDirectory,
     permissionModeState,
     skillsDirectory,
@@ -340,26 +354,33 @@ export async function prepareToolExecutionContextForScope(params: {
     bundledSkills,
     workspaceSandbox,
     executionSettings,
+    foregroundYieldMs,
     cachedAgent,
     modContext,
     modEvents,
     modAdapters,
   } = params;
 
+  // Per field: a base-only request keeps the saved include, and vice versa.
   const clientToolset: ClientToolsetConfig | undefined =
-    requestClientToolset ??
-    getStoredClientPreferences(agentId, conversationId).toolset;
+    mergeClientToolsetFields(
+      requestClientToolset,
+      getStoredClientPreferences(agentId, conversationId).toolset,
+    );
   const backend = getBackend();
+  const readScopeState = params.readScopeState ?? ((read) => read());
   const agent = agentId
     ? ((cachedAgent ??
-        (await backend.retrieveAgent(agentId))) as ScopeModelCarrier)
+        (await readScopeState(() =>
+          backend.retrieveAgent(agentId),
+        ))) as ScopeModelCarrier)
     : null;
   const agentTarget = modelTargetFromCarrier(agent);
   const conversationTarget =
     conversationId && conversationId !== "default"
       ? modelTargetFromCarrier(
-          (await backend.retrieveConversation(
-            conversationId,
+          (await readScopeState(() =>
+            backend.retrieveConversation(conversationId),
           )) as ScopeModelCarrier,
         )
       : { model: null, providerType: null, openAICompatibleProxy: false };
@@ -424,7 +445,7 @@ export async function prepareToolExecutionContextForScope(params: {
     clientToolset,
     exclude,
     clientToolAllowlist,
-    externalToolScopeIds,
+    externalToolOwnerConnectionId,
     workingDirectory,
     permissionModeState,
     modContext,
@@ -432,6 +453,7 @@ export async function prepareToolExecutionContextForScope(params: {
     modAdapters,
     agent: agent as AgentState | null,
     runtimeContext: {
+      sessionSource: getRuntimeSessionSource(),
       connectionId,
       environmentDeviceId,
       agentId,
@@ -445,14 +467,19 @@ export async function prepareToolExecutionContextForScope(params: {
       mcpOriginatorSuperRunId: mcpOriginatorSuperRunId ?? null,
       // Nor another turn's client message ids.
       resolveClientMessageIds,
+      turnStartedAt,
       workingDirectory,
       ...(skillsDirectory !== undefined ? { skillsDirectory } : {}),
       ...(skillSources !== undefined ? { skillSources } : {}),
       ...(bundledSkills !== undefined ? { bundledSkills } : {}),
       ...(workspaceSandbox !== undefined ? { workspaceSandbox } : {}),
       executionSettings,
+      // Always set so a turn never inherits another conversation's yield.
+      foregroundYieldMs,
     },
   });
+  const context = getExecutionContextById(result.preparedToolContext.contextId);
+  if (context) context.shouldEnqueueBackground = params.shouldEnqueueBackground;
   return { ...result, agent: agent as AgentState | null };
 }
 

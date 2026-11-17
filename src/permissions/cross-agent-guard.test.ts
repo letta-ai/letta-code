@@ -43,6 +43,7 @@ function thirdMemory(rel = ""): string {
 }
 
 const ENV_KEYS_TO_RESET = [
+  "HOME",
   "AGENT_ID",
   "LETTA_AGENT_ID",
   "LETTA_PARENT_AGENT_ID",
@@ -282,6 +283,33 @@ describe("evaluateCrossAgentGuard", () => {
       "/tmp",
     );
     expect(result).toBeNull();
+  });
+
+  test("expands environment variables before checking memory paths", () => {
+    const tempHome = mkdtempSync(join(tmpdir(), "memory-guard-home-"));
+    const env = {
+      ...process.env,
+      HOME: tempHome,
+      AGENT_ID: SELF,
+      MEMORY_DIR: join(tempHome, ".letta", "agents", SELF, "memory"),
+    };
+    try {
+      const cases = [
+        [`\${HOME}/.letta/agents/${OTHER}/memory/x.md`, true],
+        [`$MEMORY_DIR/../../${OTHER}/memory/x.md`, true],
+        [`\${HOME}/.letta/agents/${SELF}/memory/x.md`, false],
+      ] as const;
+      for (const [filePath, denied] of cases) {
+        expect(
+          evaluateCrossAgentGuard("Read", { file_path: filePath }, tempHome, {
+            env,
+            currentAgentId: SELF,
+          }) !== null,
+        ).toBe(denied);
+      }
+    } finally {
+      rmSync(tempHome, { recursive: true, force: true });
+    }
   });
 
   test("returns null for non-agent paths", () => {

@@ -35,11 +35,11 @@ export function isLocalComputerSelector(value: string): boolean {
  * Whether a subagent type may pick up the ambient default.
  *
  * Memory-profile subagents (memory, reflection, init) use the parent's memory
- * tree as their working filesystem, and forks (fork, recall) inherit the
- * parent's transcript, which describes the parent's working directory. Moving
- * either to a fresh sandbox silently detaches it from the files its context
- * refers to. Both still accept an explicit `computer`, where the caller has
- * chosen the machine knowing that.
+ * tree as their working filesystem, so they stay on the current machine unless
+ * the caller explicitly chooses a computer. Forks accept the ambient default,
+ * including Letta forks and external coding agents carrying parent context,
+ * except `recall`: its search lookups stay local to avoid a cloud cold boot.
+ * An explicit `computer` can still move recall.
  *
  * `memory` is excluded by name as well as by profile: the tool docs promise it
  * runs on the current machine, and an ambient default must not turn that
@@ -51,7 +51,7 @@ export function acceptsDefaultComputer(input: {
 }): boolean {
   return (
     input.subagentType !== "memory" &&
-    !input.config.fork &&
+    input.subagentType !== "recall" &&
     input.config.launchProfile !== "memory-subagent"
   );
 }

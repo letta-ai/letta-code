@@ -9,7 +9,7 @@ import {
   assertImageWithinBounds,
   buildResizeResult,
   canonicalizeOutputMediaType,
-  MAX_IMAGE_BYTES,
+  fitsImageByteLimit,
   MAX_IMAGE_HEIGHT,
   MAX_IMAGE_WIDTH,
   type ResizeResult,
@@ -69,7 +69,7 @@ async function buildVerifiedResizeResult(
 }
 
 /**
- * Compress an image to fit within MAX_IMAGE_BYTES using progressive JPEG quality reduction.
+ * Compress an image so its base64 encoding fits within MAX_IMAGE_BYTES using progressive JPEG quality reduction.
  * If quality reduction alone isn't enough, also reduces dimensions.
  * Returns null if compression is not needed (image already under limit).
  */
@@ -79,7 +79,7 @@ async function compressToFitByteLimit(
   currentHeight: number,
 ): Promise<ResizeResult | null> {
   // Check if compression is needed
-  if (buffer.length <= MAX_IMAGE_BYTES) {
+  if (fitsImageByteLimit(buffer)) {
     return null; // No compression needed
   }
 
@@ -102,7 +102,7 @@ async function compressToFitByteLimit(
           stdio: "ignore",
         });
         const compressed = readFileSync(tempOutput);
-        if (compressed.length <= MAX_IMAGE_BYTES) {
+        if (fitsImageByteLimit(compressed)) {
           return buildVerifiedResizeResult(
             compressed,
             "image/jpeg",
@@ -134,7 +134,7 @@ async function compressToFitByteLimit(
           },
         );
         const reduced = readFileSync(tempOutput);
-        if (reduced.length <= MAX_IMAGE_BYTES) {
+        if (fitsImageByteLimit(reduced)) {
           return buildVerifiedResizeResult(
             reduced,
             "image/jpeg",
@@ -151,7 +151,7 @@ async function compressToFitByteLimit(
 
     // Extremely rare: even 25% scale at q70 doesn't fit
     throw new Error(
-      `Image too large: ${(buffer.length / 1024 / 1024).toFixed(1)}MB exceeds 5MB limit even after compression`,
+      `Image too large: ${(buffer.length / 1024 / 1024).toFixed(1)}MB exceeds the 5MB base64 image limit even after compression`,
     );
   } finally {
     unlinkSync(tempInput);

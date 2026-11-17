@@ -1,4 +1,5 @@
 import { LETTA_CODE_SUBAGENT_TAG } from "@/agent/agent-tags";
+import { lookupDetachedConversationParent } from "@/agent/subagents/ephemeral-subagent";
 import { getBackend } from "@/backend";
 import { getRuntimeContext } from "@/runtime-context";
 import { getRuntimeExecutionEnv } from "@/runtime-execution-settings";
@@ -7,9 +8,17 @@ export type ParentAgentLookup = (
   agentId: string,
 ) => Promise<string | undefined>;
 
+/**
+ * The agent a subagent inherits from. A fresh Cloud subagent runs in a
+ * detached conversation, so its session ID is a `conv-` ID whose
+ * `parent_agent_id` names the parent.
+ */
 export async function lookupParentAgent(
   agentId: string,
 ): Promise<string | undefined> {
+  if (agentId.startsWith("conv-")) {
+    return lookupDetachedConversationParent(agentId, getBackend());
+  }
   const agent = await getBackend().retrieveAgent(agentId, {
     include: ["agent.tags"],
   });

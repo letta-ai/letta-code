@@ -35,7 +35,8 @@ export interface CompileLocalSystemPromptOptions {
   memoryDir?: string;
   includeMemfs?: boolean;
   now?: Date;
-  previousMessageCount?: number;
+  /** A function is only called when the prompt renders `<memory_metadata>`. */
+  previousMessageCount?: number | (() => number);
 }
 
 function hashString(value: string): string {
@@ -446,7 +447,10 @@ export function compileLocalSystemPrompt(
           agentId: options.agent.id,
           conversationId: options.conversationId,
           compiledAt,
-          previousMessageCount: options.previousMessageCount ?? 0,
+          previousMessageCount:
+            typeof options.previousMessageCount === "function"
+              ? options.previousMessageCount()
+              : (options.previousMessageCount ?? 0),
         });
   const coreMemory = [memfs.content, metadata]
     .filter((part) => part.trim().length > 0)

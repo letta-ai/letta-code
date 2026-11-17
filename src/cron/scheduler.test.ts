@@ -32,14 +32,14 @@ import {
 import type { ListenerTransport } from "@/websocket/listener/transport";
 import type { StartListenerOptions } from "@/websocket/listener/types";
 
-// ── Test setup ──────────────────────────────────────────────────────
-
 const TEST_DIR = path.join(import.meta.dir, "__scheduler_test_tmp__");
 const origHome = process.env.LETTA_HOME;
 const origCronScope = process.env[CRON_SCHEDULER_SCOPE_ENV];
 const origSandboxId = process.env.LETTA_MANAGED_CLOUD_RUNTIME;
 
+const originalDesktopMode = process.env.LETTA_DESKTOP_MODE;
 beforeEach(() => {
+  process.env.LETTA_DESKTOP_MODE = "1";
   if (existsSync(TEST_DIR)) {
     rmSync(TEST_DIR, { recursive: true });
   }
@@ -50,6 +50,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  if (originalDesktopMode === undefined) delete process.env.LETTA_DESKTOP_MODE;
+  else process.env.LETTA_DESKTOP_MODE = originalDesktopMode;
   __testFailNextRefreshSchedulerLease(false);
   __testThrowNextRefreshSchedulerLease(false);
   stopScheduler();

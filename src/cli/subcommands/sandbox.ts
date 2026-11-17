@@ -6,7 +6,7 @@ import { isLettaCloud } from "@/agent/memory-filesystem";
 import { getClient } from "@/backend/api/client";
 import {
   createSandboxDesktopSession,
-  createSandboxPublicExposure,
+  createSandboxExposure,
   downloadFileFromSandbox,
   ensureConversationSandbox,
   uploadFileToSandbox,
@@ -17,7 +17,7 @@ import { type SessionRef, settingsManager } from "@/settings-manager";
 
 interface SandboxSubcommandDeps {
   createDesktopSession?: typeof createSandboxDesktopSession;
-  createPublicExposure?: typeof createSandboxPublicExposure;
+  createExposure?: typeof createSandboxExposure;
   downloadFile?: typeof downloadFileFromSandbox;
   ensureSandbox?: typeof ensureConversationSandbox;
   getLastSession?: () => SessionRef | null;
@@ -38,6 +38,8 @@ const SANDBOX_OPTIONS = {
   agent: { type: "string" },
   "expires-in": { type: "string" },
   "extend-by": { type: "string" },
+  public: { type: "boolean" },
+  private: { type: "boolean" },
 } as const;
 
 const MIN_EXPOSURE_DURATION_SECONDS = 60;
@@ -50,8 +52,8 @@ Usage:
   letta sandbox upload <local-path>
   letta sandbox download <sandbox-path> [--to <local-path>]
   letta sandbox desktop-link
-  letta sandbox expose <port> --expires-in <duration>
-  letta sandbox expose <port> --extend-by <duration>
+  letta sandbox expose <port> [--public | --private] --expires-in <duration>
+  letta sandbox expose <port> [--public | --private] --extend-by <duration>
 
 Target another conversation (upload, download, or desktop-link):
   letta sandbox upload <local-path> --conversation <conv-id>
@@ -70,11 +72,13 @@ Notes:
     desktop in a browser tab with no sign-in. Anyone with the link can view
     and control the desktop until expiresAt (about one hour); share it only
     with the person who needs it.
-  - expose works only inside a Letta-managed sandbox. --expires-in creates or
-    renews the URL to the requested remaining lifetime; --extend-by adds time
-    to the current deadline while preserving the URL and port. Durations use
-    whole seconds, minutes, or hours (for example 30m, 2h, or 24h), from 1m to
-    24h. Anyone with the link can access the app; share it carefully.
+  - expose works only inside a Letta-managed sandbox. Exposures are private by
+    default; --public explicitly allows anyone with the URL to access the app.
+    --private remains accepted as a compatibility no-op. --expires-in creates
+    or renews the URL to the requested remaining lifetime; --extend-by adds
+    time to the current deadline while preserving the URL and port. Durations
+    use whole seconds, minutes, or hours (for example 30m, 2h, or 24h), from
+    1m to 24h.
   - Output is JSON only.
 `.trim(),
   );
@@ -241,6 +245,11 @@ export async function runSandboxSubcommand(
       printUsage();
       return 1;
     }
+    if (parsed.values.public && parsed.values.private) {
+      console.error("Error: expose accepts only one of --public or --private");
+      printUsage();
+      return 1;
+    }
   }
   if (
     action !== "expose" &&
@@ -248,6 +257,14 @@ export async function runSandboxSubcommand(
       parsed.values["extend-by"] !== undefined)
   ) {
     console.error("Error: expiry flags are only valid with expose");
+    printUsage();
+    return 1;
+  }
+  if (
+    action !== "expose" &&
+    (parsed.values.public !== undefined || parsed.values.private !== undefined)
+  ) {
+    console.error("Error: visibility flags are only valid with expose");
     printUsage();
     return 1;
   }
@@ -292,9 +309,18 @@ export async function runSandboxSubcommand(
                 "--extend-by",
               ),
             };
-      const exposure = await (
-        deps.createPublicExposure ?? createSandboxPublicExposure
-      )(port, expiry);
+      const visibility = parsed.values.public ? { public: true } : {};
+      const sandboxId = process.env.DAYTONA_SANDBOX_ID;
+      const exposure = await (deps.createExposure ?? createSandboxExposure)(
+        port,
+        expiry,
+        { ...visibility, ...(sandboxId ? { sandboxId } : {}) },
+      );
+      if (!parsed.values.public && exposure.private !== true) {
+        throw new Error(
+          "The server did not create a private exposure; nothing was shared",
+        );
+      }
       console.log(JSON.stringify(exposure, null, 2));
       return 0;
     }
@@ -341,7 +367,11 @@ export async function runSandboxSubcommand(
           {
             url:
               desktop.viewerUrl ??
-              buildDesktopViewerUrl(desktop.url, desktop.expiresAt),
+              buildDesktopViewerUrl(
+                desktop.url,
+                desktop.expiresAt,
+                desktop.protocols,
+              ),
             expiresAt: desktop.expiresAt,
             ...targetOutput,
           },

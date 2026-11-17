@@ -37,10 +37,5 @@ export function getInputToolSelectionError(
     typeof payload.exclude_interactive_tools !== "boolean"
   )
     return "Protocol violation: input.payload.exclude_interactive_tools must be boolean";
-  if (
-    payload.external_tool_scope_ids !== undefined &&
-    !isStringArray(payload.external_tool_scope_ids)
-  )
-    return "Protocol violation: input.payload.external_tool_scope_ids must be string[]";
   return null;
 }

@@ -12,6 +12,7 @@ import { runMemorySubcommand } from "./memory";
 import { runMessagesSubcommand } from "./messages";
 import { runModelSubcommand } from "./model";
 import { runModsSubcommand } from "./mods";
+import { runMonitorsSubcommand } from "./monitors";
 import { runPermissionsSubcommand } from "./permissions";
 import { runSandboxSubcommand } from "./sandbox";
 import { runSecretSubcommand } from "./secret";
@@ -23,6 +24,7 @@ import { runStepsSubcommand } from "./steps";
 import { runTeleportSubcommand } from "./teleport";
 import { runTrajectoriesSubcommand } from "./trajectories";
 import { runUsageSubcommand } from "./usage";
+import { runVariableSubcommand } from "./variable";
 
 async function runUpdateSubcommand(): Promise<number> {
   const { manualUpdate } = await import("@/updater/auto-update");
@@ -61,6 +63,8 @@ export function subcommandNeedsEarlyBackendMode(
     case "permissions":
     case "remote":
     case "sandbox":
+    case "monitors":
+    case "variable":
     case "secret":
     case "server":
     case "shared-memory":
@@ -117,6 +121,8 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runModsSubcommand(rest);
     case "sandbox":
       return runSandboxSubcommand(rest);
+    case "variable":
+      return runVariableSubcommand(rest);
     case "secret":
       return runSecretSubcommand(rest);
     case "teleport":
@@ -139,6 +145,8 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runSharedMemorySubcommand(rest);
     case "skills":
       return runSkillsSubcommand(rest);
+    case "monitors":
+      return runMonitorsSubcommand(rest);
     case "cron":
       return runCronSubcommand(rest);
     case "channels":

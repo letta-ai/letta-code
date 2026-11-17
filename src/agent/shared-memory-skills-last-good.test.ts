@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as apiRequest from "@/backend/api/request";
+import { removeTestDir } from "@/test-utils/test-fs";
 import { isolateAmbientLettaTestEnv } from "@/test-utils/test-process-env";
 import * as attachedRepositories from "./attached-repositories";
 import * as memoryFilesystem from "./memory-filesystem";
@@ -40,7 +42,7 @@ afterEach(async () => {
   restoreAmbientEnv?.();
   if (originalHome === undefined) delete process.env.HOME;
   else process.env.HOME = originalHome;
-  await rm(tempHome, { recursive: true, force: true });
+  await removeTestDir(tempHome);
 });
 
 function resolve() {
@@ -105,4 +107,28 @@ test("a later successful response still removes a detached repository", async ()
   const failed = await resolve();
   expect(failed.skillsDirs).toEqual([skillsDir("team-b")]);
   expect(failed.errors).toHaveLength(1);
+});
+
+test("detached subagent discovery lists repositories for the real agent", async () => {
+  process.env.LETTA_CODE_AGENT_ROLE = "subagent";
+  process.env.LETTA_PARENT_AGENT_ID = agentId;
+  listSpy.mockRestore();
+  const requestSpy = spyOn(apiRequest, "apiRequest").mockResolvedValue({
+    repositories: [],
+  });
+  try {
+    const result = await resolveSharedMemorySkillsContext({
+      agentId: "conv-detached-subagent",
+      skillSources: ["project"],
+    });
+
+    expect(result).toEqual({ skillsDirs: [], errors: [] });
+    expect(requestSpy).toHaveBeenCalledTimes(1);
+    expect(requestSpy).toHaveBeenCalledWith(
+      "GET",
+      `/v1/agents/${agentId}/repositories`,
+    );
+  } finally {
+    requestSpy.mockRestore();
+  }
 });
