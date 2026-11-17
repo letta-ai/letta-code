@@ -48,13 +48,13 @@ import {
   formatExternalCodingAgentId,
   parseExternalCodingAgentId,
 } from "./external-coding-agent";
+import { connectRemoteWorkerWithRetry } from "./remote-connect-retry";
 import {
   RemoteFollowUpSocketClosedError,
   RemoteFollowUpTimeoutError,
   sendRemoteFollowUpWithReconnect,
 } from "./remote-follow-up-retry";
 import { followRemoteSubagentEvents } from "./remote-subagent-events";
-
 export const REMOTE_EXTERNAL_WORKER_STOPPED = Symbol(
   "remote external worker stopped",
 );
@@ -557,7 +557,7 @@ export async function launchRemoteExternalCodingAgent(
   const toolCallId = params.toolCallId ?? `remote-${randomUUID()}`;
   let client: AppServerClient;
   try {
-    client = await connect();
+    client = await connectRemoteWorkerWithRetry(connect, params.signal);
   } catch (error) {
     return fail("connect", `Can't reach ${computer}: ${errorMessage(error)}`);
   }
