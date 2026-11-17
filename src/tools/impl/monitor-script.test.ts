@@ -140,6 +140,9 @@ while (true) {
   expect(backgroundProcesses.get(taskId)?.monitorSource).toBe("script");
 
   await waitFor(() => queued.some((m) => m.text.includes("status: queued")));
+  expect(queued.find((m) => m.text.includes("status: queued"))?.text).toContain(
+    "<summary>Monitor: script test</summary>",
+  );
   writeFileSync(file, "running");
   await waitFor(() => queued.some((m) => m.text.includes("status: running")));
   writeFileSync(file, "done");

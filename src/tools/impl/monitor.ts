@@ -315,6 +315,7 @@ function sanitizeMonitorText(
 
 export function queueMonitorEvent(params: {
   taskId: string;
+  description?: string;
   event: string;
   scope: ReturnType<typeof resolveNotificationScope>;
   actingUserId?: string | null;
@@ -328,6 +329,7 @@ export function queueMonitorEvent(params: {
     text: formatMonitorEventNotification({
       taskId,
       event: sanitizedEvent,
+      description: sanitizeMonitorText(params.description ?? "", secrets),
     }),
     ...scope,
     ...(actingUserId !== undefined ? { actingUserId } : {}),
@@ -441,6 +443,7 @@ function startCommandMonitor(args: MonitorSourceArgs): MonitorResult {
     emit(event) {
       queueMonitorEvent({
         taskId,
+        description: args.description,
         event,
         scope,
         actingUserId,
@@ -568,6 +571,7 @@ function startCommandMonitor(args: MonitorSourceArgs): MonitorResult {
         output.append(`\n[timeout after ${args.timeout_ms}ms]\n`);
         queueMonitorEvent({
           taskId,
+          description: args.description,
           event: getMonitorTimeoutEvent(args.timeout_ms),
           scope,
           actingUserId,
@@ -641,6 +645,7 @@ function startWebSocketMonitor(args: MonitorSourceArgs): MonitorResult {
     emit(event) {
       queueMonitorEvent({
         taskId,
+        description: args.description,
         event,
         scope,
         actingUserId,
@@ -694,6 +699,7 @@ function startWebSocketMonitor(args: MonitorSourceArgs): MonitorResult {
       output.append(`${event}\n`);
       queueMonitorEvent({
         taskId,
+        description: args.description,
         event,
         scope,
         actingUserId,
@@ -732,6 +738,7 @@ function startWebSocketMonitor(args: MonitorSourceArgs): MonitorResult {
     output.append(`[stderr] ${message}\n`);
     queueMonitorEvent({
       taskId,
+      description: args.description,
       event,
       scope,
       actingUserId,
@@ -759,6 +766,7 @@ function startWebSocketMonitor(args: MonitorSourceArgs): MonitorResult {
     output.append(`${event}\n`);
     queueMonitorEvent({
       taskId,
+      description: args.description,
       event,
       scope,
       actingUserId,
@@ -779,6 +787,7 @@ function startWebSocketMonitor(args: MonitorSourceArgs): MonitorResult {
       if (processState.status !== "running") return;
       queueMonitorEvent({
         taskId,
+        description: args.description,
         event: getMonitorTimeoutEvent(args.timeout_ms),
         scope,
         actingUserId,

@@ -189,7 +189,7 @@ describe("Monitor", () => {
           agentId: "agent-cloud",
           conversationId: "conv-cloud",
         });
-        expect(notifications[0]?.text).toContain("Wake or cron");
+        expect(notifications[0]?.text).not.toContain("Wake or cron");
         if (server) await waitFor(() => server.clients.size === 0);
       } finally {
         timers.mockRestore();
@@ -430,14 +430,16 @@ describe("Monitor", () => {
     );
 
     const event = queuedMessages.find((message) =>
-      message.text.includes("Monitor event"),
+      message.text.includes("<event>"),
     );
     expect(event).toMatchObject({
       kind: "task_notification",
       agentId: "agent-monitor",
       conversationId: "conv-monitor",
     });
+    expect(event?.text).toContain("<summary>Monitor: build output</summary>");
     expect(event?.text).toContain("first\nsecond");
+    expect(event?.text.match(/first\nsecond/g)).toHaveLength(1);
     expect(event?.text).not.toContain("warning");
 
     const outputFile = outputFileOf(result);
@@ -497,7 +499,7 @@ describe("Monitor", () => {
     expect(readFileSync(outputFileOf(result), "utf8")).toContain("pending");
     await Bun.sleep(250);
     expect(
-      queuedMessages.some((message) => message.text.includes("Monitor event")),
+      queuedMessages.some((message) => message.text.includes("<event>")),
     ).toBe(false);
   });
 
@@ -753,9 +755,7 @@ describe("Monitor", () => {
       await Bun.sleep(250);
       expect(backgroundProcesses.get(result.taskId)?.status).toBe("failed");
       expect(
-        queuedMessages.some((message) =>
-          message.text.includes("Monitor event"),
-        ),
+        queuedMessages.some((message) => message.text.includes("<event>")),
       ).toBe(false);
     } finally {
       for (const client of server.clients) {

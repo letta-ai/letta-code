@@ -224,7 +224,7 @@ describe("WatchPR background lifecycle", () => {
       });
       expect(queued[0]?.text).toContain("24-hour Cloud sandbox limit");
       expect(queued[0]?.text).toContain("re-arm it by calling WatchPR again");
-      expect(queued[0]?.text).toContain("Wake or cron");
+      expect(queued[0]?.text).not.toContain("Wake or cron");
     } finally {
       timers.mockRestore();
     }

@@ -50,6 +50,7 @@ export async function stopMonitor(
     actingUserId: command.runtime.acting_user_id,
     text: formatMonitorEventNotification({
       taskId: command.process_id,
+      description: process.description,
       event:
         "The user cancelled this Monitor. Do not restart it unless the user asks.",
     }),
