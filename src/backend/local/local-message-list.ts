@@ -4,9 +4,9 @@ import type {
 } from "@/backend/backend";
 import {
   getCursor,
+  getIncludedMessageTypes,
   getListLimit,
   getListOrder,
-  getIncludedMessageTypes,
 } from "./local-message-list-options";
 import { projectedMessageCursorIndex } from "./local-message-projection";
 import type { StoredMessage } from "./local-types";
