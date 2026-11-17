@@ -38,6 +38,7 @@ import {
   writeMcpStderr,
   writeMcpStdout,
 } from "./mcp-io";
+import { getLocalServers } from "./mcp-local-servers";
 import {
   mergeMcpSearchResults,
   runMcpSearch,
@@ -162,15 +163,6 @@ function parseCommandLine(argv: string[]): ParsedMcpArgs {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
-}
-
-function getLocalServers(
-  deps: McpSubcommandDependencies,
-  agentId: string,
-): McpServerConfig[] {
-  return (deps.getLocalServers ?? ((id) => settingsManager.getMcpServers(id)))(
-    agentId,
-  );
 }
 
 function serverMcpAvailable(deps: McpSubcommandDependencies): boolean {
@@ -307,7 +299,7 @@ async function listUnifiedServers(
   deps: McpSubcommandDependencies,
   agentId: string,
 ): Promise<ServerTarget[]> {
-  const local = getLocalServers(deps, agentId).map(
+  const local = (await getLocalServers(deps, agentId)).map(
     (config): ServerTarget => ({ kind: "client", config }),
   );
   if (!serverMcpAvailable(deps)) return local;
@@ -688,7 +680,8 @@ async function runSearch(
   stdout: McpOutput,
 ): Promise<number> {
   const serverSearchAvailable = serverMcpAvailable(deps);
-  const hasClientLocalServers = getLocalServers(deps, agentId).length > 0;
+  const hasClientLocalServers =
+    (await getLocalServers(deps, agentId)).length > 0;
   return runMcpSearch({
     query: parsed.target,
     mode: stringValue(parsed.values.mode),

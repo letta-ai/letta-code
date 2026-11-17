@@ -9,6 +9,10 @@ import { cloudRepositoryRoots } from "@/utils/cloud-repository-roots";
 import { confirmProcessExit } from "@/utils/confirm-process-exit";
 import { withNativeCliPath } from "@/utils/native-cli-env";
 import {
+  cloudToolsConfigArgs,
+  discoverCloudToolsConfig,
+} from "./cloud-tools-config";
+import {
   asRecord,
   CAPACITY_RETRY_DELAYS_MS,
   capacityResult,
@@ -582,7 +586,11 @@ async function createSession(
     AGENT_ID: options.parentAgentId,
     LETTA_AGENT_ID: options.parentAgentId,
   });
+  const cloudConfigArgs = deps.createTransport
+    ? []
+    : cloudToolsConfigArgs(await discoverCloudToolsConfig(env));
   let transport = (deps.createTransport ?? spawnTransport)({
+    configArgs: cloudConfigArgs,
     cwd: options.cwd,
     env,
   });
@@ -617,7 +625,7 @@ async function createSession(
       transport = spawnTransport({
         cwd: options.cwd,
         env,
-        configArgs: trace.args,
+        configArgs: [...cloudConfigArgs, ...trace.args],
       });
       client = makeClient();
       await client.initialize();
