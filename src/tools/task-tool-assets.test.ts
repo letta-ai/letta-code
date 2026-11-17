@@ -215,7 +215,7 @@ test("local Monitor assets pin the resume-enabled schema and description", async
   for (const [path, hash] of [
     [
       "./descriptions/Monitor.md",
-      "912f7f5f8161c44e357fa6d248e5b0af68bb559e9886c41bb453011f10edddae",
+      "6928aa96b3fc7fb06fa3028fb5b1d4e16e9596cb3e93e0c90e43559d18fe3eb9",
     ],
     [
       "./schemas/Monitor.json",
