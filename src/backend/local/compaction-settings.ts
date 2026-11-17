@@ -15,6 +15,11 @@ export interface ResolvedLocalCompactionSettings {
   clipChars?: number | null;
   slidingWindowPercentage: number;
   maxMessageTokens?: number;
+  /**
+   * Full compaction keeps a trailing completed tool exchange that fits
+   * `maxMessageTokens` after the summary (see planLocalAllCompaction).
+   */
+  keepToolExchange?: boolean;
 }
 
 export function compactionSettingsRecord(

@@ -1,0 +1,95 @@
+import { estimateLocalMessagesTokens } from "@/backend/local/local-context-estimate";
+import type { LocalMessage } from "./local-message";
+
+export interface LocalAllCompactionPlan {
+  messagesToSummarize: LocalMessage[];
+  messagesToKeep: LocalMessage[];
+  /** `messagesToKeep` is a completed tool exchange, not a pending call. */
+  keepsToolExchange?: boolean;
+}
+
+export function hasPendingLocalToolCall(message: LocalMessage): boolean {
+  return (
+    message.role === "assistant" &&
+    message.content.some((part) => part.type === "toolCall")
+  );
+}
+
+/**
+ * Index of the assistant message that opens the completed tool exchange the
+ * conversation ends with: its tool calls (one, or several in parallel)
+ * followed only by one result for each. Undefined when the conversation does
+ * not end in one, including while a call still lacks its result.
+ */
+export function findTrailingLocalToolExchange(
+  messages: readonly LocalMessage[],
+): number | undefined {
+  let start = messages.length;
+  while (start > 0 && messages[start - 1]?.role === "toolResult") start -= 1;
+  const call = messages[start - 1];
+  // The provider request drops errored or aborted assistant messages, and
+  // with them their results.
+  if (
+    start === messages.length ||
+    call?.role !== "assistant" ||
+    call.stopReason === "error" ||
+    call.stopReason === "aborted"
+  ) {
+    return undefined;
+  }
+  const callIds = call.content.flatMap((part) =>
+    part.type === "toolCall" ? [part.id] : [],
+  );
+  const resultIds = new Set(
+    messages
+      .slice(start)
+      .flatMap((message) =>
+        message.role === "toolResult" ? [message.toolCallId] : [],
+      ),
+  );
+  const complete =
+    callIds.length === messages.length - start &&
+    callIds.every((id) => resultIds.has(id));
+  return complete ? start - 1 : undefined;
+}
+
+/**
+ * A trailing pending tool call is always kept after the summary. Given a
+ * `toolExchangeBudget`, a trailing completed tool exchange whose estimate fits
+ * it is kept too, so the agent sees the results it asked for. An incomplete
+ * exchange, one over the budget, or one with nothing before it to summarise is
+ * summarised with everything else.
+ */
+export function planLocalAllCompaction(
+  messages: LocalMessage[],
+  options: { toolExchangeBudget?: number } = {},
+): LocalAllCompactionPlan {
+  const lastMessage = messages.at(-1);
+  if (lastMessage && hasPendingLocalToolCall(lastMessage)) {
+    return {
+      messagesToSummarize: messages.slice(0, -1),
+      messagesToKeep: [lastMessage],
+    };
+  }
+
+  const budget = options.toolExchangeBudget;
+  const start =
+    budget === undefined ? undefined : findTrailingLocalToolExchange(messages);
+  if (
+    budget !== undefined &&
+    start !== undefined &&
+    start > 0 &&
+    estimateLocalMessagesTokens(messages.slice(start)) <= budget
+  ) {
+    return {
+      messagesToSummarize: messages.slice(0, start),
+      messagesToKeep: messages.slice(start),
+      keepsToolExchange: true,
+    };
+  }
+
+  return {
+    messagesToSummarize: messages,
+    messagesToKeep: [],
+  };
+}

@@ -46,14 +46,18 @@ import {
   type LocalCompactionResult,
   type LocalCompactionStats,
   type LocalCompleteFunction,
+  LocalIrreducibleContextError,
   type LocalSelfCompactionContext,
   packageLocalSummaryMessage,
-  planLocalAllCompaction,
   planLocalSlidingWindowCompaction,
   runLocalPressureCompaction,
   summarizeLocalMessagesAll,
   summarizeLocalMessagesSlidingWindow,
 } from "./compaction";
+import {
+  type LocalAllCompactionPlan,
+  planLocalAllCompaction,
+} from "./compaction-all-plan";
 import {
   compactionSettingsRecord,
   localCompactionSettingsForStorage,
@@ -664,6 +668,9 @@ export class LocalBackend extends HeadlessBackend {
     const settings = {
       ...resolveLocalCompactionSettings(agent, body),
       maxMessageTokens,
+      // Only pressure compaction has a budget to check a kept tool exchange
+      // against; manual and overflow compaction summarise it as before.
+      keepToolExchange: maxMessageTokens !== undefined,
     };
     const self = isLocalSelfCompactionMode(settings.mode)
       ? await this.selfCompactionContext(conversationId, agentId, turn)
@@ -726,12 +733,16 @@ export class LocalBackend extends HeadlessBackend {
     const slidingWindow = isLocalSlidingWindowMode(settings.mode);
     const messages = this.store.listLocalMessages(conversationId, agentId);
     const contextWindow = this.effectiveContextWindow(conversationId, agentId);
-    const plan = slidingWindow
+    const plan: LocalAllCompactionPlan = slidingWindow
       ? planLocalSlidingWindowCompaction(messages, {
           slidingWindowPercentage: settings.slidingWindowPercentage,
           contextWindow,
         })
-      : planLocalAllCompaction(messages);
+      : planLocalAllCompaction(messages, {
+          toolExchangeBudget: settings.keepToolExchange
+            ? settings.maxMessageTokens
+            : undefined,
+        });
     const keptTokens = estimateLocalMessageTokens(plan.messagesToKeep);
     assertLocalPressureBudget(
       keptTokens,
@@ -761,27 +772,46 @@ export class LocalBackend extends HeadlessBackend {
       messages_count_after: 1 + plan.messagesToKeep.length,
     };
     if (!slidingWindow) {
-      assertLocalPressureBudget(
-        stats.context_tokens_after ?? 0,
-        settings.mode,
-        settings.maxMessageTokens,
-      );
-      return finishLocalFullCompaction({
-        messages,
-        summary,
-        stats,
-        plan,
-        systemPrompt: agent.system,
-        persist: (summary, packedSummary, remainingMessages) =>
-          this.store.compactConversationAll({
-            conversationId,
-            agentId,
-            summary,
-            packedSummary,
-            stats,
-            remainingMessages,
-          }),
-      });
+      try {
+        assertLocalPressureBudget(
+          stats.context_tokens_after ?? 0,
+          settings.mode,
+          settings.maxMessageTokens,
+        );
+        return finishLocalFullCompaction({
+          messages,
+          summary,
+          stats,
+          plan,
+          systemPrompt: agent.system,
+          persist: (summary, packedSummary, remainingMessages) =>
+            this.store.compactConversationAll({
+              conversationId,
+              agentId,
+              summary,
+              packedSummary,
+              stats,
+              remainingMessages,
+            }),
+        });
+      } catch (error) {
+        if (
+          !plan.keepsToolExchange ||
+          !(error instanceof LocalIrreducibleContextError)
+        ) {
+          throw error;
+        }
+        // With the summary the kept exchange is over budget, or keeping it
+        // would not shrink the context: summarise it too, as before.
+        return this.compactLocalConversationPass(
+          conversationId,
+          agentId,
+          agent,
+          trigger,
+          { ...settings, keepToolExchange: false },
+          self,
+        );
+      }
     }
     assertLocalCompactionProgress(
       stats,

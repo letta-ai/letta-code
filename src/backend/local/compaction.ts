@@ -18,6 +18,10 @@ import { LocalPiModelsRuntime } from "@/backend/dev/pi-models-runtime";
 import { resolvePiRequestHeaders } from "@/backend/dev/pi-request-headers";
 import { estimateLocalMessagesTokens } from "@/backend/local/local-context-estimate";
 import { isRecord } from "@/utils/type-guards";
+import {
+  hasPendingLocalToolCall,
+  type LocalAllCompactionPlan,
+} from "./compaction-all-plan";
 import { emptyLocalUsage, type LocalMessage } from "./local-message";
 import { resolveAvailableLocalModelForTurn } from "./local-model-config";
 import type { LocalAgentRecord } from "./local-types";
@@ -332,11 +336,6 @@ export interface LocalSlidingWindowCompactionPlan {
   messagesToSummarize: LocalMessage[];
   messagesToKeep: LocalMessage[];
   cutoffIndex: number;
-}
-
-export interface LocalAllCompactionPlan {
-  messagesToSummarize: LocalMessage[];
-  messagesToKeep: LocalMessage[];
 }
 
 function stringifyUnknown(value: unknown): string {
@@ -835,13 +834,6 @@ export async function summarizeLocalMessagesAll(
   );
 }
 
-function hasPendingLocalToolCall(message: LocalMessage): boolean {
-  return (
-    message.role === "assistant" &&
-    message.content.some((part) => part.type === "toolCall")
-  );
-}
-
 function normalizedSlidingWindowPercentage(value: number | undefined): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return LOCAL_DEFAULT_SLIDING_WINDOW_PERCENTAGE;
@@ -927,23 +919,6 @@ export function planLocalSlidingWindowCompaction(
     messagesToSummarize: messages.slice(0, cutoffIndex),
     messagesToKeep: messages.slice(cutoffIndex),
     cutoffIndex,
-  };
-}
-
-export function planLocalAllCompaction(
-  messages: LocalMessage[],
-): LocalAllCompactionPlan {
-  const lastMessage = messages.at(-1);
-  if (lastMessage && hasPendingLocalToolCall(lastMessage)) {
-    return {
-      messagesToSummarize: messages.slice(0, -1),
-      messagesToKeep: [lastMessage],
-    };
-  }
-
-  return {
-    messagesToSummarize: messages,
-    messagesToKeep: [],
   };
 }
 
