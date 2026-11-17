@@ -222,7 +222,7 @@ describe("unified MCP API adapter", () => {
         timeoutMs: 1,
       }),
     ).rejects.toThrow(
-      "MCP tool call hit Letta's 0.001-second limit; the MCP server may still be processing the request. Retry with a smaller or more selective request, or set the tool's own timeout argument below 0.001 seconds if it has one.",
+      "MCP tool call hit the cloud server's 0.001-second limit; the MCP server may still be processing the request. Retry with a smaller or more selective request, or set the tool's own timeout argument below 0.001 seconds if it has one.",
     );
     const error = new Error("provider failure");
     await expect(

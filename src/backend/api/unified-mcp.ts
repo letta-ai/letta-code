@@ -337,7 +337,7 @@ export async function runUnifiedMcpTool(params: {
     ),
     params.timeoutMs ?? 60_000,
     "Running agent MCP tool",
-    `MCP tool call hit Letta's ${(params.timeoutMs ?? 60_000) / 1000}-second limit; the MCP server may still be processing the request. Retry with a smaller or more selective request, or set the tool's own timeout argument below ${(params.timeoutMs ?? 60_000) / 1000} seconds if it has one.`,
+    `MCP tool call hit the cloud server's ${(params.timeoutMs ?? 60_000) / 1000}-second limit; the MCP server may still be processing the request. Retry with a smaller or more selective request, or set the tool's own timeout argument below ${(params.timeoutMs ?? 60_000) / 1000} seconds if it has one.`,
   );
   return parseRunResult(value);
 }
