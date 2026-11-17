@@ -83,6 +83,15 @@ describe("cloud WatchPR registration", () => {
       else process.env.LETTA_CLOUD_WATCH_PR = originalFlag;
     }
   });
+  test("accepts a pending baseline while registration is backing off", async () => {
+    const result = await startCloudPullRequestWatch(args, {
+      enabled: () => true,
+      request: async () => ({ id: "cmon-1" }) as never,
+    });
+    expect(result?.taskId).toBe("cmon-1");
+    expect(result?.headSha).toBe("");
+    expect(result?.content[0]?.text).toContain("pending");
+  });
   test("registers with filters and falls back only when the repository is inaccessible", async () => {
     const calls: unknown[] = [];
     const result = await startCloudPullRequestWatch(args, {
@@ -92,6 +101,8 @@ describe("cloud WatchPR registration", () => {
         return { id: "cmon-1", initial_snapshot: initial } as never;
       },
     });
+    expect(result?.content[0]?.text).toContain("cloud watch");
+    expect(result?.content[0]?.text).toContain("sandbox can sleep");
     expect(result?.taskId).toBe("cmon-1");
     expect(result?.headSha).toBe(initial.head_sha);
     const summary = describeGitHubPullRequestSnapshot(

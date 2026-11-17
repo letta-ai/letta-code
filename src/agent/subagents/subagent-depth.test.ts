@@ -1,8 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import type { SubagentConfig } from "@/agent/subagents";
 import { buildSubagentArgs } from "@/agent/subagents/manager";
 import { resolveSubagentHarnessTools } from "@/agent/subagents/subagent-depth";
 import { composeSubagentChildEnv } from "@/agent/subagents/subagent-launcher";
+import { experimentManager } from "@/experiments/manager";
 import { runWithRuntimeContext } from "@/runtime-context";
 import {
   getRuntimeExecutionEnv,
@@ -111,6 +112,35 @@ describe("subagent depth", () => {
       expect.arrayContaining(["Bash", "Read", "SendAgentMessage"]),
     );
     expect(leaf).not.toContain("Agent");
+  });
+
+  test("cloud WatchPR reaches full-capability children at every depth only when enabled", () => {
+    const enabled = spyOn(experimentManager, "isEnabled").mockReturnValue(true);
+    try {
+      expect(scopedToolsFlag(0)).toContain("WatchPR");
+      expect(scopedToolsFlag(1)).toContain("WatchPR");
+      expect(
+        resolveSubagentHarnessTools(
+          "fork",
+          { ...generalPurpose, allowedTools: "all" },
+          1,
+        ),
+      ).toContain("WatchPR");
+      expect(
+        resolveSubagentHarnessTools("recall", generalPurpose, 1),
+      ).not.toContain("WatchPR");
+      expect(
+        resolveSubagentHarnessTools(
+          "reflection",
+          { ...generalPurpose, launchProfile: "memory-subagent" },
+          1,
+        ),
+      ).not.toContain("WatchPR");
+      enabled.mockReturnValue(false);
+      expect(scopedToolsFlag(0)).not.toContain("WatchPR");
+    } finally {
+      enabled.mockRestore();
+    }
   });
 
   test("restricted and memory workers do not gain Agent", () => {

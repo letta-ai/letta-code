@@ -3,6 +3,7 @@
 // one more layer and that grandchild is a leaf. Every delegated subagent gets
 // SendAgentMessage so it can reach its parent without shelling out to the CLI.
 
+import { experimentManager } from "@/experiments/manager";
 import { getRuntimeContext } from "@/runtime-context";
 import { getRuntimeExecutionEnv } from "@/runtime-execution-settings";
 import { readSubagentDepth } from "@/utils/subagent-depth-env";
@@ -37,7 +38,10 @@ export function resolveSubagentHarnessTools(
   if (config.launchProfile === "memory-subagent") return [];
   const fullCapability =
     type === "general-purpose" || config.allowedTools === "all";
-  return fullCapability && canLaunchSubagentsAtDepth(childDepth)
-    ? ["SendAgentMessage", "Agent"]
-    : ["SendAgentMessage"];
+  const tools = ["SendAgentMessage"];
+  if (fullCapability && canLaunchSubagentsAtDepth(childDepth))
+    tools.push("Agent");
+  if (fullCapability && experimentManager.isEnabled("cloud_watch_pr"))
+    tools.push("WatchPR");
+  return tools;
 }
