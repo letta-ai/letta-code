@@ -232,7 +232,14 @@ export function invalidateClientSkillsPayloadCacheForAgent(
   invalidateAttachedRepositoriesCache(agentId);
 }
 
-/** Metadata-only reminder for changes since a conversation's last accepted send. */
+/**
+ * Metadata-only skill-delta reminder for changes since a conversation's last
+ * accepted send. `client_skills` stays frozen between compactions, so this
+ * reminder supersedes the list in the system prompt: it names what was added,
+ * updated, and removed, then gives the complete current list by name.
+ * Descriptions for skills not in the delta are already in the system prompt
+ * or an earlier reminder, so they are not repeated.
+ */
 export function buildClientSkillsUpdateReminder(
   previous: BuildClientSkillsPayloadResult["clientSkills"] | undefined,
   current: BuildClientSkillsPayloadResult["clientSkills"],
@@ -241,18 +248,20 @@ export function buildClientSkillsUpdateReminder(
   if (!previous) return null;
   const previousByName = new Map(previous.map((skill) => [skill.name, skill]));
   const currentNames = new Set(current.map((skill) => skill.name));
-  const changed = current.filter((skill) => {
+  const added = current.filter((skill) => !previousByName.has(skill.name));
+  const updated = current.filter((skill) => {
     const old = previousByName.get(skill.name);
     return (
-      !old ||
-      old.description !== skill.description ||
-      old.location !== skill.location
+      old !== undefined &&
+      (old.description !== skill.description || old.location !== skill.location)
     );
   });
   const removed = previous
     .filter((skill) => !currentNames.has(skill.name))
     .map((skill) => skill.name);
-  if (changed.length === 0 && removed.length === 0) return null;
+  if (added.length === 0 && updated.length === 0 && removed.length === 0) {
+    return null;
+  }
 
   const escapeXml = (text: string): string =>
     text
@@ -261,28 +270,39 @@ export function buildClientSkillsUpdateReminder(
       .replaceAll(">", "&gt;")
       .replaceAll('"', "&quot;")
       .replaceAll("'", "&#x27;");
-  // Keep this metadata-only. Skill bodies stay lazy-loaded through Skill.
-  return [
-    "<system-reminder>",
-    ...(changed.length > 0
-      ? [
-          "Additional skills are now available. These supplement the skills already listed in your context:",
+  const skillList = (
+    heading: string,
+    skills: BuildClientSkillsPayloadResult["clientSkills"],
+  ): string[] =>
+    skills.length === 0
+      ? []
+      : [
+          heading,
           "<available_skills>",
-          ...changed.flatMap((skill) => [
+          ...skills.flatMap((skill) => [
             "  <skill>",
             `    <name>${escapeXml(skill.name)}</name>`,
             `    <description>${escapeXml(skill.description)}</description>`,
             "  </skill>",
           ]),
           "</available_skills>",
-        ]
-      : []),
+        ];
+  // Keep this metadata-only. Skill bodies stay lazy-loaded through Skill.
+  return [
+    "<system-reminder>",
+    "The available skills have changed. This update supersedes the skills list in your system prompt and any earlier skill update.",
+    ...skillList("Added skills:", added),
+    ...skillList("Updated skills:", updated),
     ...(removed.length > 0
       ? [
-          "Skills no longer available:",
+          "Removed skills (do not use these, even if they still appear in your system prompt):",
           ...removed.map((name) => `- ${escapeXml(name)}`),
         ]
       : []),
+    "Current skills (complete list; skills not described above keep the descriptions you already have):",
+    ...(current.length > 0
+      ? current.map((skill) => `- ${escapeXml(skill.name)}`)
+      : ["(none)"]),
     "</system-reminder>",
   ].join("\n");
 }
