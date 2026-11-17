@@ -13,7 +13,6 @@ import type {
   ConversationCreateBody,
   ConversationMessageCompactBody,
   ConversationMessageCreateBody,
-  ConversationMessageListBody,
   ConversationMessageStreamBody,
   ConversationRecompileBody,
 } from "@/backend/backend";
@@ -455,7 +454,6 @@ export class LocalBackend extends HeadlessBackend {
       input.conversationId,
       input.agentId,
       input.agent,
-      input.history.length,
     );
     const clientSkills = Array.isArray(
       (input.body as Record<string, unknown>).client_skills,
@@ -827,7 +825,6 @@ export class LocalBackend extends HeadlessBackend {
     conversationId: string,
     agentId: string,
     agent = this.store.retrieveAgentRecord(agentId),
-    previousMessageCount = 0,
   ): Promise<LocalCompiledSystemPrompt> {
     const existing = this.store.getCompiledSystemPrompt(
       conversationId,
@@ -850,10 +847,7 @@ export class LocalBackend extends HeadlessBackend {
       const compiled = await this.compileAndMaybePersistSystemPrompt(
         conversationId,
         agentId,
-        {
-          dryRun: true,
-          previousMessageCount,
-        },
+        { dryRun: true },
       );
       if (compiled.memfsRevision !== existing.memfsRevision) {
         const midConversationSystemPrompt =
@@ -871,30 +865,25 @@ export class LocalBackend extends HeadlessBackend {
 
     return this.compileAndMaybePersistSystemPrompt(conversationId, agentId, {
       dryRun: false,
-      previousMessageCount,
     });
   }
 
   private async compileAndMaybePersistSystemPrompt(
     conversationId: string,
     agentId: string,
-    options: { dryRun: boolean; previousMessageCount?: number },
+    options: { dryRun: boolean },
   ): Promise<LocalCompiledSystemPrompt> {
     const agent = this.store.retrieveAgentRecord(agentId);
     const memfsEnabled = this.isMemfsEnabledForAgent(agentId);
     if (memfsEnabled) {
       await this.ensureLocalMemoryRepo(agentId, [], agent.name);
     }
-    const previousMessageCount =
-      options.previousMessageCount ??
-      this.store.listConversationMessages(conversationId, {
-        agent_id: agentId,
-        order: "asc",
-      } as ConversationMessageListBody).length;
     const compiled = compileLocalSystemPrompt({
       agent,
       conversationId,
-      previousMessageCount,
+      // Scans the transcript, so only when <memory_metadata> is rendered.
+      previousMessageCount: () =>
+        this.store.countMessagesOutsideContext(conversationId, agentId),
       memoryDir: memfsEnabled ? this.memoryDirForAgent(agentId) : undefined,
       includeMemfs: memfsEnabled,
     });

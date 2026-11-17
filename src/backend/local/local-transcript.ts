@@ -223,7 +223,7 @@ function isLocalTranscriptCompactionEntry(
   );
 }
 
-function isLocalTranscriptAppendEntry(
+export function isLocalTranscriptAppendEntry(
   value: unknown,
 ): value is LocalTranscriptAppendEntry {
   return (
