@@ -1,4 +1,6 @@
-Start a background monitor whenever the condition you are waiting on can be checked at a public http(s) URL. Each change to the HTTP status or body is an event — you keep working and notifications arrive in the chat. Events arrive on their own schedule and are not replies from the user, even if one lands while you're waiting for the user to answer a question.
+Start a background monitor that streams events from a public http(s) URL. Each change to the HTTP status or body is an event — you keep working and notifications arrive in the chat. Events arrive on their own schedule and are not replies from the user, even if one lands while you're waiting for the user to answer a question.
+
+Use Monitor whenever you are waiting for something to happen that a URL can show. Wake is only for an explicit time condition, or when no monitor is possible.
 
 Use Monitor when you need one notification per occurrence: until the timeout ("every time the status changes"), or until a known end ("each CI step result, stop when the run completes": use `match` with `stop_on_match: true`). For a single notification ("tell me when the server is ready"), use `match` with `stop_on_match: true`.
 

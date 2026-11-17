@@ -1,6 +1,13 @@
-Start a background monitor whenever you can check for the condition you are waiting on. Each stdout line is an event — you keep working and notifications arrive in the chat. Events arrive on their own schedule and are not replies from the user, even if one lands while you're waiting for the user to answer a question.
+Start a background monitor that streams events from a long-running script. Each stdout line is an event — you keep working and notifications arrive in the chat. Events arrive on their own schedule and are not replies from the user, even if one lands while you're waiting for the user to answer a question.
 
-Use Monitor when you need one notification per occurrence: indefinitely ("every time an ERROR line appears": `tail -f`, `inotifywait -m`, `while true`), or until a known end ("each CI step result, stop when the run completes": a command that emits lines and then exits). For a single notification ("tell me when the server is ready"), run a command that exits when the condition is true, e.g. `until grep -q "Ready" dev.log; do sleep 0.5; done`, with Monitor; it reports completion when the command exits. An unbounded command used for a single notification stays armed until timeout, and `tail -f log | grep -m 1 ...` can hang the same way.
+Use Monitor whenever you are waiting for something to happen. Wake is only for an explicit time condition, or when no monitor is possible.
+
+Pick the command by how many notifications you need:
+- One ("tell me when the server is ready"): a command that exits when the condition is true, e.g. `until grep -q "Ready" dev.log; do sleep 0.5; done`. You are notified when it exits.
+- One per occurrence, indefinitely ("every time an ERROR line appears"): an unbounded command (`tail -f`, `inotifywait -m`, `while true`).
+- One per occurrence, until a known end ("each CI step result, stop when the run completes"): a command that emits lines and then exits.
+
+An unbounded command used for a single notification stays armed until timeout, and `tail -f log | grep -m 1 ...` can hang the same way.
 
 For open github.com pull requests, use WatchPR instead. It covers the whole PR surface and keeps watching after CI finishes. Use Monitor only when WatchPR does not apply.
 

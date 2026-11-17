@@ -1,4 +1,10 @@
-Schedule a future turn for the current conversation. Use Monitor whenever you can check for the condition you are waiting on, with `backup_after_seconds` as its durable fallback. Use Wake for time-based follow-ups or waits longer than about an hour.
+Schedule a future turn for the current conversation at a time you choose.
+
+Do not use Wake to wait for something to happen. If you can check for the condition (a job finishing, a deploy landing, a file or reply appearing), use Monitor: it brings you back when the thing happens, while a wake fires at a time you guessed, which is either too early or later than necessary. Never use a wake to poll.
+
+Use Wake only when:
+- there is an explicit time condition: a reminder, a follow-up at a set time, a recurring check-in; or
+- no monitor is possible, because nothing you can check would show the change.
 
 Wake is always self-bound. It cannot target another agent, conversation, or computer.
 
