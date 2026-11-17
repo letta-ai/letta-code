@@ -40,7 +40,6 @@ import { compareSemver } from "@/utils/version";
 import {
   CLAUDE_INTERRUPT_ACK_TIMEOUT_ERROR,
   CLAUDE_TURN_START_TIMEOUT_ERROR,
-  REMOTE_SUBAGENT_MESSAGE_TIMEOUT_MS,
 } from "./claude-steer-timeouts";
 import {
   createExternalCodingAgentConfig,
@@ -49,8 +48,13 @@ import {
   formatExternalCodingAgentId,
   parseExternalCodingAgentId,
 } from "./external-coding-agent";
+import { connectRemoteWorkerWithRetry } from "./remote-connect-retry";
+import {
+  RemoteFollowUpSocketClosedError,
+  RemoteFollowUpTimeoutError,
+  sendRemoteFollowUpWithReconnect,
+} from "./remote-follow-up-retry";
 import { followRemoteSubagentEvents } from "./remote-subagent-events";
-
 export const REMOTE_EXTERNAL_WORKER_STOPPED = Symbol(
   "remote external worker stopped",
 );
@@ -231,9 +235,6 @@ class RemoteWorkerLostError extends Error {}
 
 class OutdatedRemoteWorkerError extends Error {}
 
-/** No answer to a follow-up in time; the listener may still deliver it. */
-class RemoteFollowUpTimeoutError extends Error {}
-
 /** Fixed telemetry categories; never include error text in the returned code. */
 export function classifyRemoteExternalWorkerControlError(
   error: unknown,
@@ -246,7 +247,9 @@ export function classifyRemoteExternalWorkerControlError(
   }
   if (error instanceof OutdatedRemoteWorkerError) return "outdated_computer";
   if (error instanceof RemoteFollowUpTimeoutError) return "steer_timeout";
+  if (error instanceof RemoteFollowUpSocketClosedError) return "socket_closed";
   const message = errorMessage(error);
+  if (message === "App-server socket closed") return "socket_closed";
   if (
     message === CLAUDE_TURN_START_TIMEOUT_ERROR ||
     message === CLAUDE_INTERRUPT_ACK_TIMEOUT_ERROR
@@ -554,7 +557,7 @@ export async function launchRemoteExternalCodingAgent(
   const toolCallId = params.toolCallId ?? `remote-${randomUUID()}`;
   let client: AppServerClient;
   try {
-    client = await connect();
+    client = await connectRemoteWorkerWithRetry(connect, params.signal);
   } catch (error) {
     return fail("connect", `Can't reach ${computer}: ${errorMessage(error)}`);
   }
@@ -889,7 +892,8 @@ async function deliverRemoteExternalCodingAgentMessage(
   );
   let response: Awaited<ReturnType<AppServerClient["sendSubagentMessage"]>>;
   try {
-    response = await client.sendSubagentMessage(
+    response = await sendRemoteFollowUpWithReconnect(
+      client,
       {
         request_id: requestId,
         runtime: {
@@ -903,15 +907,12 @@ async function deliverRemoteExternalCodingAgentMessage(
         message: params.message,
         tool_call_id: toolCallId,
       },
-      { timeoutMs: REMOTE_SUBAGENT_MESSAGE_TIMEOUT_MS },
+      connect,
+      (reconnected) => follower.attach(reconnected),
+      target.computer as string,
     );
   } catch (error) {
     follower.close();
-    if (errorMessage(error) === `Timed out waiting for ${requestId}`) {
-      throw new RemoteFollowUpTimeoutError(
-        `${target.computer} didn't confirm the follow-up within ${Math.round(REMOTE_SUBAGENT_MESSAGE_TIMEOUT_MS / 1000)}s. The message may not have been delivered; check the worker's output, or send it again.`,
-      );
-    }
     throw error;
   }
   if (!response.success) {

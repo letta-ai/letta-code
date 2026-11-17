@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, jest, test } from "bun:test";
+import { afterEach, describe, expect, jest, spyOn, test } from "bun:test";
 import {
   clearAllSubagents,
   completeSubagent,
@@ -7,6 +7,9 @@ import {
   updateSubagent,
 } from "@/agent/subagent-state";
 import type { SubagentResult } from "@/agent/subagents";
+import type { AppServerClient } from "@/app-server-client";
+import { telemetry } from "@/telemetry";
+import { REMOTE_SUBAGENT_MESSAGE_DEDUPE_PENDING_TTL_MS } from "@/tools/impl/claude-steer-timeouts";
 import type { sendClaudeMessage } from "@/tools/impl/claude-stream-session";
 import {
   clearNativeSessionCaptureForTests,
@@ -16,6 +19,8 @@ import {
   backgroundTasks,
   scheduleBackgroundTaskCleanup,
 } from "@/tools/impl/process_manager";
+import { sendRemoteExternalCodingAgentMessage } from "@/tools/impl/remote-external-coding-agent";
+import type { SubagentMessageCommand } from "@/types/subagent-protocol";
 import { readSubagentDepth } from "@/utils/subagent-depth-env";
 import { createRuntime } from "@/websocket/listener/lifecycle";
 import { createConversationRuntime } from "@/websocket/listener/runtime";
@@ -60,6 +65,7 @@ const workerEnv = {
 
 afterEach(async () => {
   jest.useRealTimers();
+  jest.restoreAllMocks();
   clearAllSubagents();
   backgroundTasks.clear();
   __resetSubagentControlDedupeForTests();
@@ -280,6 +286,189 @@ describe("remote external subagent control", () => {
     ]);
     expect(calls).toBe(1);
     expect(second).toEqual(first);
+  });
+
+  test("reconnects a closed follow-up socket without steering twice, even during a slow steer", async () => {
+    const { parent } = fixture();
+    const started = Promise.withResolvers<void>();
+    const receipt = Promise.withResolvers<{
+      mode: "steered";
+      sessionId: string;
+    }>();
+    let now = 0;
+    let steers = 0;
+    const deps = {
+      workerEnv,
+      now: () => now,
+      sendClaude: async () => {
+        steers++;
+        started.resolve();
+        return receipt.promise;
+      },
+    };
+    const commands: SubagentMessageCommand[] = [];
+    const pending: Promise<unknown>[] = [];
+    const closes = [jest.fn(), jest.fn()];
+    const clients = closes.map(
+      (close, attempt) =>
+        ({
+          close,
+          onMessage: () => () => {},
+          onDisconnect: () => () => {},
+          sendSubagentMessage: async (command: SubagentMessageCommand) => {
+            commands.push(command);
+            const response = handleSubagentMessageCommand(
+              command,
+              parent,
+              deps,
+            );
+            pending.push(response);
+            if (attempt === 0) {
+              await started.promise;
+              // The steer is still pending after the completed-response cache's TTL.
+              now = 31_000;
+              throw new Error("App-server socket closed");
+            }
+            receipt.resolve({ mode: "steered", sessionId: nativeId });
+            return response;
+          },
+        }) as unknown as AppServerClient,
+    );
+    let attempts = 0;
+    const resolvedIds: string[] = [];
+    const result = await sendRemoteExternalCodingAgentMessage(
+      {
+        agentId: `${nativeId}@computer`,
+        parentScope: {
+          agentId: runtime.agent_id,
+          conversationId: runtime.conversation_id,
+        },
+        message: "Only once",
+        toolCallId: "follow-up-1",
+      },
+      {
+        resolveComputer: async () => ({
+          connectionId: `conn-${resolvedIds.length + 1}`,
+          environment: remoteEnvironment(),
+        }),
+        connect: async (id) => {
+          resolvedIds.push(id);
+          return clients[attempts++] as AppServerClient;
+        },
+      },
+    );
+    await Promise.all(pending);
+    expect(result).toEqual({ delivery: "steered" });
+    expect(resolvedIds).toEqual(["conn-1", "conn-2"]);
+    expect(commands).toHaveLength(2);
+    expect(commands[1]).toEqual(commands[0]);
+    expect(steers).toBe(1);
+    for (const close of closes) expect(close).toHaveBeenCalledTimes(1);
+    // The completed receipt is retained for a full TTL after it settles, too.
+    now = 60_000;
+    await handleSubagentMessageCommand(
+      commands[0] as SubagentMessageCommand,
+      parent,
+      deps,
+    );
+    expect(steers).toBe(1);
+  });
+
+  test("reports socket_closed after both follow-up attempts lose their socket", async () => {
+    const report = spyOn(telemetry, "trackError").mockImplementation(() => {});
+    spyOn(telemetry, "flush").mockResolvedValue(undefined);
+    const commands: SubagentMessageCommand[] = [];
+    const closes = [jest.fn(), jest.fn()];
+    let attempts = 0;
+    const resolveComputer = jest.fn(async () => ({
+      connectionId: "conn-test",
+      environment: remoteEnvironment(),
+    }));
+    await expect(
+      sendRemoteExternalCodingAgentMessage(
+        {
+          agentId: `${nativeId}@computer`,
+          parentScope: {
+            agentId: runtime.agent_id,
+            conversationId: runtime.conversation_id,
+          },
+          message: "Continue",
+        },
+        {
+          resolveComputer,
+          connect: async () =>
+            ({
+              close: closes[attempts++],
+              onMessage: () => () => {},
+              onDisconnect: () => () => {},
+              sendSubagentMessage: async (command: SubagentMessageCommand) => {
+                commands.push(command);
+                throw new Error("App-server socket closed");
+              },
+            }) as unknown as AppServerClient,
+        },
+      ),
+    ).rejects.toThrow("The message may not have been delivered");
+    expect(commands).toHaveLength(2);
+    expect(commands[1]).toEqual(commands[0]);
+    expect(resolveComputer).toHaveBeenCalledTimes(2);
+    expect(attempts).toBe(2);
+    for (const close of closes) expect(close).toHaveBeenCalledTimes(1);
+    expect(report).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(report.mock.calls[0]?.[2] as string).error_code).toBe(
+      "socket_closed",
+    );
+  });
+
+  test("evicts a stuck pending steer after the caller retry budget cap", async () => {
+    const { parent } = fixture();
+    const started = [
+      Promise.withResolvers<void>(),
+      Promise.withResolvers<void>(),
+    ] as const;
+    const receipts = [
+      Promise.withResolvers<{ mode: "steered"; sessionId: string }>(),
+      Promise.withResolvers<{ mode: "steered"; sessionId: string }>(),
+    ] as const;
+    let now = 0;
+    let steers = 0;
+    const command: SubagentMessageCommand = {
+      type: "subagent_message",
+      request_id: "stuck-steer",
+      runtime,
+      agent_id: nativeId,
+      message: "Only retry after the cap",
+    };
+    const deps = {
+      workerEnv,
+      now: () => now,
+      sendClaude: async () => {
+        const attempt = steers++;
+        started[attempt]?.resolve();
+        const receipt = receipts[attempt];
+        if (!receipt) throw new Error("Unexpected extra steer");
+        return receipt.promise;
+      },
+    };
+    const original = handleSubagentMessageCommand(command, parent, deps);
+    await started[0].promise;
+    now = REMOTE_SUBAGENT_MESSAGE_DEDUPE_PENDING_TTL_MS - 1;
+    const beforeCap = handleSubagentMessageCommand(command, parent, deps);
+    expect(steers).toBe(1);
+
+    now = REMOTE_SUBAGENT_MESSAGE_DEDUPE_PENDING_TTL_MS + 1;
+    const afterCap = handleSubagentMessageCommand(command, parent, deps);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(steers).toBe(2);
+
+    // A late completion from the expired request must not replace the new entry.
+    receipts[0].resolve({ mode: "steered", sessionId: nativeId });
+    await Promise.all([original, beforeCap]);
+    now += 31_000;
+    const retry = handleSubagentMessageCommand(command, parent, deps);
+    receipts[1].resolve({ mode: "steered", sessionId: nativeId });
+    await Promise.all([afterCap, retry]);
+    expect(steers).toBe(2);
   });
 
   test("delivers the same request ID from different parents", async () => {
@@ -673,3 +862,19 @@ describe("remote external subagent control", () => {
     });
   });
 });
+
+function remoteEnvironment() {
+  return {
+    id: "env-test",
+    connectionId: "conn-test",
+    deviceId: "computer",
+    connectionName: "computer",
+    organizationId: "org-test",
+    podId: null,
+    connectedAt: null,
+    lastHeartbeat: Date.now(),
+    lastSeenAt: 1,
+    firstSeenAt: 1,
+    metadata: { subagent_message: true },
+  };
+}

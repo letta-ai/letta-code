@@ -131,9 +131,9 @@ describe("Exec command completion notifications", () => {
     const result = await exec_command({
       cmd: command("process.stdout.write('done')"),
       description: "Run quick check",
-      // Windows PowerShell startup itself can exceed 250ms. This case tests
-      // completion before the chosen yield deadline, not shell startup speed.
-      yield_time_ms: isWindows ? 10_000 : 250,
+      // Process startup on any loaded runner can exceed a short deadline.
+      // This case tests completion before the deadline, not startup speed.
+      yield_time_ms: isWindows ? 10_000 : 5_000,
     });
 
     expect(result.output).toContain("Process exited with code 0");

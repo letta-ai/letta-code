@@ -182,7 +182,7 @@ USAGE
   letta memory ...      Memory filesystem subcommands
   letta agents ...      Agents subcommands (JSON-only)
   letta model ...       Get, list, or set models and reasoning (JSON-only)
-  letta usage           Show account credits and Letta quota (Markdown)
+  letta usage           Show account plan and remaining credits (Markdown)
   letta computers ...   List available remote computers (JSON-only)
   letta teleport ...    Move the current conversation between computers
   letta messages ...    Messages subcommands (JSON-only)
