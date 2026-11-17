@@ -42,7 +42,8 @@ describe("mcp servers info reminder", () => {
             expect(id).toBe("parent");
             return ["filesystem"];
           },
-          listServerSideServers: async (id) => {
+          listServerSideServers: async (id, timeoutMs) => {
+            expect(timeoutMs).toBe(3_000);
             expect(id).toBe("parent");
             return [{ name: "linear", toolCount: 3 }];
           },

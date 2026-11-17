@@ -79,14 +79,26 @@ mock.module("@/agent/subagents/manager", () => ({ spawnSubagent: spawn }));
 // External workers: keep the real module, replace only the process launch and
 // the remote hand-off so the prompt each would receive can be observed.
 const workerPrompts: string[] = [];
+const workerReminders: Array<string | undefined> = [];
+let inventoryError: Error | undefined;
+const realReminders = await import("@/reminders/engine");
+mock.module("@/reminders/engine", () => ({
+  ...realReminders,
+  listMcpServersForAgent: async () => {
+    if (inventoryError) throw inventoryError;
+    return [];
+  },
+}));
 const realExternal = await import("./external-coding-agent");
 mock.module("./external-coding-agent", () => ({
   ...realExternal,
   runExternalCodingAgent: async (options: {
     prompt: string;
+    mcpReminder?: string;
     onStarted?: (agentId: string) => void;
   }) => {
     workerPrompts.push(options.prompt);
+    workerReminders.push(options.mcpReminder);
     options.onStarted?.("codex_00000000-0000-0000-0000-000000000000");
     return new Promise<SubagentResult>(() => {});
   },
@@ -141,6 +153,8 @@ beforeEach(async () => {
   forkConversation.mockClear();
   listConversationMessages.mockClear();
   workerPrompts.length = 0;
+  workerReminders.length = 0;
+  inventoryError = undefined;
   remoteLaunches.length = 0;
   __testSetBackend({
     capabilities: { environmentRouting: true },
@@ -349,5 +363,46 @@ describe("fork prompt limit", () => {
     });
     expect(result.success).toBe(true);
     expect(forkConversation).not.toHaveBeenCalled();
+  });
+});
+
+describe("external worker MCP discovery", () => {
+  test("a timed-out inventory read still launches with discovery instructions", async () => {
+    inventoryError = new Error(
+      "Listing agent MCP servers timed out after 5000ms",
+    );
+    const result = await launchSubagent({ ...brief, harness: "codex" });
+    expect(result.success).toBe(true);
+    expect(workerPrompts).toHaveLength(1);
+    expect(workerReminders[0]).toContain("MCP server list could not be loaded");
+    expect(workerReminders[0]).toContain("letta mcp search");
+    expect(workerReminders[0]).toContain("Do not automatically store results");
+  });
+
+  test("unknown requested servers reject the launch", async () => {
+    const result = await launchSubagent({
+      ...brief,
+      harness: "codex",
+      mcp: { inherit: true, servers: ["missing"] },
+    });
+    expect(result).toMatchObject({
+      success: false,
+      error:
+        "Requested MCP server is not available to the parent agent: missing",
+    });
+    expect(workerPrompts).toHaveLength(0);
+  });
+
+  test("invalid MCP options still reject the launch", async () => {
+    const result = await launchSubagent({
+      ...brief,
+      harness: "codex",
+      mcp: { inherit: false, servers: ["example"] },
+    });
+    expect(result).toMatchObject({
+      success: false,
+      error: "mcp.servers requires mcp.inherit to be true",
+    });
+    expect(workerPrompts).toHaveLength(0);
   });
 });

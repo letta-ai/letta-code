@@ -174,11 +174,13 @@ export interface McpServersReminderDependencies {
   /** Returns cloud-connected servers, or null when unavailable. */
   listServerSideServers?: (
     agentId: string,
+    timeoutMs?: number,
   ) => Promise<McpServerReminderEntry[] | null>;
 }
 
 async function defaultListServerSideServers(
   agentId: string,
+  timeoutMs = 3_000,
 ): Promise<McpServerReminderEntry[] | null> {
   // An unavailable backend means no server-side MCP; local names are still
   // valid. A failed server fetch on an available backend throws instead, so a
@@ -200,7 +202,7 @@ async function defaultListServerSideServers(
   const client = (await getClient()) as Parameters<
     typeof listUnifiedMcpServers
   >[0];
-  const allServers = await listUnifiedMcpServers(client, agentId, 3_000);
+  const allServers = await listUnifiedMcpServers(client, agentId, timeoutMs);
   // Hosted Letta Cloud cannot execute stdio-type cloud servers; do not
   // advertise tools the agent cannot call.
   const servers =
@@ -220,20 +222,25 @@ function formatMcpServerEntry(entry: McpServerReminderEntry): string {
   return `${entry.name} (${entry.toolCount} ${entry.toolCount === 1 ? "tool" : "tools"})`;
 }
 
+const MCP_MEMORY_GUIDANCE =
+  "Do not automatically store results of principal-restricted operations in shared memory.";
+const MCP_TOOL_USAGE = `Find tools (with schemas) with \`letta mcp search "<what you want to do>"\`, list one server's tools with \`letta mcp tools <server>\` (\`--full\` includes schemas, \`letta mcp schema <tool-name>\` fetches one), and invoke one with \`letta mcp call <tool-name> --args '{"key":"value"}'\`. For large or quote-heavy arguments, use \`--args-file <path>\` (\`-\` for stdin) instead of \`--args\`. Exit code 2 means the tool returned an error result: read its \`content\`, fix the arguments, and retry (exit 1 is a CLI/usage error).`;
+
 export function buildMcpServersReminderText(
-  entries: McpServerReminderEntry[],
+  entries: McpServerReminderEntry[] | null,
 ): string {
-  if (entries.length === 0) {
-    return `${SYSTEM_REMINDER_OPEN}\nMCP servers with available tools: None\nDo not automatically store results of principal-restricted operations in shared memory.\n${SYSTEM_REMINDER_CLOSE}`;
-  }
-  const rendered = entries.map(formatMcpServerEntry).join(", ");
-  return `${SYSTEM_REMINDER_OPEN}\nMCP servers with available tools: ${rendered}\nDo not automatically store results of principal-restricted operations in shared memory.\nFind tools (with schemas) with \`letta mcp search "<what you want to do>"\`, list one server's tools with \`letta mcp tools <server>\` (\`--full\` includes schemas, \`letta mcp schema <tool-name>\` fetches one), and invoke one with \`letta mcp call <tool-name> --args '{"key":"value"}'\`. For large or quote-heavy arguments, use \`--args-file <path>\` (\`-\` for stdin) instead of \`--args\`. Exit code 2 means the tool returned an error result: read its \`content\`, fix the arguments, and retry (exit 1 is a CLI/usage error).\n${SYSTEM_REMINDER_CLOSE}`;
+  const inventory =
+    entries === null
+      ? 'MCP server list could not be loaded. Run `letta mcp search "<what you want to do>"` to find tools.'
+      : `MCP servers with available tools: ${entries.length ? entries.map(formatMcpServerEntry).join(", ") : "None"}`;
+  return `${SYSTEM_REMINDER_OPEN}\n${inventory}\n${MCP_MEMORY_GUIDANCE}\n${entries?.length === 0 ? "" : `${MCP_TOOL_USAGE}\n`}${SYSTEM_REMINDER_CLOSE}`;
 }
 
 export async function listMcpServersForAgent(
   agentId: string,
   _state: SharedReminderContext["state"],
   deps: McpServersReminderDependencies = {},
+  timeoutMs = 3_000,
 ): Promise<McpServerReminderEntry[]> {
   const localNames = (
     deps.getLocalServerNames ??
@@ -246,7 +253,7 @@ export async function listMcpServersForAgent(
   }));
   const serverSideEntries = await (
     deps.listServerSideServers ?? defaultListServerSideServers
-  )(agentId);
+  )(agentId, timeoutMs);
   if (serverSideEntries) entries.push(...serverSideEntries);
   return [...new Map(entries.map((entry) => [entry.name, entry])).values()];
 }
