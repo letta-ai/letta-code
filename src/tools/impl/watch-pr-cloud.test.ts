@@ -156,7 +156,10 @@ describe("cloud WatchPR registration", () => {
       },
     );
     expect(resumed?.taskId).toBe("cmon-1");
-    expect(resumed?.content[0]?.text).toContain("running");
+    expect(resumed?.content[0]?.text).toBe(
+      "WatchPR cmon-1 is running. Cloud watches continue between sessions; start a new watch after it stops.",
+    );
+    expect(resumed?.headSha).toBe("");
     expect(
       await startCloudPullRequestWatch(args, {
         enabled: () => true,

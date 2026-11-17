@@ -8,6 +8,6 @@ The initial result includes current blockers. Local watches also compare a saved
 
 Pass a URL ending at the PR number, such as `https://github.com/owner/repo/pull/123`. Remove `/files`, `/commits`, `/checks`, and other suffixes. The watcher is read-only and errors if the PR is already merged or closed.
 
-Use `notify_on` to limit PR notifications (for example `["merged", "closed", "conflict"]` or `["checks_done"]`); watcher errors still report. For several PRs, start one watch per URL. Workflow run URLs (`https://github.com/owner/repo/actions/runs/123`) report status changes and completion with conclusion and failed jobs/steps, including runs without a PR. Reruns remain a separate action.
+Use `notify_on` to limit PR notifications (for example `["merged", "closed", "conflict"]` or `["checks_done"]`); watcher errors still report. Workflow run URLs (`https://github.com/owner/repo/actions/runs/123`) report status changes and completion with conclusion and failed jobs/steps, including runs without a PR. Reruns remain a separate action.
 
-Pass `resume` with a local paused monitor id to restart it; a cloud id retrieves its status. Cloud watches continue between sessions.
+Pass `resume` with a local paused monitor id to restart it; a cloud id returns status only, without replaying a PR snapshot. Cloud watches continue between sessions.
