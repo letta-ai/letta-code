@@ -87,6 +87,19 @@ export function listTasks(): TaskRecord[] {
   return out;
 }
 
+/** Full task state for clients; order is zero-based creation order. */
+export interface TaskSnapshot {
+  tasks: (TaskRecord & { order: number })[];
+}
+
+export type TaskRecordResult = TaskRecord & TaskSnapshot;
+
+export function getTaskSnapshot(): TaskSnapshot {
+  return {
+    tasks: listTasks().map((task, order) => ({ ...task, order })),
+  };
+}
+
 export interface UpdateTaskInput {
   taskId: string;
   status?: TaskStatus;
