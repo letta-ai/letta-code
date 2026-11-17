@@ -30,4 +30,20 @@ describe("expandDreamCommand", () => {
     expect(prompt).toContain("Call the Workflow tool with `wait: true`");
     expect(prompt).toContain("worktree add");
   });
+
+  test("takes --reasoning-effort for the new agent instead of passing it on", () => {
+    delete process.env.LETTA_DREAM_REASONING_EFFORT;
+    const [, , ...rest] = expandDreamCommand([
+      "dream",
+      "trajectories",
+      "--reasoning-effort",
+      "xhigh",
+      "--model",
+      "qwen",
+    ]);
+    expect(rest).not.toContain("--reasoning-effort");
+    expect(rest.slice(-2)).toEqual(["--model", "qwen"]);
+    expect(String(process.env.LETTA_DREAM_REASONING_EFFORT)).toBe("xhigh");
+    delete process.env.LETTA_DREAM_REASONING_EFFORT;
+  });
 });

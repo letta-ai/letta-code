@@ -69,7 +69,7 @@ import { setAgentContext, setConversationId } from "./agent/context";
 import { createAgent } from "./agent/create";
 import { handleListMessages } from "./agent/list-messages-handler";
 import { getStreamToolContextId, sendMessageStream } from "./agent/message";
-import { getModelUpdateArgs, resolveModel } from "./agent/model";
+import { getNewAgentUpdateArgs, resolveModel } from "./agent/model";
 import { updateAgentSystemPrompt } from "./agent/modify";
 import { buildCreateAgentOptionsForPersonality } from "./agent/personality";
 import { resolvePersonalityId } from "./agent/personality-presets";
@@ -1121,7 +1121,7 @@ export async function handleHeadlessCommand(
         })
       : undefined;
     const modelForUpdateArgs = personalityOptions?.model ?? model;
-    const updateArgs = getModelUpdateArgs(modelForUpdateArgs);
+    const updateArgs = getNewAgentUpdateArgs(modelForUpdateArgs);
     const createOptions = {
       ...(personalityOptions ?? {}),
       model: modelForUpdateArgs,
