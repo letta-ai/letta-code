@@ -68,7 +68,6 @@ import {
 
 const WATCH_POLL_MS = 30_000;
 const WATCH_MAX_POLL_MS = 5 * 60_000;
-const WATCH_REFRESH_ERROR_NOTIFY_AFTER_MS = 5 * 60_000;
 const WATCH_FRESH_SNAPSHOT_NOTIFY_AFTER_MS = 30 * 60_000;
 
 interface WatchPullRequestArgs {
@@ -427,8 +426,6 @@ export async function watch_pr(
         let freshnessNoticeSent = false;
         let nextPollMs = WATCH_POLL_MS;
         let failedPolls = 0;
-        let failureStartedAt: number | undefined;
-        let lastNotifiedError: string | undefined;
         while (processState.status === "running") {
           try {
             await wait(controller.signal, nextPollMs);
@@ -444,14 +441,7 @@ export async function watch_pr(
               freshnessNoticeSent = false;
             }
             nextPollMs = WATCH_POLL_MS;
-            if (lastNotifiedError !== undefined) {
-              emit([
-                `WatchPR recovered after ${failedPolls} failed poll${failedPolls === 1 ? "" : "s"}.`,
-              ]);
-            }
             failedPolls = 0;
-            failureStartedAt = undefined;
-            lastNotifiedError = undefined;
             const sameHead = current.headSha === previous.headSha;
             const stableCurrent = { ...current, readinessConfirmed: false };
             stableCurrent.readinessConfirmed = Boolean(
@@ -516,22 +506,12 @@ export async function watch_pr(
             }
             failedPolls += 1;
             nextPollMs = pollDelayMs(failedPolls);
-            failureStartedAt ??= now();
             const message = errorText(error);
             if (!output.append(`[poll error ${failedPolls}] ${message}\n`)) {
               processState.completionNotificationSuppressed = true;
               markMonitorFinished(taskId, processState, "failed", null);
               controller.abort();
               return;
-            }
-            if (
-              now() - failureStartedAt >= WATCH_REFRESH_ERROR_NOTIFY_AFTER_MS &&
-              message !== lastNotifiedError
-            ) {
-              emit([
-                `WatchPR could not refresh ${ref.url}: ${message}. Retrying.`,
-              ]);
-              lastNotifiedError = message;
             }
           }
         }
