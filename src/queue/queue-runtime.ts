@@ -87,6 +87,13 @@ export type QueueItem =
   | CronPromptQueueItem
   | ModContinueQueueItem;
 
+// Omit each variant separately so its kind-specific fields remain available.
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown
+  ? Omit<T, K>
+  : never;
+
+export type QueueItemInput = DistributiveOmit<QueueItem, "id" | "enqueuedAt">;
+
 // ── Scope ────────────────────────────────────────────────────────
 
 function hasSameScope(a: QueueItem, b: QueueItem): boolean {
@@ -205,7 +212,7 @@ export class QueueRuntime {
    * - If at hard ceiling: rejects all item kinds, fires onDropped("buffer_limit").
    */
   enqueue(
-    input: Omit<QueueItem, "id" | "enqueuedAt">,
+    input: QueueItemInput,
     options: { preserveExisting?: boolean } = {},
   ): QueueItem | null {
     // Durable rehydration must be observational on rejection: its payload remains
@@ -507,7 +514,7 @@ export class QueueRuntime {
     this.store.length = write;
   }
 
-  private makeItem(input: Omit<QueueItem, "id" | "enqueuedAt">): QueueItem {
+  private makeItem(input: QueueItemInput): QueueItem {
     return {
       ...input,
       id: `q-${++this.nextId}`,
