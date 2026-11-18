@@ -25,6 +25,7 @@ class ProviderResolutionBackend extends FakeHeadlessBackend {
 
   models: Array<Record<string, unknown>> = [];
   listModelsCalls = 0;
+  retrieveConversationCalls = 0;
   listModelsError: Error | null = null;
 
   override async retrieveAgent(): Promise<AgentState> {
@@ -32,6 +33,7 @@ class ProviderResolutionBackend extends FakeHeadlessBackend {
   }
 
   override async retrieveConversation(): Promise<Conversation> {
+    this.retrieveConversationCalls += 1;
     return this.conversation;
   }
 
@@ -68,6 +70,21 @@ describe("scoped toolset provider resolution", () => {
   afterEach(() => {
     clearAvailableModelsCache();
     __testSetBackend(null);
+  });
+
+  test("reuses conversation metadata fetched before reminder construction", async () => {
+    const prepared = await prepareToolExecutionContextForScope({
+      agentId: AGENT_ID,
+      conversationId: CONVERSATION_ID,
+      cachedConversation: {
+        id: CONVERSATION_ID,
+        agent_id: AGENT_ID,
+        model: "anthropic/claude-sonnet-4-6",
+        model_settings: { provider_type: "anthropic" },
+      } as Conversation,
+    });
+    expect(prepared.toolset).toBe("default");
+    expect(backend.retrieveConversationCalls).toBe(0);
   });
 
   test("keeps the agent provider when an explicit model is the same custom alias", async () => {

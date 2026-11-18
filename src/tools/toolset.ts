@@ -322,6 +322,9 @@ export async function prepareToolExecutionContextForScope(params: {
   executionSettings?: RuntimeContextSnapshot["executionSettings"];
   /** Foreground yield from the runtime tool policy; unset uses the default. */
   foregroundYieldMs?: number;
+  cachedConversation?: Awaited<
+    ReturnType<ReturnType<typeof getBackend>["retrieveConversation"]>
+  >;
   cachedAgent?: AgentState | null;
   /** Caller-owned retry/lease policy, applied only to scope metadata reads. */
   readScopeState?: <T>(read: () => Promise<T>) => Promise<T>;
@@ -379,9 +382,10 @@ export async function prepareToolExecutionContextForScope(params: {
   const conversationTarget =
     conversationId && conversationId !== "default"
       ? modelTargetFromCarrier(
-          (await readScopeState(() =>
-            backend.retrieveConversation(conversationId),
-          )) as ScopeModelCarrier,
+          (params.cachedConversation ??
+            (await readScopeState(() =>
+              backend.retrieveConversation(conversationId),
+            ))) as ScopeModelCarrier,
         )
       : { model: null, providerType: null, openAICompatibleProxy: false };
 
