@@ -23,6 +23,21 @@ export interface LocalMessageProviderMetadata {
   usage?: unknown;
 }
 
+/**
+ * Which request wrote a compaction summary:
+ * - `self`: the agent's own context (self-compaction modes).
+ * - `transcript`: a transcript summary, which the mode uses by design.
+ * - `transcript_after_overflow`: a transcript summary after the self request
+ *   exceeded the context window.
+ * - `transcript_after_no_text`: a transcript summary after the self request
+ *   returned no text (for example, the model called a tool instead).
+ */
+export type LocalCompactionSummarySource =
+  | "self"
+  | "transcript"
+  | "transcript_after_overflow"
+  | "transcript_after_no_text";
+
 export interface LocalMessageMetadata {
   created_at?: string;
   updated_at?: string;
@@ -38,6 +53,7 @@ export interface LocalMessageMetadata {
       context_window?: number;
       messages_count_before?: number;
       messages_count_after?: number;
+      summary_source?: LocalCompactionSummarySource;
     };
   };
 }

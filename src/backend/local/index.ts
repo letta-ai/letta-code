@@ -1,6 +1,5 @@
 export { isContextWindowOverflowError } from "@/backend/dev/context-window-overflow";
 export {
-  formatLocalMessagesForSummary,
   isLocalSlidingWindowCompactionPlanningError,
   LOCAL_ALL_COMPACTION_PROMPT,
   LOCAL_DEFAULT_COMPACTION_MODE,
@@ -11,6 +10,7 @@ export {
   LocalSlidingWindowCompactionPlanningError,
   planLocalSlidingWindowCompaction,
 } from "./compaction";
+export { formatLocalMessagesForSummary } from "./compaction-transcript";
 export {
   isHiddenLocalAgentRecord,
   projectLocalAgentState,

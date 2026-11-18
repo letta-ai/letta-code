@@ -10,7 +10,11 @@ import {
   type LocalAllCompactionInput,
   summarizeLocalMessagesAll,
 } from "./compaction";
-import { emptyLocalUsage, type LocalMessage } from "./local-message";
+import {
+  emptyLocalUsage,
+  type LocalCompactionSummarySource,
+  type LocalMessage,
+} from "./local-message";
 
 const TOOLS: Tool[] = [
   {
@@ -89,12 +93,13 @@ describe("self-compaction", () => {
     overrides: Partial<LocalAllCompactionInput> = {},
   ): Promise<{
     summary: string;
+    source?: LocalCompactionSummarySource;
     contexts: Context[];
     options: Array<Record<string, unknown> | undefined>;
   }> {
     const contexts: Context[] = [];
     const options: Array<Record<string, unknown> | undefined> = [];
-    const summary = await summarizeLocalMessagesAll({
+    const { summary, source } = await summarizeLocalMessagesAll({
       conversationId: "conv-self",
       agent: {
         id: "agent-local-self",
@@ -118,7 +123,7 @@ describe("self-compaction", () => {
       },
       ...overrides,
     });
-    return { summary, contexts, options };
+    return { summary, source, contexts, options };
   }
 
   test("summarizes inside the agent's own context and tools", async () => {
@@ -240,5 +245,102 @@ describe("self-compaction", () => {
 
     expect(contexts).toHaveLength(1);
     expect(contexts[0]?.systemPrompt).toBe(LOCAL_ALL_COMPACTION_PROMPT);
+  });
+
+  describe("reports which request wrote the summary", () => {
+    const text = (value: string) => assistant([{ type: "text", text: value }]);
+    const cases: Array<{
+      name: string;
+      replies: () => Array<AssistantMessage | Error>;
+      overrides?: Partial<LocalAllCompactionInput>;
+      source: LocalCompactionSummarySource;
+      summary: string;
+      requests: number;
+    }> = [
+      {
+        name: "a self summary",
+        replies: () => [text("self summary")],
+        source: "self",
+        summary: "self summary",
+        requests: 1,
+      },
+      {
+        name: "a transcript-mode summary",
+        replies: () => [text("transcript summary")],
+        overrides: { self: undefined },
+        source: "transcript",
+        summary: "transcript summary",
+        requests: 1,
+      },
+      {
+        name: "a self request that throws a context-window overflow",
+        replies: () => [
+          new Error("This model's maximum context length is 1000 tokens."),
+          text("transcript summary"),
+        ],
+        source: "transcript_after_overflow",
+        summary: "transcript summary",
+        requests: 2,
+      },
+      {
+        name: "a self request the provider refuses as over the window",
+        replies: () => [
+          {
+            ...assistant([]),
+            stopReason: "error",
+            errorMessage:
+              "This model's maximum context length is 30000 tokens. However, your messages resulted in 30551 tokens. (context_length_exceeded)",
+          },
+          text("transcript summary"),
+        ],
+        source: "transcript_after_overflow",
+        summary: "transcript summary",
+        requests: 2,
+      },
+      {
+        name: "a self answer with only a tool call",
+        replies: () => [
+          assistant([
+            {
+              type: "toolCall",
+              id: "call-2",
+              name: "Bash",
+              arguments: { command: "ls" },
+            },
+          ]),
+          text("transcript summary"),
+        ],
+        source: "transcript_after_no_text",
+        summary: "transcript summary",
+        requests: 2,
+      },
+    ];
+
+    for (const testCase of cases) {
+      test(`${testCase.source} for ${testCase.name}`, async () => {
+        const { summary, source, contexts } = await summarize(
+          TOOL_TURN,
+          testCase.replies(),
+          testCase.overrides,
+        );
+
+        expect(source).toBe(testCase.source);
+        expect(summary).toBe(testCase.summary);
+        expect(contexts).toHaveLength(testCase.requests);
+        expect(contexts.at(-1)?.systemPrompt).toBe(
+          testCase.source === "self"
+            ? "compiled agent system"
+            : LOCAL_ALL_COMPACTION_PROMPT,
+        );
+      });
+    }
+
+    test("no source when there is nothing to summarize", async () => {
+      const { summary, source, contexts } = await summarize([], []);
+
+      expect(summary).toBe("No prior conversation messages.");
+      expect(source).toBeUndefined();
+      expect(contexts).toHaveLength(0);
+    });
   });
 });
