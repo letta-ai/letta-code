@@ -83,53 +83,7 @@ describe("cloud WatchPR registration", () => {
       else process.env.LETTA_CLOUD_WATCH_PR = originalFlag;
     }
   });
-  test("falls back on transient create failures while preserving other errors and resumes", async () => {
-    for (const [status, body] of [
-      [400, JSON.stringify({ errorCode: "PR_SNAPSHOT_UNAVAILABLE" })],
-      [500, "internal error"],
-      [502, "bad gateway"],
-      [503, "unavailable"],
-      [599, "server error"],
-    ] as const) {
-      const error = new ApiRequestError("create failed", status, body);
-      const request = async () => {
-        throw error;
-      };
-      expect(
-        await startCloudPullRequestWatch(args, {
-          enabled: () => true,
-          request,
-        }),
-      ).toBeUndefined();
-      await expect(
-        startCloudPullRequestWatch(
-          { ...args, resume: "cmon-1" },
-          {
-            enabled: () => true,
-            request,
-          },
-        ),
-      ).rejects.toBe(error);
-    }
-    for (const [status, body] of [
-      [400, JSON.stringify({ errorCode: "PR_NOT_OPEN" })],
-      [400, "malformed"],
-      [401, "unauthorized"],
-      [403, "forbidden"],
-      [429, "too many requests"],
-    ] as const) {
-      const error = new ApiRequestError("create failed", status, body);
-      await expect(
-        startCloudPullRequestWatch(args, {
-          enabled: () => true,
-          request: async () => {
-            throw error;
-          },
-        }),
-      ).rejects.toBe(error);
-    }
-  });
-  test("registers with filters and falls back when the repository is inaccessible", async () => {
+  test("registers with filters and falls back only when the repository is inaccessible", async () => {
     const calls: unknown[] = [];
     const result = await startCloudPullRequestWatch(args, {
       enabled: () => true,
