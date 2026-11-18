@@ -110,6 +110,11 @@
       "path": "src/websocket/listener/turn-durability.test.ts",
       "timeoutMs": 30000,
       "reason": "Performs hundreds of synchronous durable writes and lock operations; isolate it so shared-batch load does not make Windows lock-budget assertions hit the generic 15-second timeout."
+    },
+    {
+      "path": "src/agent/memory-git-windows-hide.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Mocks node:child_process while exercising real MemFS Git and validator launches; isolate the process-global Bun module mock from other suites."
     }
   ]
 }
