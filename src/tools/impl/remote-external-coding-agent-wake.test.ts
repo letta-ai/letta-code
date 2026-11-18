@@ -263,6 +263,8 @@ test.each([
   ],
   [new Error("Claude turn did not become interruptible"), "worker_busy"],
   [new Error("Claude interrupt acknowledgement timed out"), "worker_busy"],
+  [new Error("no active turn to steer"), "turn_ended"],
+  [new Error("No Active Turn To Steer"), "turn_ended"],
   [new Error("unrecognized private detail"), "other"],
   ["unrecognized rejection", "other"],
   [null, "other"],

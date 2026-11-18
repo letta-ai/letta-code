@@ -18,7 +18,11 @@ import {
   turnFailureMessage,
   turnReport,
 } from "./codex-app-server-payloads";
-import { withCodexSteerReceipt, withSessionLock } from "./codex-steer-receipt";
+import {
+  waitForRejectedCodexSteer,
+  withCodexSteerReceipt,
+  withSessionLock,
+} from "./codex-steer-receipt";
 import { traceCodexLaunch } from "./external-llm-trace-launch";
 import {
   type ExternalTraceContext,
@@ -922,8 +926,8 @@ export async function sendCodexMessage(
               turnId: activeTurnId,
             };
           } catch (error) {
-            if (delivery.queued || session.activeTurnId === activeTurnId)
-              throw error;
+            if (delivery.queued) throw error;
+            await waitForRejectedCodexSteer(session, activeTurnId, error);
             // The matching turn completed while steering. Start exactly one new turn.
           }
         }
