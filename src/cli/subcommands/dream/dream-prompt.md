@@ -61,8 +61,15 @@ async function runWorker(s, i) {
   let outcome
   for (let attempt = 1; attempt <= 2 && !(outcome && outcome.ok); attempt++) {
     try {
-      const result = await agent(workerPrompt(s, worktree), { label: attempt === 1 ? s.key : `${s.key}-retry`, phase: 'Workers', skills: SKILLS, timeoutMs: TIMEOUT, effort: 'high' })
+      const prompt = workerPrompt(s, worktree) + (attempt > 1 ? '\n\nYour previous attempt ended without writing anything. Write and commit memory before you finish.' : '')
+      const result = await agent(prompt, { label: attempt === 1 ? s.key : `${s.key}-retry`, phase: 'Workers', skills: SKILLS, timeoutMs: TIMEOUT, effort: 'high' })
       outcome = { key: s.key, ok: true, summary: String(result).slice(0, 1500) }
+      // A worker can end its turn before writing anything; that counts as a failed attempt.
+      const wrote = String(await sh(`echo WROTE=$( { git -C ${q(worktree)} log --oneline ${BASE}..HEAD; git -C ${q(worktree)} status --porcelain; } | wc -l)`)).match(/WROTE=(\d+)/)
+      if (wrote && Number(wrote[1]) === 0) {
+        log(`EMPTY ${s.key} (attempt ${attempt}): no commits or changes`)
+        outcome = { key: s.key, ok: false, error: 'worker wrote nothing' }
+      }
     } catch (err) {
       log(`FAILED ${s.key} (attempt ${attempt}): ${String((err && err.message) || err).slice(0, 300)}`)
       outcome = { key: s.key, ok: false, error: String((err && err.message) || err) }
@@ -89,6 +96,7 @@ async function runWorker(s, i) {
 }
 
 phase('Workers')
+const BASE = String(await sh(`echo BASE=$(git -C ${q(memoryDir)} rev-parse HEAD)`)).match(/BASE=([0-9a-f]{40})/)[1]
 // Create every worktree before any worker starts; git serializes worktree creation.
 for (const [i, s] of shards.entries()) {
   await git(memoryDir, `worktree add -q -b ${q(branchOf(s, i))} ${q(worktreeOf(i))} HEAD`)
