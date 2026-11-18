@@ -8,4 +8,4 @@ The result:
 - Learn only from `{{corpus}}`. Do not search the filesystem for other trajectories, transcripts, memory, or task material.
 - Before you finish, everything must be committed on the current branch of the git repository at `$MEMORY_DIR`, and `git status` must be clean. Anything left uncommitted, on another branch, or in another worktree is lost.
 
-Your budget is ${{budget}} (USD) for your Workflows: pass `maxCostUsd` on every Workflow call so their total stays within it, and a script can read `budget.spent` and `budget.remaining`. `{{spendFile}}` holds the total spent so far, including your own turns, and the run stops when that reaches the budget, so commit as you go.
+Your budget is ${{budget}} (USD) for your Workflows: pass `maxCostUsd` on every Workflow call so their total stays within it, and a script can read `budget.spent` and `budget.remaining`. `{{spendFile}}` holds the total spent so far, including your own turns, and the run stops when that reaches the budget, so commit as you go. When the file shows `wrap_up`, launch no new Workflows: commit what you have and finish; anything still uncommitted when the budget runs out is committed as is.

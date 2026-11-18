@@ -18,16 +18,27 @@ export function runSpend(): number {
   return agentUsd + workflowUsd;
 }
 
+/** Share of the budget after which the spend file tells the agent to wrap up. */
+export const RUN_BUDGET_WRAP_UP_FRACTION = 0.85;
+
 function publish(): void {
   const file = process.env.LETTA_RUN_SPEND_FILE;
   const limit = runBudgetLimit();
   if (!file || limit === undefined) return;
   const spent = runSpend();
+  const wrapUp = spent >= RUN_BUDGET_WRAP_UP_FRACTION * limit;
+  const report = {
+    spent_usd: +spent.toFixed(4),
+    limit_usd: limit,
+    remaining_usd: +Math.max(0, limit - spent).toFixed(4),
+    agent_usd: +agentUsd.toFixed(4),
+    workflow_usd: +workflowUsd.toFixed(4),
+    ...(wrapUp && {
+      wrap_up: `${Math.round(RUN_BUDGET_WRAP_UP_FRACTION * 100)}% of the budget is spent: launch no new work, commit what you have, and finish.`,
+    }),
+  };
   try {
-    writeFileSync(
-      file,
-      `${JSON.stringify({ spent_usd: +spent.toFixed(4), limit_usd: limit, remaining_usd: +Math.max(0, limit - spent).toFixed(4), agent_usd: +agentUsd.toFixed(4), workflow_usd: +workflowUsd.toFixed(4) })}\n`,
-    );
+    writeFileSync(file, `${JSON.stringify(report)}\n`);
   } catch {
     // Reporting spend is best effort; enforcement does not depend on it.
   }

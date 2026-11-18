@@ -1,4 +1,8 @@
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { getScopedMemoryFilesystemRoot } from "./agent/memory-filesystem";
 import type { Buffers } from "./cli/helpers/accumulator";
 import { writeWireMessageAsync } from "./stream-json-writer";
 import type { ErrorMessage } from "./types/protocol";
@@ -70,6 +74,9 @@ export function createHeadlessRunLimits(options: RunLimitOptions) {
       }),
     );
     if (runBudgetExceeded()) {
+      commitMemoryAtBudgetStop(
+        getScopedMemoryFilesystemRoot(options.sessionId),
+      );
       await stop(
         `Run cost budget reached ($${runSpend().toFixed(2)} spent of $${limit})`,
         "headless_run_budget_reached",
@@ -79,4 +86,30 @@ export function createHeadlessRunLimits(options: RunLimitOptions) {
   };
 
   return { checkMaxTurns, checkRunBudget };
+}
+
+/**
+ * A budget stop interrupts whatever the agent and its Workflow subagents were
+ * doing, so commit anything left uncommitted in the agent's memory repository
+ * (its session ID is the agent ID) before the run exits. Best effort: the stop
+ * goes ahead even if there is nothing to commit or git fails.
+ */
+export function commitMemoryAtBudgetStop(dir: string): void {
+  try {
+    if (!existsSync(join(dir, ".git"))) return;
+    const git = (...args: string[]) =>
+      execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+    if (!git("status", "--porcelain").trim()) return;
+    git("add", "-A");
+    const message = "dream: commit uncommitted work at the run budget stop";
+    try {
+      git("commit", "-q", "-m", message);
+    } catch {
+      // A memory hook can reject partial work; keep it anyway.
+      git("commit", "-q", "--no-verify", "-m", message);
+    }
+    console.error(`Committed uncommitted memory in ${dir} at the budget stop`);
+  } catch (error) {
+    console.error(`Could not commit memory at the budget stop: ${error}`);
+  }
 }
