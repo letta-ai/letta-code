@@ -183,6 +183,8 @@ When you uninstall a plugin from the last scope it's installed at, Claude Code a
 
 With `--json`, `keptData` reports whether the directory stayed, and `/plugin` shows `· data preserved` when it did. For a directory that stays without `--keep-data`, this reporting requires Claude Code v2.1.281 or later. The `savedKept` field requires Claude Code v2.1.282 or later.
 
+When Claude Code deletes the options and secrets, it also deletes the files that v2.1.326 or later extracted into `~/.claude/plugins/mcpb/` from the plugin's [MCP bundles](https://code.claude.com/docs/en/plugins/components.md#include-a-packaged-mcpb-server). It keeps them while another plugin uses an identical bundle. Any extracted files you still find there are [cleaned up automatically](https://code.claude.com/docs/en/claude-directory.md#cleaned-up-automatically) once no session has used them for the `cleanupPeriodDays` period.
+
 ### plugin enable
 
 Enable a disabled plugin. For a [plugin synced from claude.ai](https://code.claude.com/docs/en/plugins/loading.md#synced-plugins), pass `<name>@synced` as the plugin.

@@ -2532,7 +2532,13 @@ In addition to the [common input fields](#common-input-fields), PermissionDenied
 
 | Field | Description |
 | :- | :- |
-| `reason` | The denial reason. For a classifier verdict, in most sessions it names the matched rule in square brackets, such as `[Data Exfiltration]`; see [Review denials](https://code.claude.com/docs/en/auto-mode-config.md#review-denials) for the other forms. For a [no-verdict denial](#permissiondenied-decision-control), it starts with `Auto mode could not evaluate this action and is blocking it for safety`. For a denial because the classifier model was unavailable, it is the fixed text `Classifier unavailable` |
+| `reason` | The denial reason |
+
+When you log denials, expect text such as the following in `reason`:
+
+* **Classifier verdict**: in most sessions, the matched [policy](https://code.claude.com/docs/en/auto-mode-config.md#fix-a-policy-denial) or rule in square brackets, such as `[Destructive or Unwanted Actions]`. See [Review denials](https://code.claude.com/docs/en/auto-mode-config.md#review-denials) for the other forms.
+* **[No verdict from the classifier](#permissiondenied-decision-control)**: starts with `Auto mode could not evaluate this action and is blocking it for safety`
+* **Classifier model unavailable, or a [server check that failed or timed out](https://code.claude.com/docs/en/errors.md#the-server-returned-no-safety-verdict)**: the text `Classifier unavailable`
 
 #### PermissionDenied decision control
 
