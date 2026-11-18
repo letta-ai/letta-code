@@ -7,7 +7,10 @@ import type {
   AssistantMessageEvent,
   Context,
 } from "@earendil-works/pi-ai";
-import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
+import type {
+  LettaStreamingResponse,
+  SummaryMessage,
+} from "@letta-ai/letta-client/resources/agents/messages";
 import type { ConversationMessageCreateBody } from "@/backend";
 import type { PiStreamFunction } from "@/backend/dev/pi-stream-adapter";
 import { LocalBackend } from "@/backend/local/local-backend";
@@ -277,6 +280,79 @@ describe("LocalBackend context pressure", () => {
         "You are the self-compaction agent.",
       );
       expect(compactionContexts[1]?.tools).toBeUndefined();
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("reports a self-compaction overflow fallback on the emitted and stored summary", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-self-compaction-source-"),
+    );
+    try {
+      const compactionContexts: Context[] = [];
+      const backend = new LocalBackend({
+        storageDir,
+        stream: () => streamFromMessage(assistantMessage("provider response")),
+        complete: async (_model, context) => {
+          compactionContexts.push(context);
+          if (compactionContexts.length === 1) {
+            throw new Error(
+              "This model's maximum context length is 1000 tokens. (context_length_exceeded)",
+            );
+          }
+          return assistantMessage("transcript summary");
+        },
+        memfsEnabled: false,
+      });
+      const agent = await backend.createAgent({
+        name: "Self Compaction",
+        model: "openai/gpt-5.5",
+        model_settings: {
+          provider_type: "openai",
+          context_window_limit: 1_000,
+        },
+        compaction_settings: { mode: "self_compact_all" },
+      } as never);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as never);
+
+      const chunks = await collect(
+        await backend.createConversationMessageStream(conversation.id, {
+          agent_id: agent.id,
+          messages: [{ role: "user", content: "x".repeat(4_000) }],
+        } as ConversationMessageCreateBody),
+      );
+
+      expect(compactionContexts).toHaveLength(2);
+      const summaryMessage = expect.objectContaining({
+        message_type: "summary_message",
+        summary: "transcript summary",
+        compaction_stats: expect.objectContaining({
+          trigger: "context_window_limit",
+          summary_source: "transcript_after_overflow",
+        }),
+      });
+      expect(chunks).toContainEqual(summaryMessage);
+
+      // The stored transcript keeps the source, including after a reload.
+      const reloaded = new LocalBackend({ storageDir, memfsEnabled: false });
+      for (const reader of [backend, reloaded]) {
+        const page = await reader.listConversationMessages(conversation.id, {
+          agent_id: agent.id,
+        } as never);
+        const stored = page
+          .getPaginatedItems()
+          .filter(
+            (message): message is SummaryMessage =>
+              message.message_type === "summary_message",
+          );
+        expect(stored).toContainEqual(summaryMessage);
+        expect(
+          stored.map((message) => message.compaction_stats?.summary_source),
+        ).not.toContain(undefined);
+      }
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

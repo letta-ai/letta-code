@@ -16,8 +16,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { isRecord } from "@/utils/type-guards";
-import type { LocalCompactionStats } from "./compaction";
-import type { LocalMessage } from "./local-message";
+import type { LocalCompactionStats, LocalMessage } from "./local-message";
 import { removeOrphanLocalToolResults } from "./local-message-projection";
 import type { StoredConversation } from "./local-types";
 

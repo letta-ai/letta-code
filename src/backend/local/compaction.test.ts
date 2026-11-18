@@ -90,7 +90,7 @@ describe("local compaction summarizer options", () => {
         | (SimpleStreamOptions & Record<string, unknown>)
         | undefined;
       let capturedModelId: string | undefined;
-      const summary = await summarizeLocalMessagesAll({
+      const { summary } = await summarizeLocalMessagesAll({
         conversationId: "conv-fable-compaction",
         agent: {
           id: "agent-local-1",
