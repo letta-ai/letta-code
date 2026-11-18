@@ -235,11 +235,11 @@ describe("local compaction keeps the latest tool exchange", () => {
         expect(requestText(next)).toContain("Summary 1.");
         expect(requestText(next)).toContain(LARGE_OUTPUT);
 
-        // Only the messages before the exchange were summarised.
+        // The summary covers the kept exchange too.
         expect(harness.compactionRequests).toHaveLength(1);
         const transcript = requestText(harness.compactionRequests[0]);
         expect(transcript).toContain("Please inspect the logs.");
-        expect(transcript).not.toContain("LLLL");
+        expect(transcript).toContain("LLLL");
 
         // Stored and in-context order: summary, call, result, then the reply.
         const expected = [
@@ -328,27 +328,23 @@ describe("local compaction keeps the latest tool exchange", () => {
     );
   });
 
-  test("summarises everything when the summary and the exchange are over the budget", async () => {
+  test("drops the exchange without summarising again when the summary and the exchange are over the budget", async () => {
     await withHarness(
       {
         mode: "all",
         replies: [{ calls: [call("call-1")] }, { text: "Done." }],
         // About 750 tokens: with the 2,500-token exchange, over the budget.
-        summaries: ["S".repeat(3_000), "Short summary."],
+        summaries: ["S".repeat(3_000)],
       },
       async (harness) => {
         await harness.send(EARLIER_REQUEST);
         await harness.returnResults({ "call-1": LARGE_OUTPUT });
 
-        expect(harness.compactionRequests).toHaveLength(2);
-        expect(requestText(harness.compactionRequests[0])).not.toContain(
-          "LLLL",
-        );
-        expect(requestText(harness.compactionRequests[1])).toContain("LLLL");
+        expect(harness.compactionRequests).toHaveLength(1);
+        expect(requestText(harness.compactionRequests[0])).toContain("LLLL");
         expect(shape(harness.providerRequests[1])).toEqual(["user"]);
-        expect(requestText(harness.providerRequests[1])).toContain(
-          "Short summary.",
-        );
+        expect(requestText(harness.providerRequests[1])).toContain("SSSS");
+        expect(harness.storedShape()).toEqual(["summary", "assistant"]);
       },
     );
   });
@@ -470,7 +466,7 @@ describe("local compaction keeps the latest tool exchange", () => {
     );
   });
 
-  test("self-compaction summarises the request that produced the kept call", async () => {
+  test("self-compaction continues the agent's context, kept exchange included", async () => {
     await withHarness(
       {
         mode: "self_compact_all",
@@ -490,16 +486,20 @@ describe("local compaction keeps the latest tool exchange", () => {
         const [compaction] = harness.compactionRequests;
         expect(compaction?.systemPrompt).toContain("You are a test agent.");
         expect(compaction?.tools?.map((tool) => tool.name)).toEqual(["Bash"]);
-        // The request that produced call-2, the acknowledgement, the prompt.
+        // The request that produced call-2, then call-2 and its result, the
+        // acknowledgement and the prompt: the request the agent would have
+        // made next, continued.
         expect(shape(compaction)).toEqual([
           ...shape(harness.providerRequests[1]),
+          "assistant:call-2",
+          "toolResult:call-2",
           "assistant",
           "user",
         ]);
         expect(compaction?.messages.at(-1)).toMatchObject({
           content: "Summarize the conversation now.",
         });
-        expect(requestText(compaction)).not.toContain("LLLL");
+        expect(requestText(compaction)).toContain("LLLL");
 
         expect(shape(harness.providerRequests[2])).toEqual([
           "user",

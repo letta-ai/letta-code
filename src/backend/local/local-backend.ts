@@ -726,7 +726,6 @@ export class LocalBackend extends HeadlessBackend {
     trigger: string,
     settings: ResolvedLocalCompactionSettings,
     self?: LocalSelfCompactionContext,
-    keepToolExchange = true,
   ): Promise<LocalCompactionResult> {
     const slidingWindow = isLocalSlidingWindowMode(settings.mode);
     const messages = this.store.listLocalMessages(conversationId, agentId);
@@ -737,9 +736,7 @@ export class LocalBackend extends HeadlessBackend {
           contextWindow,
         })
       : planLocalAllCompaction(messages, {
-          toolExchangeBudget: keepToolExchange
-            ? settings.maxMessageTokens
-            : undefined,
+          toolExchangeBudget: settings.maxMessageTokens,
         });
     const keptTokens = estimateLocalMessageTokens(plan.messagesToKeep);
     assertLocalPressureBudget(
@@ -761,26 +758,30 @@ export class LocalBackend extends HeadlessBackend {
       modelsRuntime: this.piModelsRuntime,
       self,
     });
+    const summaryTokens = Math.ceil(summary.length / 4);
     const stats: LocalCompactionStats = {
       trigger,
       context_tokens_before: estimateLocalMessageTokens(messages),
-      context_tokens_after: Math.ceil(summary.length / 4) + keptTokens,
+      context_tokens_after: summaryTokens + keptTokens,
       context_window: contextWindow,
       messages_count_before: messages.length,
       messages_count_after: 1 + plan.messagesToKeep.length,
     };
     if (!slidingWindow) {
-      try {
+      const finish = (
+        finalPlan: LocalAllCompactionPlan,
+        finalStats: LocalCompactionStats,
+      ) => {
         assertLocalPressureBudget(
-          stats.context_tokens_after ?? 0,
+          finalStats.context_tokens_after ?? 0,
           settings.mode,
           settings.maxMessageTokens,
         );
         return finishLocalFullCompaction({
           messages,
           summary,
-          stats,
-          plan,
+          stats: finalStats,
+          plan: finalPlan,
           systemPrompt: agent.system,
           persist: (summary, packedSummary, remainingMessages) =>
             this.store.compactConversationAll({
@@ -788,10 +789,13 @@ export class LocalBackend extends HeadlessBackend {
               agentId,
               summary,
               packedSummary,
-              stats,
+              stats: finalStats,
               remainingMessages,
             }),
         });
+      };
+      try {
+        return finish(plan, stats);
       } catch (error) {
         if (
           !plan.keepsToolExchange ||
@@ -800,15 +804,15 @@ export class LocalBackend extends HeadlessBackend {
           throw error;
         }
         // With the summary the kept exchange is over budget, or keeping it
-        // would not shrink the context: summarise it too.
-        return this.compactLocalConversationPass(
-          conversationId,
-          agentId,
-          agent,
-          trigger,
-          settings,
-          self,
-          false,
+        // would not shrink the context. The summary already covers it, so
+        // drop it rather than summarising again.
+        return finish(
+          { messagesToSummarize: plan.messagesToSummarize, messagesToKeep: [] },
+          {
+            ...stats,
+            context_tokens_after: summaryTokens,
+            messages_count_after: 1,
+          },
         );
       }
     }

@@ -140,11 +140,11 @@ describe("planLocalAllCompaction", () => {
   const messages = [...prefix, ...exchange];
   const exchangeTokens = estimateLocalMessagesTokens(exchange);
 
-  test("keeps a completed exchange that fits the budget", () => {
+  test("keeps a completed exchange that fits the budget and still summarises it", () => {
     expect(
       planLocalAllCompaction(messages, { toolExchangeBudget: exchangeTokens }),
     ).toEqual({
-      messagesToSummarize: prefix,
+      messagesToSummarize: messages,
       messagesToKeep: exchange,
       keepsToolExchange: true,
     });

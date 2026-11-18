@@ -10,7 +10,10 @@ import {
 export interface LocalAllCompactionPlan {
   messagesToSummarize: LocalMessage[];
   messagesToKeep: LocalMessage[];
-  /** `messagesToKeep` is a completed tool exchange, not a pending call. */
+  /**
+   * `messagesToKeep` is a completed tool exchange, not a pending call. It is
+   * in `messagesToSummarize` too, so the summary can stand alone without it.
+   */
   keepsToolExchange?: boolean;
 }
 
@@ -66,9 +69,11 @@ export function findTrailingLocalToolExchange(
 /**
  * A trailing pending tool call is always kept after the summary. Given a
  * `toolExchangeBudget`, a trailing completed tool exchange whose estimate fits
- * it is kept too, so the agent sees the results it asked for. An incomplete
- * exchange, one over the budget, or one with nothing before it to summarise is
- * summarised with everything else.
+ * it is kept too, so the agent sees the results it asked for. The exchange is
+ * still summarised with everything else: the summary request is the agent's
+ * whole context, a continuation of the conversation, whether or not the
+ * exchange is kept. An incomplete exchange, one over the budget, or one with
+ * nothing before it is only summarised.
  */
 export function planLocalAllCompaction(
   messages: LocalMessage[],
@@ -87,7 +92,7 @@ export function planLocalAllCompaction(
     const start = findTrailingLocalToolExchange(messages);
     if (start && estimateLocalMessagesTokens(messages.slice(start)) <= budget) {
       return {
-        messagesToSummarize: messages.slice(0, start),
+        messagesToSummarize: messages,
         messagesToKeep: messages.slice(start),
         keepsToolExchange: true,
       };
