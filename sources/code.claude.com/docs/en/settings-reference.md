@@ -5453,7 +5453,9 @@ Set the newest Claude Code version your organization allows to start. When the r
 }
 ```
 
-Background auto-updates and `claude update` skip versions above the ceiling, so an installation inside the range stays inside it. `claude update`, `claude install`, and `claude doctor` keep working above the ceiling so users can recover. Pair it with [`requiredMinimumVersion`](#requiredminimumversion) to enforce a range.
+On native and npm installs, background auto-updates and `claude update` skip versions above the ceiling. `claude update`, `claude install`, and `claude doctor` keep working above the ceiling so users can recover. Pair it with [`requiredMinimumVersion`](#requiredminimumversion) to enforce a range.
+
+When the desktop app updates, its own copy of Claude Code can be newer than the ceiling, and [local sessions in the Code tab then don't start](https://code.claude.com/docs/en/desktop.md#version-above-your-organizations-limit). To keep that copy from changing on macOS and Windows, [turn off the desktop app's auto-updates](https://code.claude.com/docs/en/desktop.md#device-management-policies). The Microsoft Store still updates an install that came from it.
 
 ### `requiredMinimumVersion`
 
