@@ -198,6 +198,66 @@ describe("PiStreamAdapter context pressure", () => {
     expect(events.some((event) => event.type === "local-message")).toBe(true);
   });
 
+  test("waits for tool results, then estimates from the reply's usage", async () => {
+    const pressures: LocalContextPressure[] = [];
+    const reply = {
+      ...assistantMessage({ stopReason: "toolUse", usage: usage(86_045) }),
+      content: [
+        {
+          type: "toolCall" as const,
+          id: "call-1",
+          name: "Bash",
+          arguments: {},
+        },
+      ],
+    };
+    const adapter = new PiStreamAdapter({
+      stream: () => streamFromMessage(reply),
+      onContextPressure: async (_input, pressure) => {
+        pressures.push(pressure);
+        return null;
+      },
+    });
+
+    const input = turnInput();
+    const events = await collectEvents(adapter.stream(input));
+    expect(pressures).toEqual([]);
+    expect(compactionEvent(events)).toBeUndefined();
+
+    // The request that carries the result: the stored reply, then the result.
+    const storedReply = events.find((event) => event.type === "local-message");
+    if (storedReply?.type !== "local-message") throw new Error("no reply");
+    await collectEvents(
+      adapter.stream({
+        ...input,
+        uiMessages: [
+          ...input.uiMessages,
+          storedReply.message,
+          {
+            id: "ui-msg-result",
+            role: "toolResult",
+            toolCallId: "call-1",
+            toolName: "Bash",
+            content: [{ type: "text", text: "r".repeat(400) }],
+            isError: false,
+            timestamp: Date.now(),
+          },
+        ],
+      }),
+    );
+
+    // The reply's usage plus the result (400 characters, 100 tokens): never
+    // below what the post-turn check would have seen.
+    expect(pressures).toEqual([
+      {
+        contextTokens: 86_045 + 100,
+        contextWindow: 100_000,
+        phase: "preflight",
+        source: "estimate",
+      },
+    ]);
+  });
+
   test("includes the completed response in the post-turn fallback estimate", async () => {
     const pressures: LocalContextPressure[] = [];
     const stream: PiStreamFunction = () =>
