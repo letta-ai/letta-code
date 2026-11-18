@@ -89,11 +89,17 @@ describe("launch_subagent protocol", () => {
     [{ subagent_type: "custom" }, { subagent_type: "custom" }],
     [{ subagent_type: "recall" }, { subagent_type: "recall" }],
     [{ subagent_type: " my-reviewer " }, { subagent_type: "my-reviewer" }],
-    [{ subagent_type: "codex" }, { harness: "codex" }],
-    [{ subagent_type: "claude-code" }, { harness: "claude-code" }],
-    [{ subagent_type: "cursor" }, { harness: "cursor" }],
-    [{ subagent_type: "opencode" }, { harness: "opencode" }],
-    [{ subagent_type: "general-purpose" }, {}],
+    [{ subagent_type: "codex" }, { harness: "codex", fork_context: false }],
+    [
+      { subagent_type: "claude-code" },
+      { harness: "claude-code", fork_context: false },
+    ],
+    [{ subagent_type: "cursor" }, { harness: "cursor", fork_context: false }],
+    [
+      { subagent_type: "opencode" },
+      { harness: "opencode", fork_context: false },
+    ],
+    [{ subagent_type: "general-purpose" }, { fork_context: false }],
     [{ subagent_type: "fork" }, { fork_context: true }],
     // A current client: harness or fork_context present, passed through.
     [

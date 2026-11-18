@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { __testSetBackend } from "@/backend";
 import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
+import { removeTestDir } from "@/test-utils/test-fs";
 import { toolFilter } from "./filter";
 import {
   clearCapturedToolExecutionContexts,
@@ -33,7 +34,7 @@ afterEach(async () => {
   if (originalArtifacts === undefined) delete process.env.LETTA_ARTIFACTS;
   else process.env.LETTA_ARTIFACTS = originalArtifacts;
   for (const path of temporaryDirectories.splice(0)) {
-    await rm(path, { recursive: true, force: true });
+    await removeTestDir(path);
   }
 });
 

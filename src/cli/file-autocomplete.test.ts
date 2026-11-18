@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   applyPiFileCompletion,
   FileAutocompleteProvider,
 } from "@/cli/helpers/file-autocomplete";
+import { removeTestDir } from "@/test-utils/test-fs";
 
 async function setupFolder(
   baseDir: string,
@@ -133,7 +134,7 @@ describeFd("FileAutocompleteProvider fd @ suggestions", () => {
   });
 
   afterEach(async () => {
-    await rm(rootDir, { recursive: true, force: true });
+    await removeTestDir(rootDir);
   });
 
   test("returns all files and folders for empty @ query", async () => {

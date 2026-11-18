@@ -49,6 +49,8 @@ import {
   handleExecuteCommand,
   SUPPORTED_REMOTE_COMMANDS,
 } from "@/websocket/listener/commands";
+import { deviceGitContextCache } from "@/websocket/listener/device-git-context";
+import { createIncomingMessage } from "@/websocket/listener/inbound-dispatch";
 import { ensureListenerModAdapter } from "@/websocket/listener/mod-adapter";
 import { isEditFileCommand } from "@/websocket/listener/protocol-inbound";
 import {
@@ -586,7 +588,6 @@ describe("listen-client parseServerMessage", () => {
         __testSetBackend(backend);
         const listener = __listenClientTestUtils.createListenerRuntime();
         const socket = new MockSocket(WebSocket.OPEN);
-
         await __listenClientTestUtils.handleRuntimeStartCommand(
           {
             type: "runtime_start",
@@ -608,7 +609,6 @@ describe("listen-client parseServerMessage", () => {
           socket as unknown as WebSocket,
           listener,
         );
-
         const messages = socket.sentPayloads.map((payload) =>
           JSON.parse(payload),
         );
@@ -655,11 +655,12 @@ describe("listen-client parseServerMessage", () => {
           ]),
         );
       } finally {
+        // Join the replay's in-flight git refresh before deleting its cwd (Windows).
+        await deviceGitContextCache.refresh(cwdDir);
         await rm(storageDir, { recursive: true, force: true });
         await rm(cwdDir, { recursive: true, force: true });
       }
     });
-
     test("resumes an existing agent and conversation", async () => {
       const storageDir = await mkdtemp(
         join(os.tmpdir(), "ws-runtime-start-resume-"),
@@ -689,7 +690,6 @@ describe("listen-client parseServerMessage", () => {
             conversation_id: conversation.id,
             external_tools: [
               {
-                scope_id: "scope-1",
                 tools: [
                   {
                     name: "RemoteLookup",
@@ -721,7 +721,6 @@ describe("listen-client parseServerMessage", () => {
           "anthropic/claude-sonnet-4",
           {
             clientToolAllowlist: ["RemoteLookup"],
-            externalToolScopeIds: ["scope-1"],
             runtimeContext: {
               connectionId: "test-connection",
               agentId: agent.id,
@@ -872,7 +871,6 @@ describe("listen-client parseServerMessage", () => {
             kind: "create_message",
             messages: [],
             client_tool_allowlist: ["Read", "Grep"],
-            external_tool_scope_ids: ["scope-1"],
           },
         }),
       ),
@@ -889,7 +887,6 @@ describe("listen-client parseServerMessage", () => {
     expect(msg?.type).toBe("input");
     if (msg?.type === "input" && msg.payload.kind === "create_message") {
       expect(msg.payload.client_tool_allowlist).toEqual(["Read", "Grep"]);
-      expect(msg.payload.external_tool_scope_ids).toEqual(["scope-1"]);
     }
     expect(changeDeviceState?.type).toBe("change_device_state");
   });
@@ -916,7 +913,7 @@ describe("listen-client parseServerMessage", () => {
     }
   });
 
-  test("rejects input create_message with invalid external tool scope ids", () => {
+  test("accepts and ignores deprecated external tool scope ids", () => {
     const parsed = parseServerMessage(
       Buffer.from(
         JSON.stringify({
@@ -931,13 +928,16 @@ describe("listen-client parseServerMessage", () => {
       ),
     );
 
-    expect(parsed).not.toBeNull();
-    expect(parsed?.type).toBe("__invalid_input");
-    if (parsed?.type === "__invalid_input") {
-      expect(parsed.reason).toContain(
-        "external_tool_scope_ids must be string[]",
-      );
+    expect(parsed?.type).toBe("input");
+    if (parsed?.type !== "input" || parsed.payload.kind !== "create_message") {
+      throw new Error("expected create_message input");
     }
+    const incoming = createIncomingMessage(
+      { agent_id: "agent-1", conversation_id: "default" },
+      parsed.payload,
+      "client-1",
+    );
+    expect(incoming).not.toHaveProperty("externalToolScopeIds");
   });
 
   test("parses abort_message as the canonical abort command", () => {
@@ -2062,14 +2062,18 @@ describe("listen-client model command helpers", () => {
 });
 
 describe("listen-client cron command handling", () => {
-  test("wraps cron library CRUD over WS commands", async () => {
+  test("wraps Desktop local cron library CRUD over WS commands", async () => {
     const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-listen-cron-"));
     const originalLettaHome = process.env.LETTA_HOME;
+    const originalEnv = {
+      LETTA_DESKTOP_MODE: process.env.LETTA_DESKTOP_MODE,
+      LETTA_MANAGED_CLOUD_RUNTIME: process.env.LETTA_MANAGED_CLOUD_RUNTIME,
+    };
+    process.env.LETTA_DESKTOP_MODE = "1";
+    delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
     process.env.LETTA_HOME = tempRoot;
-
     try {
       const socket = new MockSocket(WebSocket.OPEN);
-
       await __listenClientTestUtils.handleCronCommand(
         {
           type: "cron_add",
@@ -2084,7 +2088,6 @@ describe("listen-client cron command handling", () => {
         },
         socket as unknown as WebSocket,
       );
-
       const addMessages = socket.sentPayloads.map((payload) =>
         JSON.parse(payload as string),
       );
@@ -2105,7 +2108,6 @@ describe("listen-client cron command handling", () => {
         agent_id: "agent-1",
         conversation_id: "conv-1",
       });
-
       const taskId = addMessages[0].task.id as string;
       appendCronRunLog(getCronRunLogPath(taskId), {
         ts: 1000,
@@ -2126,7 +2128,6 @@ describe("listen-client cron command handling", () => {
         runId: "run-newer",
       });
       socket.sentPayloads.length = 0;
-
       await __listenClientTestUtils.handleCronCommand(
         {
           type: "cron_list",
@@ -2143,7 +2144,6 @@ describe("listen-client cron command handling", () => {
       });
       expect(listResponse.tasks).toHaveLength(1);
       expect(listResponse.tasks[0].id).toBe(taskId);
-
       socket.sentPayloads.length = 0;
       await __listenClientTestUtils.handleCronCommand(
         {
@@ -2160,7 +2160,6 @@ describe("listen-client cron command handling", () => {
         found: true,
         task: { id: taskId },
       });
-
       socket.sentPayloads.length = 0;
       await __listenClientTestUtils.handleCronCommand(
         {
@@ -2191,7 +2190,6 @@ describe("listen-client cron command handling", () => {
         agent_id: "agent-1",
         conversation_id: "conv-1",
       });
-
       socket.sentPayloads.length = 0;
       await __listenClientTestUtils.handleCronCommand(
         {
@@ -2225,7 +2223,6 @@ describe("listen-client cron command handling", () => {
           ],
         },
       });
-
       socket.sentPayloads.length = 0;
       await __listenClientTestUtils.handleCronCommand(
         {
@@ -2249,7 +2246,6 @@ describe("listen-client cron command handling", () => {
         agent_id: "agent-1",
         conversation_id: "conv-1",
       });
-
       socket.sentPayloads.length = 0;
       await __listenClientTestUtils.handleCronCommand(
         {
@@ -2288,6 +2284,10 @@ describe("listen-client cron command handling", () => {
         agent_id: "agent-1",
       });
     } finally {
+      for (const [key, value] of Object.entries(originalEnv)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
       if (originalLettaHome) {
         process.env.LETTA_HOME = originalLettaHome;
       } else {

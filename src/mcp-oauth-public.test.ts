@@ -230,37 +230,62 @@ function memoryStorage(): McpOAuthStorage {
   };
 }
 
+// The fixture exits with 1 when either port is already taken. A port probed
+// free can be claimed by another process before the fixture binds it, so a
+// startup exit is retried on fresh ports. Its stderr is kept for the error.
 async function startOAuthServer(): Promise<void> {
-  const mcpPort = await availablePort();
-  const authPort = await availablePort();
-  serverUrl = `http://localhost:${mcpPort}/mcp`;
-  serverProcess = spawn(process.execPath, [OAUTH_SERVER, "--oauth"], {
-    stdio: "ignore",
-    env: {
-      ...process.env,
-      MCP_PORT: String(mcpPort),
-      MCP_AUTH_PORT: String(authPort),
-    },
-  });
-  await waitForServer(serverUrl);
-}
-
-async function waitForServer(url: string): Promise<void> {
-  const deadline = Date.now() + 10_000;
-  while (Date.now() < deadline) {
-    if (serverProcess?.exitCode !== null) {
+  const attempts = 3;
+  for (let attempt = 1; ; attempt++) {
+    const mcpPort = await availablePort();
+    let authPort = await availablePort();
+    while (authPort === mcpPort) authPort = await availablePort();
+    const url = `http://localhost:${mcpPort}/mcp`;
+    let stderr = "";
+    const child = spawn(process.execPath, [OAUTH_SERVER, "--oauth"], {
+      stdio: ["ignore", "ignore", "pipe"],
+      env: {
+        ...process.env,
+        MCP_PORT: String(mcpPort),
+        MCP_AUTH_PORT: String(authPort),
+      },
+    });
+    child.stderr?.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    serverProcess = child;
+    const started = await waitForServer(child, url);
+    if (started === "ready") {
+      serverUrl = url;
+      return;
+    }
+    if (started === "timeout") {
       throw new Error(
-        `OAuth test server exited with ${serverProcess?.exitCode}`,
+        `Timed out waiting for OAuth test server\n${stderr.trim()}`,
       );
     }
+    if (attempt >= attempts) {
+      throw new Error(
+        `OAuth test server exited with ${child.exitCode} on ${attempts} attempts\n${stderr.trim()}`,
+      );
+    }
+  }
+}
+
+async function waitForServer(
+  child: ChildProcess,
+  url: string,
+): Promise<"ready" | "exited" | "timeout"> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null) return "exited";
     try {
       await fetch(url);
-      return;
+      return "ready";
     } catch {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
   }
-  throw new Error("Timed out waiting for OAuth test server");
+  return "timeout";
 }
 
 function availablePort(): Promise<number> {

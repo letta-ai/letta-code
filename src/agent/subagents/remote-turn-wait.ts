@@ -10,18 +10,23 @@ import {
 } from "@/backend/api/conversation-enqueue";
 import { buildAgentReference } from "@/cli/helpers/app-urls";
 import { INTERRUPTED_BY_USER } from "@/constants";
-import { cancelAcceptedListenerInput } from "@/headless-listener-launch";
+import {
+  cancelAcceptedListenerInput,
+  stopAcceptedListenerConversation,
+} from "@/headless-listener-launch";
 import {
   readConversationRuntimeStatus,
   type SuperRunWaitDeps,
   waitForAcceptedSuperRun,
 } from "@/headless-super-run-wait";
+import { backgroundTasks } from "@/tools/impl/process_manager";
 import { recordTaskEvent } from "@/tools/impl/task-transcript";
 import { getErrorMessage } from "@/utils/error";
 import { addToMessageQueue } from "@/utils/message-queue-bridge";
 import {
   formatTaskNotification,
   resolveNotificationScope,
+  taskNotificationMessage,
 } from "@/utils/task-notifications";
 import {
   type ExecutionState,
@@ -58,12 +63,14 @@ export function createRemoteIdleNotifier(
     addToMessageQueue({
       kind: "task_notification",
       ...scope,
-      text: formatTaskNotification({
-        taskId: subagentId,
-        status: "running",
-        summary: `Agent loop stopped with ${count} background process${count === 1 ? "" : "es"} still running`,
-        result: `${text}\n\nThe child agent's loop has stopped with ${count} background process${count === 1 ? "" : "es"} still running. It will resume when they finish, and a final notification will follow.`,
-      }),
+      ...taskNotificationMessage(
+        formatTaskNotification({
+          taskId: subagentId,
+          status: "running",
+          summary: `Agent loop stopped with ${count} background process${count === 1 ? "" : "es"} still running`,
+          result: `${text}\n\nThe child agent's loop has stopped with ${count} background process${count === 1 ? "" : "es"} still running. It will resume when they finish, and a final notification will follow.`,
+        }),
+      ),
     });
   };
 }
@@ -137,6 +144,17 @@ export async function collectRemoteTurnResult(
   signal = new AbortController().signal,
   deps: RemoteTurnWaitDeps = {},
 ): Promise<SubagentResult> {
+  const task = [...backgroundTasks.values()].find(
+    (task) => task.subagentId === subagentId,
+  );
+  let stopConfirmed = false;
+  if (task) {
+    task.remote = true;
+    task.stop = async () => {
+      await stopAcceptedListenerConversation(receipt);
+      stopConfirmed = true;
+    };
+  }
   const startedAt = Date.now();
   updateSubagent(subagentId, {
     agentId: receipt.agent_id ?? undefined,
@@ -196,9 +214,9 @@ export async function collectRemoteTurnResult(
   } catch (error) {
     let detail = getErrorMessage(error);
     if (signal.aborted) {
-      const cancelled = await cancelAcceptedListenerInput(receipt).catch(
-        () => false,
-      );
+      const cancelled =
+        stopConfirmed ||
+        (await cancelAcceptedListenerInput(receipt).catch(() => false));
       detail = cancelled
         ? INTERRUPTED_BY_USER
         : `${INTERRUPTED_BY_USER} (could not confirm cancellation of remote Super Run ${receipt.super_run_id})`;

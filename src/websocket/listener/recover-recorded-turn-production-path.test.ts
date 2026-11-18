@@ -19,6 +19,7 @@ import { createInterruptedTurnStore } from "./interrupted-turn-record";
 import { createRuntime } from "./lifecycle";
 import { recoverRecordedTurns } from "./recover-recorded-turn";
 import { setActiveRuntime } from "./runtime";
+import { handleIncomingMessage } from "./turn";
 import { createTurnFinishedStore } from "./turn-finished-replay";
 import type { StartListenerOptions } from "./types";
 import { __listenerWarmupTestUtils } from "./warmup";
@@ -49,18 +50,36 @@ function connectionOptions(): StartListenerOptions {
   };
 }
 
-async function eventually(assertion: () => void): Promise<void> {
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 500; attempt += 1) {
+async function eventually(
+  assertion: () => void,
+  timeoutMs = 8_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
     try {
       assertion();
       return;
     } catch (error) {
-      lastError = error;
+      if (Date.now() >= deadline) throw error;
       await Bun.sleep(2);
     }
   }
-  throw lastError;
+}
+
+/** Waits for recovered turns, including any started while waiting. */
+async function settleTurns(
+  turns: Set<Promise<unknown>>,
+  timeoutMs = 5_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (turns.size > 0) {
+    const pending = [...turns];
+    const remaining = deadline - Date.now();
+    if (remaining <= 0)
+      throw new Error(`${pending.length} recovered turn(s) never settled`);
+    await Promise.race([Promise.allSettled(pending), Bun.sleep(remaining)]);
+    for (const turn of pending) turns.delete(turn);
+  }
 }
 
 test("real recovered turns retire an ACKed predecessor before processing its independent successor", async () => {
@@ -85,6 +104,13 @@ test("real recovered turns retire an ACKed predecessor before processing its ind
     ensureMemfsSyncedForAgent: async () => false,
     ensureSecretsHydratedForAgent: async () => {},
   });
+
+  const recoveredTurns = new Set<Promise<unknown>>();
+  const processTurn = ((...args: Parameters<typeof handleIncomingMessage>) => {
+    const turn = handleIncomingMessage(...args);
+    recoveredTurns.add(turn);
+    return turn;
+  }) as typeof handleIncomingMessage;
 
   const listener = createRuntime();
   listener.connectionId = "conn-replacement";
@@ -250,6 +276,7 @@ test("real recovered turns retire an ACKed predecessor before processing its ind
       resume: resume as never,
       canRecover: async () => true,
       acquireClaim: acquireClaim as never,
+      processTurn,
       setCwd: () => {},
       retryDelayMs: 1,
     });
@@ -298,6 +325,7 @@ test("real recovered turns retire an ACKed predecessor before processing its ind
       resume: resume as never,
       canRecover: async () => true,
       acquireClaim: acquireClaim as never,
+      processTurn,
       retryDelayMs: 1,
     });
     expect(streamSpy).toHaveBeenCalledTimes(2);
@@ -306,10 +334,16 @@ test("real recovered turns retire an ACKed predecessor before processing its ind
   } finally {
     listener.intentionallyClosed = true;
     setActiveRuntime(null);
-    __listenerWarmupTestUtils.resetWarmupDepsForTests();
-    __testSetBackend(null);
-    await settingsManager.reset();
-    process.env.HOME = originalHome;
-    directory.cleanup();
+    // A recovered turn can still be streaming (or resuming its stream) here;
+    // clearing the backend first would send that resume to the real API.
+    try {
+      await settleTurns(recoveredTurns);
+    } finally {
+      __listenerWarmupTestUtils.resetWarmupDepsForTests();
+      __testSetBackend(null);
+      await settingsManager.reset();
+      process.env.HOME = originalHome;
+      directory.cleanup();
+    }
   }
 }, 15_000);

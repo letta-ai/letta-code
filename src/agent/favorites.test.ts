@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { __testSetBackend, type Backend } from "@/backend";
 import { settingsManager } from "@/settings-manager";
+import { removeTestDir } from "@/test-utils/test-fs";
 import { setServiceName } from "@/utils/secrets";
 import {
   __testSetCurrentUserMetadataFetcher,
@@ -59,7 +60,7 @@ afterEach(async () => {
   __testSetBackend(null);
   __testSetCurrentUserMetadataFetcher(null);
   await settingsManager.reset();
-  await rm(testHomeDir, { recursive: true, force: true });
+  await removeTestDir(testHomeDir);
   process.env.HOME = originalHome;
   setServiceName("letta-code");
 });

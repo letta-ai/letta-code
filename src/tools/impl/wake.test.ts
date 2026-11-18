@@ -6,7 +6,7 @@ import { ApiRequestError } from "@/backend/api/request";
 import type { CloudSchedule } from "@/backend/api/schedules";
 import { type CronTask, listTasks } from "@/cron";
 import { runWithRuntimeContext } from "@/runtime-context";
-import { wake } from "./wake";
+import { cancelConversationWakes, wake } from "./wake";
 
 const NOW = new Date("2026-09-24T05:00:00.000Z");
 const originalManagedCloudRuntime = process.env.LETTA_MANAGED_CLOUD_RUNTIME;
@@ -136,9 +136,7 @@ describe("Wake", () => {
     });
     expect(payload(result)).toMatchObject({
       id: "wake-cloud",
-      runner: "cloud",
       conversation_id: SCOPE.conversationId,
-      execution_target: "cloud-sandbox",
     });
   });
 
@@ -177,8 +175,7 @@ describe("Wake", () => {
     });
     expect(payload(result)).toMatchObject({
       id: "schedule-local",
-      runner: "local",
-      warnings: ["No listener is running."],
+      warnings: ["This wake only fires while this session is running."],
     });
   });
 
@@ -209,10 +206,7 @@ describe("Wake", () => {
     expect(payload(result)).toMatchObject({
       action: "listed",
       conversation_id: SCOPE.conversationId,
-      wakes: [
-        { id: "schedule-local", runner: "local" },
-        { id: "schedule-cloud", runner: "cloud" },
-      ],
+      wakes: [{ id: "schedule-local" }, { id: "schedule-cloud" }],
     });
   });
 
@@ -242,7 +236,7 @@ describe("Wake", () => {
     );
     expect(payload(listed)).toMatchObject({
       conversation_id: "default",
-      wakes: [{ id: "schedule-cloud", runner: "cloud" }],
+      wakes: [{ id: "schedule-cloud" }],
     });
 
     const cancelled = await runWithRuntimeContext(defaultScope, () =>
@@ -409,7 +403,7 @@ describe("Wake", () => {
     );
 
     expect(result.status).toBe("success");
-    expect(payload(result)).toMatchObject({ runner: "local" });
+    expect(payload(result)).not.toHaveProperty("runner");
     expect(listCalls).toBe(0);
     expect(deletedId).toBe("schedule-local");
   });
@@ -537,7 +531,6 @@ describe("Wake", () => {
       );
       expect(created.status).toBe("success");
       expect(payload(created)).toMatchObject({
-        runner: "local",
         conversation_id: scope.conversationId,
       });
       expect(listTasks({ agent_id: scope.agentId })[0]?.timezone).toBe("UTC");
@@ -547,7 +540,7 @@ describe("Wake", () => {
         wake({ action: "list" }),
       );
       expect(payload(listed)).toMatchObject({
-        wakes: [{ id, runner: "local" }],
+        wakes: [{ id }],
       });
 
       const cancelled = await runWithRuntimeContext(scope, () =>
@@ -560,4 +553,26 @@ describe("Wake", () => {
       rmSync(directory, { recursive: true, force: true });
     }
   });
+});
+
+test("conversation stop deletes its Cloud schedules and preserves sibling schedules", async () => {
+  const removed: string[] = [];
+  const own = cloudSchedule();
+  await inScope(() =>
+    cancelConversationWakes(SCOPE, {
+      listLocal: () => [],
+      listCloud: async () => ({
+        scheduled_messages: [
+          own,
+          cloudSchedule({ id: "sibling", conversation_id: "conv-sibling" }),
+        ],
+        has_next_page: false,
+      }),
+      getCloud: async () => own,
+      deleteCloud: async (_agent, id) => {
+        removed.push(id);
+      },
+    }),
+  );
+  expect(removed).toEqual([own.id]);
 });

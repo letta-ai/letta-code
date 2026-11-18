@@ -11,6 +11,13 @@ import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/mes
 import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { type ConversationMessageStreamBody, getBackend } from "@/backend";
 import {
+  getBusyRecoveryHttpStatus,
+  reportBusyRecovery,
+  traceBusyRecoveryStream,
+} from "@/telemetry/busy-recovery";
+import {
+  extractConversationBusyRunId,
+  isConversationBusyError,
   rebuildInputWithFreshDenials,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
 } from "./turn-recovery-policy";
@@ -88,6 +95,19 @@ export {
   shouldRetryRunMetadataError,
 } from "./turn-recovery-policy";
 
+/** Call only at final fallthrough, after own-request replay and blocker waiting. */
+export function reportBusyRetryExhausted(
+  detail: unknown,
+  retries: number,
+  maxRetries: number,
+): void {
+  if (isConversationBusyError(detail) && retries >= maxRetries) {
+    reportBusyRecovery("retry_budget_exhausted", {
+      blockerRunId: extractConversationBusyRunId(detail) ?? undefined,
+    });
+  }
+}
+
 // ── Async helpers (network side effects — stay here) ────────────────
 
 async function sleepWithAbort(
@@ -121,6 +141,35 @@ export async function waitForConversationBusyRun(
   options: BlockingRunWaitOptions = {},
 ): Promise<BlockingRunWaitResult> {
   const now = options.now ?? Date.now;
+  const start = now();
+  const report = (phase: Parameters<typeof reportBusyRecovery>[0]) =>
+    reportBusyRecovery(phase, {
+      blockerRunId: runId,
+      elapsedMs: now() - start,
+    });
+  report("poll_started");
+  try {
+    const result = await waitForBlockingRun(runId, signal, options);
+    report(
+      result === "settled"
+        ? "poll_settled"
+        : result === "timed_out"
+          ? "poll_timed_out"
+          : "poll_unavailable",
+    );
+    return result;
+  } catch (error) {
+    report(signal?.aborted ? "cancelled" : "poll_failed");
+    throw error;
+  }
+}
+
+async function waitForBlockingRun(
+  runId: string,
+  signal?: AbortSignal,
+  options: BlockingRunWaitOptions = {},
+): Promise<BlockingRunWaitResult> {
+  const now = options.now ?? Date.now;
   const deadlineMs =
     options.deadlineMs ?? now() + CONVERSATION_BUSY_WAIT_TIMEOUT_MS;
   const pollIntervalMs =
@@ -147,8 +196,12 @@ export async function waitForConversationBusyRun(
           timeout: Math.min(remainingMs, pollIntervalMs),
         })
       ).status;
-    } catch {
+    } catch (error) {
       signal?.throwIfAborted();
+      reportBusyRecovery("poll_failed", {
+        blockerRunId: runId,
+        httpStatus: getBusyRecoveryHttpStatus(error),
+      });
       return "unavailable";
     }
 
@@ -193,10 +246,14 @@ export async function resumeConversationBusyRequest(
   const otid = input
     .map((item) => (item as Record<string, unknown>).otid)
     .find((value): value is string => typeof value === "string");
-  if (!otid) return null;
+  const fields = { conversationId, otid };
+  if (!otid) {
+    reportBusyRecovery("replay_missing_otid", fields);
+    return null;
+  }
 
   try {
-    return await getBackend().streamConversationMessages(
+    const stream = await getBackend().streamConversationMessages(
       conversationId,
       {
         agent_id: conversationId === "default" ? agentId : undefined,
@@ -206,7 +263,12 @@ export async function resumeConversationBusyRequest(
       } as unknown as ConversationMessageStreamBody,
       signal ? { signal } : undefined,
     );
-  } catch {
+    return traceBusyRecoveryStream(stream, conversationId, otid, signal);
+  } catch (error) {
+    reportBusyRecovery(signal?.aborted ? "cancelled" : "replay_unavailable", {
+      ...fields,
+      httpStatus: getBusyRecoveryHttpStatus(error),
+    });
     signal?.throwIfAborted();
     return null;
   }

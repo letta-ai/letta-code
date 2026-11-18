@@ -469,8 +469,24 @@ describe("Startup Flow - Integration", () => {
         });
         // Assert durable history, not whether a model follows competing wording
         // instructions. The second CLI process must append to the same history.
-        const history =
-          await client.conversations.messages.list(conversationId);
+        const history = await client.conversations.messages.list(
+          conversationId,
+          {
+            include_return_message_types: [
+              "system_message",
+              "user_message",
+              "assistant_message",
+              "reasoning_message",
+              "hidden_reasoning_message",
+              "tool_call_message",
+              "tool_return_message",
+              "approval_request_message",
+              "approval_response_message",
+              "summary_message",
+              "event_message",
+            ],
+          },
+        );
         expect(history.items.map((message) => message.id)).toEqual(
           expect.arrayContaining(
             originalHistory.items.map((message) => message.id),

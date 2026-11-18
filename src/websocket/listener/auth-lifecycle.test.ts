@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebSocket, WebSocketServer } from "ws";
 import { OAuthRefreshError, type TokenResponse } from "@/auth/oauth";
 import { settingsManager } from "@/settings-manager";
+import { removeTestDir } from "@/test-utils/test-fs";
 import type { ControlRequest } from "@/types/protocol_v2";
 import {
   startListenerClient,
@@ -149,7 +150,7 @@ describe("listener auth lifecycle", () => {
     settingsManager.updateSettings = originalUpdateSettings;
     settingsManager.flush = originalFlush;
     await settingsManager.reset();
-    await rm(testHome, { recursive: true, force: true });
+    await removeTestDir(testHome);
 
     process.env.HOME = originalHome;
     if (originalDisableCron === undefined) {

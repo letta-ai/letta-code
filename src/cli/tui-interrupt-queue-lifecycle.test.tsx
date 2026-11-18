@@ -10,7 +10,15 @@
  * by the dequeue effect's own completion callback, which masked the bug. A
  * turn started by typing has no such callback.
  */
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  type Mock,
+  spyOn,
+  test,
+} from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -39,6 +47,7 @@ import {
   backgroundProcesses,
   clearBackgroundProcessCleanup,
 } from "@/tools/impl/process_manager";
+import * as debugModule from "@/utils/debug";
 import {
   addToMessageQueue,
   clearPendingMessages,
@@ -80,14 +89,58 @@ async function waitFor(
   predicate: () => boolean,
   description: string,
   timeoutMs = 5000,
+  diagnose?: () => string,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!predicate() && Date.now() < deadline) {
     await sleep(10);
   }
   if (!predicate()) {
-    throw new Error(`Timed out waiting for ${description}`);
+    const details = diagnose ? `\n${diagnose()}` : "";
+    throw new Error(`Timed out waiting for ${description}${details}`);
   }
+}
+
+// Records the app's existing queue debug lines (call-through spy) so a CI-only
+// timeout can report why the dequeue effect did not start the next turn.
+let debugLogSpy: Mock<typeof debugModule.debugLog> | null = null;
+
+function recentQueueDebugLines(limit = 15): string[] {
+  return (debugLogSpy?.mock.calls ?? [])
+    .filter(([prefix]) => prefix === "queue" || prefix === "queue-lifecycle")
+    .slice(-limit)
+    .map(
+      ([prefix, message]) =>
+        `[${prefix}] ${message.slice(0, 400).replaceAll("\n", "\\n")}`,
+    );
+}
+
+/** Snapshot of queue/dequeue state for timeouts that only reproduce on CI. */
+function describeQueueState(
+  frames: string[],
+  inputCount: number,
+  monitor: { state: { status: string; outputFile?: string | null } },
+): string {
+  const queueLines = recentQueueDebugLines();
+  let monitorOutput = "";
+  try {
+    monitorOutput = readFileSync(monitor.state.outputFile as string, "utf8");
+  } catch (error) {
+    monitorOutput = `(unreadable: ${String(error)})`;
+  }
+  const lastFrame = stripAnsi(frames.at(-1) ?? "").trimEnd();
+  return [
+    `executor turns: ${inputCount}`,
+    `queue bridge connected: ${isQueueBridgeConnected()}`,
+    `monitor status: ${monitor.state.status}`,
+    `monitor output (tail): ${JSON.stringify(monitorOutput.slice(-300))}`,
+    "recent queue debug log:",
+    queueLines.length > 0
+      ? queueLines.map((line) => `  ${line}`).join("\n")
+      : "  (none)",
+    `last frame (${frames.length} writes):`,
+    lastFrame.slice(-2000),
+  ].join("\n");
 }
 
 function monitorNotification(summary: string): string {
@@ -194,9 +247,12 @@ beforeEach(async () => {
   process.env.HOME = tempHome;
   await settingsManager.reset();
   await settingsManager.initialize();
+  debugLogSpy = spyOn(debugModule, "debugLog");
 });
 
 afterEach(async () => {
+  debugLogSpy?.mockRestore();
+  debugLogSpy = null;
   for (const instance of renderedInstances) {
     instance.unmount();
     instance.cleanup();
@@ -276,7 +332,7 @@ async function typePrompt(stdin: NodeJS.ReadStream, text: string) {
 describe("TUI interrupt queue lifecycle", () => {
   test("a real Monitor survives normal completion and idle Esc", async () => {
     const inputs: HeadlessTurnExecutorInput[] = [];
-    const { stdin } = await renderTestApp({
+    const { stdin, frames } = await renderTestApp({
       async execute(input) {
         inputs.push(input);
         return createAssistantMessageStream();
@@ -287,6 +343,7 @@ describe("TUI interrupt queue lifecycle", () => {
     const input = inputs[0];
     if (!input) throw new Error("Missing first turn");
     const source = await startMonitor(input);
+    const diagnose = () => describeQueueState(frames, inputs.length, source);
     // An event drives another complete turn while the source stays connected.
     source.socket.send("normal monitor event");
     await waitFor(
@@ -302,6 +359,7 @@ describe("TUI interrupt queue lifecycle", () => {
       () => inputs.length === 2,
       "the Monitor notification turn",
       10_000,
+      diagnose,
     );
     await sleep(300);
     expect(source.state.status).toBe("running");
@@ -313,6 +371,7 @@ describe("TUI interrupt queue lifecycle", () => {
       () => inputs.length === 3,
       "the event after idle Esc",
       10_000,
+      diagnose,
     );
     expect(JSON.stringify(inputs[2]?.body)).toContain(
       "still watching after idle Esc",

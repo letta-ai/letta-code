@@ -43,9 +43,9 @@ await handleHeadlessCommand(parseCliArgs([
 
 test.each([
   {
-    model: "auto",
+    model: "glm",
     explicitNew: true,
-    expectedModel: "letta/auto",
+    expectedModel: "letta/glm",
     expectedSettings: {
       provider_type: "openai",
       parallel_tool_calls: true,

@@ -895,7 +895,11 @@ describe("app-server native websocket", () => {
       expect(getActiveRuntime()?.connections.size).toBe(2);
       terminateClient(clientB);
       await waitForClientClose(clientB);
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      // The server may handle the close after the client sees it; poll (≤5s).
+      for (let i = 0; i < 500; i++) {
+        if (getActiveRuntime()?.connections.size === 1) break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
       expect(getActiveRuntime()?.connections.size).toBe(1);
 
       const afterDisconnect = waitForJsonMessage(

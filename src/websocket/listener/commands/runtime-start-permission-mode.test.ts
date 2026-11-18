@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type WebSocket from "ws";
@@ -7,6 +7,7 @@ import { __testSetBackend, type AgentCreateBody } from "@/backend";
 import { LocalBackend } from "@/backend/local";
 import { type PermissionMode, permissionMode } from "@/permissions/mode";
 import { telemetry } from "@/telemetry";
+import { removeTestDir } from "@/test-utils/test-fs";
 import type { RuntimeStartCommand } from "@/types/runtime-start-protocol";
 import { handleModeChange } from "@/websocket/listener/control-inputs";
 import { getOrCreateScopedRuntime } from "@/websocket/listener/conversation-runtime";
@@ -72,7 +73,7 @@ describe("runtime_start default permission mode", () => {
     if (previousConfigDir === undefined) delete process.env.LETTA_CONFIG_DIR;
     else process.env.LETTA_CONFIG_DIR = previousConfigDir;
     resetRemoteSettingsCache();
-    await rm(storageDir, { recursive: true, force: true });
+    await removeTestDir(storageDir);
   });
 
   async function createAgentId(): Promise<string> {

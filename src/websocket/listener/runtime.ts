@@ -2,6 +2,7 @@ import { createContextTracker } from "@/cli/helpers/context-tracker";
 import { createSharedReminderState } from "@/reminders/state";
 import type { PendingControlRequest } from "@/types/protocol_v2";
 import { redactWsEventForLogging } from "@/websocket/ws-event-redaction";
+import { hasRunningBackgroundWork } from "./background-process-snapshot";
 import { getWorkingDirectoryScopeKey } from "./cwd";
 import { cancelFailedTeleportCleanup } from "./failed-teleport-cleanup";
 import {
@@ -216,7 +217,11 @@ export function evictConversationRuntimeIfIdle(
     runtime.queueRuntime?.length > 0 ||
     ((runtime.workspaceSandbox !== undefined ||
       runtime.executionSettings !== undefined) &&
-      runtime.listener.connectionIdsByRuntimeKey.has(runtime.key))
+      runtime.listener.connectionIdsByRuntimeKey.has(runtime.key)) ||
+    // A reconnect only re-reports device status for held conversations, so
+    // keep this one until its background work finishes.
+    (runtime.agentId !== null &&
+      hasRunningBackgroundWork(runtime.agentId, runtime.conversationId))
   ) {
     return false;
   }

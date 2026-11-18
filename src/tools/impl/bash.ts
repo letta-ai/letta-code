@@ -4,6 +4,7 @@ import {
   consumeWorkingDirectoryRecovery,
   getCurrentWorkingDirectory,
 } from "@/runtime-context";
+import { resolveForegroundYieldMs } from "@/tools/foreground-yield";
 import {
   captureSecretRedactions,
   createSecretStreamScrubber,
@@ -30,6 +31,7 @@ import {
   backgroundProcesses,
   createBackgroundOutputFile,
   getNextBashId,
+  notifyBackgroundProcessStateChanged,
   scheduleBackgroundProcessCleanup,
   scrubCompletedBackgroundOutput,
 } from "./process_manager.js";
@@ -55,9 +57,6 @@ import { assertSafeWindowsCommand } from "./windows-command-safety.js";
 
 // Cache the working shell launcher after first successful spawn
 let cachedWorkingLauncher: string[] | null = null;
-
-/** Time to wait for an ordinary Bash command before returning it as a task. */
-const DEFAULT_FOREGROUND_YIELD_MS = 10_000;
 
 type ShellProcessStarter = typeof startShellProcess;
 let shellProcessStarter: ShellProcessStarter = startShellProcess;
@@ -325,6 +324,7 @@ interface BashArgs {
   signal?: AbortSignal;
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
   secretEnv?: Record<string, string>;
+  variableEnv?: Record<string, string>;
   parentScope?: { agentId: string; conversationId: string };
   /** Test-only override; not exposed in the Bash tool schema. */
   foregroundYieldMs?: number;
@@ -347,10 +347,11 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     run_in_background = false,
     signal,
     onOutput,
-    secretEnv,
+    secretEnv: invocationSecrets,
     parentScope,
-    foregroundYieldMs = DEFAULT_FOREGROUND_YIELD_MS,
+    foregroundYieldMs = resolveForegroundYieldMs(),
   } = args;
+  const secretEnv = { ...args.variableEnv, ...invocationSecrets };
   const userCwd = getCurrentWorkingDirectory();
   assertSafeWindowsCommand(command, {
     cwd: userCwd,
@@ -358,7 +359,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
   });
   const redactions = captureSecretRedactions(
     parentScope?.agentId,
-    secretEnv ?? {},
+    invocationSecrets ?? {},
   );
   const sanitizeOutput = (text: string) =>
     scrubSecretsFromString(text, redactions);
@@ -493,6 +494,8 @@ export async function bash(args: BashArgs): Promise<BashResult> {
   });
   bgProcess = {
     process: runningProcess.process,
+    completion: runningProcess.completion,
+    terminate: runningProcess.terminate,
     command,
     stdout: [],
     stderr: [],
@@ -582,6 +585,15 @@ export async function bash(args: BashArgs): Promise<BashResult> {
         status,
         detail,
       });
+      // The queue frame is emitted in a microtask. Publish completion after
+      // that frame so zero running shells cannot overtake the notification.
+      if (bgProcess.completionNotificationSuppressed) {
+        notifyBackgroundProcessStateChanged(bgProcess.runtimeScope);
+      } else {
+        queueMicrotask(() =>
+          notifyBackgroundProcessStateChanged(bgProcess.runtimeScope),
+        );
+      }
       scheduleBackgroundProcessCleanup(bashId);
     });
   };

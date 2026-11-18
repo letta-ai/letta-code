@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { resolveStartupTarget } from "@/agent/resolve-startup-agent";
 import { settingsManager } from "@/settings-manager";
+import { removeTestDir } from "@/test-utils/test-fs";
 
 const originalHome = process.env.HOME;
 const originalCwd = process.cwd();
@@ -109,8 +110,8 @@ afterEach(async () => {
   } else {
     process.env.LETTA_MEMFS_BASE_URL = originalMemfsBaseUrl;
   }
-  await rm(testHomeDir, { recursive: true, force: true });
-  await rm(testProjectDir, { recursive: true, force: true });
+  await removeTestDir(testHomeDir);
+  await removeTestDir(testProjectDir);
 });
 
 describe("startup resolution from settings files", () => {

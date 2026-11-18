@@ -12,6 +12,7 @@ import { activateOrgCredentials } from "@/auth/org-credentials-session";
 import { settingsManager } from "@/settings-manager";
 import { debugLog } from "@/utils/debug";
 import {
+  type CredentialBootstrap,
   deriveListenerInstanceId,
   type RegisterOptions,
 } from "@/websocket/listen-register";
@@ -94,6 +95,12 @@ type ListenerAuthOptions = {
 type ListenerRegistrationOptions = ListenerAuthOptions & {
   surface?: "server" | "listen";
 };
+
+interface ResolvedListenerAuth {
+  serverUrl: string;
+  apiKey: string;
+  onCredentialBootstrap?: (bootstrap: CredentialBootstrap) => Promise<void>;
+}
 
 /**
  * Best-effort: open the device-auth page so a first-time user does not have
@@ -328,41 +335,54 @@ async function resolveListenerAuth(
   deviceId: string,
   connectionName: string,
   options: ListenerAuthOptions,
-): Promise<{ serverUrl: string; apiKey: string }> {
+): Promise<ResolvedListenerAuth> {
   const allowInteractiveOAuth = options.allowInteractiveOAuth ?? true;
   const settings = await settingsManager.getSettingsWithSecureTokens();
   const serverUrl = getListenerServerUrl(settings);
 
   // An organization listener signs in on its own; ambient keys and the
   // global sign-in belong to whichever organization the user picked there.
-  if (options.organizationId) {
+  const organizationId = options.organizationId;
+  if (organizationId) {
     if (!isCloudListenerServerUrl(serverUrl)) {
       throw new Error("--org is only supported with Letta Cloud");
     }
-    const slot = orgCredentialSlot(options.organizationId);
+    const slot = orgCredentialSlot(organizationId);
     const apiKey = options.connectToken
       ? await redeemConnectToken(
           slot,
           deviceId,
           connectionName,
           options.connectToken,
-          options.organizationId,
+          organizationId,
         )
       : await resolveCloudCredentials(
           slot,
           deviceId,
           connectionName,
           allowInteractiveOAuth,
-          options.organizationId,
+          organizationId,
         );
     // Turns, memfs, and subagents in this process read the organization
     // sign-in from here, so they act as the organization the computer joined.
     const credentials = await slot.read();
-    activateOrgCredentials(options.organizationId, deviceId, {
+    activateOrgCredentials(organizationId, deviceId, {
       ...credentials,
       apiKey,
     });
-    return { serverUrl, apiKey };
+    if (credentials.refreshToken) return { serverUrl, apiKey };
+    const onCredentialBootstrap = async (
+      bootstrap: CredentialBootstrap,
+    ): Promise<void> => {
+      const nextCredentials = {
+        apiKey,
+        refreshToken: bootstrap.refreshToken,
+        tokenExpiresAt: Date.now() + bootstrap.expiresIn * 1000,
+      };
+      await slot.write(nextCredentials);
+      activateOrgCredentials(organizationId, deviceId, nextCredentials);
+    };
+    return { serverUrl, apiKey, onCredentialBootstrap };
   }
 
   if (options.connectToken) {

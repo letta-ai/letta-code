@@ -172,6 +172,41 @@ describe("local system prompt compilation", () => {
     }
   });
 
+  test("counts previous messages only when memory_metadata is rendered", async () => {
+    const memoryDir = await mkdtemp(join(tmpdir(), "local-prompt-count-"));
+    try {
+      await writeMemoryFile(memoryDir, "system/persona.md", "Who", "Agent.");
+      initAndCommitMemory(memoryDir);
+      let calls = 0;
+      const count = () => {
+        calls += 1;
+        return 4;
+      };
+
+      const v1 = compileLocalSystemPrompt({
+        agent: agent(),
+        conversationId: "local-conv-test",
+        memoryDir,
+        previousMessageCount: count,
+      });
+      expect(calls).toBe(1);
+      expect(v1.coreMemory).toContain("- 4 previous messages between you");
+
+      await writeFile(join(memoryDir, "MEMORY.md"), "# Memory\n", "utf8");
+      initAndCommitMemory(memoryDir, "root layout");
+      const v2 = compileLocalSystemPrompt({
+        agent: agent(),
+        conversationId: "local-conv-test",
+        memoryDir,
+        previousMessageCount: count,
+      });
+      expect(calls).toBe(1);
+      expect(v2.content).not.toContain("<memory_metadata>");
+    } finally {
+      await rm(memoryDir, { recursive: true, force: true });
+    }
+  });
+
   test("reads committed MemFS state instead of dirty working tree files", async () => {
     const memoryDir = await mkdtemp(join(tmpdir(), "local-prompt-head-"));
     try {

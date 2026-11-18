@@ -155,7 +155,7 @@ describe("formatErrorDetails", () => {
     const message = formatErrorDetails(error);
 
     expect(message).toBe(
-      "Your account does not have credits for this model. Add your own API keys or upgrade your plan to purchase credits.",
+      "This model needs your own API key or Letta credits. Run /connect to add a provider key, or buy credits at https://chat.letta.com/preferences/usage.",
     );
     expect(message).not.toContain("not available on Free plan");
     expect(message).not.toContain("Selected hosted model");
@@ -229,7 +229,7 @@ describe("formatErrorDetails", () => {
 
     const message = formatErrorDetails(error);
     expect(message).toBe(
-      "Your account does not have credits for this model. Add your own API keys or upgrade your plan to purchase credits.",
+      "This model needs your own API key or Letta credits. Run /connect to add a provider key, or buy credits at https://chat.letta.com/preferences/usage.",
     );
   });
 
@@ -384,7 +384,7 @@ describe("formatErrorDetails", () => {
 
     expect(message).toContain("Upgrade your plan for more quota");
     expect(message).toContain("purchase credits");
-    expect(message).not.toContain("Add your own API keys");
+    expect(message).not.toContain("/connect");
   });
 
   test("prefers backend reason_text over generic hosted quota guidance", () => {
@@ -424,7 +424,7 @@ describe("formatErrorDetails", () => {
     const message = formatErrorDetails(error);
 
     expect(message).toBe(
-      "Your account does not have credits for this model. Add your own API keys or upgrade your plan to purchase credits.",
+      "This model needs your own API key or Letta credits. Run /connect to add a provider key, or buy credits at https://chat.letta.com/preferences/usage.",
     );
   });
 

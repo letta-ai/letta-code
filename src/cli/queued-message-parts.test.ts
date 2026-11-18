@@ -10,6 +10,7 @@ import {
   QueueRuntime,
   type TaskNotificationQueueItem,
 } from "@/queue/queue-runtime";
+import { buildExternalToolNotificationContent } from "@/queue/turn-queue-runtime";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
 import { formatTaskNotification } from "@/utils/task-notifications";
 
@@ -80,7 +81,10 @@ describe("queuedMessageParts", () => {
       kind: "task_notification",
       source: "task_notification",
       text: "<task-notification>ready</task-notification>",
-      content: [{ type: "text", text: "caption" }, image],
+      content: buildExternalToolNotificationContent({
+        text: "<task-notification>ready</task-notification>",
+        content: [{ type: "text", text: "caption" }, image],
+      }),
     };
     const item = queue.enqueue(notification);
     if (!item || item.kind !== "task_notification") {
