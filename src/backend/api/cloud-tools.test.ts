@@ -1,5 +1,9 @@
 import { expect, test } from "bun:test";
-import { callCloudTool, listCloudTools } from "./cloud-tools";
+import {
+  callCloudTool,
+  getCloudToolsClient,
+  listCloudTools,
+} from "./cloud-tools";
 import {
   createMcpSubprocessBroker,
   createMcpSubprocessBrokerClient,
@@ -60,5 +64,20 @@ test("broker forwards only exact cloud tool routes with fresh parent proof", asy
     expect(requests).toHaveLength(2);
   } finally {
     broker.close();
+  }
+});
+
+test("local MCP commands never initialize cloud credentials for optional tools", async () => {
+  const { resolveBackendMode, setConfiguredBackendMode } = await import(
+    "@/backend/backend-mode"
+  );
+  const previous = resolveBackendMode();
+  setConfiguredBackendMode("local");
+  try {
+    await expect(getCloudToolsClient({})).rejects.toThrow(
+      "require the API backend",
+    );
+  } finally {
+    setConfiguredBackendMode(previous);
   }
 });

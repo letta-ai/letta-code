@@ -3,6 +3,7 @@ import {
   ToolSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import { resolveBackendMode } from "@/backend/backend-mode";
 import { getRuntimeContext } from "@/runtime-context";
 import { resolveMcpOriginatorToken } from "./mcp-originator-resolver";
 import { getMcpSubprocessBrokerClientOrDefault } from "./mcp-subprocess-broker";
@@ -18,6 +19,9 @@ export type CloudToolCatalog = z.infer<typeof catalogSchema>;
 export async function getCloudToolsClient(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<UnifiedMcpClient> {
+  if (resolveBackendMode() !== "api") {
+    throw new Error("Caller-scoped API tools require the API backend");
+  }
   const client = await getMcpSubprocessBrokerClientOrDefault(env);
   return {
     get: (path) => client.get(path),
