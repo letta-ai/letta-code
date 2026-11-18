@@ -188,6 +188,7 @@ function lastEditedByChild(dir: string, names: string[]): Map<string, number> {
       timeout: 5_000,
       maxBuffer: 64 * 1024 * 1024,
       stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
     });
   const walkMtime = (path: string, name: string) => {
     try {
