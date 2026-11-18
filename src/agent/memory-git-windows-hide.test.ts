@@ -1,4 +1,4 @@
-import { afterEach, expect, mock, test } from "bun:test";
+import { afterAll, expect, mock, test } from "bun:test";
 import * as childProcess from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,7 +9,7 @@ const originalExecFile = childProcess.execFile;
 const originalSpawnSync = childProcess.spawnSync;
 const originalExecFileSync = childProcess.execFileSync;
 
-afterEach(() => mock.restore());
+afterAll(() => mock.restore());
 
 test("hides direct Git and validator launches for MemFS operations and the viewer", async () => {
   const calls: Array<{
