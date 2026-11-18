@@ -37,7 +37,7 @@ You can attach a note to Claude when you approve or deny a single action. On mos
 With the field open, type the comment and then press one of these keys:
 
 * `Enter`: submits your answer with the comment attached. If you leave the field empty, Claude Code submits the answer without a comment.
-* `Tab`: closes the field without answering. Claude Code keeps the text you typed and still sends it if you answer with that option.
+* `Tab`: closes the field without answering. To send the text you typed, press `Tab` again before you answer.
 * `Shift+Tab`: on a file prompt, such as an Edit or Write prompt, closes the field the same as `Tab`. Before v2.1.235, pressing `Shift+Tab` inside the field instead selected the option that allows the action for the rest of the session, so Claude Code approved the action for the rest of the session and discarded the comment.
 
 Claude Code delivers the comment differently depending on how you answered:
@@ -77,7 +77,7 @@ Claude Code supports several permission modes that control how it approves tool 
 | `acceptEdits` | Automatically accepts file edits and common filesystem commands such as `mkdir`, `touch`, `mv`, and `cp` for paths in the working directory or `additionalDirectories` |
 | `plan` | Claude reads files and runs read-only shell commands to explore but doesn't edit your source files; with [auto mode](https://code.claude.com/docs/en/permission-modes.md#eliminate-prompts-with-auto-mode) available, classifier-approved commands also run. Labeled Plan in the CLI and the VS Code extension |
 | `auto` | Runs without routine prompts; before actions such as shell commands and network requests run, a background [classifier](https://code.claude.com/docs/en/permission-modes.md#eliminate-prompts-with-auto-mode) checks that they align with your request |
-| `dontAsk` | Auto-denies every call that would otherwise prompt, though a [mod](https://code.claude.com/docs/en/plugins/mods/overview.md) you installed can still approve some of those calls. File reads in your working directories and other actions that need no approval still run, as do tools pre-approved via `/permissions` or `permissions.allow` rules. `AskUserQuestion`, MCP tools marked [`requiresUserInteraction`](https://code.claude.com/docs/en/mcp#require-approval-for-a-specific-tool), [reads from network paths](#network-paths), and connector tools [your organization set to `ask`](https://code.claude.com/docs/en/mcp#organization-controls-on-connector-tools) in sessions where that setting reaches Claude Code are denied even if you've allowed them |
+| `dontAsk` | Auto-denies every call that would otherwise prompt, though in [some setups](#precedence-among-rules-hooks-and-mods) a [mod](https://code.claude.com/docs/en/plugins/mods/overview.md) you installed can still approve some of those calls. File reads in your working directories and other actions that need no approval still run, as do tools pre-approved via `/permissions` or `permissions.allow` rules. `AskUserQuestion` and [some other calls](https://code.claude.com/docs/en/permission-modes.md#allow-only-pre-approved-tools-with-dontask-mode) are denied even if you've allowed them |
 | `bypassPermissions` | Skips permission prompts, except for the [actions no mode auto-approves](https://code.claude.com/docs/en/permission-modes.md#actions-no-mode-auto-approves) |
 
 > [!WARNING]
@@ -90,7 +90,7 @@ To deny calls that would wait on a permission prompt, so an unattended session k
 
 ## Permission rule syntax
 
-Permission rules follow the format `Tool` or `Tool(specifier)`. Parentheses inside the specifier are literal, so a command or path that contains them needs no escaping.
+Permission rules follow the format `Tool` or `Tool(specifier)`.
 
 ### Match all uses of a tool
 
@@ -589,7 +589,9 @@ For `<server>`, write the server's name the way it appears in that server's tool
 
   As a deny or ask rule, though, each of those two names also covers every tool of the `reports__v2` server. To cover a server named `reports` alone, write one rule per tool in the `mcp__reports__<tool>` form, or rename one of the servers.
 
-If your organization has set a [claude.ai connector](https://code.claude.com/docs/en/mcp.md#organization-controls-on-connector-tools) tool to `ask` and that setting reaches Claude Code in your session, allow rules for that tool don't take effect: Claude Code prompts on every call, even in `auto` and `bypassPermissions` modes. In `dontAsk` mode, which never prompts, Claude Code denies the call instead. Tools from connectors Claude Code fetches itself appear as `mcp__claude_ai_<server>__<tool>`.
+If your organization has set a [claude.ai connector](https://code.claude.com/docs/en/mcp.md#organization-controls-on-connector-tools) tool to `ask` and that setting reaches Claude Code in your session, allow rules for that tool don't take effect. Claude Code prompts each time Claude calls that tool, even in `auto` and `bypassPermissions` modes. In `dontAsk` mode, or a `-p` run with nothing to answer the prompt, Claude Code denies the call instead.
+
+Tools from connectors Claude Code fetches itself appear as `mcp__claude_ai_<server>__<tool>`.
 
 In a [Cowork](https://claude.com/docs/cowork/overview) session in the Claude Desktop app, Claude runs shell commands through Cowork's `mcp__workspace__bash` tool rather than the built-in `Bash` tool, and Cowork likewise provides `mcp__workspace__web_fetch` for web fetches. Claude Code also applies deny rules that name the whole `Bash` or `WebFetch` tool to these Cowork tools, so a managed `Bash` deny rule stops Claude from running shell commands in Cowork. When Claude Code blocks such a call, the message names the Cowork tool: `Permission to use mcp__workspace__bash has been denied.` Allow rules don't carry over: Claude Code never applies a `Bash` allow rule to `mcp__workspace__bash`.
 
@@ -635,7 +637,7 @@ Path patterns share the `//`, `~/`, and `/` anchors from [Read and Edit rules](#
 
 PreToolUse hook decisions don't bypass permission rules. Claude Code evaluates deny and ask rules regardless of what a PreToolUse hook returns: a matching deny rule blocks the call, and a matching ask rule still prompts even when the hook returned `"allow"` or `"ask"`. This preserves the deny-first precedence described in [Manage permissions](#manage-permissions), including deny rules set in managed settings.
 
-That precedence covers hooks in settings files and in a plugin's `hooks/hooks.json`. A [mod](https://code.claude.com/docs/en/plugins/mods/overview.md) you install that handles the [`tool.check`](https://code.claude.com/docs/en/plugins/mods/events#approve-or-refuse-a-tool-call-before-the-user-is-asked) event gives its answer after the `PreToolUse` hooks have run. With [managed settings](https://code.claude.com/docs/en/settings.md#check-what-your-organization-enforces) or a [`managed-mcp.json` file](https://code.claude.com/docs/en/managed-mcp#deploy-managed-mcp-json), or a Team or Enterprise [`/login`](https://code.claude.com/docs/en/authentication#authentication-precedence) as the session's credential, these outcomes stay in place by default when the mod approves a call:
+That precedence covers hooks in settings files and in a plugin's `hooks/hooks.json`. A [mod](https://code.claude.com/docs/en/plugins/mods/overview.md) you install that handles the [`tool.check`](https://code.claude.com/docs/en/plugins/mods/events#approve-or-refuse-a-tool-call-before-the-user-is-asked) event answers after the `PreToolUse` hooks have run. With [managed settings](https://code.claude.com/docs/en/settings.md#check-what-your-organization-enforces) or a [`managed-mcp.json` file](https://code.claude.com/docs/en/managed-mcp#deploy-managed-mcp-json), or a Team or Enterprise [`/login`](https://code.claude.com/docs/en/authentication#authentication-precedence) as the session's credential, the [built-in guard](https://code.claude.com/docs/en/plugins/mods/admin.md#know-what-happens-by-default) loads by default. These outcomes then hold by default when Claude's call is approved by a mod that isn't [your organization's](https://code.claude.com/docs/en/plugins/mods/admin.md#install-your-organizations-mods):
 
 * A call that a deny rule refuses stays refused.
 * A call that an ask rule would prompt for still prompts you.
@@ -643,11 +645,11 @@ That precedence covers hooks in settings files and in a plugin's `hooks/hooks.js
 * A call that a `PreToolUse` hook blocked stays blocked, whichever settings file the hook comes from.
 * A call that your [`--permission-prompt-tool`](https://code.claude.com/docs/en/cli-reference#cli-flags) or Agent SDK [`canUseTool` callback](https://code.claude.com/docs/en/agent-sdk/user-input#handle-tool-approval-requests) would be asked about is still put to that tool or callback.
 
-Your setup might lack managed settings, a `managed-mcp.json` file, and a Team or Enterprise `/login` as the session's credential. In that setup, the mod can approve a call that a deny rule refuses or a `PreToolUse` hook blocked. A session that runs on an API key or a long-lived [`CLAUDE_CODE_OAUTH_TOKEN`](https://code.claude.com/docs/en/authentication#generate-a-long-lived-token) instead isn't using that login, even when that login is stored.
+Your setup might lack managed settings, a `managed-mcp.json` file, and a Team or Enterprise `/login` as the session's credential. In that setup, the mod can approve a call that a `PreToolUse` hook blocked, and some calls that a deny rule refuses. A session that runs on an API key or a long-lived [`CLAUDE_CODE_OAUTH_TOKEN`](https://code.claude.com/docs/en/authentication#generate-a-long-lived-token) instead isn't using that login, even when that login is stored.
 
-In that setup you aren't prompted when the mod approves a call that an ask rule, a `PreToolUse` hook, or `permissions.blockReadsOutsideWorkingDirectories` would prompt for. Your `--permission-prompt-tool` or `canUseTool` callback isn't asked about a call the mod approves, either. Auto mode, plan mode, and `dontAsk` mode each add an outcome of their own in every setup:
+In that setup, a call the mod approves can skip the prompt from an ask rule, a `PreToolUse` hook, or `permissions.blockReadsOutsideWorkingDirectories`. It can also skip your `--permission-prompt-tool` or `canUseTool` callback. Auto mode, plan mode, and `dontAsk` mode each add an outcome of their own in that setup:
 
-* **[Auto mode](https://code.claude.com/docs/en/permission-modes.md#eliminate-prompts-with-auto-mode)**: a call the mod approves runs without a classifier check, except where the mod can't bypass your permission prompt tool or Agent SDK permission callback. There the classifier checks the call first.
+* **[Auto mode](https://code.claude.com/docs/en/permission-modes.md#eliminate-prompts-with-auto-mode)**: a call the mod approves can run without a classifier check.
 * **[Plan mode](#hook-approvals-in-plan-mode)**: the mod can't approve a call that isn't read-only, such as a file edit or a shell command that writes.
 * **[`dontAsk` mode](https://code.claude.com/docs/en/permission-modes#allow-only-pre-approved-tools-with-dontask-mode)**: the mod can approve a call that nothing but the mode would deny.
 
@@ -721,7 +723,7 @@ The following configuration types are loaded from `--add-dir` directories:
 | [Settings](https://code.claude.com/docs/en/settings.md) in `.claude/settings.json` and `.claude/settings.local.json` | `enabledPlugins` and [`extraKnownMarketplaces`](https://code.claude.com/docs/en/settings-reference#extraknownmarketplaces) keys only |
 | [CLAUDE.md](https://code.claude.com/docs/en/memory.md) files, `.claude/rules/`, and `CLAUDE.local.md` | Only when `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1` is set. `CLAUDE.local.md` additionally requires the `local` setting source, which is enabled by default |
 
-To load the skills, commands, and subagents from a subdirectory of your [primary working directory](#working-directories) mid-session, run `/add-dir` with that subdirectory's path. Claude Code loads them for the rest of the session without prompting you or adding a working directory, because the subdirectory is already readable. This requires Claude Code v2.1.257 or later.
+To load the skills, commands, and subagents from a subdirectory of your [primary working directory](#working-directories) mid-session, run `/add-dir` with that subdirectory's path. Claude Code loads them for the rest of the session without adding a working directory. This requires Claude Code v2.1.257 or later.
 
 #### Where output styles, hooks, and local settings load from
 
