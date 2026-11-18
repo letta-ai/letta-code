@@ -81,3 +81,28 @@ test("local MCP commands never initialize cloud credentials for optional tools",
     setConfiguredBackendMode(previous);
   }
 });
+
+test("an injected local backend cannot discover API tools under an API mode flag", async () => {
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { getBackend, __testSetBackend } = await import("@/backend");
+  const { LocalBackend } = await import("@/backend/local");
+  const { resolveBackendMode, setConfiguredBackendMode } = await import(
+    "@/backend/backend-mode"
+  );
+  const previousBackend = getBackend();
+  const previousMode = resolveBackendMode();
+  const storageDir = await mkdtemp(join(tmpdir(), "local-cloud-tools-"));
+  setConfiguredBackendMode("api");
+  __testSetBackend(new LocalBackend({ storageDir, memfsEnabled: false }));
+  try {
+    await expect(getCloudToolsClient({})).rejects.toThrow(
+      "does not support API tools",
+    );
+  } finally {
+    __testSetBackend(previousBackend);
+    setConfiguredBackendMode(previousMode);
+    await rm(storageDir, { recursive: true, force: true });
+  }
+});

@@ -22,6 +22,10 @@ export async function getCloudToolsClient(
   if (resolveBackendMode() !== "api") {
     throw new Error("Caller-scoped API tools require the API backend");
   }
+  const { getBackend } = await import("@/backend");
+  if (!getBackend().capabilities.serverSideToolManagement) {
+    throw new Error("Active backend does not support API tools");
+  }
   const client = await getMcpSubprocessBrokerClientOrDefault(env);
   return {
     get: (path) => client.get(path),
