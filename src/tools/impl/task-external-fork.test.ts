@@ -107,6 +107,7 @@ const remoteLaunches: Array<{
   prompt: string;
   forkContext?: boolean;
   computer: string;
+  parentScope: { agentId: string; conversationId: string };
 }> = [];
 const realRemote = await import("./remote-external-coding-agent");
 mock.module("./remote-external-coding-agent", () => ({
@@ -115,6 +116,7 @@ mock.module("./remote-external-coding-agent", () => ({
     prompt: string;
     forkContext?: boolean;
     computer: string;
+    parentScope: { agentId: string; conversationId: string };
   }) => {
     remoteLaunches.push(launch);
     return { success: true, task_id: "t", output_file: "o", agent_id: null };
@@ -251,6 +253,37 @@ describe("fork_context for external coding workers", () => {
     expect(remoteLaunches[0]?.prompt).toBe(brief.prompt);
     expect(remoteLaunches[0]?.forkContext).toBe(true);
     expect(listConversationMessages).not.toHaveBeenCalled();
+  });
+
+  test("a detached subagent launches a remote worker with the parent agent identity", async () => {
+    const previousRole = process.env.LETTA_CODE_AGENT_ROLE;
+    const previousParent = process.env.LETTA_PARENT_AGENT_ID;
+    process.env.LETTA_CODE_AGENT_ROLE = "subagent";
+    process.env.LETTA_PARENT_AGENT_ID = "agent-parent";
+    try {
+      const result = await launchSubagent({
+        ...brief,
+        harness: "codex",
+        computer: "cloud",
+        parentScope: {
+          agentId: "conv-detached-child",
+          conversationId: "conv-detached-child",
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(remoteLaunches).toHaveLength(1);
+      expect(remoteLaunches[0]?.parentScope).toMatchObject({
+        agentId: "agent-parent",
+        conversationId: "conv-detached-child",
+      });
+    } finally {
+      if (previousRole === undefined) delete process.env.LETTA_CODE_AGENT_ROLE;
+      else process.env.LETTA_CODE_AGENT_ROLE = previousRole;
+      if (previousParent === undefined)
+        delete process.env.LETTA_PARENT_AGENT_ID;
+      else process.env.LETTA_PARENT_AGENT_ID = previousParent;
+    }
   });
 
   test("a forked external worker uses the default computer", async () => {
