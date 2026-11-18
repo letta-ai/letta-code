@@ -602,7 +602,14 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       ) {
         throw new PiProviderError(finalMessage);
       }
-      if (this.onContextPressure) {
+      // A reply that calls tools is not compacted until its results are in:
+      // the request that carries them runs the pre-call check, and its
+      // estimate starts from this reply's usage. Compacting here would leave
+      // the call out of the summary request and keep it after the summary.
+      const awaitingToolResults = finalMessage.content.some(
+        (part) => part.type === "toolCall",
+      );
+      if (this.onContextPressure && !awaitingToolResults) {
         const usageContextTokens = contextTokensFromUsage(finalMessage.usage);
         const contextTokens =
           usageContextTokens ??
