@@ -747,7 +747,6 @@ export async function launchSubagent(
 
   let effectiveAgentId = args.agent_id;
   let effectiveConversationId = args.conversation_id;
-
   const callerNotification = args.notifyCaller
     ? {
         emitCompletionNotification: false,
@@ -776,9 +775,10 @@ export async function launchSubagent(
           model,
           mcp: args.mcp,
           toolCallId,
-          parentScope: resolvedParentScope ?? {
-            agentId: parentAgentId,
+          parentScope: {
             conversationId: getConversationId() ?? "default",
+            ...resolvedParentScope,
+            agentId: parentAgentId,
           },
           signal,
         },
