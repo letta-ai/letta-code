@@ -799,7 +799,16 @@ function splitShellSegmentsAllowUnsafeRedirects(
       continue;
     }
 
-    if (ch === ";" || ch === "|" || ch === "\n" || ch === "\r") {
+    // A lone `&` starts a new command. Keep `>&N` / `<&N` fd duplication
+    // intact, since redirects are not consumed by this splitter.
+    const isFdDuplication = ch === "&" && /[<>]$/.test(current);
+    if (
+      ch === ";" ||
+      ch === "|" ||
+      ch === "\n" ||
+      ch === "\r" ||
+      (ch === "&" && !isFdDuplication)
+    ) {
       segments.push(current);
       current = "";
       i += 1;
