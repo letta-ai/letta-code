@@ -151,8 +151,12 @@ async function resolveScopedModelState(
     };
 
     if (conversationId !== "default") {
-      const conversation =
-        await getBackend().retrieveConversation(conversationId);
+      const conversation = await getBackend().retrieveConversation(
+        conversationId,
+        {
+          query: { include_context_message_ids: false },
+        },
+      );
       const conversationRecord = conversation as unknown as {
         model?: unknown;
         model_settings?: unknown;

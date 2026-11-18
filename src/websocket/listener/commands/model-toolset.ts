@@ -160,6 +160,7 @@ async function getCurrentModelScopeSnapshot(params: {
   if (!params.agentId) {
     const conversation = await backend.retrieveConversation(
       params.conversationId,
+      { query: { include_context_message_ids: false } },
     );
     const record = conversation as unknown as Record<string, unknown>;
     return {
@@ -200,6 +201,7 @@ async function getCurrentModelScopeSnapshot(params: {
 
   const conversation = await backend.retrieveConversation(
     params.conversationId,
+    { query: { include_context_message_ids: false } },
   );
   const conversationRecord = conversation as unknown as Record<string, unknown>;
   const conversationModel =
