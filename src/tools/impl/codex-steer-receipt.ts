@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from "node:timers/promises";
 import { telemetry } from "@/telemetry";
 
 const CODEX_STEER_GRACE_MS = 10_000;
@@ -54,4 +55,24 @@ export async function withSessionLock<T>(
   } finally {
     release();
   }
+}
+
+/** Let the completion notification reach its original waiter before starting again. */
+export async function waitForRejectedCodexSteer(
+  session: { activeTurnId?: string },
+  turnId: string,
+  error: unknown,
+): Promise<void> {
+  const message = error instanceof Error ? error.message : String(error);
+  if (
+    /no active turn to steer|expected[ _-]?turn[ _-]?id.*(?:does not match|mismatch)|turn[ _-]?id mismatch/i.test(
+      message,
+    )
+  ) {
+    const deadline = Date.now() + 3_000;
+    while (session.activeTurnId === turnId && Date.now() < deadline) {
+      await sleep(25);
+    }
+  }
+  if (session.activeTurnId === turnId) throw error;
 }

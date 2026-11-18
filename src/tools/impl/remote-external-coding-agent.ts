@@ -234,7 +234,6 @@ function errorMessage(error: unknown): string {
 class RemoteWorkerLostError extends Error {}
 
 class OutdatedRemoteWorkerError extends Error {}
-
 /** Fixed telemetry categories; never include error text in the returned code. */
 export function classifyRemoteExternalWorkerControlError(
   error: unknown,
@@ -249,6 +248,7 @@ export function classifyRemoteExternalWorkerControlError(
   if (error instanceof RemoteFollowUpTimeoutError) return "steer_timeout";
   if (error instanceof RemoteFollowUpSocketClosedError) return "socket_closed";
   const message = errorMessage(error);
+  if (/no active turn to steer/i.test(message)) return "turn_ended";
   if (message === "App-server socket closed") return "socket_closed";
   if (
     message === CLAUDE_TURN_START_TIMEOUT_ERROR ||
