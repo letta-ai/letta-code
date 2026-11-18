@@ -84,10 +84,6 @@ export class LSPClient extends EventEmitter {
     });
   }
 
-  /**
-   * Reject every outstanding request with the given error and clear the table.
-   * Safe to call multiple times — once the pending map is empty it's a no-op.
-   */
   private rejectAllPending(error: Error): void {
     if (this.pendingRequests.size === 0) return;
     for (const [, pending] of this.pendingRequests) {
@@ -152,8 +148,6 @@ export class LSPClient extends EventEmitter {
 
   private sendRequest<T>(method: string, params?: unknown): Promise<T> {
     return new Promise((resolve, reject) => {
-      // If the server is already gone, fail fast instead of enqueueing a
-      // request that can never be written or answered.
       if (this.disposed) {
         reject(this.terminalError ?? new Error("LSP server has exited"));
         return;
@@ -186,9 +180,6 @@ export class LSPClient extends EventEmitter {
 
   private sendMessage(message: JsonRpcRequest | JsonRpcNotification): void {
     if (this.disposed) {
-      // Server process is gone — writing to its stdin would throw. Drop the
-      // message; any request waiting on a response was already rejected by
-      // the exit/error handler.
       return;
     }
     const content = JSON.stringify(message);

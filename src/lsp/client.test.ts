@@ -5,12 +5,6 @@ import { PassThrough } from "node:stream";
 import { LSPClient } from "@/lsp/client";
 import type { LSPServerProcess } from "@/lsp/types";
 
-/**
- * Spawn a minimal "LSP server" process: it reads JSON-RPC messages from stdin
- * (so the client's Content-Length framing works) but its behavior is controlled
- * by the script. We use this instead of a mock so the real ChildProcess wiring
- * and exit handling in LSPClient are exercised.
- */
 function spawnScript(script: string) {
   return spawn("bun", ["-e", script], {
     stdio: ["pipe", "pipe", "pipe"],
@@ -27,20 +21,32 @@ async function withScriptServer(
 ) {
   const server = spawnScript(script);
   const abort = new AbortController();
+  let closedSettled = false;
   const closed = new Promise<void>((resolve) =>
-    server.once("close", () => resolve()),
+    server.once("close", () => {
+      closedSettled = true;
+      resolve();
+    }),
   );
+  server.once("exit", () => {
+    for (const stream of [server.stdin, server.stdout, server.stderr]) {
+      (stream as { destroy?: () => void } | null)?.destroy?.();
+    }
+  });
   let timer: ReturnType<typeof setTimeout> | undefined;
   let onError: (error: Error) => void = () => {};
+  let failed = false;
   const failure = new Promise<never>((_, reject) => {
-    onError = reject;
+    onError = (error: Error) => {
+      failed = true;
+      reject(error);
+    };
     server.once("error", onError);
-    timer = setTimeout(
-      () => reject(new Error("server test timed out")),
-      timeoutMs,
-    );
+    timer = setTimeout(() => {
+      failed = true;
+      reject(new Error("server test timed out"));
+    }, timeoutMs);
   });
-  // Start through a promise so synchronous exceptions also go through cleanup.
   const work = Promise.resolve().then(() => run(server, abort.signal));
   try {
     await Promise.race([work, failure]);
@@ -48,20 +54,37 @@ async function withScriptServer(
     clearTimeout(timer);
     abort.abort();
     server.kill("SIGKILL");
-    let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
+    let boundTimer: ReturnType<typeof setTimeout> | undefined;
+    let graceTimer: ReturnType<typeof setTimeout> | undefined;
     try {
-      await Promise.race([
-        Promise.allSettled([closed, work]),
-        new Promise<never>((_, reject) => {
-          cleanupTimer = setTimeout(
-            () => reject(new Error("server cleanup timed out")),
-            1000,
-          );
-        }),
-      ]);
+      if (failed) {
+        await Promise.race([
+          Promise.allSettled([closed, work]),
+          new Promise<void>((resolve) => {
+            graceTimer = setTimeout(resolve, 250);
+          }),
+        ]);
+      } else {
+        await Promise.race([
+          Promise.allSettled([closed, work]),
+          new Promise<never>((_, reject) => {
+            boundTimer = setTimeout(
+              () => reject(new Error("server cleanup timed out")),
+              1000,
+            );
+          }),
+        ]);
+      }
     } finally {
-      clearTimeout(cleanupTimer);
+      clearTimeout(boundTimer);
+      clearTimeout(graceTimer);
       server.removeListener("error", onError);
+      if (!closedSettled) {
+        server.unref();
+        for (const stream of [server.stdin, server.stdout, server.stderr]) {
+          (stream as { unref?: () => void } | null)?.unref?.();
+        }
+      }
     }
   }
 }
@@ -172,7 +195,6 @@ test("exit blocks new requests but allows the final buffered response before clo
 });
 
 test("pending request is rejected when the server process exits without responding", async () => {
-  // Server: read and discard stdin, then exit immediately on the first message.
   await withScriptServer(
     `
     process.stdin.once("data", () => {
@@ -186,24 +208,18 @@ test("pending request is rejected when the server process exits without respondi
         rootUri: process.cwd(),
       });
 
-      // sendRequest is private, so reach it through the public surface. A bogus
-      // method is fine — what matters is that a request is pending when the
-      // process dies, and that it rejects instead of hanging forever.
       const pending = (
         client as unknown as {
           sendRequest<T>(method: string, params?: unknown): Promise<T>;
         }
       ).sendRequest("some/pendingMethod", {});
 
-      // Before the fix, this promise would hang because the exit handler did not
-      // reject outstanding requests.
       await expect(pending).rejects.toThrow(/LSP server exited/);
     },
   );
 }, 5000);
 
 test("request sent after the server exited rejects immediately", async () => {
-  // Server that exits right away.
   await withScriptServer(
     `setImmediate(() => process.exit(0));`,
     async (server, signal) => {
@@ -213,7 +229,6 @@ test("request sent after the server exited rejects immediately", async () => {
         rootUri: process.cwd(),
       });
 
-      // Wait for the exit handler to mark the client as disposed.
       await once(client, "exit", { signal });
 
       const pending = (
@@ -222,18 +237,16 @@ test("request sent after the server exited rejects immediately", async () => {
         }
       ).sendRequest("anything", {});
 
-      // New requests against a dead server must fail fast rather than enqueue a
-      // promise that can never be settled.
       await expect(pending).rejects.toThrow(/LSP server exited/);
     },
   );
 }, 5000);
 
-// Server: respond to the first complete frame, then exit on the second.
 const framedServerScript = `
     let buf = Buffer.alloc(0);
     let handled = false;
     process.stdin.on("data", (chunk) => {
+      process.stderr.write("RX " + chunk.length + " " + JSON.stringify(chunk.toString("latin1")) + "\\n");
       buf = Buffer.concat([buf, chunk]);
       while (true) {
         const end = buf.indexOf("\\r\\n\\r\\n");
@@ -246,6 +259,7 @@ const framedServerScript = `
         if (!handled) {
           const body = '{"jsonrpc":"2.0","id":1,"result":{"ok":true}}';
           process.stdout.write('Content-Length: ' + Buffer.byteLength(body) + '\\r\\n\\r\\n' + body);
+          process.stderr.write("TX response\\n");
           handled = true;
         } else {
           setImmediate(() => process.exit(1));
@@ -278,25 +292,52 @@ test("server fixture handles split headers and bodies followed by coalesced fram
 }, 5000);
 
 test("responded request resolves; only a later, unrelated exit rejects others", async () => {
-  await withScriptServer(framedServerScript, async (server) => {
-    const client = new LSPClient({
-      serverID: "test",
-      server: { process: server },
-      rootUri: process.cwd(),
+  const wire: string[] = [];
+  try {
+    await withScriptServer(framedServerScript, async (server) => {
+      type WriteFn = (
+        chunk: unknown,
+        cb?: (error?: Error | null) => void,
+      ) => boolean;
+      const rawWrite = server.stdin.write.bind(
+        server.stdin,
+      ) as unknown as WriteFn;
+      (server.stdin as unknown as { write: WriteFn }).write = (chunk, cb) => {
+        wire.push(`client-wrote ${JSON.stringify(String(chunk))}`);
+        return rawWrite(chunk, cb);
+      };
+      server.stdout.on("data", (chunk: Buffer) =>
+        wire.push(
+          `client-received ${JSON.stringify(chunk.toString("latin1"))}`,
+        ),
+      );
+      server.stderr.on("data", (chunk: Buffer) =>
+        wire.push(`server-said ${JSON.stringify(chunk.toString("latin1"))}`),
+      );
+
+      const client = new LSPClient({
+        serverID: "test",
+        server: { process: server },
+        rootUri: process.cwd(),
+      });
+
+      const sendRequest = (
+        client as unknown as {
+          sendRequest<T>(method: string, params?: unknown): Promise<T>;
+        }
+      ).sendRequest.bind(client);
+
+      const first = sendRequest<{ ok: boolean }>("first");
+      const firstResult = await first;
+      expect(firstResult.ok).toBe(true);
+
+      const second = sendRequest("second");
+      await expect(second).rejects.toThrow(/LSP server exited/);
     });
-
-    const sendRequest = (
-      client as unknown as {
-        sendRequest<T>(method: string, params?: unknown): Promise<T>;
-      }
-    ).sendRequest.bind(client);
-
-    const first = sendRequest<{ ok: boolean }>("first");
-    const firstResult = await first;
-    expect(firstResult.ok).toBe(true);
-
-    // Second request will still be pending when the server exits.
-    const second = sendRequest("second");
-    await expect(second).rejects.toThrow(/LSP server exited/);
-  });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `${message}\nwire trace:\n  ${wire.length > 0 ? wire.join("\n  ") : "(no pipe traffic captured)"}`,
+    );
+  }
 }, 5000);
