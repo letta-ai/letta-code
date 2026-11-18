@@ -27,18 +27,36 @@ async function withScriptServer(
 ) {
   const server = spawnScript(script);
   const abort = new AbortController();
+  let closedSettled = false;
   const closed = new Promise<void>((resolve) =>
-    server.once("close", () => resolve()),
+    server.once("close", () => {
+      closedSettled = true;
+      resolve();
+    }),
   );
+  // Bun workaround: when a child exits while its stdio pipes are still being
+  // polled, Bun can fail to deliver the pipes' EOF — the trailing stderr data
+  // is dropped and the ChildProcess `close` event never fires, wedging the
+  // event loop in a native busy-poll. Force-destroy the streams once `exit`
+  // is observed so EOF/close is delivered deterministically.
+  server.once("exit", () => {
+    for (const stream of [server.stdin, server.stdout, server.stderr]) {
+      (stream as { destroy?: () => void } | null)?.destroy?.();
+    }
+  });
   let timer: ReturnType<typeof setTimeout> | undefined;
   let onError: (error: Error) => void = () => {};
+  let failed = false;
   const failure = new Promise<never>((_, reject) => {
-    onError = reject;
+    onError = (error: Error) => {
+      failed = true;
+      reject(error);
+    };
     server.once("error", onError);
-    timer = setTimeout(
-      () => reject(new Error("server test timed out")),
-      timeoutMs,
-    );
+    timer = setTimeout(() => {
+      failed = true;
+      reject(new Error("server test timed out"));
+    }, timeoutMs);
   });
   // Start through a promise so synchronous exceptions also go through cleanup.
   const work = Promise.resolve().then(() => run(server, abort.signal));
@@ -48,20 +66,46 @@ async function withScriptServer(
     clearTimeout(timer);
     abort.abort();
     server.kill("SIGKILL");
-    let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
+    let boundTimer: ReturnType<typeof setTimeout> | undefined;
+    let graceTimer: ReturnType<typeof setTimeout> | undefined;
     try {
-      await Promise.race([
-        Promise.allSettled([closed, work]),
-        new Promise<never>((_, reject) => {
-          cleanupTimer = setTimeout(
-            () => reject(new Error("server cleanup timed out")),
-            1000,
-          );
-        }),
-      ]);
+      if (failed) {
+        // Best-effort teardown: the body already failed, and `work` may be
+        // exactly the promise that never settles (that is the hang under
+        // test). Give its abort path a short grace, then give up without
+        // throwing so the original failure is what the test reports.
+        await Promise.race([
+          Promise.allSettled([closed, work]),
+          new Promise<void>((resolve) => {
+            graceTimer = setTimeout(resolve, 250);
+          }),
+        ]);
+      } else {
+        // Success path: `work` has settled; the kill must be followed by
+        // `close` — waiting past the bound is a genuine leak worth failing on.
+        await Promise.race([
+          Promise.allSettled([closed, work]),
+          new Promise<never>((_, reject) => {
+            boundTimer = setTimeout(
+              () => reject(new Error("server cleanup timed out")),
+              1000,
+            );
+          }),
+        ]);
+      }
     } finally {
-      clearTimeout(cleanupTimer);
+      clearTimeout(boundTimer);
+      clearTimeout(graceTimer);
       server.removeListener("error", onError);
+      if (!closedSettled) {
+        // Last resort when `close` never fires after a kill: drop the
+        // child's event-loop refs so one stuck test cannot hold the whole
+        // test process (and shard) open after it has already failed.
+        server.unref();
+        for (const stream of [server.stdin, server.stdout, server.stderr]) {
+          (stream as { unref?: () => void } | null)?.unref?.();
+        }
+      }
     }
   }
 }
@@ -234,6 +278,7 @@ const framedServerScript = `
     let buf = Buffer.alloc(0);
     let handled = false;
     process.stdin.on("data", (chunk) => {
+      process.stderr.write("RX " + chunk.length + " " + JSON.stringify(chunk.toString("latin1")) + "\\n");
       buf = Buffer.concat([buf, chunk]);
       while (true) {
         const end = buf.indexOf("\\r\\n\\r\\n");
@@ -246,6 +291,7 @@ const framedServerScript = `
         if (!handled) {
           const body = '{"jsonrpc":"2.0","id":1,"result":{"ok":true}}';
           process.stdout.write('Content-Length: ' + Buffer.byteLength(body) + '\\r\\n\\r\\n' + body);
+          process.stderr.write("TX response\\n");
           handled = true;
         } else {
           setImmediate(() => process.exit(1));
@@ -278,25 +324,56 @@ test("server fixture handles split headers and bodies followed by coalesced fram
 }, 5000);
 
 test("responded request resolves; only a later, unrelated exit rejects others", async () => {
-  await withScriptServer(framedServerScript, async (server) => {
-    const client = new LSPClient({
-      serverID: "test",
-      server: { process: server },
-      rootUri: process.cwd(),
+  // Wire trace: on failure, report every byte crossing the pipes so the log
+  // shows where the round-trip broke (client write, server receive, response
+  // delivery, or response parsing).
+  const wire: string[] = [];
+  try {
+    await withScriptServer(framedServerScript, async (server) => {
+      type WriteFn = (
+        chunk: unknown,
+        cb?: (error?: Error | null) => void,
+      ) => boolean;
+      const rawWrite = server.stdin.write.bind(
+        server.stdin,
+      ) as unknown as WriteFn;
+      (server.stdin as unknown as { write: WriteFn }).write = (chunk, cb) => {
+        wire.push(`client-wrote ${JSON.stringify(String(chunk))}`);
+        return rawWrite(chunk, cb);
+      };
+      server.stdout.on("data", (chunk: Buffer) =>
+        wire.push(
+          `client-received ${JSON.stringify(chunk.toString("latin1"))}`,
+        ),
+      );
+      server.stderr.on("data", (chunk: Buffer) =>
+        wire.push(`server-said ${JSON.stringify(chunk.toString("latin1"))}`),
+      );
+
+      const client = new LSPClient({
+        serverID: "test",
+        server: { process: server },
+        rootUri: process.cwd(),
+      });
+
+      const sendRequest = (
+        client as unknown as {
+          sendRequest<T>(method: string, params?: unknown): Promise<T>;
+        }
+      ).sendRequest.bind(client);
+
+      const first = sendRequest<{ ok: boolean }>("first");
+      const firstResult = await first;
+      expect(firstResult.ok).toBe(true);
+
+      // Second request will still be pending when the server exits.
+      const second = sendRequest("second");
+      await expect(second).rejects.toThrow(/LSP server exited/);
     });
-
-    const sendRequest = (
-      client as unknown as {
-        sendRequest<T>(method: string, params?: unknown): Promise<T>;
-      }
-    ).sendRequest.bind(client);
-
-    const first = sendRequest<{ ok: boolean }>("first");
-    const firstResult = await first;
-    expect(firstResult.ok).toBe(true);
-
-    // Second request will still be pending when the server exits.
-    const second = sendRequest("second");
-    await expect(second).rejects.toThrow(/LSP server exited/);
-  });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `${message}\nwire trace:\n  ${wire.length > 0 ? wire.join("\n  ") : "(no pipe traffic captured)"}`,
+    );
+  }
 }, 5000);
