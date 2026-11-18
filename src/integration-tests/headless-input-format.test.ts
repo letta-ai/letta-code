@@ -38,6 +38,7 @@ async function runBidirectionalOnce(
   timeoutMs = 180000, // 180s timeout - CI can be very slow
   extraEnv: NodeJS.ProcessEnv = {},
   backgroundResults = 0,
+  isBackgroundComplete: (objects: object[]) => boolean = () => true,
 ): Promise<object[]> {
   return new Promise((resolve, reject) => {
     const proc = spawn(
@@ -106,7 +107,12 @@ async function runBidirectionalOnce(
         controlResponsesReceived >= expectedControlResponses;
       const allInputsSent = inputIndex >= inputs.length;
 
-      if (allInputsSent && allUserResultsDone && allControlResponsesDone) {
+      if (
+        allInputsSent &&
+        allUserResultsDone &&
+        allControlResponsesDone &&
+        isBackgroundComplete(objects)
+      ) {
         closing = true;
         setTimeout(() => proc.stdin?.end(), 500);
       }
@@ -185,6 +191,7 @@ async function runBidirectionalOnce(
       // Check if we got enough results
       const gotExpectedResults =
         userResultsReceived >= expectedUserResults &&
+        isBackgroundComplete(objects) &&
         controlResponsesReceived >= expectedControlResponses &&
         (!hasInvalidInput || errorResponsesReceived > 0);
 
@@ -197,6 +204,10 @@ async function runBidirectionalOnce(
                 stderr,
                 extra: {
                   args: extraArgs.join(" "),
+                  turn_inputs_and_results: JSON.stringify({
+                    stdin: inputs,
+                    stream: objects,
+                  }),
                 },
               },
             )}`,
@@ -215,6 +226,10 @@ async function runBidirectionalOnce(
                   stderr,
                   extra: {
                     args: extraArgs.join(" "),
+                    turn_inputs_and_results: JSON.stringify({
+                      stdin: inputs,
+                      stream: objects,
+                    }),
                     recent_messages: summarizeRecentMessages(
                       objects as Array<Record<string, unknown>>,
                     ),
@@ -239,6 +254,10 @@ async function runBidirectionalOnce(
               stderr,
               extra: {
                 args: extraArgs.join(" "),
+                turn_inputs_and_results: JSON.stringify({
+                  stdin: inputs,
+                  stream: objects,
+                }),
                 recent_messages: summarizeRecentMessages(
                   objects as Array<Record<string, unknown>>,
                 ),
@@ -270,6 +289,7 @@ async function runBidirectionalWithRetry(
   retryOnTimeouts = 1,
   extraEnv: NodeJS.ProcessEnv = {},
   backgroundResults = 0,
+  isBackgroundComplete: (objects: object[]) => boolean = () => true,
 ): Promise<object[]> {
   let attempt = 0;
   const failedAttempts: Array<{ attempt: number; message: string }> = [];
@@ -281,6 +301,7 @@ async function runBidirectionalWithRetry(
         timeoutMs,
         extraEnv,
         backgroundResults,
+        isBackgroundComplete,
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -684,14 +705,28 @@ describe("input-format stream-json", () => {
           240000,
           1,
           { USER_CWD: fixture.rootDir },
-          1, // Keep stdin open for the subagent completion notification's turn.
+          1,
+          // Interim results must not close stdin before the child's report arrives.
+          (messages) =>
+            messages.some((message) => {
+              const result = message as Partial<ResultMessage>;
+              return (
+                result.type === "result" &&
+                result.result?.includes(fixture.expectedReport) === true
+              );
+            }),
         )) as WireMessage[];
 
         const results = objects.filter(
           (o): o is ResultMessage => o.type === "result",
         );
-        expect(results, JSON.stringify(results, null, 2)).toHaveLength(2);
-        const result = results.at(-1);
+        expect(
+          results.length,
+          JSON.stringify(objects, null, 2),
+        ).toBeGreaterThanOrEqual(2);
+        const result = results
+          .slice(1)
+          .find((result) => result.result?.includes(fixture.expectedReport));
         expect(result).toBeDefined();
         expect(result?.subtype).toBe("success");
 
