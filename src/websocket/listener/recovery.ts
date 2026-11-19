@@ -19,7 +19,10 @@ import {
 import { LISTENER_STREAM_RESUME_POLICY } from "./constants";
 import { promotePreparedInputTerminals } from "./conversation-runtime";
 import { getConversationWorkingDirectory } from "./cwd";
-import { captureNotificationWait } from "./external-tools";
+import {
+  captureNotificationWait,
+  resolveRuntimeToolContextOptions,
+} from "./external-tools";
 import { createInterruptedTurnStore } from "./interrupted-turn-record";
 import {
   createToolExecutionOutputEmitter,
@@ -567,6 +570,11 @@ async function executeRecoveredApprovalContinuation(params: {
         return;
       }
       const preparedToolContext = await prepareToolExecutionContext({
+        ...resolveRuntimeToolContextOptions(
+          runtime.listener,
+          scope,
+          selectedDeliveryOwnerId ?? opts?.connectionId,
+        ),
         connectionId: resolveTurnExecutionConnectionId(
           runtime.listener,
           scope,
