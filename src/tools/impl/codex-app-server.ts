@@ -22,6 +22,11 @@ import {
   turnReport,
 } from "./codex-app-server-payloads";
 import {
+  codexServerRequestReply,
+  type JsonRpcMessage,
+  parseCodexMessage,
+} from "./codex-app-server-requests";
+import {
   waitForRejectedCodexSteer,
   withCodexSteerReceipt,
   withSessionLock,
@@ -40,13 +45,6 @@ import {
 
 declare const LETTA_VERSION: string | undefined;
 
-interface JsonRpcMessage {
-  id?: number;
-  method?: string;
-  params?: Record<string, unknown>;
-  result?: Record<string, unknown>;
-  error?: { code?: number; message?: string; data?: unknown };
-}
 export interface CodexAppServerTransport {
   stdout: Readable;
   stderr?: Readable;
@@ -270,27 +268,29 @@ class CodexAppServerClient {
     const stdout = createInterface({ input: transport.stdout });
     stdout.once("error", () => void this.close());
     stdout.on("line", (line) => {
-      if (!line.trim()) return;
-      let message: JsonRpcMessage;
-      try {
-        message = JSON.parse(line) as JsonRpcMessage;
-      } catch {
-        return;
-      }
-      if (typeof message.id === "number") {
-        const pending = this.pending.get(message.id);
-        if (!pending) return;
-        this.pending.delete(message.id);
-        if (message.error) {
-          pending.reject(
-            new Error(message.error.message ?? "Codex request failed"),
+      const message = parseCodexMessage(line);
+      if (!message) return;
+      if (typeof message.method === "string") {
+        const { id, method } = message;
+        if (typeof id === "number" || typeof id === "string") {
+          this.transport.stdin.write(
+            `${JSON.stringify(codexServerRequestReply(id, method))}\n`,
+            (error) => error && void this.close(),
           );
-        } else {
-          pending.resolve(message.result ?? {});
-        }
+        } else if (id === undefined) this.onNotification(message);
         return;
       }
-      if (message.method) this.onNotification(message);
+      if (typeof message.id !== "number") return;
+      const pending = this.pending.get(message.id);
+      if (!pending) return;
+      this.pending.delete(message.id);
+      if (message.error) {
+        pending.reject(
+          new Error(message.error.message ?? "Codex request failed"),
+        );
+      } else {
+        pending.resolve(message.result ?? {});
+      }
     });
     transport.stderr?.setEncoding("utf8");
     transport.stderr?.on("data", (chunk: string) => {
