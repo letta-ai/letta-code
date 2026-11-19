@@ -91,8 +91,7 @@ export interface SubagentMessageCommand {
   tool_call_id?: string;
 }
 
-// `queued`: the worker is in a long tool call and hasn't acknowledged the
-// interrupt yet; the message is queued and handled when the call stops.
+// `queued`: the listener accepted the follow-up and delivery is still pending.
 export type SubagentMessageResponse = {
   type: "subagent_message_response";
   request_id: string;

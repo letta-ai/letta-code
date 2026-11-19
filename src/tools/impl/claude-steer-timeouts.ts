@@ -12,8 +12,8 @@ export const CLAUDE_CONTROL_RESPONSE_TIMEOUT_MS = 30_000;
 
 /**
  * How long a remote caller waits for a follow-up (steer or resume) answer.
- * Covers the listener's worst case (turn start + interrupt ack) plus margin
- * for building the worker environment and the network round trip.
+ * Retains the budget for older listeners that do not acknowledge slow
+ * follow-ups early.
  */
 export const REMOTE_SUBAGENT_MESSAGE_TIMEOUT_MS =
   CLAUDE_TURN_START_TIMEOUT_MS + CLAUDE_CONTROL_RESPONSE_TIMEOUT_MS + 30_000;
