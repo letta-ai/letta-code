@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
   filterStructuredOutputRows,
+  settableReasoningLevels,
   structuredOutputSupport,
 } from "@/cli/subcommands/model";
 import { removeTestDir } from "@/test-utils/test-fs";
@@ -45,6 +46,31 @@ test("the structured-output filter keeps only explicit support", () => {
     supported: [supported],
     unknownCount: 1,
   });
+});
+
+test("a BYOK model that reports no reasoning capabilities accepts standard levels", () => {
+  expect(settableReasoningLevels([], { providerCategory: "byok" })).toEqual([
+    "none",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+  ]);
+  // A capability set the backend did report stays authoritative even when it
+  // advertises no levels, and advertised levels always win.
+  expect(
+    settableReasoningLevels([], {
+      providerCategory: "byok",
+      capabilitiesReported: true,
+    }),
+  ).toEqual([]);
+  expect(
+    settableReasoningLevels(["none"], { providerCategory: "byok" }),
+  ).toEqual(["none"]);
+  // Non-BYOK rows keep their advertised levels (or lack of them).
+  expect(settableReasoningLevels([], {})).toEqual([]);
 });
 
 // Real CLI subprocesses and disk-backed local backend; no inference or mocks.
