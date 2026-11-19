@@ -63,7 +63,7 @@ Bare-name removal applies to every tool except [`EndConversation`](https://code.
 
 > [!NOTE]
 >
-> Permission rules are enforced by Claude Code, not by the model. Instructions in your prompt or `CLAUDE.md` shape what Claude tries to do, but they don't change what Claude Code allows. To grant or revoke access, use `/permissions`, the rules described here, a [permission mode](https://code.claude.com/docs/en/permission-modes.md), or a [PreToolUse hook](#extend-permissions-with-hooks).
+> Permission rules are enforced by Claude Code, not by the model. Instructions in your prompt or `CLAUDE.md` shape what Claude tries to do, but they don't change these rules. To grant or revoke access, use `/permissions`, the rules described here, a [permission mode](https://code.claude.com/docs/en/permission-modes.md), or a [PreToolUse hook](#extend-permissions-with-hooks).
 
 When [auto mode](https://code.claude.com/docs/en/permission-modes.md#eliminate-prompts-with-auto-mode) is available to your session, the dialog also includes the [auto mode classifier rules](https://code.claude.com/docs/en/auto-mode-config.md#edit-rules-from-permissions). Select the **Auto mode** tab to view them.
 
@@ -352,7 +352,9 @@ A `Read` deny rule also blocks the [Edit and Write tools](https://code.claude.co
 
 > [!WARNING]
 >
-> Read and Edit deny rules apply to Claude's built-in file tools, to file commands Claude Code recognizes in Bash, such as `cat`, `head`, `tail`, `sed`, and `tee`, and to the targets of Bash [redirections](#redirections) such as `> file` and `< file`. They don't apply to a command that reads files without naming them, such as `grep -r pattern .` run from the directory that holds the file, or to arbitrary subprocesses that read or write files indirectly, like a Python or Node script that opens files itself. For OS-level enforcement that blocks all processes from accessing a path, [enable the sandbox](https://code.claude.com/docs/en/sandboxing.md).
+> Read and Edit deny rules apply to Claude's built-in file tools. In a Bash command Claude Code [can analyze](#read-only-commands), they also apply to [redirection](#redirections) targets and to file commands it recognizes, such as `cat`, `head`, `tail`, `sed`, and `tee`.
+>
+> They don't apply to a command that reads files without naming them, such as `grep -r pattern .` run from the directory that holds the file. They also don't apply to arbitrary subprocesses that read or write files indirectly, like a Python or Node script that opens files itself. For OS-level enforcement on sandboxed shell commands, [enable the sandbox](https://code.claude.com/docs/en/sandboxing.md) and [turn off the unsandboxed retry](https://code.claude.com/docs/en/sandboxing.md#turn-off-the-retry-with-strict-sandbox-mode).
 
 #### `Write(path)`, `Glob(path)`, and `Grep(path)` rules don't match
 
@@ -677,13 +679,17 @@ Files in additional directories follow the same permission rules as the original
 
 You can't add most [network paths](https://code.claude.com/docs/en/errors.md#working-directory-is-a-network-path), such as the UNC share `\\server\share`, as working directories, because looking one up can contact the host it names. On Windows, map the share to a drive letter instead and pass the drive with `--add-dir` at launch.
 
+> [!NOTE]
+>
+> If you use `claude --add-dir` or `/add-dir` in an interactive terminal session to add a folder your [workspace trust](#project-allow-rules-and-workspace-trust) doesn't cover, Claude Code asks you to trust it first. Requires Claude Code v2.1.326 or later.
+
 In background sessions on macOS, the session host requests access to protected folders such as `~/Desktop`, `~/Documents`, and `~/Downloads` separately from your terminal when Claude needs to read or write files there; if reads there fail with `Operation not permitted`, see [how to grant folder access to background sessions](https://code.claude.com/docs/en/agent-view.md#background-sessions-can’t-read-desktop-documents-or-downloads-on-macos).
 
 ### Block file-tool reads and writes outside the working directories
 
 To make Claude's file tools refuse paths outside the working directories in every permission mode, including `bypassPermissions`, set one or both of these keys to `true`:
 
-* **[`permissions.blockReadsOutsideWorkingDirectories`](https://code.claude.com/docs/en/settings-reference#permissions-blockreadsoutsideworkingdirectories)**: the file tools refuse reads there, apart from files Claude Code itself needs. In auto mode, Claude Code offers to turn it on the first time Claude [reads outside the working directories](https://code.claude.com/docs/en/permission-modes.md#first-read-outside-the-working-directories).
+* **[`permissions.blockReadsOutsideWorkingDirectories`](https://code.claude.com/docs/en/settings-reference#permissions-blockreadsoutsideworkingdirectories)**: the file tools refuse reads there, apart from files Claude Code itself needs. In auto mode, Claude Code can offer to turn it on the first time Claude [reads outside the working directories](https://code.claude.com/docs/en/permission-modes.md#first-read-outside-the-working-directories).
 * **[`permissions.blockWritesOutsideWorkingDirectories`](https://code.claude.com/docs/en/settings-reference#permissions-blockwritesoutsideworkingdirectories)**: the `Write`, `Edit`, and `NotebookEdit` tools refuse writes there, apart from some of Claude Code's own files such as plan files. The key doesn't limit shell commands, MCP tools, or the programs hooks run, so use [sandboxing](https://code.claude.com/docs/en/sandboxing.md) to limit where shell commands write. Requires Claude Code v2.1.314 or later.
 
 To keep one outside directory reachable while either key is `true`, [add it as a working directory](https://code.claude.com/docs/en/settings-reference.md#let-one-directory-through-the-read-or-write-block).
@@ -746,7 +752,7 @@ Permissions and [sandboxing](https://code.claude.com/docs/en/sandboxing.md) are 
 
 Use both for defense-in-depth, since sandbox restrictions still apply even if a prompt injection bypasses Claude's decision-making. Paths and domains from both sandbox settings and permission rules are [merged into the final sandbox configuration](https://code.claude.com/docs/en/sandboxing.md#permission-rules).
 
-When you enable sandboxing and set [`sandbox.autoAllowBashIfSandboxed`](https://code.claude.com/docs/en/settings-reference#sandbox-autoallowbashifsandboxed) to `true`, sandboxed Bash commands run without prompting. That holds even with a bare `Bash` ask rule or the [equivalent `Bash(*)` form](#match-all-uses-of-a-tool): the sandbox boundary substitutes for that whole-tool prompt.
+When you enable sandboxing and set [`sandbox.autoAllowBashIfSandboxed`](https://code.claude.com/docs/en/settings-reference#sandbox-autoallowbashifsandboxed) to `true`, sandboxed Bash commands run without prompting. That applies even with a bare `Bash` ask rule or the [equivalent `Bash(*)` form](#match-all-uses-of-a-tool): the sandbox boundary substitutes for that whole-tool prompt.
 
 In [plan mode](https://code.claude.com/docs/en/permission-modes.md#analyze-before-you-edit-with-plan-mode), Claude Code skips this substitution. Without an ask rule, the [built-in read-only commands](#read-only-commands) still run without prompting, and any other shell command goes through the regular permission flow while you are still planning; see [plan mode](https://code.claude.com/docs/en/permission-modes.md#analyze-before-you-edit-with-plan-mode) for how Claude Code gates commands there. With a bare `Bash` ask rule, every Bash command prompts, including sandboxed read-only commands, the same as outside sandboxing.
 

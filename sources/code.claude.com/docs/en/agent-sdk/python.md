@@ -2608,7 +2608,7 @@ Launches a new agent to handle complex, multi-step tasks autonomously.
 When Claude leaves `run_in_background` out of an `Agent` call, by default your main agent doesn't wait for the new agent and a subagent waits:
 
 * **From your main agent**: the new agent runs in the background, and the result has `status: "async_launched"`. To make your main agent wait for the new agent instead, see [Choose whether Claude waits for subagents](https://code.claude.com/docs/en/agent-sdk/subagents.md#choose-whether-claude-waits-for-subagents).
-* **From one of your subagents**: the calling subagent [waits for the new agent](https://code.claude.com/docs/en/sub-agents.md#let-subagents-spawn-their-own-subagents). The new agent runs in the background instead when its definition sets [`background`](#agentdefinition) to `True`, or when you [turn fork mode off](https://code.claude.com/docs/en/sub-agents.md#turn-fork-mode-on-or-off) by setting `CLAUDE_CODE_FORK_SUBAGENT` to `0`.
+* **From one of your subagents**: the calling subagent [waits for the new agent](https://code.claude.com/docs/en/sub-agents.md#let-subagents-spawn-their-own-subagents). The new agent runs in the background instead when its definition sets [`background`](#agentdefinition) to `True`.
 
 Before Python SDK v0.2.169, agents that your subagents started also ran in the background by default. That release is the first to bundle Claude Code v2.1.302 or later.
 

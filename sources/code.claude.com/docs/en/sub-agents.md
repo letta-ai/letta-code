@@ -1079,7 +1079,7 @@ By default, a subagent can spawn subagents of its own, up to three layers below 
 Nested subagents suit a delegated task that itself splits into parallel subtasks, such as a reviewer subagent that dispatches a verifier per finding. By default the spawning subagent waits for each nested subagent's report:
 
 * **Interactive terminal session**: only the top-level subagent's summary returns to you, because a subagent that launches background subagents waits for their results before it finishes.
-* **`claude -p` and the Agent SDK**: the spawning subagent waits while [fork mode](#turn-fork-mode-on-or-off) is on. If you turn fork mode off, nested subagents start in the [background](#run-subagents-in-foreground-or-background) instead. The spawning subagent doesn't wait for a background nested subagent, which reports to your main conversation if it outlasts the spawning subagent.
+* **`claude -p` and the Agent SDK**: the spawning subagent waits only for a foreground nested subagent. A [background](#run-subagents-in-foreground-or-background) nested subagent reports to your main conversation if it outlasts the spawning subagent.
 
 To change the limit, set [`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH`](https://code.claude.com/docs/en/env-vars) to the number of subagent layers you want below your main conversation. For example, this entry in [`settings.json`](https://code.claude.com/docs/en/settings) caps nesting at two layers:
 

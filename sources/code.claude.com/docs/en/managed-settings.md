@@ -134,7 +134,13 @@ Both settings rank the sources the same way. These terms recur in this section:
 
 Claude Code checks the sources in this order, highest priority first:
 
-1. Remote settings, delivered from claude.ai as [server-managed settings](https://code.claude.com/docs/en/server-managed-settings.md) or by a [Claude apps gateway](https://code.claude.com/docs/en/claude-apps-gateway). Claude Code fetches this source only when the session authenticates to Anthropic's API directly with an [eligible credential](https://code.claude.com/docs/en/server-managed-settings.md#platform-availability), signs in to a gateway with `/login`, or runs in Claude Desktop's Code tab behind a gateway that [serves that session settings](https://code.claude.com/docs/en/claude-apps-gateway-config.md#apply-code-settings-in-the-code-tab). On other providers, or when `ANTHROPIC_BASE_URL` points somewhere other than Anthropic's API, it starts at the next source
+1. Remote settings, delivered from claude.ai as [server-managed settings](https://code.claude.com/docs/en/server-managed-settings.md) or by a [Claude apps gateway](https://code.claude.com/docs/en/claude-apps-gateway). Claude Code fetches this source only when the session meets one of these conditions:
+
+   * It has an [eligible credential](https://code.claude.com/docs/en/server-managed-settings.md#platform-availability)
+   * It signs in to a gateway with `/login`
+   * It runs in Claude Desktop's Code tab behind a gateway that [serves that session settings](https://code.claude.com/docs/en/claude-apps-gateway-config.md#apply-code-settings-in-the-code-tab)
+
+   If you set a provider or `ANTHROPIC_BASE_URL`, [check the fetch outcome on a machine](https://code.claude.com/docs/en/server-managed-settings.md#verify-settings-delivery) to see whether Claude Code skips this source
 2. MDM or OS-level policies: the macOS plist or the HKLM registry key
 3. Managed settings files, `managed-settings.d/*.json` and `managed-settings.json` merged together
 4. The HKCU registry, on Windows, and on WSL once the HKLM registry or the Windows managed settings file turns [`wslInheritsWindowsSettings`](https://code.claude.com/docs/en/settings-reference#wslinheritswindowssettings) on and the HKCU value also sets it. Claude Code reads it only when [no admin document is present above it](#present-admin-documents) and no [host-supplied parent settings](#let-an-embedding-host-add-policy) supply a restrictive key

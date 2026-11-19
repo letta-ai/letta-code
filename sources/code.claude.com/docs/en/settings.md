@@ -323,7 +323,7 @@ An app that runs Claude Code inside itself and sets [`CLAUDE_CODE_PROVIDER_MANAG
 
 ## Settings in cloud sessions
 
-A [cloud session](https://code.claude.com/docs/en/claude-code-on-the-web.md) runs in a [cloud environment](https://code.claude.com/docs/en/cloud-environments.md) on a fresh clone of your repository, not on your machine. That changes which settings reach it:
+A [cloud session](https://code.claude.com/docs/en/claude-code-on-the-web.md) runs in a [cloud environment](https://code.claude.com/docs/en/cloud-environments.md) on a fresh clone of your repository. That changes which settings reach it:
 
 * **Cloud threads in a project**: in a cloud thread in a [project](https://code.claude.com/docs/en/claude-projects.md#what-threads-pick-up-from-your-repositories), none of a repository's `.claude/settings.json` permission rules, hooks, or `env` apply, however many repositories the project has. [What threads pick up from your repositories](https://code.claude.com/docs/en/claude-projects.md#what-threads-pick-up-from-your-repositories) lists what to use instead.
 * **Shared project settings** (`.claude/settings.json`): read in a session with one repository outside a project's threads, because the file is part of the clone and the session starts inside it. Commit a setting there to apply it in those sessions.
