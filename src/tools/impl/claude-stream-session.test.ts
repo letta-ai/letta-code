@@ -348,16 +348,13 @@ describe("Claude stream sessions", () => {
   );
 
   test(
-    "reports an errored held result as failed when the cap fires",
+    "reports a current error without waiting for background tasks",
     async () => {
       const fixture = transportFixture();
       try {
         const running = runClaudeTurn(
           { ...base, prompt: "work", sessionId: SESSION_ID },
-          {
-            createTransport: () => fixture.transport,
-            backgroundTaskWaitCapMs: 20,
-          },
+          { createTransport: () => fixture.transport },
         );
         await Bun.sleep(0);
         fixture.emit({
@@ -366,11 +363,11 @@ describe("Claude stream sessions", () => {
           tasks: [{ task_id: "bg1", task_type: "local_bash" }],
         });
         fixture.emit({ type: "result", is_error: true, result: "BROKE" });
-        const result = await awaitWithLiveLoop(running);
-        expect(result.success).toBe(false);
-        expect(result.report).toStartWith("BROKE");
-        expect(result.report).toContain("background tasks were still running");
-        expect(result.error).toStartWith("BROKE");
+        expect(await running).toMatchObject({
+          success: false,
+          report: "BROKE",
+          error: "BROKE",
+        });
         expect(fixture.ended()).toBe(true);
       } finally {
         teardownFixture(fixture);
@@ -533,7 +530,7 @@ describe("Claude stream sessions", () => {
         { createTransport: () => fixture.transport },
       );
       await Bun.sleep(0);
-      fixture.finish({ exitCode, exitSignal });
+      fixture.process.emit("exit", exitCode, exitSignal);
       expect(await running).toMatchObject({
         success: false,
         error: `Claude Code exited before a final result with ${expected}`,

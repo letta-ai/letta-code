@@ -266,7 +266,8 @@ describe("Codex app-server lifecycle", () => {
       { prompt: "Initial", parentAgentId: "parent", cwd: "/repo" },
       { createTransport: () => first.transport() },
     );
-    first.close("boom");
+    first.stderr.write("boom");
+    first.stdout.end();
     expect(await handle.completion).toMatchObject({
       success: false,
       error: expect.stringContaining("boom"),
@@ -343,10 +344,15 @@ describe("Codex app-server lifecycle", () => {
       });
       const handle = await startCodexTurn(
         { prompt: "Initial", parentAgentId: "parent", cwd: "/repo" },
-        { createTransport: () => ({ ...fake.transport(), exited }) },
+        {
+          createTransport: () => ({
+            ...fake.transport(),
+            childExit: exited,
+            exited: new Promise(() => {}),
+          }),
+        },
       );
-      fake.close(detail);
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      fake.stderr.write(detail);
       resolveExit({ code, signal });
       expect(await handle.completion).toMatchObject({
         success: false,
@@ -393,6 +399,27 @@ describe("Codex app-server lifecycle", () => {
     });
     expect(Date.now() - startedAt).toBeLessThan(3_000);
   });
+
+  test.each([false, true])(
+    "settles on stdout EOF with terminal frame: %s",
+    async (terminal) => {
+      const fake = new FakeCodexTransport();
+      const handle = await startCodexTurn(
+        { prompt: "Initial", parentAgentId: "parent", cwd: "/repo" },
+        {
+          createTransport: () => ({
+            ...fake.transport(),
+            exited: new Promise(() => {}),
+          }),
+        },
+      );
+      if (terminal) fake.complete("finished");
+      fake.stdout.end();
+      expect(await handle.completion).toMatchObject(
+        terminal ? { success: true, report: "finished" } : { success: false },
+      );
+    },
+  );
 
   test("routes messages to active turns through turn/steer", async () => {
     const fake = new FakeCodexTransport();
@@ -780,34 +807,20 @@ describe("Codex capacity failures", () => {
     expect(turnStarts(fake)).toHaveLength(1);
   });
 
-  test("includes Codex error notifications in the failed turn's error", async () => {
+  test("fails immediately on a non-retrying error for the active turn", async () => {
     const fake = new FakeCodexTransport();
     const handle = await startCodexTurn(
       { prompt: "Implement it", parentAgentId: "parent", cwd: "/repo" },
       { createTransport: () => fake.transport(), sleep: async () => {} },
     );
+    fake.errorNotification({ message: "different turn" }, "turn-other");
     fake.errorNotification({ message: "Reconnecting... 1/5" }, "turn-1", true);
     fake.errorNotification({
       message: "stream disconnected before completion",
     });
-    fake.fail("turn-1", null);
     expect(await handle.completion).toMatchObject({
       success: false,
       error: "stream disconnected before completion",
-    });
-  });
-
-  test("does not repeat an error notification that matches the turn error", async () => {
-    const fake = new FakeCodexTransport();
-    const handle = await startCodexTurn(
-      { prompt: "Implement it", parentAgentId: "parent", cwd: "/repo" },
-      { createTransport: () => fake.transport(), sleep: async () => {} },
-    );
-    fake.errorNotification({ message: "quota exceeded" });
-    fake.errorNotification({ message: "context window exceeded" });
-    fake.fail("turn-1", { message: "quota exceeded" });
-    expect(await handle.completion).toMatchObject({
-      error: "quota exceeded; context window exceeded",
     });
   });
 
@@ -823,7 +836,6 @@ describe("Codex capacity failures", () => {
       changes: [{ path: "src/a.ts" }],
     });
     fake.errorNotification({ message: CAPACITY_MESSAGE });
-    fake.fail("turn-1", null);
     const result = await handle.completion;
     expect(result.error).toStartWith(CODEX_CAPACITY_ERROR);
     expect(result.error).toContain("409 Conflict");

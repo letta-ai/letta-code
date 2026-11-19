@@ -21,6 +21,36 @@ afterEach(() => {
 });
 
 describe("Claude stream session lifecycle", () => {
+  test.each(["EOF", "error", "final frame"])(
+    "settles when stdout closes: %s",
+    async (mode) => {
+      const fixture = trackedFixture({ exitOnStdinEnd: false });
+      const running = runClaudeTurn(
+        { ...base, prompt: "work", sessionId: SESSION_ID },
+        { createTransport: () => fixture.transport },
+      );
+      await Bun.sleep(0);
+      if (mode === "error") fixture.stdout.destroy(new Error("broken stream"));
+      else if (mode === "final frame") {
+        fixture.stdout.end(
+          JSON.stringify({
+            type: "result",
+            is_error: false,
+            result: "finished",
+          }),
+        );
+      } else fixture.stdout.end();
+      expect(await running).toMatchObject(
+        mode === "final frame"
+          ? { success: true, report: "finished" }
+          : {
+              success: false,
+              error: "Claude Code stdout closed before a final result",
+            },
+      );
+    },
+  );
+
   test(
     "cancellation still reaches a settled session whose process is alive",
     async () => {

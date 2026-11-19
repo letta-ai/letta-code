@@ -332,3 +332,27 @@ export function externalWorkerProgressListeners(
       recordTaskEvent(subagentId, { type: "reasoning", text }),
   };
 }
+export function bufferExternalWorkerProgress() {
+  type Listeners = Required<ExternalWorkerListeners>;
+  let target: Listeners | undefined;
+  const pending: Array<(listeners: Listeners) => void> = [];
+  const forward =
+    <T>(select: (listeners: Listeners) => (value: T) => void) =>
+    (value: T) => {
+      const emit = (listeners: Listeners) => select(listeners)(value);
+      if (target) emit(target);
+      else if (pending.length < TASK_PROGRESS_MAX_LINES) pending.push(emit);
+    };
+  return {
+    listeners: {
+      onToolCall: forward((listeners) => listeners.onToolCall),
+      onText: forward((listeners) => listeners.onText),
+      onToolResult: forward((listeners) => listeners.onToolResult),
+      onReasoning: forward((listeners) => listeners.onReasoning),
+    } satisfies ExternalWorkerListeners,
+    attach(subagentId: string) {
+      target = externalWorkerProgressListeners(subagentId);
+      for (const emit of pending.splice(0)) emit(target);
+    },
+  };
+}
