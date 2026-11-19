@@ -148,7 +148,7 @@ The Bash tool runs each command in a separate process.
   * If `cd` lands outside those directories, Claude Code resets to the project directory and appends `Shell cwd was reset to <dir>` to the tool result.
   * To disable this carry-over so every Bash command starts in the project directory, set `CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR=1`.
 * Environment variables don't persist. An `export` in one command won't be available in the next.
-* Aliases and shell functions defined in your shell startup file are available. At session start, Claude Code sources `~/.zshrc`, `~/.bashrc`, or `~/.profile` depending on your shell, captures the resulting aliases, functions, and shell options, and applies them to every Bash command.
+* Claude Code starts a non-interactive shell, sources `~/.zshrc` for Zsh or `~/.bashrc` for Bash, and applies the aliases, functions, and shell options it captures to Bash commands.
 
 Activate your virtualenv or conda environment before launching Claude Code. To make environment variables persist across Bash commands, set [`CLAUDE_ENV_FILE`](https://code.claude.com/docs/en/env-vars) to a shell script before launching Claude Code, or use a [SessionStart hook](https://code.claude.com/docs/en/hooks.md#persist-environment-variables) to populate it dynamically.
 

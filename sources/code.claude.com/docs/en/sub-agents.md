@@ -328,7 +328,7 @@ experimental:
 
 #### Subagent files Claude Code skips
 
-Claude Code skips a file in a project, user, or managed `agents` directory, or in one under a directory you add with `--add-dir`, without reporting it in the session, when the frontmatter has any of these problems:
+Claude Code skips a file in a project, user, or managed `agents` directory, or in one under a directory you add with `--add-dir`, when the frontmatter has any of these problems:
 
 * **No `name`**: Claude Code treats the file as documentation kept beside your agents.
 * **An opening `---` that isn't the file's first line**: Claude Code reads the file as having no frontmatter and treats it as documentation.

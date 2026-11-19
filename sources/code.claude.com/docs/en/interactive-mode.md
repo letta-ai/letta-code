@@ -479,7 +479,7 @@ To turn it on, run this at the Claude Code prompt:
 /plugin enable cc-plugin-you-should-know@builtin
 ```
 
-Where `/plugin` doesn't list the mod, the enable command answers `Plugin "cc-plugin-you-should-know@builtin" is not installed in this project`.
+Where `/plugin` doesn't list the mod, the enable command says the plugin isn't installed in this project.
 
 ### Cost of checks
 
