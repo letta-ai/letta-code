@@ -891,8 +891,12 @@ function createLettaModApi(
   signal: AbortSignal,
 ): LettaModApi {
   const isLive = () => isOwnerLive(registry, owner);
-  const guardLive = (capability: ModDiagnostic["capability"]): boolean => {
-    if (isLive()) return true;
+  const guardLive = (
+    capability: ModDiagnostic["capability"],
+    cleanup = false,
+  ): boolean => {
+    if (isLive() || (cleanup && registry.owners[owner.id] === owner))
+      return true;
     recordStaleHandleUse(registry, owner, capability, onDiagnostic);
     return false;
   };
@@ -920,7 +924,7 @@ function createLettaModApi(
   ) => {
     validateModEventName(name);
     if (!isModEventCapabilityEnabled(capabilities, name)) return;
-    if (!guardLive({ id: name, kind: "event" })) return;
+    if (!guardLive({ id: name, kind: "event" }, true)) return;
     const registrations = registry.events[name];
     if (!registrations) return;
     const nextRegistrations = registrations.filter(
@@ -939,7 +943,7 @@ function createLettaModApi(
   const unregisterCommand = (id: string) => {
     if (!capabilities.commands) return;
     validateModCommandId(id);
-    if (!guardLive({ id, kind: "command" })) return;
+    if (!guardLive({ id, kind: "command" }, true)) return;
     const existing = registry.commands[id];
     if (existing?.owner?.id === owner.id) {
       delete registry.commands[id];
@@ -950,7 +954,7 @@ function createLettaModApi(
   const unregisterPermission = (id: string) => {
     if (!capabilities.permissions) return;
     validateModPermissionId(id);
-    if (!guardLive({ id, kind: "permission" })) return;
+    if (!guardLive({ id, kind: "permission" }, true)) return;
     const existing = registry.permissions[id];
     if (existing?.owner?.id === owner.id) {
       delete registry.permissions[id];
@@ -964,7 +968,7 @@ function createLettaModApi(
   const closePanel = (id: string) => {
     if (!capabilities.ui.panels) return;
     validateModPanelId(id);
-    if (!guardLive({ id, kind: "panel" })) return;
+    if (!guardLive({ id, kind: "panel" }, true)) return;
     const panelKey = getModPanelKey(owner.id, id);
     const existing = registry.ui.panels[panelKey];
     if (existing?.owner?.id === owner.id) {
@@ -987,7 +991,7 @@ function createLettaModApi(
   const unregisterTool = (name: string) => {
     if (!capabilities.tools) return;
     validateModToolName(name);
-    if (!guardLive({ id: name, kind: "tool" })) return;
+    if (!guardLive({ id: name, kind: "tool" }, true)) return;
     const existing = registry.tools[name];
     if (existing?.owner?.id === owner.id) {
       delete registry.tools[name];
@@ -1000,7 +1004,7 @@ function createLettaModApi(
 
   const unregisterProvider = (name: string) => {
     if (!capabilities.providers) return;
-    if (!guardLive({ id: name, kind: "provider" })) return;
+    if (!guardLive({ id: name, kind: "provider" }, true)) return;
     unregisterPiProvider(name, owner.id, owner);
     clearAvailableModelsCache();
     onChange();
@@ -1412,7 +1416,6 @@ export async function loadLocalMods(
       let failurePhase: ModDiagnostic["phase"] = "import";
       registry.ownerAbortControllers[owner.id] = abortController;
       registry.owners[owner.id] = owner;
-
       if (source.scope === "legacy_global") {
         recordLegacyExtensionLoadedDiagnostic(
           registry,
@@ -1502,7 +1505,6 @@ export async function loadLocalMods(
       }
     }
   }
-
   return registry;
 }
 
@@ -1678,10 +1680,8 @@ export function disposeLocalMods(registry: LocalModRegistry): void {
   for (const abortController of Object.values(registry.ownerAbortControllers)) {
     abortController.abort("mod disposed");
   }
-
   const disposers = [...registry.disposers].reverse();
   registry.disposers = [];
-
   for (const { dispose, owner } of disposers) {
     try {
       dispose();
@@ -1693,7 +1693,6 @@ export function disposeLocalMods(registry: LocalModRegistry): void {
       });
     }
   }
-
   if (registry.registerCapabilitiesGlobally) {
     for (const owner of Object.values(registry.owners)) {
       unregisterPiProvidersForOwner(owner);
