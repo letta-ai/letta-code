@@ -38,6 +38,7 @@ export type {
 } from "./claude-stream-session-types";
 
 const sessions = new Map<string, ClaudeSession>();
+const pendingResumes = new Map<string, Promise<ClaudeSession>>();
 /**
  * How long to keep waiting after a result while background tasks are still
  * listed. Claude Code's own background-task limit is 30 minutes.
@@ -877,8 +878,7 @@ async function queueSteerPrompt(
 
 /**
  * Steers the live process for this session, waiting out a settled one that
- * hasn't exited yet. With no process left, calls `launch` in the same
- * continuation so concurrent senders can't both start a `claude --resume`.
+ * hasn't exited yet. Reserve the next process while its options are prepared.
  */
 async function deliverClaudeMessage(
   options: { sessionId: string; prompt: string; signal?: AbortSignal },
@@ -889,6 +889,12 @@ async function deliverClaudeMessage(
   | undefined
 > {
   for (;;) {
+    options.signal?.throwIfAborted();
+    const pending = pendingResumes.get(options.sessionId);
+    if (pending) {
+      await pending;
+      continue;
+    }
     const existing = sessions.get(options.sessionId);
     if (!existing) break;
     if (existing.settled) {
@@ -913,7 +919,11 @@ async function deliverClaudeMessage(
     }
   }
   if (!launch) return undefined;
-  const session = await launch();
+  const pending = launch().finally(() =>
+    pendingResumes.delete(options.sessionId),
+  );
+  pendingResumes.set(options.sessionId, pending);
+  const session = await pending;
   if (session.sessionId !== options.sessionId) {
     throw new Error("Claude Code resumed with an unexpected session ID");
   }

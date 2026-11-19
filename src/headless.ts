@@ -1881,6 +1881,7 @@ export async function handleHeadlessCommand(
     );
   }
   pushPart(prompt);
+
   telemetry.trackUserInput(prompt, "user", reportModel ?? "unknown");
   if (usesRemoteEnvironment) {
     const environmentSelector = explicitEnvironmentSelector ?? "";

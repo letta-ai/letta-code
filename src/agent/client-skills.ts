@@ -396,6 +396,7 @@ export interface BuildClientSkillsPayloadOptions {
   /** Bundled skill IDs to expose when skillSources omits "bundled". */
   bundledSkills?: string[];
   attachedRepositories?: readonly AttachedAgentRepository[];
+  cloudSkillRepositories?: readonly string[];
   discoverSkillsFn?: typeof discoverSkills;
   logger?: (message: string) => void;
 }
@@ -419,10 +420,11 @@ function toClientSkill(skill: Skill): ClientSkill {
   };
 }
 
-export function getCloudProjectSkillDirectories(): string[] {
-  const roots = cloudRepositoryRoots(
-    getRuntimeContext()?.executionSettings?.cloud_skill_repositories,
-  );
+export function getCloudProjectSkillDirectories(
+  repositories: readonly string[] | undefined = getRuntimeContext()
+    ?.executionSettings?.cloud_skill_repositories,
+): string[] {
+  const roots = cloudRepositoryRoots(repositories);
   return roots.flatMap((root) => [
     join(root, SKILLS_DIR),
     join(root, PROJECT_SKILLS_DIR),
@@ -458,7 +460,9 @@ function resolveSkillDiscoveryContext(
     configuredSkillsDirectory,
     legacySkillsDirectory,
     primaryProjectSkillsDirectory,
-    extraProjectSkillsDirectories: getCloudProjectSkillDirectories(),
+    extraProjectSkillsDirectories: getCloudProjectSkillDirectories(
+      options.cloudSkillRepositories,
+    ),
     skillSources,
     bundledSkills,
   };
@@ -472,6 +476,7 @@ export interface DiscoverClientSideSkillsOptions {
   /** Bundled skill IDs to expose when skillSources omits "bundled". */
   bundledSkills?: string[];
   attachedRepositories?: readonly AttachedAgentRepository[];
+  cloudSkillRepositories?: readonly string[];
   discoverSkillsFn?: typeof discoverSkills;
 }
 

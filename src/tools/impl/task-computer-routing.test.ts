@@ -173,6 +173,21 @@ describe("task computer routing", () => {
     },
   );
 
+  test("forwards cloud provisioning options when launching a preset", async () => {
+    const result = await task({
+      ...launchArgs,
+      subagent_type: "reviewer",
+      computer: "cloud-sandbox",
+      cloud: { repositories: ["octocat/hello"], sandbox_size: "large" },
+    });
+    expect(result).toContain("Task running in background");
+    expect(receivedEnvironment).toBe("cloud-sandbox");
+    expect(spawn.mock.calls[0]?.at(-1)).toEqual({
+      githubRepositories: [{ owner: "octocat", repo: "hello" }],
+      sandboxSize: "large",
+    });
+  });
+
   test("forwards a whitespace-padded selector trimmed to the child", async () => {
     const result = await task({ ...launchArgs, computer: " \t office-mac \n" });
 
