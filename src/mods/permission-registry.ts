@@ -97,7 +97,7 @@ export function registerModPermission(
 export function unregisterModPermission(id: string, owner: ModOwner): void {
   const registry = getMutableModPermissionsRegistry();
   const existing = registry.get(id);
-  if (existing?.owner?.id === owner.id) {
+  if (existing?.owner === owner) {
     registry.delete(id);
   }
 }
@@ -105,7 +105,7 @@ export function unregisterModPermission(id: string, owner: ModOwner): void {
 export function unregisterModPermissionsForOwner(owner: ModOwner): void {
   const registry = getMutableModPermissionsRegistry();
   for (const [id, permission] of registry.entries()) {
-    if (permission.owner?.id === owner.id) {
+    if (permission.owner === owner) {
       registry.delete(id);
     }
   }
