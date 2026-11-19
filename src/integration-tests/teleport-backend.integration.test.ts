@@ -52,6 +52,36 @@ async function bounded<T>(label: string, work: Promise<T>, ms = 30_000) {
   }
 }
 
+async function connectStatusWebSocket(url: string): Promise<AppServerClient> {
+  // Registration can become visible before the relay accepts WebSocket upgrades.
+  // connect() closes a failed socket, so retry with a fresh client.
+  for (let attempt = 1; ; attempt++) {
+    const client = new AppServerClient({
+      url,
+      authToken: apiKey,
+      WebSocket,
+      requestTimeoutMs: 30_000,
+    });
+    try {
+      return await client.connect();
+    } catch (error) {
+      if (
+        attempt === 3 ||
+        !(error instanceof Error) ||
+        !(
+          error.message.endsWith("failed: Expected 101 status code") ||
+          /^App-server WebSocket failed to open: HTTP (502|503|504)\b/.test(
+            error.message,
+          )
+        )
+      ) {
+        throw error;
+      }
+      await delay(attempt * 500);
+    }
+  }
+}
+
 async function poll<T>(label: string, probe: () => Promise<T | undefined>) {
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
@@ -284,17 +314,14 @@ testWithAPI.each([
               : undefined;
           },
         );
-        const client = new AppServerClient({
-          url: new URL(
+        stage = `${role} status WebSocket readiness`;
+        const client = await connectStatusWebSocket(
+          new URL(
             `/v1/environments/${encodeURIComponent(connectionId)}/status/ws`,
             baseURL,
           ).toString(),
-          authToken: apiKey,
-          WebSocket,
-          requestTimeoutMs: 30_000,
-        });
+        );
         clients.push(client);
-        await bounded(`${role} status WebSocket`, client.connect());
         stage = `${role} API backend readiness`;
         const info = await client.info();
         // Teleport probes report supported only on the API backend. In
