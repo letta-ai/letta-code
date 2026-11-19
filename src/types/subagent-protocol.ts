@@ -65,6 +65,7 @@ export interface SubagentMessageCommand {
   agent_id: string;
   message: string;
   tool_call_id?: string;
+  accepts_pending_resume?: boolean;
 }
 
 export type SubagentMessageResponse = {
@@ -72,7 +73,7 @@ export type SubagentMessageResponse = {
   request_id: string;
   runtime?: AgentRuntimeScope;
 } & (
-  | { success: true; delivery: "steered" | "queued" | "resumed" }
+  | { success: true; delivery: "steered" | "queued" | "resuming" | "resumed" }
   | { success: false; error: string }
 );
 

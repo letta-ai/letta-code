@@ -161,6 +161,7 @@ describe("subagent control protocol", () => {
         type: "subagent_message",
         message: "Continue",
         tool_call_id: "call-2",
+        accepts_pending_resume: true,
       }),
     ).toBe(true);
     expect(isSubagentStopCommand({ ...base, type: "subagent_stop" })).toBe(
@@ -174,6 +175,7 @@ describe("subagent control protocol", () => {
     { runtime: { agent_id: "", conversation_id: "conv-parent" } },
     { message: "" },
     { tool_call_id: 42 },
+    { accepts_pending_resume: "yes" },
   ])("rejects invalid message commands %#", (override) => {
     expect(
       isSubagentMessageCommand({
