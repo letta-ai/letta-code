@@ -98,6 +98,7 @@ export interface IncomingMessage {
   clientPreferences?: import("@/types/client-preferences").ClientPreferences;
   excludeInteractiveTools?: boolean;
   responseFormat?: Record<string, unknown>;
+  gitAttribution?: import("@/types/git-attribution").GitAttribution;
   messages: Array<
     (AttributedMessageCreate & { client_message_id?: string }) | ApprovalCreate
   >;

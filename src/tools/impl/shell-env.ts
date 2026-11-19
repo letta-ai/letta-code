@@ -23,6 +23,7 @@ import { peekOrgAccessToken } from "@/auth/org-credentials-session";
 import { getServerUrl } from "@/backend/api/server-url";
 import { isLocalBackendMemfsDisabledForProcess } from "@/backend/local/paths";
 import {
+  applyTurnGitAttribution,
   getCurrentWorkingDirectory,
   getRuntimeActingUserId,
   getRuntimeContext,
@@ -337,6 +338,7 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   }
 
   env.USER_CWD = getCurrentWorkingDirectory();
+  applyTurnGitAttribution(env);
 
   const sessionSource = getRuntimeSessionSource();
   if (sessionSource) env.LETTA_RUNTIME_SESSION_SOURCE = sessionSource;

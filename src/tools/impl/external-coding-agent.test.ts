@@ -12,6 +12,7 @@ import { settingsManager } from "@/settings-manager";
 import {
   buildExternalCodingAgentCommand,
   buildExternalCodingAgentMcpReminder,
+  buildExternalWorkerLaunchEnv,
   formatExternalCodingAgentId,
   parseExternalCodingAgentId,
   parseExternalCodingAgentOutput,
@@ -700,4 +701,28 @@ describe("parent memory launch instructions", () => {
       }
     },
   );
+});
+
+test("a delayed worker keeps its launch turn's Git attribution", async () => {
+  const secrets = Promise.withResolvers<Record<string, string>>();
+  const build = () =>
+    buildExternalWorkerLaunchEnv(
+      { parentAgentId: "agent-parent", parentConversationId: "conv-parent" },
+      { env: {}, resolveSecretEnv: () => secrets.promise },
+    );
+  const first = runWithRuntimeContext(
+    { gitAttribution: { conversation: "conv-parent", requester: "Alice" } },
+    build,
+  );
+  const second = runWithRuntimeContext(
+    { gitAttribution: { conversation: "conv-parent", requester: "Bob" } },
+    () => {
+      secrets.resolve({});
+      return build();
+    },
+  );
+  expect((await first).env.LETTA_GIT_REQUESTER).toBe("Alice");
+  expect((await first).env.LETTA_GIT_CONVERSATION).toBe("conv-parent");
+  expect((await second).env.LETTA_GIT_REQUESTER).toBe("Bob");
+  expect((await build()).env.LETTA_GIT_REQUESTER).toBeUndefined();
 });

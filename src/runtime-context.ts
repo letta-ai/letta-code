@@ -4,6 +4,7 @@ import { resolveActingUserId } from "@/agent/acting-user";
 import type { SkillSource } from "./agent/skills";
 import { isUsableDirectory } from "./helpers/usable-directory";
 import type { RuntimeExecutionSettings } from "./runtime-execution-settings";
+import type { GitAttribution } from "./types/git-attribution";
 
 export type RuntimeSessionSource = "interactive-cli" | "headless" | "listen";
 
@@ -26,6 +27,7 @@ export interface RuntimeContextSnapshot {
   agentId?: string | null;
   agentName?: string | null;
   conversationId?: string | null;
+  gitAttribution?: GitAttribution;
   actingUserId?: string;
   mcpOriginatorSuperRunId?: string | null;
   resolveMcpOriginatorSuperRunId?: () => string | null | undefined;
@@ -70,6 +72,18 @@ export function getRuntimeActingUserId(): string | undefined {
 export function getRuntimeActingUserAttribution(): string | null | undefined {
   if (getRuntimeContext()?.suppressActingUserFallback) return null;
   return getRuntimeActingUserId();
+}
+
+/** Copy attribution into this process launch without mutating the listener environment. */
+export function applyTurnGitAttribution(env: NodeJS.ProcessEnv): void {
+  const attribution = getRuntimeContext()?.gitAttribution;
+  if (attribution) {
+    env.LETTA_GIT_REQUESTER = attribution.requester;
+    env.LETTA_GIT_CONVERSATION = attribution.conversation;
+  } else {
+    delete env.LETTA_GIT_REQUESTER;
+    delete env.LETTA_GIT_CONVERSATION;
+  }
 }
 
 export function runWithRuntimeContext<T>(

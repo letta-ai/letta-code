@@ -23,6 +23,7 @@ import {
 } from "./registry-presentation";
 import type { ChannelRouteProvisioner } from "./registry-routes";
 import { loadRouteForInboundMessage } from "./routing";
+import { asRecord } from "./slack/utils";
 import type {
   ChannelAdapter,
   ChannelTurnLifecycleEvent,
@@ -151,6 +152,18 @@ export function createChannelInboundRouter(deps: {
         return;
       }
       const turnSource = buildChannelTurnSource(slackResult.route, msg);
+      const raw = asRecord(msg.raw);
+      if (raw?.bot_id || raw?.subtype === "bot_message") {
+        delete turnSource.senderName;
+      }
+      const threadRoot = slackResult.route.threadId ?? msg.messageId;
+      if (
+        threadRoot &&
+        /^[CDG][A-Z0-9]+$/.test(msg.chatId) &&
+        /^\d+\.\d+$/.test(threadRoot)
+      ) {
+        turnSource.conversationPermalink = `https://app.slack.com/archives/${msg.chatId}/p${threadRoot.replace(".", "")}`;
+      }
       if (slackResult.route.outboundEnabled !== false) {
         await deps.dispatchTurnLifecycleEvent({
           type: "queued",

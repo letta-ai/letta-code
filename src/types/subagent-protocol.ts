@@ -1,3 +1,4 @@
+import type { GitAttribution } from "./git-attribution";
 import type {
   AgentRuntimeScope,
   ConversationRuntimeScope,
@@ -48,6 +49,7 @@ export interface LaunchSubagentCommand {
   request_id: string;
   runtime: AgentRuntimeScope;
   args: LaunchSubagentWireArgs;
+  git_attribution?: GitAttribution;
   tool_call_id?: string;
   notify?: SubagentLaunchNotify;
 }
@@ -64,6 +66,7 @@ export interface SubagentMessageCommand {
   runtime: AgentRuntimeScope;
   agent_id: string;
   message: string;
+  git_attribution?: GitAttribution;
   tool_call_id?: string;
 }
 
