@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AssistantMessage, Context, Tool } from "@earendil-works/pi-ai";
+import { toPiHistoryMessages } from "@/backend/dev/pi-messages";
 import { createOrUpdateLocalProvider } from "@/backend/local/local-provider-auth-store";
 import {
   LOCAL_ALL_COMPACTION_PROMPT,
@@ -136,16 +137,17 @@ describe("self-compaction", () => {
     const [context] = contexts;
     expect(context?.systemPrompt).toBe("compiled agent system");
     expect(context?.tools?.map((tool) => tool.name)).toEqual(["Bash"]);
+    // The agent's context continued: the prompt follows the tool result
+    // directly, with nothing written in the model's name.
     expect(context?.messages.map((message) => message.role)).toEqual([
       "user",
       "assistant",
       "toolResult",
-      "assistant",
       "user",
     ]);
-    expect(context?.messages.at(-2)).toMatchObject({
-      content: [{ type: "text", text: "I understand. Let me summarize." }],
-    });
+    expect(context?.messages.slice(0, -1)).toEqual(
+      toPiHistoryMessages(TOOL_TURN),
+    );
     expect(context?.messages.at(-1)).toMatchObject({
       content: LOCAL_SELF_ALL_COMPACTION_PROMPT,
     });
@@ -169,6 +171,34 @@ describe("self-compaction", () => {
     ]);
     expect(contexts[0]?.messages.at(-1)).toMatchObject({
       content: "Summarize for the next session.",
+    });
+  });
+
+  test("adds the prompt to a trailing user message instead of a second one", async () => {
+    const messages: LocalMessage[] = [
+      TOOL_TURN[0] as LocalMessage,
+      assistant([{ type: "text", text: "done" }]),
+      {
+        id: "user-2",
+        role: "user",
+        content: [{ type: "text", text: "now fix the lint" }],
+        timestamp: Date.now(),
+      },
+    ];
+    const { contexts } = await summarize(messages, [
+      assistant([{ type: "text", text: "self summary" }]),
+    ]);
+
+    expect(contexts[0]?.messages.map((message) => message.role)).toEqual([
+      "user",
+      "assistant",
+      "user",
+    ]);
+    expect(contexts[0]?.messages.at(-1)).toMatchObject({
+      content: [
+        { type: "text", text: "now fix the lint" },
+        { type: "text", text: LOCAL_SELF_ALL_COMPACTION_PROMPT },
+      ],
     });
   });
 

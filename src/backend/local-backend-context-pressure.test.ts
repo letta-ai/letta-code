@@ -258,13 +258,17 @@ describe("LocalBackend context pressure", () => {
         "You are the self-compaction agent.",
       );
       expect(compaction?.tools?.map((tool) => tool.name)).toEqual(["Bash"]);
+      // The user's message has not reached the model yet, so the prompt
+      // joins it: nothing is written in the model's name, and no two user
+      // messages follow each other.
       expect(compaction?.messages.map((message) => message.role)).toEqual([
         "user",
-        "assistant",
-        "user",
       ]);
-      expect(compaction?.messages.at(-1)).toMatchObject({
-        content: "Summarize the conversation now.",
+      const content = compaction?.messages[0]?.content;
+      expect(JSON.stringify(content)).toContain("x".repeat(100));
+      expect(Array.isArray(content) ? content.at(-1) : content).toEqual({
+        type: "text",
+        text: "Summarize the conversation now.",
       });
       expect(providerContexts).toHaveLength(1);
       expect(JSON.stringify(providerContexts[0]?.messages)).toContain(
