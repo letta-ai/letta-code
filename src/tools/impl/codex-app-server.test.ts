@@ -212,7 +212,7 @@ test("registers Codex repository skills before thread startup", async () => {
   const [roots, thread] = fake.requests.slice(-3, -1);
   expect(roots?.method).toBe("skills/extraRoots/set");
   expect(roots?.params).toEqual({
-    extraRoots: ["/root/workspace/api/.agents/skills"],
+    extraRoots: [join("/root/workspace", "api", ".agents", "skills")],
   });
   expect(thread?.method).toBe("thread/start");
 });
