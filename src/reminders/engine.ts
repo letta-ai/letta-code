@@ -236,12 +236,18 @@ export function buildMcpServersReminderText(
   return `${SYSTEM_REMINDER_OPEN}\n${inventory}\n${MCP_MEMORY_GUIDANCE}\n${entries?.length === 0 ? "" : `${MCP_TOOL_USAGE}\n`}${SYSTEM_REMINDER_CLOSE}`;
 }
 
+export interface McpServerInventory {
+  entries: McpServerReminderEntry[];
+  /** False when the backend has no server-side MCP, so `entries` are local only. */
+  serverSideAvailable: boolean;
+}
+
 export async function listMcpServersForAgent(
   agentId: string,
   _state: SharedReminderContext["state"],
   deps: McpServersReminderDependencies = {},
   timeoutMs = 3_000,
-): Promise<McpServerReminderEntry[]> {
+): Promise<McpServerInventory> {
   const localNames = (
     deps.getLocalServerNames ??
     ((id: string) =>
@@ -255,7 +261,10 @@ export async function listMcpServersForAgent(
     deps.listServerSideServers ?? defaultListServerSideServers
   )(agentId, timeoutMs);
   if (serverSideEntries) entries.push(...serverSideEntries);
-  return [...new Map(entries.map((entry) => [entry.name, entry])).values()];
+  return {
+    entries: [...new Map(entries.map((entry) => [entry.name, entry])).values()],
+    serverSideAvailable: serverSideEntries !== null,
+  };
 }
 
 export async function buildMcpServersInfoReminderText(
@@ -263,21 +272,34 @@ export async function buildMcpServersInfoReminderText(
   deps: McpServersReminderDependencies = {},
 ): Promise<string | null> {
   try {
-    const uniqueEntries = await listMcpServersForAgent(
-      await getMcpScopeAgentId(
-        context.agent.id,
-        undefined,
-        deps.lookupParentAgent,
-      ),
-      context.state,
-      deps,
-    );
+    const { entries: uniqueEntries, serverSideAvailable } =
+      await listMcpServersForAgent(
+        await getMcpScopeAgentId(
+          context.agent.id,
+          undefined,
+          deps.lookupParentAgent,
+        ),
+        context.state,
+        deps,
+      );
     const namesKey = uniqueEntries
       .map((entry) => `${entry.name}\u0001${entry.toolCount ?? ""}`)
       .join("\0");
     if (
       context.state.hasSentMcpServersInfo &&
       context.state.lastSentMcpServerNamesKey === namesKey
+    ) {
+      return null;
+    }
+    // Without server-side MCP an empty local list is complete, so there is
+    // nothing to announce until a server appears. The key stays null so a
+    // later list is still sent. Backends with server-side MCP, such as Letta
+    // Cloud, keep the None form: an empty server-side list can hide servers
+    // that need the user's credentials, and the guardrail line covers them.
+    if (
+      uniqueEntries.length === 0 &&
+      !serverSideAvailable &&
+      context.state.lastSentMcpServerNamesKey === null
     ) {
       return null;
     }

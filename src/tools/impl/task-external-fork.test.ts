@@ -86,7 +86,7 @@ mock.module("@/reminders/engine", () => ({
   ...realReminders,
   listMcpServersForAgent: async () => {
     if (inventoryError) throw inventoryError;
-    return [];
+    return { entries: [], serverSideAvailable: true };
   },
 }));
 const realExternal = await import("./external-coding-agent");
