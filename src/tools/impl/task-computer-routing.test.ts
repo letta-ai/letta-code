@@ -177,11 +177,11 @@ describe("task computer routing", () => {
     const result = await task({
       ...launchArgs,
       subagent_type: "reviewer",
-      computer: "cloud-sandbox",
+      computer: "cloud",
       cloud: { repositories: ["octocat/hello"], sandbox_size: "large" },
     });
     expect(result).toContain("Task running in background");
-    expect(receivedEnvironment).toBe("cloud-sandbox");
+    expect(receivedEnvironment).toBe("cloud");
     expect(spawn.mock.calls[0]?.at(-1)).toEqual({
       githubRepositories: [{ owner: "octocat", repo: "hello" }],
       sandboxSize: "large",

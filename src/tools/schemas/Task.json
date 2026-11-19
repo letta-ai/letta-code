@@ -40,7 +40,7 @@
     },
     "cloud": {
       "type": "object",
-      "description": "Options for computer: \"cloud\" or \"cloud-sandbox\" only. Applied when the sandbox is created. Repositories are cloned to /root/workspace/<repo>.",
+      "description": "Options for computer: \"cloud\" only. Applied when the sandbox is created. Repositories are cloned to /root/workspace/<repo>.",
       "properties": {
         "repositories": {
           "type": "array",

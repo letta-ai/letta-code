@@ -7,12 +7,14 @@ test("cloud configuration requires an explicit cloud selector and maps GitHub re
     repositories: ["octocat/hello", `octocat/world@${commit}`],
     sandbox_size: "large",
   };
-  expect(parseTaskCloudOptions(undefined, cloud)).toHaveProperty("error");
+  expect(parseTaskCloudOptions(undefined, cloud)).toEqual({
+    error: 'cloud requires computer: "cloud"',
+  });
   expect(parseTaskCloudOptions("office-mac", cloud)).toHaveProperty("error");
   expect(
     parseTaskCloudOptions("cloud", { repositories: ["octocat/world@main"] }),
   ).toHaveProperty("error");
-  expect(parseTaskCloudOptions("cloud-sandbox", cloud)).toEqual({
+  expect(parseTaskCloudOptions("cloud", cloud)).toEqual({
     options: {
       githubRepositories: [
         { owner: "octocat", repo: "hello" },
@@ -20,5 +22,12 @@ test("cloud configuration requires an explicit cloud selector and maps GitHub re
       ],
       sandboxSize: "large",
     },
+  });
+});
+
+test("accepts the legacy cloud selector for compatibility", () => {
+  const cloud = { sandbox_size: "large" };
+  expect(parseTaskCloudOptions("cloud-sandbox", cloud)).toEqual({
+    options: { sandboxSize: "large" },
   });
 });

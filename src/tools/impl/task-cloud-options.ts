@@ -12,7 +12,7 @@ export function parseTaskCloudOptions(
 ): { options?: AgentSandboxOptions } | { error: string } {
   if (cloud === undefined) return {};
   if (typeof computer !== "string" || !isCloudEnvironmentSelector(computer)) {
-    return { error: 'cloud requires computer: "cloud" or "cloud-sandbox"' };
+    return { error: 'cloud requires computer: "cloud"' };
   }
   if (
     !cloud ||
