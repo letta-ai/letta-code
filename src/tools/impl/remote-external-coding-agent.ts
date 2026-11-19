@@ -19,10 +19,9 @@ import { getClient } from "@/backend/api/client";
 import {
   ComputerResolutionError,
   type EnvironmentConnection,
-  getEnvironmentConnection,
-  isEnvironmentOnline,
   resolveAgentSandboxConnectionId,
   resolveEnvironmentConnectionId,
+  resolveQualifiedComputer,
 } from "@/backend/api/environments";
 import { getApiRequestConfig } from "@/backend/api/request";
 import { isCloudEnvironmentSelector } from "@/headless-environment-response";
@@ -188,38 +187,6 @@ async function defaultConnect(connectionId: string, scope: ParentScope) {
     client.close();
     throw error;
   }
-}
-
-async function resolveQualifiedComputer(deviceId: string, scope: ParentScope) {
-  let environment: EnvironmentConnection;
-  try {
-    environment = await getEnvironmentConnection(deviceId);
-  } catch {
-    return resolveEnvironmentConnectionId(deviceId);
-  }
-
-  if (!isEnvironmentOnline(environment) || !environment.connectionId) {
-    // Neither the sandbox creation response nor the environment record exposes
-    // the conversation. Only accept the caller's exact sandbox device format.
-    const prefix = `sandbox-${scope.agentId}-`;
-    const suffix = deviceId.startsWith(prefix)
-      ? deviceId
-          .slice(prefix.length)
-          .match(
-            /^(conv-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-linux-vm$/i,
-          )
-      : null;
-    if (environment.deviceId === deviceId && suffix) {
-      const resolved = await resolveAgentSandboxConnectionId(scope.agentId, {
-        conversationId: suffix[1],
-      });
-      if (resolved.environment.deviceId !== deviceId)
-        throw new Error("Cloud sandbox device changed while waking worker");
-      return resolved;
-    }
-    throw new Error(`Computer "${deviceId}" is offline`);
-  }
-  return { connectionId: environment.connectionId, environment };
 }
 
 function errorMessage(error: unknown): string {
@@ -741,12 +708,17 @@ export async function launchRemoteExternalCodingAgent(
 export interface RemoteExternalCodingAgentControl {
   agentId: string;
   message?: string;
+  signal?: AbortSignal;
   toolCallId?: string;
   parentScope: ParentScope;
 }
 
 export interface RemoteExternalCodingAgentControlDeps {
-  resolveComputer?: (deviceId: string) => Promise<{
+  computerPollIntervalMs?: number;
+  resolveComputer?: (
+    deviceId: string,
+    scope: ParentScope,
+  ) => Promise<{
     connectionId: string;
     environment: EnvironmentConnection;
   }>;
@@ -768,6 +740,7 @@ async function connectQualifiedTarget(
   agentId: string,
   parentScope: ParentScope,
   deps: RemoteExternalCodingAgentControlDeps,
+  poll?: { intervalMs: number; signal?: AbortSignal },
 ): Promise<{
   target: NonNullable<ReturnType<typeof parseExternalCodingAgentId>>;
   client: AppServerClient;
@@ -776,10 +749,9 @@ async function connectQualifiedTarget(
   const target = parseExternalCodingAgentId(agentId);
   if (!target?.computer || target.type === "opencode")
     throw new Error(`Invalid remote external coding agent ID: ${agentId}`);
-  const resolved = await (deps.resolveComputer ?? resolveQualifiedComputer)(
-    target.computer,
-    parentScope,
-  );
+  const resolved = deps.resolveComputer
+    ? await deps.resolveComputer(target.computer, parentScope)
+    : await resolveQualifiedComputer(target.computer, parentScope, poll);
   if (resolved.environment.metadata?.subagent_message !== true)
     throw new Error(formatOutdatedSteeringError(target.computer));
   return {
@@ -867,6 +839,7 @@ async function deliverRemoteExternalCodingAgentMessage(
     params.agentId,
     params.parentScope,
     deps,
+    { intervalMs: deps.computerPollIntervalMs ?? 1_000, signal: params.signal },
   );
   const toolCallId = params.toolCallId ?? `remote-followup-${randomUUID()}`;
   const connect = async () => {

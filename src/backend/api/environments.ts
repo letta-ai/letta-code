@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import { apiRequest } from "./request";
 
 export interface EnvironmentMetadata {
@@ -88,10 +89,13 @@ export async function sendEnvironmentMessage(
 
 export async function getEnvironmentConnection(
   deviceId: string,
+  signal?: AbortSignal,
 ): Promise<EnvironmentConnection> {
   return apiRequest<EnvironmentConnection>(
     "GET",
     `/v1/environments/${encodeURIComponent(deviceId)}`,
+    undefined,
+    { signal },
   );
 }
 
@@ -289,6 +293,62 @@ export async function resolveAgentSandboxConnectionId(
   throw new Error(
     `Timed out waiting for cloud sandbox ${sandbox.connectionName} to register${lastError instanceof Error ? `: ${lastError.message}` : ""}`,
   );
+}
+
+export async function resolveQualifiedComputer(
+  deviceId: string,
+  scope: { agentId: string },
+  poll?: { intervalMs: number; signal?: AbortSignal },
+) {
+  let environment: EnvironmentConnection;
+  try {
+    environment = await getEnvironmentConnection(deviceId, poll?.signal);
+  } catch {
+    poll?.signal?.throwIfAborted();
+    return resolveEnvironmentConnectionId(deviceId);
+  }
+
+  if (!isEnvironmentOnline(environment) || !environment.connectionId) {
+    // Neither the sandbox creation response nor the environment record exposes
+    // the conversation. Only accept the caller's exact sandbox device format.
+    const prefix = `sandbox-${scope.agentId}-`;
+    const suffix = deviceId
+      .slice(prefix.length)
+      .match(
+        /^(conv-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-linux-vm$/i,
+      );
+    if (
+      environment.deviceId === deviceId &&
+      deviceId.startsWith(prefix) &&
+      suffix
+    ) {
+      const resolved = await resolveAgentSandboxConnectionId(scope.agentId, {
+        conversationId: suffix[1],
+      });
+      if (resolved.environment.deviceId !== deviceId)
+        throw new Error("Cloud sandbox device changed while waking worker");
+      return resolved;
+    }
+    if (poll && !deviceId.startsWith("sandbox-agent-")) {
+      const timeout = AbortSignal.timeout(10_500);
+      const signal = poll.signal
+        ? AbortSignal.any([poll.signal, timeout])
+        : timeout;
+      try {
+        for (let attempt = 0; attempt < 10; attempt++) {
+          await delay(poll.intervalMs, undefined, { signal });
+          environment = await getEnvironmentConnection(deviceId, signal);
+          if (isEnvironmentOnline(environment) && environment.connectionId)
+            return { connectionId: environment.connectionId, environment };
+        }
+      } catch (error) {
+        poll.signal?.throwIfAborted();
+        if (!timeout.aborted) throw error;
+      }
+    }
+    throw new Error(`Computer "${deviceId}" is offline`);
+  }
+  return { connectionId: environment.connectionId, environment };
 }
 
 export type TeleportStatus =

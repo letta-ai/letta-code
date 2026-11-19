@@ -147,6 +147,51 @@ test.each([
   expect(requests).toBe(1);
 });
 
+test.each([[true], [false]])(
+  "follow-up waits for a named computer (reconnects: %s)",
+  async (reconnects) => {
+    process.env.LETTA_API_KEY = "test-key";
+    process.env.LETTA_BASE_URL = "https://api.example.test";
+    spyOn(telemetry, "trackError").mockImplementation(() => {});
+    spyOn(telemetry, "flush").mockResolvedValue(undefined);
+    const deviceId = "workstation";
+    let reads = 0;
+    mockApiFetch(async () =>
+      Response.json({
+        ...environment(),
+        deviceId,
+        connectionId: ++reads > 1 && reconnects ? "conn-reconnected" : null,
+        lastHeartbeat: Date.now(),
+      }),
+    );
+    const client = {
+      sendSubagentMessage: async () => ({ success: true, delivery: "steered" }),
+      onMessage: () => () => {},
+      onDisconnect: () => () => {},
+      close: () => {},
+    } as unknown as AppServerClient;
+    const connect = mock(async (_id: string) => client);
+    const deps = { connect, computerPollIntervalMs: 0 };
+    const result = sendRemoteExternalCodingAgentMessage(
+      {
+        agentId: `claude_22222222-2222-4222-8222-222222222222@${deviceId}`,
+        parentScope: scope,
+        message: "Continue",
+      },
+      deps,
+    );
+    if (reconnects) {
+      expect(await result).toEqual({ delivery: "steered" });
+      expect(connect).toHaveBeenCalledWith("conn-reconnected", scope);
+      expect(reads).toBe(2);
+    } else {
+      await expect(result).rejects.toThrow('Computer "workstation" is offline');
+      expect(connect).not.toHaveBeenCalled();
+      expect(reads).toBe(11);
+    }
+  },
+);
+
 test("follow-up ownership rejection distinguishes outdated listeners", async () => {
   const report = spyOn(telemetry, "trackError").mockImplementation(() => {});
   spyOn(telemetry, "flush").mockResolvedValue(undefined);

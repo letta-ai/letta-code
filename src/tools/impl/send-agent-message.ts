@@ -222,6 +222,7 @@ export async function send_agent_message(
           {
             agentId: args.agent_id as string,
             message: args.message,
+            signal: args.signal,
             parentScope: {
               ...parentScope,
               actingUserId: getRuntimeActingUserAttribution(),
