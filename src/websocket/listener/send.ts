@@ -35,7 +35,10 @@ import {
   MAX_PRE_STREAM_RECOVERY,
 } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
-import { captureNotificationWait } from "./external-tools";
+import {
+  captureNotificationWait,
+  resolveRuntimeToolContextOptions,
+} from "./external-tools";
 import { readInterruptedTurn } from "./interrupted-turn-read";
 import {
   createListenerAgentModContext,
@@ -52,6 +55,7 @@ import {
   drainRecoveryStreamWithEmission,
   isApprovalToolCallDesyncError,
 } from "./recovery";
+import { getRecoveryEligibility } from "./recovery-ownership";
 import { retryApprovalRecoveryRead } from "./recovery-read";
 import { injectQueuedSkillContent } from "./skill-injection";
 import type { ListenerTransport } from "./transport";
@@ -387,6 +391,7 @@ export async function resolveStaleApprovals(
     agent_id: runtime.agentId,
     conversation_id: recoveryConversationId,
   } as const;
+  if ((await getRecoveryEligibility(runtime)) !== "owned") return null;
   const modAdapters = runtime.agentId
     ? await ensureListenerModAdaptersForAgent(runtime.listener, runtime.agentId)
     : [];
@@ -396,6 +401,7 @@ export async function resolveStaleApprovals(
       scope,
       runtime.activeConnectionId ?? undefined,
     ),
+    ...resolveRuntimeToolContextOptions(runtime.listener, scope),
     agentId: runtime.agentId,
     conversationId: recoveryConversationId,
     workingDirectory: recoveryWorkingDirectory,
@@ -422,6 +428,7 @@ export async function resolveStaleApprovals(
   const recoveryActingUserId = recoveryRecord?.actingUserId;
   pendingApprovals = await filterStillPending(pendingApprovals);
   while (pendingApprovals.length > 0) {
+    if ((await getRecoveryEligibility(runtime)) !== "owned") return null;
     assertCurrentTurnLease();
     const recoveryBatchId = resolveRecoveryBatchId(runtime, pendingApprovals);
     if (!recoveryBatchId) {

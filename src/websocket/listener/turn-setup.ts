@@ -21,8 +21,6 @@ import { buildListenReminderContext } from "@/reminders/listen-context";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { replaceClientPreferences } from "@/tools/client-preferences";
-import { INTERACTIVE_USER_INPUT_TOOL_NAMES } from "@/tools/interactive-policy";
-import { resolveTurnToolSelection } from "@/tools/tool-policy";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import { debugWarn, isDebugEnabled } from "@/utils/debug";
 import { detectShellContext } from "@/utils/shell-context";
@@ -31,7 +29,7 @@ import { resolveTurnExecutionConnectionId } from "./connection";
 import {
   captureNotificationWait,
   recordRuntimeSubmittingConnection,
-  resolveRuntimeToolOwner,
+  resolveRuntimeToolContextOptions,
 } from "./external-tools";
 import { getInboundImageFailureModes } from "./image-policy";
 import { consumeInterruptQueue } from "./interrupts";
@@ -352,19 +350,6 @@ export async function prepareListenerTurn(params: {
       connectionId,
     );
   }
-  const toolOwner = resolveRuntimeToolOwner(
-    runtime.listener,
-    toolRuntimeScope,
-    connectionId,
-  );
-  const toolSelection = resolveTurnToolSelection(
-    {
-      clientToolset: msg.clientToolset,
-      clientToolAllowlist: msg.clientToolAllowlist,
-      excludeInteractiveTools: msg.excludeInteractiveTools,
-    },
-    toolOwner.toolPolicy,
-  );
   const preparedToolContext = await prepareToolExecutionContextForScope({
     readScopeState: (read) =>
       retryApprovalRecoveryRead(
@@ -383,12 +368,12 @@ export async function prepareListenerTurn(params: {
     mcpOriginatorSuperRunId: getEffectiveMcpOriginatorId(msg),
     resolveClientMessageIds,
     turnStartedAt: msg.receivedAt,
-    externalToolOwnerConnectionId: toolOwner.connectionId,
-    clientToolset: toolSelection.clientToolset,
-    clientToolAllowlist: toolSelection.clientToolAllowlist,
-    ...(toolSelection.excludeInteractiveTools
-      ? { exclude: [...INTERACTIVE_USER_INPUT_TOOL_NAMES] }
-      : {}),
+    ...resolveRuntimeToolContextOptions(
+      runtime.listener,
+      toolRuntimeScope,
+      connectionId,
+      msg,
+    ),
     workingDirectory,
     permissionModeState,
     skillsDirectory: listenerOptions?.skillsDirectory,
@@ -396,7 +381,6 @@ export async function prepareListenerTurn(params: {
     bundledSkills: runtime.bundledSkills,
     workspaceSandbox: runtime.workspaceSandbox,
     executionSettings: runtime.executionSettings,
-    foregroundYieldMs: toolOwner.toolPolicy?.foreground_yield_ms,
     cachedAgent,
     ...(agentId ? { modContext: createListenerAgentModContext(agentId) } : {}),
     modAdapters,
