@@ -260,6 +260,46 @@ describe("remote external subagent control", () => {
     expect(response).toMatchObject({ success: true, delivery: "queued" });
   });
 
+  test("reports a failure after a queued reply without delivering a retry twice", async () => {
+    jest.useFakeTimers();
+    const { parent } = fixture();
+    const started = Promise.withResolvers<void>();
+    const delivery = Promise.withResolvers<never>();
+    const failed = Promise.withResolvers<void>();
+    const report = spyOn(telemetry, "trackError").mockImplementation(() => {
+      failed.resolve();
+    });
+    const command = {
+      type: "subagent_message" as const,
+      request_id: "late-failure",
+      runtime,
+      agent_id: nativeId,
+      message: "Continue",
+    };
+    const deps = {
+      workerEnv,
+      sendClaude: jest.fn(() => {
+        started.resolve();
+        return delivery.promise;
+      }),
+    };
+
+    const response = handleSubagentMessageCommand(command, parent, deps);
+    await started.promise;
+    jest.advanceTimersByTime(10_000);
+    expect(await response).toMatchObject({ success: true, delivery: "queued" });
+    delivery.reject(new Error("Late delivery failure"));
+    await failed.promise;
+    expect(report).toHaveBeenCalledWith(
+      "remote_queued_followup_failed",
+      "Queued remote follow-up delivery failed",
+    );
+    expect(await handleSubagentMessageCommand(command, parent, deps)).toEqual(
+      await response,
+    );
+    expect(deps.sendClaude).toHaveBeenCalledTimes(1);
+  });
+
   test("deduplicates a retried request ID", async () => {
     const { parent } = fixture();
     let calls = 0;
