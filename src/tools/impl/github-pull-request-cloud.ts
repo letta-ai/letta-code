@@ -36,7 +36,7 @@ interface CloudComment {
   updated_at: string;
 }
 
-interface CloudPullRequestSnapshot {
+export interface CloudPullRequestSnapshot {
   ref: GitHubPullRequestRef;
   head_sha: string;
   state: PullRequestState;
@@ -88,6 +88,7 @@ type CloudSnapshotResult =
   | { status: 404 | 429 | 501 };
 
 interface CloudSnapshotDeps {
+  allowInaccessibleFallback?: boolean;
   isCloud?: () => boolean;
   fetchGh?: FetchSnapshot;
   request?: (
@@ -153,7 +154,7 @@ function toComment(comment: CloudComment): PullRequestComment {
   };
 }
 
-function toClientSnapshot(
+export function toClientSnapshot(
   ref: GitHubPullRequestRef,
   snapshot: CloudPullRequestSnapshot,
 ): GitHubPullRequestSnapshot {
@@ -265,6 +266,10 @@ export function createGitHubPullRequestSnapshotFetcher(
           continue;
         }
         if (entry?.inaccessible) {
+          if (!hasSnapshot && deps.allowInaccessibleFallback) {
+            unsupported = true;
+            return fetchGh(ref, options);
+          }
           throw new Error(`Cloud could not access ${ref.url}`);
         }
         if (!entry?.snapshot) {

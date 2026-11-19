@@ -74,9 +74,7 @@ test("renders the configured cap into Monitor and WatchPR text", () => {
   expect(texts[0]).toContain(
     "stops after 24 hours (this sandbox's monitor cap)",
   );
-  expect(texts[1]).toContain(
-    "stops after 24 hours (this sandbox's monitor cap)",
-  );
+  expect(texts[1]).toContain("stops after 24 hours (the monitor cap)");
   expect(texts[2]).toContain("still stops after 24 hours");
   expect(texts[2]).toContain("Maximum 24 hours.");
   for (const text of texts) {

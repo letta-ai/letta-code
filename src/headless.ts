@@ -18,6 +18,7 @@ import { INTERRUPTED_BY_USER } from "@/constants";
 import { buildHeadlessSenderReminder } from "@/headless-message-sender";
 import { createHeadlessResponseState } from "@/headless-response-state";
 import { createStartupBackend } from "@/headless-startup-backend";
+import { serializeQueuedMessageAsUserLine } from "@/queue/queued-message-line";
 import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
 import {
   trackBoundaryError,
@@ -327,6 +328,7 @@ function toBidirectionalQueuedInput(
     return {
       kind: "task_notification",
       text: contentToTaskNotificationText(content),
+      content,
     };
   }
 
@@ -3435,13 +3437,13 @@ async function runBidirectionalMode(
    */
   function parseUserLine(raw: string): {
     kind: "message" | "task_notification";
-    content: string;
+    content: MessageCreate["content"];
   } | null {
     if (!raw.trim()) return null;
     try {
       const parsed: {
         type?: string;
-        message?: { content?: string };
+        message?: { content?: MessageCreate["content"] };
         _queuedKind?: string;
       } = JSON.parse(raw);
       if (parsed.type !== "user" || parsed.message?.content === undefined)
@@ -3485,6 +3487,7 @@ async function runBidirectionalMode(
         kind: "task_notification",
         source: "task_notification",
         text: input.text,
+        content: input.content,
       } as Parameters<typeof msgQueueRuntime.enqueue>[0]);
     } else if (input.kind === "cron_prompt") {
       msgQueueRuntime.enqueue({
@@ -3500,16 +3503,6 @@ async function runBidirectionalMode(
       } as Parameters<typeof msgQueueRuntime.enqueue>[0]);
     }
   }
-
-  const serializeQueuedMessageAsUserLine = (queuedMessage: QueuedMessage) =>
-    JSON.stringify({
-      type: "user",
-      message: {
-        role: "user",
-        content: queuedMessage.text,
-      },
-      _queuedKind: queuedMessage.kind,
-    });
 
   // Connect Task/subagent background notifications to the same queueing path
   // used by user input so bidirectional mode inherits TUI-style queue behavior.

@@ -192,7 +192,7 @@ describe("buildSystemPrompt", () => {
       );
       expect(result).toContain("monitors reactively invoke you");
       expect(result).toContain(
-        "Use Wake for a future turn in the current conversation",
+        "Use Wake only when there is an explicit time condition",
       );
       expect(result).toContain("advanced `letta cron` schedules");
       expect(result).not.toContain("Create one-shot or recurring crons");

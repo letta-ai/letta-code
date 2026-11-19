@@ -61,7 +61,7 @@ export type TaskNotificationQueueItem = QueueItemBase & {
   kind: "task_notification";
   /** XML notification string. */
   text: string;
-  /** Original tool content, including image parts, delivered after the XML header. */
+  /** Complete model-facing notification parts; text remains the display fallback. */
   content?: MessageCreate["content"];
   /** Client message ids of the listener turn that started the work. */
   clientMessageIds?: string[];
@@ -86,6 +86,13 @@ export type QueueItem =
   | TaskNotificationQueueItem
   | CronPromptQueueItem
   | ModContinueQueueItem;
+
+// Omit each variant separately so its kind-specific fields remain available.
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown
+  ? Omit<T, K>
+  : never;
+
+export type QueueItemInput = DistributiveOmit<QueueItem, "id" | "enqueuedAt">;
 
 // ── Scope ────────────────────────────────────────────────────────
 
@@ -205,7 +212,7 @@ export class QueueRuntime {
    * - If at hard ceiling: rejects all item kinds, fires onDropped("buffer_limit").
    */
   enqueue(
-    input: Omit<QueueItem, "id" | "enqueuedAt">,
+    input: QueueItemInput,
     options: { preserveExisting?: boolean } = {},
   ): QueueItem | null {
     // Durable rehydration must be observational on rejection: its payload remains
@@ -507,7 +514,7 @@ export class QueueRuntime {
     this.store.length = write;
   }
 
-  private makeItem(input: Omit<QueueItem, "id" | "enqueuedAt">): QueueItem {
+  private makeItem(input: QueueItemInput): QueueItem {
     return {
       ...input,
       id: `q-${++this.nextId}`,

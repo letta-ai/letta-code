@@ -49,6 +49,7 @@ export interface BackgroundProcess {
   remote?: boolean;
   cancel?: () => Promise<{ killed: boolean; output: string }>;
   description?: string;
+  monitorEndStatus?: "expired" | "stopped" | "paused";
   monitorSource?: "command" | "websocket" | "script" | "github_pull_request";
   persistent?: boolean;
   secrets?: Readonly<Record<string, string>>;

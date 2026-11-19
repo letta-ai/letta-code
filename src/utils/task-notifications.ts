@@ -1,6 +1,7 @@
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { SYSTEM_REMINDER_OPEN } from "@/constants";
 import { getRuntimeContext } from "@/runtime-context";
+import type { QueuedMessage } from "@/utils/message-queue-bridge";
 import { subagentScopeMatches } from "@/utils/subagent-scope";
 
 /**
@@ -118,21 +119,44 @@ export function formatTaskNotification(notification: TaskNotification): string {
     ? `\n<usage>${usageLines.join("\n")}</usage>`
     : "";
 
+  const transcriptBlock = notification.outputFile
+    ? `\n<transcript>${escapeXml(notification.outputFile)}</transcript>`
+    : "";
+
   return `<task-notification>
 <task-id>${notification.taskId}</task-id>
 <status>${notification.status}</status>
 <summary>${escapedSummary}</summary>
-<result>${escapedResult}</result>${usageBlock}
-</task-notification>${notification.outputFile ? `\nFull transcript available at: ${notification.outputFile}` : ""}`;
+<result>${escapedResult}</result>${usageBlock}${transcriptBlock}
+</task-notification>`;
+}
+
+/** Optional deployment-owned guidance for subagent receipts and results. */
+export function subagentResultReminder(): string {
+  const reminder = process.env.LETTA_SUBAGENT_RESULT_REMINDER;
+  return reminder
+    ? `\n\n<system-reminder>\n${reminder}\n</system-reminder>`
+    : "";
+}
+
+/** Keep the complete notification together in one model-facing text part. */
+export function taskNotificationMessage(
+  text: string,
+): Pick<QueuedMessage, "text" | "content"> {
+  const parts = [{ type: "text" as const, text }];
+  const reminder = subagentResultReminder();
+  if (reminder) parts.push({ type: "text", text: reminder.trimStart() });
+  return { text, content: parts };
 }
 
 export function formatMonitorEventNotification(notification: {
   taskId: string;
   event: string;
+  description?: string;
 }): string {
   return `<task-notification>
 <task-id>${escapeXml(notification.taskId)}</task-id>
-<summary>${escapeXml(`Monitor event: "${notification.event}"`)}</summary>
+<summary>${escapeXml(notification.description?.trim() ? `Monitor: ${notification.description}` : "Monitor event")}</summary>
 <result>
 <event>${escapeXml(notification.event)}</event>
 </result>

@@ -54,6 +54,7 @@ export interface ScriptMonitorHooks {
   createOutput(path: string): { append(text: string): boolean };
   queueEvent(params: {
     taskId: string;
+    description?: string;
     event: string;
     scope: ReturnType<typeof resolveNotificationScope>;
     actingUserId?: string | null;
@@ -62,7 +63,7 @@ export interface ScriptMonitorHooks {
   markFinished(
     taskId: string,
     processState: BackgroundProcess,
-    status: "completed" | "failed",
+    status: "completed" | "failed" | "expired",
     exitCode: number | null,
   ): void;
   timeoutEvent(timeoutMs: number): string;
@@ -171,13 +172,25 @@ export async function startScriptMonitor(
     if (processState.status !== "running") return;
     processState.completionNotificationSuppressed = true;
     if (note) output.append(note);
-    hooks.markFinished(taskId, processState, "failed", null);
+    hooks.markFinished(
+      taskId,
+      processState,
+      reason === "timeout" ? "expired" : "failed",
+      null,
+    );
     controller.abort(new Error(reason));
   };
 
   const events = createMonitorEventStream({
     emit(event) {
-      hooks.queueEvent({ taskId, event, scope, actingUserId, secrets });
+      hooks.queueEvent({
+        taskId,
+        description: args.description,
+        event,
+        scope,
+        actingUserId,
+        secrets,
+      });
     },
     stopSource() {
       stop("output rate too high", "\n[stopped: output rate too high]\n");
@@ -321,6 +334,7 @@ export async function startScriptMonitor(
       events.finish();
       hooks.queueEvent({
         taskId,
+        description: args.description,
         event: hooks.timeoutEvent(args.timeout_ms),
         scope,
         actingUserId,

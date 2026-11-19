@@ -109,7 +109,7 @@ export type ExternalWorkerFailureStage =
 
 /** The HTTP status an error message starts with or carries after a colon. */
 export function extractHttpStatus(message: string): number | undefined {
-  const match = /(?:^|:\s*)([45]\d{2})\b/.exec(message);
+  const match = /(?:^|:\s*)(?:HTTP\s+)?([45]\d{2})\b/.exec(message);
   return match ? Number(match[1]) : undefined;
 }
 

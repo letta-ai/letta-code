@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,11 +16,15 @@ import {
   openTaskProgressLog,
 } from "@/tools/impl/task-transcript";
 import {
+  clearPendingMessages,
   type QueuedMessage,
   setMessageQueueAdder,
 } from "@/utils/message-queue-bridge";
 import { collectRemoteTurnResult } from "./remote-turn-wait";
 import type { ExecutionState } from "./subagent-stream";
+
+beforeEach(clearPendingMessages);
+afterEach(clearPendingMessages);
 
 const SUBAGENT = "subagent-remote-1";
 
@@ -141,6 +145,8 @@ test("streams a remote Letta subagent's progress into the output file while it r
 
 test("notifies once while a completed child waits on background work and continues to the terminal result", async () => {
   const queued: QueuedMessage[] = [];
+  // Attaching a consumer delivers whatever earlier suites left queued.
+  clearPendingMessages();
   setMessageQueueAdder((message) => queued.push(message));
   registerSubagent(SUBAGENT, "general-purpose", "test", undefined, true);
   let poll = 0;
@@ -208,6 +214,8 @@ test("notifies once while a completed child waits on background work and continu
 
 test("does not notify a foreground Task's parent, which is blocked in this wait", async () => {
   const queued: QueuedMessage[] = [];
+  // Attaching a consumer delivers whatever earlier suites left queued.
+  clearPendingMessages();
   setMessageQueueAdder((message) => queued.push(message));
   registerSubagent(SUBAGENT, "general-purpose", "test", undefined, false);
   let poll = 0;

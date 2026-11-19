@@ -313,20 +313,38 @@ function waitForSocketOpen(
       detachResponse = () => socket.off?.("unexpected-response", onResponse);
     }
     detachError = onceSocketEvent(socket, "error", (event) => {
+      const detail = socketErrorDetail(event);
+      // Opaque errors may be followed by a close with the actual failure reason.
+      if (detail === null) return;
       cleanup();
-      reject(
-        new Error(`App-server WebSocket failed to open: ${String(event)}`),
-      );
+      reject(new Error(`App-server WebSocket failed to open: ${detail}`));
     });
-    detachClose = onceSocketEvent(socket, "close", () => {
+    detachClose = onceSocketEvent(socket, "close", (event) => {
       // An HTTP upgrade failure reports its status from the response handler.
       if (upgradeRejected) return;
       cleanup();
+      const reason =
+        event && typeof event === "object"
+          ? Reflect.get(event, "reason")
+          : null;
       reject(
-        new Error("App-server WebSocket failed to open: closed before opening"),
+        new Error(
+          `App-server WebSocket failed to open: ${typeof reason === "string" && reason ? reason : "closed before opening"}`,
+        ),
       );
     });
   });
+}
+
+function socketErrorDetail(event: unknown): string | null {
+  if (event instanceof Error) return event.message || null;
+  if (event && typeof event === "object") {
+    const error = Reflect.get(event, "error");
+    if (error instanceof Error && error.message) return error.message;
+    const message = Reflect.get(event, "message");
+    if (typeof message === "string" && message) return message;
+  }
+  return typeof event === "string" && event ? event : null;
 }
 
 function rawEventData(event: unknown): unknown {
@@ -399,6 +417,9 @@ export class AppServerClient {
       resolveAppServerUrl(options.url),
       socketOptions,
     );
+    // EventEmitter sockets can emit again after handshake listeners detach,
+    // including while close() aborts a failed connection. Keep this for life.
+    this.socket.on?.("error", () => {});
     this.control = this.socket;
     this.stream = this.socket;
 
@@ -411,8 +432,13 @@ export class AppServerClient {
   }
 
   async connect(): Promise<this> {
-    await waitForSocketOpen(this.socket, this.requestTimeoutMs);
-    return this;
+    try {
+      await waitForSocketOpen(this.socket, this.requestTimeoutMs);
+      return this;
+    } catch (error) {
+      this.close();
+      throw error;
+    }
   }
 
   close(): void {

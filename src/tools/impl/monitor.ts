@@ -20,6 +20,7 @@ import {
 } from "@/utils/task-notifications.js";
 import { noteExpectedWorktreeForLauncher } from "@/websocket/listener/worktree-ownership";
 import { getBackgroundLauncher } from "./bash.js";
+import type { MonitorArgs, MonitorWebSocketSource } from "./monitor-args";
 import {
   armMonitorBackup,
   cancelMonitorBackup,
@@ -32,13 +33,14 @@ import {
   MONITOR_EVENT_BUFFER_CHARS,
 } from "./monitor-event-stream.js";
 import { buildMonitorResult } from "./monitor-result";
+import { readResumableMonitor, savedMonitorArgs } from "./monitor-resume";
 import { startScriptMonitor } from "./monitor-script.js";
 import { persistMonitorState, withMonitorState } from "./monitor-state";
-import { getMonitorMaxTimeoutMs } from "./monitor-timeout";
 import {
-  startCloudUrlMonitor,
-  type UrlMonitorMatch,
-} from "./monitor-url-cloud";
+  getMonitorMaxTimeoutMs,
+  getMonitorTimeoutEvent,
+} from "./monitor-timeout";
+import { startCloudUrlMonitor } from "./monitor-url-cloud";
 import {
   assertBackgroundProcessCapacity,
   type BackgroundProcess,
@@ -61,44 +63,8 @@ export const MONITOR_OUTPUT_FILE_BYTES = 1024 * 1024;
 const WEBSOCKET_MAX_PAYLOAD_BYTES = MONITOR_EVENT_BUFFER_CHARS * 2;
 const WEBSOCKET_PROTOCOL_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 
-export function getMonitorTimeoutEvent(
-  timeoutMs: number,
-  tool = "Monitor",
-): string {
-  return isManagedCloudRuntime() && timeoutMs === getMonitorMaxTimeoutMs()
-    ? `${tool} stopped at the ${timeoutMs / 3_600_000}-hour Cloud sandbox limit. If you still need to watch, simply re-arm it by calling ${tool} again. For much longer waits, schedule a Wake or cron, which does not keep the sandbox running between turns.`
-    : "[Monitor timed out — re-arm if needed.]";
-}
-
-interface MonitorWebSocketSource {
-  url: string;
-  protocols?: string[];
-}
-
-interface MonitorArgs {
-  description: string;
-  timeout_ms?: number;
-  persistent?: boolean;
-  command?: string;
-  ws?: MonitorWebSocketSource;
-  script?: string;
-  args?: unknown;
-  url?: string;
-  interval_seconds?: number;
-  headers?: Record<string, string>;
-  select?: string;
-  match?: UrlMonitorMatch;
-  stop_on_match?: boolean;
-  toolCallId?: string;
-  backup_after_seconds?: number;
-  backup_prompt?: string;
-  secretEnv?: Record<string, string>;
-  variableEnv?: Record<string, string>;
-  parentScope?: { agentId: string; conversationId: string };
-  signal?: AbortSignal;
-}
-
 type NormalizedMonitorArgs = MonitorArgs & {
+  description: string;
   timeout_ms: number;
   persistent: boolean;
 };
@@ -224,17 +190,18 @@ function validateWebSocketSource(source: MonitorWebSocketSource): void {
 function normalizeMonitorArgs(args: MonitorArgs): NormalizedMonitorArgs {
   const normalized: NormalizedMonitorArgs = {
     ...args,
+    description: args.description ?? "",
     timeout_ms: args.timeout_ms ?? DEFAULT_TIMEOUT_MS,
     persistent: args.persistent ?? false,
   };
 
-  if (typeof normalized.description !== "string") {
+  if (typeof args.description !== "string") {
     throw new Error("Monitor description is required");
   }
   if (
     typeof normalized.timeout_ms !== "number" ||
     !Number.isFinite(normalized.timeout_ms) ||
-    normalized.timeout_ms < MIN_TIMEOUT_MS ||
+    normalized.timeout_ms < (args.resume ? 1 : MIN_TIMEOUT_MS) ||
     (!normalized.persistent && normalized.timeout_ms > getMonitorMaxTimeoutMs())
   ) {
     throw new Error(
@@ -348,6 +315,7 @@ function sanitizeMonitorText(
 
 export function queueMonitorEvent(params: {
   taskId: string;
+  description?: string;
   event: string;
   scope: ReturnType<typeof resolveNotificationScope>;
   actingUserId?: string | null;
@@ -361,6 +329,7 @@ export function queueMonitorEvent(params: {
     text: formatMonitorEventNotification({
       taskId,
       event: sanitizedEvent,
+      description: sanitizeMonitorText(params.description ?? "", secrets),
     }),
     ...scope,
     ...(actingUserId !== undefined ? { actingUserId } : {}),
@@ -422,10 +391,11 @@ function queueCommandCompletion(params: {
 export function markMonitorFinished(
   taskId: string,
   processState: BackgroundProcess,
-  status: "completed" | "failed",
+  status: "completed" | "failed" | "expired",
   exitCode: number | null,
 ): void {
-  processState.status = status;
+  processState.status = status === "expired" ? "failed" : status;
+  if (status === "expired") processState.monitorEndStatus = "expired";
   processState.exitCode = exitCode;
   persistMonitorState(processState);
   void cancelMonitorBackup(taskId);
@@ -473,6 +443,7 @@ function startCommandMonitor(args: MonitorSourceArgs): MonitorResult {
     emit(event) {
       queueMonitorEvent({
         taskId,
+        description: args.description,
         event,
         scope,
         actingUserId,
@@ -600,6 +571,7 @@ function startCommandMonitor(args: MonitorSourceArgs): MonitorResult {
         output.append(`\n[timeout after ${args.timeout_ms}ms]\n`);
         queueMonitorEvent({
           taskId,
+          description: args.description,
           event: getMonitorTimeoutEvent(args.timeout_ms),
           scope,
           actingUserId,
@@ -613,7 +585,12 @@ function startCommandMonitor(args: MonitorSourceArgs): MonitorResult {
         );
         output.append(`\n[error] ${message}\n`);
       }
-      markMonitorFinished(taskId, processState, "failed", null);
+      markMonitorFinished(
+        taskId,
+        processState,
+        shellError.killed ? "expired" : "failed",
+        null,
+      );
       if (!shellError.killed) {
         queueCommandCompletion({
           taskId,
@@ -668,6 +645,7 @@ function startWebSocketMonitor(args: MonitorSourceArgs): MonitorResult {
     emit(event) {
       queueMonitorEvent({
         taskId,
+        description: args.description,
         event,
         scope,
         actingUserId,
@@ -678,7 +656,7 @@ function startWebSocketMonitor(args: MonitorSourceArgs): MonitorResult {
       if (!processState || processState.status !== "running") return;
       processState.completionNotificationSuppressed = true;
       output.append("\n[stopped: output rate too high]\n");
-      markMonitorFinished(taskId, processState, "failed", null);
+      markMonitorFinished(taskId, processState, "expired", null);
       closeSocket();
     },
   });
@@ -721,13 +699,14 @@ function startWebSocketMonitor(args: MonitorSourceArgs): MonitorResult {
       output.append(`${event}\n`);
       queueMonitorEvent({
         taskId,
+        description: args.description,
         event,
         scope,
         actingUserId,
         secrets,
       });
       processState.completionNotificationSuppressed = true;
-      markMonitorFinished(taskId, processState, "failed", null);
+      markMonitorFinished(taskId, processState, "expired", null);
       closeSocket();
       return;
     }
@@ -739,7 +718,7 @@ function startWebSocketMonitor(args: MonitorSourceArgs): MonitorResult {
     const wrote = output.append(`${text}\n`);
     if (!wrote) {
       processState.completionNotificationSuppressed = true;
-      markMonitorFinished(taskId, processState, "failed", null);
+      markMonitorFinished(taskId, processState, "expired", null);
       closeSocket();
       return;
     }
@@ -759,6 +738,7 @@ function startWebSocketMonitor(args: MonitorSourceArgs): MonitorResult {
     output.append(`[stderr] ${message}\n`);
     queueMonitorEvent({
       taskId,
+      description: args.description,
       event,
       scope,
       actingUserId,
@@ -786,6 +766,7 @@ function startWebSocketMonitor(args: MonitorSourceArgs): MonitorResult {
     output.append(`${event}\n`);
     queueMonitorEvent({
       taskId,
+      description: args.description,
       event,
       scope,
       actingUserId,
@@ -806,6 +787,7 @@ function startWebSocketMonitor(args: MonitorSourceArgs): MonitorResult {
       if (processState.status !== "running") return;
       queueMonitorEvent({
         taskId,
+        description: args.description,
         event: getMonitorTimeoutEvent(args.timeout_ms),
         scope,
         actingUserId,
@@ -813,7 +795,7 @@ function startWebSocketMonitor(args: MonitorSourceArgs): MonitorResult {
       });
       output.append(`\n[timeout after ${args.timeout_ms}ms]\n`);
       processState.completionNotificationSuppressed = true;
-      markMonitorFinished(taskId, processState, "failed", null);
+      markMonitorFinished(taskId, processState, "expired", null);
       closeSocket();
     }, args.timeout_ms);
     unrefTimer(timeout);
@@ -863,6 +845,28 @@ function backupScopeFor(taskId: string) {
 }
 
 export async function monitor(args: MonitorArgs): Promise<MonitorResult> {
+  const resumeRecord = args.resume
+    ? await readResumableMonitor(args.resume, args.parentScope)
+    : undefined;
+  if (resumeRecord) {
+    if (resumeRecord.kind === "github_pull_request")
+      throw new Error("Use WatchPR to resume this monitor.");
+    args = {
+      ...resumeRecord.args,
+      resume: resumeRecord.monitor_id,
+      parentScope: args.parentScope,
+      signal: args.signal,
+      secretEnv: args.secretEnv,
+      variableEnv: args.variableEnv,
+    };
+    if (resumeRecord.expires_at) {
+      args.timeout_ms = Math.max(
+        1,
+        Date.parse(resumeRecord.expires_at) - Date.now(),
+      );
+      args.persistent = false;
+    }
+  }
   // Hooks may have yielded since approval execution checked cancellation.
   args.signal?.throwIfAborted();
   // A url monitor runs in Letta Cloud; nothing is started or retained here.
@@ -893,13 +897,17 @@ export async function monitor(args: MonitorArgs): Promise<MonitorResult> {
     }
   }
   if (cloud) {
-    return startCloudUrlMonitor(args);
+    if (!args.description) throw new Error("Monitor description is required");
+    return startCloudUrlMonitor({ ...args, description: args.description });
   }
   const normalized = normalizeMonitorArgs(args);
   installMonitorProcessExitCleanup();
   const result = await withMonitorState(
     {
       ...normalized,
+      resumeRecord,
+      timeoutMs: normalized.persistent ? 0 : normalized.timeout_ms,
+      args: savedMonitorArgs(normalized),
       kind:
         normalized.script !== undefined
           ? "script"
@@ -943,6 +951,9 @@ export function stopMonitorsForProcessExit(): void {
       continue;
     }
     processState.completionNotificationSuppressed = true;
+    processState.monitorEndStatus = isManagedCloudRuntime()
+      ? "paused"
+      : "stopped";
     processState.status = "failed";
     try {
       processState.process.kill("SIGKILL");

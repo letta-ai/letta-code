@@ -18,6 +18,11 @@ import {
   turnFailureMessage,
   turnReport,
 } from "./codex-app-server-payloads";
+import {
+  waitForRejectedCodexSteer,
+  withCodexSteerReceipt,
+  withSessionLock,
+} from "./codex-steer-receipt";
 import { traceCodexLaunch } from "./external-llm-trace-launch";
 import {
   type ExternalTraceContext,
@@ -134,6 +139,7 @@ export interface CodexTurnHandle {
 
 export interface CodexMessageReceipt {
   mode: "steered" | "new_turn";
+  queued?: boolean;
   threadId: string;
   turnId: string;
   completion?: Promise<SubagentResult>;
@@ -695,23 +701,6 @@ async function createSession(
   return session;
 }
 
-async function withSessionLock<T>(
-  session: CodexSession,
-  operation: () => Promise<T>,
-): Promise<T> {
-  const previous = session.startLock;
-  let release!: () => void;
-  session.startLock = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  await previous;
-  try {
-    return await operation();
-  } finally {
-    release();
-  }
-}
-
 interface TurnAttempt {
   turnId: string;
   outcome: Promise<TurnOutcome>;
@@ -910,50 +899,61 @@ export async function sendCodexMessage(
 ): Promise<CodexMessageReceipt> {
   const session = await resumeSession(options.threadId, options, deps);
   try {
-    return await withSessionLock(session, async () => {
-      const activeTurnId = session.activeTurnId;
-      if (activeTurnId) {
-        try {
-          await session.client.request("turn/steer", {
-            threadId: session.threadId,
-            expectedTurnId: activeTurnId,
-            input: textInput(options.prompt),
-          });
-          if (session.activeWaiter?.turnId === activeTurnId) {
-            session.activeWaiter.steered = true;
+    return await withCodexSteerReceipt<CodexMessageReceipt>((delivery) =>
+      withSessionLock(session, async () => {
+        const activeTurnId = session.activeTurnId;
+        if (activeTurnId) {
+          try {
+            await delivery.wait(
+              session.client.request("turn/steer", {
+                threadId: session.threadId,
+                expectedTurnId: activeTurnId,
+                input: textInput(options.prompt),
+              }),
+              {
+                mode: "steered",
+                threadId: session.threadId,
+                turnId: activeTurnId,
+                queued: true,
+              },
+            );
+            if (session.activeWaiter?.turnId === activeTurnId) {
+              session.activeWaiter.steered = true;
+            }
+            return {
+              mode: "steered",
+              threadId: session.threadId,
+              turnId: activeTurnId,
+            };
+          } catch (error) {
+            if (delivery.queued) throw error;
+            await waitForRejectedCodexSteer(session, activeTurnId, error);
+            // The matching turn completed while steering. Start exactly one new turn.
           }
-          return {
-            mode: "steered",
-            threadId: session.threadId,
-            turnId: activeTurnId,
-          };
-        } catch (error) {
-          if (session.activeTurnId === activeTurnId) throw error;
-          // The matching turn completed while steering. Start exactly one new turn.
         }
-      }
-      options.signal?.throwIfAborted();
-      updateExternalTraceTask(session.threadId, options.traceContext);
-      await options.beforeStart?.(session.threadId);
-      const handle = await startTurnUnlocked(
-        session,
-        options.prompt,
-        undefined,
-        options.onStarted,
-        options,
-      );
-      if (options.signal?.aborted) {
-        await handle.interrupt();
-        options.signal.throwIfAborted();
-      }
-      return {
-        mode: "new_turn",
-        threadId: handle.threadId,
-        turnId: handle.turnId,
-        completion: handle.completion,
-        interrupt: handle.interrupt,
-      };
-    });
+        options.signal?.throwIfAborted();
+        updateExternalTraceTask(session.threadId, options.traceContext);
+        await options.beforeStart?.(session.threadId);
+        const handle = await startTurnUnlocked(
+          session,
+          options.prompt,
+          undefined,
+          options.onStarted,
+          options,
+        );
+        if (options.signal?.aborted) {
+          await handle.interrupt();
+          options.signal.throwIfAborted();
+        }
+        return {
+          mode: "new_turn",
+          threadId: handle.threadId,
+          turnId: handle.turnId,
+          completion: handle.completion,
+          interrupt: handle.interrupt,
+        };
+      }),
+    );
   } catch (error) {
     if (!session.activeTurnId && sessions.get(session.threadId) === session) {
       scheduleIdleSessionCleanup(session);

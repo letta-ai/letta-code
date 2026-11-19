@@ -4,6 +4,7 @@ import {
   runOutsideRuntimeContext,
   runWithRuntimeContext,
 } from "@/runtime-context";
+import { REMOTE_SUBAGENT_MESSAGE_DEDUPE_PENDING_TTL_MS } from "@/tools/impl/claude-steer-timeouts";
 import {
   sendClaudeMessage,
   stopClaudeSession,
@@ -266,7 +267,12 @@ export async function handleSubagentMessageCommand(
         }),
       );
       if (receipt.mode === "steered")
-        return { ...base, success: true, delivery: "steered" };
+        return {
+          ...base,
+          success: true,
+          delivery:
+            "queued" in receipt && receipt.queued ? "queued" : "steered",
+        };
       if (!receipt.completion || !receipt.interrupt)
         throw new Error("External coding agent returned an incomplete receipt");
       const secretEnv = worker?.secretEnv;
@@ -321,12 +327,19 @@ export async function handleSubagentMessageCommand(
     }
   })();
   responses.set(key, {
-    expiresAt: now + DEDUPE_TTL_MS,
+    // Keep retries deduplicated, but let a stuck steer expire eventually.
+    expiresAt: now + REMOTE_SUBAGENT_MESSAGE_DEDUPE_PENDING_TTL_MS,
     response,
   });
   const result = await response;
-  if (!result.success && responses.get(key)?.response === response)
-    responses.delete(key);
+  if (responses.get(key)?.response === response) {
+    if (!result.success) responses.delete(key);
+    else
+      responses.set(key, {
+        expiresAt: (deps.now ?? Date.now)() + DEDUPE_TTL_MS,
+        response,
+      });
+  }
   return result;
 }
 
