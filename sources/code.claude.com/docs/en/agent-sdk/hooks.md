@@ -840,6 +840,7 @@ If your callback needs more time, set a higher `timeout` on its `HookMatcher`. I
 * Check all `PreToolUse` hooks for `permissionDecision: 'deny'` returns
 * Add logging to your hooks to see what `permissionDecisionReason` they're returning
 * Verify matcher patterns aren't too broad: an empty matcher matches all tools
+* If the tool result says a hook `returned updatedInput that failed schema validation` or `returned updatedInput that the tool refused`, fix that hook's `updatedInput`. Include the unchanged `tool_input` fields, as in [Modify tool input](#modify-tool-input), because `updatedInput` replaces the whole input.
 
 ### Modified input not applied
 

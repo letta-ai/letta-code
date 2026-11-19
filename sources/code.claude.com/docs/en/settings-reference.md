@@ -143,7 +143,7 @@ Every key below links to its entry. Scope lists the [files](https://code.claude.
 | [`permissions`](#permissions) | Set allow, ask, and deny rules and the default [permission mode](https://code.claude.com/docs/en/permission-modes.md) | Permission settings | Any file |
 | [`permissions.additionalDirectories`](#permissions-additionaldirectories) | Give Claude file access to [directories outside the current one](https://code.claude.com/docs/en/permissions.md#working-directories) | Permission settings | Any file |
 | [`permissions.allow`](#permissions-allow) | Approve listed [tool uses](https://code.claude.com/docs/en/permissions.md#permission-rule-syntax) without a prompt | Permission settings | Any file |
-| [`permissions.ask`](#permissions-ask) | Always prompt before listed [tool uses](https://code.claude.com/docs/en/permissions.md#permission-rule-syntax) | Permission settings | Any file |
+| [`permissions.ask`](#permissions-ask) | Prompt before listed [tool uses](https://code.claude.com/docs/en/permissions.md#permission-rule-syntax) | Permission settings | Any file |
 | [`permissions.blockReadsOutsideWorkingDirectories`](#permissions-blockreadsoutsideworkingdirectories) | Make the file tools refuse reads outside the [working directories](https://code.claude.com/docs/en/permissions.md#working-directories) in every permission mode | Permission settings | Any file |
 | [`permissions.blockWritesOutsideWorkingDirectories`](#permissions-blockwritesoutsideworkingdirectories) | Make the `Write`, `Edit`, and `NotebookEdit` tools refuse paths outside the [working directories](https://code.claude.com/docs/en/permissions.md#working-directories) in every permission mode, apart from [some of Claude Code's own files](#what-the-write-block-refuses-and-what-stays-writable) | Permission settings | Any file |
 | [`permissions.defaultMode`](#permissions-defaultmode) | Set the default [permission mode](https://code.claude.com/docs/en/permission-modes.md#which-mode-a-session-starts-in) for new sessions | Permission settings | Any file |
@@ -670,7 +670,7 @@ To cap one model's effort rather than set its level, add a [`maxEffortLevel`](#m
 * **Type**: object mapping a model name to an object with any of these fields:
   * `effortLevel`: one of `"low"`, `"medium"`, `"high"`, or `"xhigh"`
   * [`maxEffortLevel`](#maxeffortlevel): the highest effort level the model may run at
-  * `autoCompactWindow`: a number of tokens from `100000` to `1000000`, or `"auto"` for the window tuned for the model. [`/autocompact`](https://code.claude.com/docs/en/model-config#set-the-auto-compact-window) saves here. For that model, the value takes precedence over a top-level [`autoCompactWindow`](#autocompactwindow) in the same settings file. Requires Claude Code v2.1.288 or later
+  * `autoCompactWindow`: a token count of `100000` or more, or `"auto"` for the window tuned for the model. [`/autocompact`](https://code.claude.com/docs/en/model-config#set-the-auto-compact-window) saves here. For that model, the value takes precedence over a top-level [`autoCompactWindow`](#autocompactwindow) in the same settings file. Requires Claude Code v2.1.288 or later
 * **Default**: unset
 
 Claude Code writes each entry under the model's canonical name, such as `claude-opus-5-5`, and matches that model's alias, date-suffixed, `[1m]`, and recognized provider-specific IDs to the same entry.
@@ -979,6 +979,8 @@ For the complete rule syntax, including wildcard behavior, tool-specific pattern
 ### `permissions.ask`
 
 List the tool uses that prompt you for confirmation even in a permission mode that would otherwise approve them, such as `acceptEdits` or `bypassPermissions`. In `dontAsk` mode Claude Code denies a matching tool use instead of prompting.
+
+A matching tool use can still run without your approval if a [`PermissionRequest` hook](https://code.claude.com/docs/en/hooks#permissionrequest) or a [mod](https://code.claude.com/docs/en/plugins/mods/overview.md#what-a-mod-can-reach) allows it. With [sandbox auto-allow](https://code.claude.com/docs/en/permissions.md#how-permissions-interact-with-sandboxing), sandboxed commands can skip a bare `Bash` ask rule.
 
 * **Scope**: [`Any file`](#scopes)
 * **Type**: array of permission rule strings
@@ -2338,7 +2340,7 @@ The manual `/compact` command keeps working while auto-compact is off. If you tu
 Set how full the context window gets before Claude Code [compacts automatically](https://code.claude.com/docs/en/context-window.md#when-your-context-fills-up).
 
 * **Scope**: [`Any file`](#scopes)
-* **Type**: number of tokens, from `100000` to `1000000`. Claude Code caps the value at your model's context window; the [models overview](https://platform.claude.com/docs/en/about-claude/models/overview) lists each model's window
+* **Type**: number of tokens, at least `100000`. Claude Code caps the value at your model's context window; the [models overview](https://platform.claude.com/docs/en/about-claude/models/overview) lists each model's window
 * **Default**: unset, so Claude Code picks a window tuned for your model
 * **Per-session overrides**: [`--autocompact`](https://code.claude.com/docs/en/cli-reference#cli-flags) takes precedence over this key for one session, and [`CLAUDE_CODE_AUTO_COMPACT_WINDOW`](https://code.claude.com/docs/en/env-vars) takes precedence over both unless Claude Code [ignores the variable's value](https://code.claude.com/docs/en/model-config.md#claude_code_auto_compact_window-values)
 
@@ -2481,6 +2483,7 @@ This example turns off automatic compaction and routes API requests through a pr
     * The content variables `OTEL_LOG_USER_PROMPTS`, `OTEL_LOG_ASSISTANT_RESPONSES`, `OTEL_LOG_TOOL_CONTENT`, and `OTEL_LOG_TOOL_DETAILS`
     * `OTEL_EXPORTER_OTLP_*` variables whose names end in `_ENDPOINT`, `_HEADERS`, `_PROTOCOL`, `_CERTIFICATE`, `_CLIENT_KEY`, or `_INSECURE`, in the generic and per-signal forms, such as `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_EXPORTER_OTLP_METRICS_HEADERS`
     * `OTEL_EXPORTER_PROMETHEUS_HOST` and `OTEL_EXPORTER_PROMETHEUS_PORT`
+    * `OTEL_RESOURCE_INCLUDE_HOST`, which [adds the machine's name and ID](https://code.claude.com/docs/en/monitoring-usage.md#identify-the-machine-a-session-ran-on)
 
     Only these values still apply from project and local settings, because they turn something off: `none` for the three exporter selectors, and an off value such as `0` for `OTEL_LOG_USER_PROMPTS`, `OTEL_LOG_TOOL_CONTENT`, and `OTEL_LOG_TOOL_DETAILS`. Such a value overrides the same variable in your user settings, but not one that the environment you start Claude Code from, a `--settings` file, or managed settings sets.
 
@@ -2501,7 +2504,7 @@ This example turns off automatic compaction and routes API requests through a pr
 * [`CLAUDE_CODE_PROJECT_DIR_NAME`](https://code.claude.com/docs/en/sessions#name-the-project-directory-yourself), which Claude Code reads from the launch environment only, is ignored from every file; requires v2.1.234 or later.
 * [`CLAUDE_CODE_RESTRICTED`](https://code.claude.com/docs/en/env-vars#variables), which Claude Code reads from the launch environment only, is ignored from every file.
 * [`CLAUDE_CODE_DISABLE_POWERSHELL_CMD_RM_DENY`](https://code.claude.com/docs/en/env-vars#variables), which Claude Code reads from the launch environment only, is ignored from every file. The variable requires Claude Code v2.1.283 or later.
-* [`CLAUDE_CODE_DISABLE_DANGEROUS_RM_TIMEOUT`, `CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT`, `CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT`, and `CLAUDE_CODE_DISABLE_MOUNTED_DRIVE_RM_PROMPT`](https://code.claude.com/docs/en/env-vars#variables), which Claude Code reads from the launch environment only, are ignored from every file.
+* [`CLAUDE_CODE_DISABLE_DANGEROUS_RM_TIMEOUT`, `CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT`, `CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT`, `CLAUDE_CODE_STRICT_INLINE_SHELL_RM_PROMPT`, `CLAUDE_CODE_DISABLE_MOUNTED_DRIVE_RM_PROMPT`, and `CLAUDE_CODE_DISABLE_ULTRAREVIEW_TRUST_CHECK`](https://code.claude.com/docs/en/env-vars#variables), which Claude Code reads from the launch environment only, are ignored from every file.
 * [`CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS`](https://code.claude.com/docs/en/env-vars#variables), which Claude Code reads from the launch environment only, is ignored from every file.
 * [`CLAUDE_CODE_WARN_DISK_FREE_GIB` and `CLAUDE_CODE_WARN_MEMORY_FREE_GIB`](https://code.claude.com/docs/en/env-vars#variables), which Claude Code reads from the launch environment only, are ignored from every file. The variables require Claude Code v2.1.304 or later.
 
@@ -4043,7 +4046,7 @@ Each entry below shows one allowlist entry per source type and the fields it acc
 
 | Source | Example entry | Fields |
 | :- | :- | :- |
-| `github` | `{ "source": "github", "repo": "acme-corp/plugins", "ref": "main", "path": "marketplace" }` | `repo` required; `ref` is a branch, tag, or commit SHA; `path` is a subdirectory |
+| `github` | `{ "source": "github", "repo": "acme-corp/plugins", "ref": "main", "path": ".claude-plugin/marketplace.json" }` | `repo` required; `ref` is a branch, tag, or commit SHA; `path` is the [marketplace file's path](https://code.claude.com/docs/en/plugins/marketplace-reference.md#fields-by-type) in the repository |
 | `git` | `{ "source": "git", "url": "https://gitlab.example.com/tools/plugins.git", "ref": "production" }` | `url` required; `ref` and `path` as for `github` |
 | `url` | `{ "source": "url", "url": "https://plugins.example.com/marketplace.json", "headers": { "Authorization": "Bearer ${TOKEN}" } }` | `url` required; `headers` adds HTTP headers for authenticated access |
 | `file` | `{ "source": "file", "path": "/opt/acme-corp/plugins/marketplace.json" }` | `path` required, the absolute path to a `marketplace.json` file |
@@ -4101,7 +4104,7 @@ For every source type except owner-wildcard `github` entries and the regex-match
 For example, Claude Code treats each pair below as two different sources:
 
 * `{ "source": "github", "repo": "acme-corp/plugins" }` and `{ "source": "github", "repo": "acme-corp/plugins", "ref": "main" }`
-* `{ "source": "github", "repo": "acme-corp/plugins", "path": "marketplace" }` and `{ "source": "github", "repo": "acme-corp/plugins" }`
+* `{ "source": "github", "repo": "acme-corp/plugins", "path": ".claude-plugin/marketplace.json" }` and `{ "source": "github", "repo": "acme-corp/plugins" }`
 
 #### Allow only the official marketplace
 

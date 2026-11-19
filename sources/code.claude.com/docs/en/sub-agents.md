@@ -302,7 +302,7 @@ Multi-word field names use camelCase, such as `maxTurns` and `disallowedTools`, 
 | `model` | No | [Model](#choose-a-model) to use: `sonnet`, `opus`, `haiku`, `fable`, a full model ID such as `claude-opus-5-5`, or `inherit`. When you omit it, Claude Code picks the model in the [subagent model order](#choose-a-model) |
 | `permissionMode` | No | [Permission mode](#permission-modes): `default`, `acceptEdits`, `auto`, `dontAsk`, `bypassPermissions`, `plan`, or `manual` as an alias for `default`. Ignored for [plugin subagents](#choose-the-subagent-scope) |
 | `maxTurns` | No | Maximum number of agentic turns before the subagent stops. When the subagent reaches the limit, Claude Code returns its output marked as partial, and Claude can [resume it](#resume-subagents) to continue. The partial marking requires Claude Code v2.1.246 or later |
-| `autoCompactWindow` | No | Lower the [auto-compact window](#subagent-auto-compact-window) for this subagent to a token count from `100000` to `1000000`. Requires Claude Code v2.1.296 or later |
+| `autoCompactWindow` | No | Lower the [auto-compact window](#subagent-auto-compact-window) for this subagent to a token count of `100000` or more. Requires Claude Code v2.1.296 or later |
 | `skills` | No | [Skills](https://code.claude.com/docs/en/skills.md) to preload into the subagent's context at startup. The full skill content is injected, not only the description. Subagents can still invoke unlisted project, user, and plugin skills through the Skill tool |
 | `mcpServers` | No | [MCP servers](https://code.claude.com/docs/en/mcp.md) available to this subagent. Each entry is either a server name referencing an already-configured server (e.g., `"slack"`) or an inline definition with the server name as key and a full [MCP server config](https://code.claude.com/docs/en/mcp.md#installing-mcp-servers) as value. Ignored for [plugin subagents](#choose-the-subagent-scope) |
 | `hooks` | No | [Lifecycle hooks](#define-hooks-for-subagents) scoped to this subagent. Ignored for [plugin subagents](#choose-the-subagent-scope) |
@@ -1212,7 +1212,7 @@ The `preTokens` value shows how many tokens were used before compaction occurred
 
 ##### Set the auto-compact window for one subagent
 
-To make one subagent compact earlier than it otherwise would, set `autoCompactWindow` in its [frontmatter](#supported-frontmatter-fields) to a token count from `100000` to `1000000`. If you set [`CLAUDE_CODE_AUTO_COMPACT_WINDOW`](https://code.claude.com/docs/en/env-vars#variables), the subagent uses that variable's window instead and the field has no effect, unless Claude Code [ignores the variable's value](https://code.claude.com/docs/en/model-config.md#claude_code_auto_compact_window-values). Requires Claude Code v2.1.296 or later.
+To make one subagent compact earlier than it otherwise would, set `autoCompactWindow` in its [frontmatter](#supported-frontmatter-fields) to a token count of `100000` or more. Requires Claude Code v2.1.296 or later.
 
 This frontmatter sets `autoCompactWindow` to 200,000 tokens for a subagent that reads long log files:
 
@@ -1224,12 +1224,14 @@ autoCompactWindow: 200000
 ---
 ```
 
-Write the value as a plain integer such as `200000`, because in frontmatter Claude Code reads `200k` as 200, which is outside the allowed range. The subagent still loads and compacts as if the field were absent. To check whether Claude Code ignored your value, run `claude --debug` in your shell and search the [debug log](#supported-frontmatter-fields) for `invalid autoCompactWindow`.
+Write the value as a plain integer such as `200000`, because in frontmatter Claude Code reads `200k` as 200, which is below the minimum. The subagent still loads and compacts as if the field were absent. To check whether Claude Code ignored your value, run `claude --debug` in your shell and search the [debug log](#supported-frontmatter-fields) for `invalid autoCompactWindow`.
 
-If the value is in range and you still see no change, check for these causes:
+If the value is `100000` or more and you still see no change, check for these causes:
 
 * **The value isn't below the [auto-compact window](https://code.claude.com/docs/en/model-config.md#context-window-and-auto-compaction) the subagent would otherwise inherit**: to compact earlier, set a value below that window.
 * **You run the whole session as this subagent with `--agent` or the `agent` setting**: the field has no effect there. To set the session's window, see [Set the auto-compact window](https://code.claude.com/docs/en/model-config.md#set-the-auto-compact-window).
+
+If you also set [`CLAUDE_CODE_AUTO_COMPACT_WINDOW`](https://code.claude.com/docs/en/env-vars#variables), the subagent uses the lowest of the `autoCompactWindow` value, the model's context window, and the window the variable sets. Before v2.1.312, the field had no effect while the variable set the window.
 
 ## Fork the current conversation
 

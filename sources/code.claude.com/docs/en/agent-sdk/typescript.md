@@ -1301,7 +1301,7 @@ type AgentDefinition = {
 | `skills` | No | Array of skill names to preload into the agent context |
 | `initialPrompt` | No | Auto-submitted as the first user turn when this agent runs as the main thread agent |
 | `maxTurns` | No | Maximum number of agentic turns (API round-trips) before stopping |
-| `autoCompactWindow` | No | Lower the [auto-compact window](https://code.claude.com/docs/en/sub-agents.md#subagent-auto-compact-window) for this agent when it runs as a subagent, to a token count from `100000` to `1000000`. Requires TypeScript Agent SDK v0.3.296 or later |
+| `autoCompactWindow` | No | Lower the [auto-compact window](https://code.claude.com/docs/en/sub-agents.md#subagent-auto-compact-window) for this agent when it runs as a subagent, to a token count of `100000` or more. Requires TypeScript Agent SDK v0.3.296 or later |
 | `background` | No | Run this agent as a non-blocking background task when invoked |
 | `omitClaudeMd` | No | Leave the user, project, and local CLAUDE.md files out of this agent's initial context; managed policy files still load. Use it for agents that take everything they need from the Agent tool prompt. Ignored when this agent runs as the main thread agent. Requires TypeScript Agent SDK v0.3.271 or later |
 | `memory` | No | Memory source for this agent: `'user'`, `'project'`, or `'local'` |
