@@ -491,10 +491,13 @@ function transcriptContext(transcript: string, systemPrompt: string): Context {
 }
 
 /**
- * The agent's own context with the compaction prompt as one more user
- * message, so the summary request continues the conversation. Nothing is
- * written in the model's name: providers that need an assistant message
- * between tool results and a user message get one from pi-ai.
+ * The agent's own context with the compaction prompt added, so the summary
+ * request continues the conversation. Nothing is written in the model's name:
+ * providers that need an assistant message between tool results and a user
+ * message get one from pi-ai. A trailing user message has not reached the
+ * model yet (the pre-call check compacts before the request that would carry
+ * it), so the prompt joins it rather than following as a second user message,
+ * which chat templates with strict role alternation reject.
  */
 function selfCompactionContext(
   self: LocalSelfCompactionContext,
@@ -502,7 +505,19 @@ function selfCompactionContext(
   prompt: string,
 ): Context {
   const history = toPiHistoryMessages(messages);
-  history.push({ role: "user", content: prompt, timestamp: Date.now() });
+  const last = history.at(-1);
+  if (last?.role === "user") {
+    const content =
+      typeof last.content === "string"
+        ? [{ type: "text" as const, text: last.content }]
+        : last.content;
+    history[history.length - 1] = {
+      ...last,
+      content: [...content, { type: "text", text: prompt }],
+    };
+  } else {
+    history.push({ role: "user", content: prompt, timestamp: Date.now() });
+  }
   return {
     systemPrompt: self.systemPrompt,
     messages: history,

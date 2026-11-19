@@ -174,6 +174,34 @@ describe("self-compaction", () => {
     });
   });
 
+  test("adds the prompt to a trailing user message instead of a second one", async () => {
+    const messages: LocalMessage[] = [
+      TOOL_TURN[0] as LocalMessage,
+      assistant([{ type: "text", text: "done" }]),
+      {
+        id: "user-2",
+        role: "user",
+        content: [{ type: "text", text: "now fix the lint" }],
+        timestamp: Date.now(),
+      },
+    ];
+    const { contexts } = await summarize(messages, [
+      assistant([{ type: "text", text: "self summary" }]),
+    ]);
+
+    expect(contexts[0]?.messages.map((message) => message.role)).toEqual([
+      "user",
+      "assistant",
+      "user",
+    ]);
+    expect(contexts[0]?.messages.at(-1)).toMatchObject({
+      content: [
+        { type: "text", text: "now fix the lint" },
+        { type: "text", text: LOCAL_SELF_ALL_COMPACTION_PROMPT },
+      ],
+    });
+  });
+
   test("sends the agent's sampling settings on the self request only", async () => {
     const { options } = await summarize(
       TOOL_TURN,
