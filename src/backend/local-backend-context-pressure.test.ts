@@ -258,9 +258,10 @@ describe("LocalBackend context pressure", () => {
         "You are the self-compaction agent.",
       );
       expect(compaction?.tools?.map((tool) => tool.name)).toEqual(["Bash"]);
+      // The prompt follows the user's message directly: nothing is written
+      // in the model's name.
       expect(compaction?.messages.map((message) => message.role)).toEqual([
         "user",
-        "assistant",
         "user",
       ]);
       expect(compaction?.messages.at(-1)).toMatchObject({

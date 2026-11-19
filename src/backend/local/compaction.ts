@@ -18,11 +18,10 @@ import { LocalPiModelsRuntime } from "@/backend/dev/pi-models-runtime";
 import { resolvePiRequestHeaders } from "@/backend/dev/pi-request-headers";
 import { estimateLocalMessagesTokens } from "@/backend/local/local-context-estimate";
 import { formatLocalMessagesForSummary } from "./compaction-transcript";
-import {
-  emptyLocalUsage,
-  type LocalCompactionStats,
-  type LocalCompactionSummarySource,
-  type LocalMessage,
+import type {
+  LocalCompactionStats,
+  LocalCompactionSummarySource,
+  LocalMessage,
 } from "./local-message";
 import { resolveAvailableLocalModelForTurn } from "./local-model-config";
 import type { LocalAgentRecord } from "./local-types";
@@ -301,10 +300,6 @@ export const LOCAL_SELF_SLIDING_WINDOW_COMPACTION_PROMPT = `${slidingWindowCompa
   "The messages above",
 )}\n\n${SELF_COMPACTION_INSTRUCTIONS}`;
 
-// Ends the history with an assistant message before the summary request, as
-// the server's self-compaction does, so the model doesn't continue the turn.
-const SELF_COMPACTION_ACKNOWLEDGEMENT = "I understand. Let me summarize.";
-
 /** A summary and the request that wrote it (unset when none ran). */
 export interface LocalCompactionSummary {
   summary: string;
@@ -392,7 +387,7 @@ function fableCompactionSummaryFallbackSettings(
 
 async function runGenerateText(
   input: LocalAllCompactionInput,
-  buildContext: (model: Model<string>) => Context,
+  context: Context,
   turnSampling = false,
 ): Promise<{ text: string }> {
   const modelsRuntime =
@@ -441,7 +436,6 @@ async function runGenerateText(
     );
   }
   const run = input.complete ?? runtimeComplete(modelsRuntime);
-  const context = buildContext(resolved.model as Model<string>);
   const reasoning = reasoningForSettings(
     localModel.modelSettings,
     localModel.model,
@@ -496,25 +490,18 @@ function transcriptContext(transcript: string, systemPrompt: string): Context {
   };
 }
 
+/**
+ * The agent's own context with the compaction prompt as one more user
+ * message, so the summary request continues the conversation. Nothing is
+ * written in the model's name: providers that need an assistant message
+ * between tool results and a user message get one from pi-ai.
+ */
 function selfCompactionContext(
   self: LocalSelfCompactionContext,
   messages: LocalMessage[],
   prompt: string,
-  model: Model<string>,
 ): Context {
   const history = toPiHistoryMessages(messages);
-  if (history.at(-1)?.role !== "assistant") {
-    history.push({
-      role: "assistant",
-      content: [{ type: "text", text: SELF_COMPACTION_ACKNOWLEDGEMENT }],
-      api: model.api,
-      provider: model.provider,
-      model: model.id,
-      usage: emptyLocalUsage(),
-      stopReason: "stop",
-      timestamp: Date.now(),
-    });
-  }
   history.push({ role: "user", content: prompt, timestamp: Date.now() });
   return {
     systemPrompt: self.systemPrompt,
@@ -539,8 +526,7 @@ async function summarizeInSelfContext(
   try {
     const result = await runGenerateText(
       input,
-      (model) =>
-        selfCompactionContext(input.self, input.messages, prompt, model),
+      selfCompactionContext(input.self, input.messages, prompt),
       true,
     );
     return result.text.trim() ? result : "transcript_after_no_text";
@@ -584,7 +570,8 @@ async function summarizeTranscript(
   const primaryTranscript = formatLocalMessagesForSummary(input.messages);
   let result: { text: string } | undefined;
   try {
-    result = await runGenerateText(input, () =>
+    result = await runGenerateText(
+      input,
       transcriptContext(primaryTranscript, systemPrompt),
     );
   } catch (error) {
@@ -598,7 +585,8 @@ async function summarizeTranscript(
       if (fallbackTranscript === previousTranscript) continue;
       previousTranscript = fallbackTranscript;
       try {
-        result = await runGenerateText(input, () =>
+        result = await runGenerateText(
+          input,
           transcriptContext(fallbackTranscript, systemPrompt),
         );
         break;
