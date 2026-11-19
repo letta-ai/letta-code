@@ -411,17 +411,7 @@ test("subagent reminders are opt-in and do not alter other background notificati
       expect(taskNotificationMessage(original)).toEqual({
         text: original,
         content: [
-          {
-            type: "text",
-            text: original.slice(
-              0,
-              original.indexOf("\nFull transcript available at:"),
-            ),
-          },
-          {
-            type: "text",
-            text: "Full transcript available at: /tmp/task-1.log",
-          },
+          { type: "text", text: original },
           ...(value
             ? [{ type: "text" as const, text: suffix.trimStart() }]
             : []),

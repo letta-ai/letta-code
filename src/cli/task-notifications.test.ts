@@ -14,6 +14,14 @@ import {
 } from "@/utils/task-notifications";
 
 describe("taskNotifications", () => {
+  test("keeps legacy transcript trailers out of the display text", () => {
+    expect(
+      extractTaskNotificationsForDisplay(
+        "<task-notification><summary>Finished</summary></task-notification>\nFull transcript available at: /tmp/task_1.log\nNext message",
+      ),
+    ).toEqual({ notifications: ["Finished"], cleanedText: "Next message" });
+  });
+
   describe("formatTaskNotification", () => {
     test("formats single notification correctly", () => {
       const notification: TaskNotification = {
@@ -21,7 +29,7 @@ describe("taskNotifications", () => {
         status: "completed",
         summary: 'Agent "Find files" completed',
         result: "Found 5 files in src/",
-        outputFile: "/tmp/task_1.log",
+        outputFile: "/tmp/task_1<&>.log",
       };
 
       const formatted = formatTaskNotification(notification);
@@ -35,7 +43,7 @@ describe("taskNotifications", () => {
       expect(formatted).toContain("<result>Found 5 files in src/</result>");
       expect(formatted).toContain("</task-notification>");
       expect(formatted).toContain(
-        "Full transcript available at: /tmp/task_1.log",
+        "<transcript>/tmp/task_1&lt;&amp;&gt;.log</transcript>\n</task-notification>",
       );
     });
 

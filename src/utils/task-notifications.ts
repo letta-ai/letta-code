@@ -119,12 +119,16 @@ export function formatTaskNotification(notification: TaskNotification): string {
     ? `\n<usage>${usageLines.join("\n")}</usage>`
     : "";
 
+  const transcriptBlock = notification.outputFile
+    ? `\n<transcript>${escapeXml(notification.outputFile)}</transcript>`
+    : "";
+
   return `<task-notification>
 <task-id>${notification.taskId}</task-id>
 <status>${notification.status}</status>
 <summary>${escapedSummary}</summary>
-<result>${escapedResult}</result>${usageBlock}
-</task-notification>${notification.outputFile ? `\nFull transcript available at: ${notification.outputFile}` : ""}`;
+<result>${escapedResult}</result>${usageBlock}${transcriptBlock}
+</task-notification>`;
 }
 
 /** Optional deployment-owned guidance for subagent receipts and results. */
@@ -135,13 +139,11 @@ export function subagentResultReminder(): string {
     : "";
 }
 
-/** Preserve the display text while sending the XML and transcript as separate parts. */
+/** Keep the complete notification together in one model-facing text part. */
 export function taskNotificationMessage(
   text: string,
 ): Pick<QueuedMessage, "text" | "content"> {
-  const parts = text
-    .split(/(?<=<\/task-notification>)\n(?=Full transcript available at:)/)
-    .map((part) => ({ type: "text" as const, text: part }));
+  const parts = [{ type: "text" as const, text }];
   const reminder = subagentResultReminder();
   if (reminder) parts.push({ type: "text", text: reminder.trimStart() });
   return { text, content: parts };

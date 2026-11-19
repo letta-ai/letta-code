@@ -105,7 +105,7 @@ describe("Exec command completion notifications", () => {
     expect(notification.text).toContain(`Session ID: ${sessionId}`);
     expect(notification.text).toContain("Exit code: 0");
     expect(notification.text).toContain("done");
-    expect(notification.text).toContain("Full transcript available at:");
+    expect(notification.text).toContain("<transcript>");
     expect(notificationsFor(sessionId)).toHaveLength(1);
   });
 

@@ -121,7 +121,7 @@ describe("Background bash completion notifications", () => {
       'Background command "Watch deploy" completed',
     );
     expect(notification.text).toContain("deploy finished");
-    expect(notification.text).toContain("Full transcript available at:");
+    expect(notification.text).toContain("<transcript>");
   });
 
   test("routes one completion notification after an ordinary command yields", async () => {
