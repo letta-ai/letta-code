@@ -220,6 +220,8 @@ export function buildChannelTurnSource(
     | "chatType"
     | "senderId"
     | "senderTeamId"
+    | "senderName"
+    | "reaction"
     | "messageId"
     | "threadId"
   >,
@@ -230,6 +232,9 @@ export function buildChannelTurnSource(
     chatId: msg.chatId,
     chatType: msg.chatType,
     senderId: msg.senderId,
+    ...(msg.senderName && msg.senderName !== msg.senderId && !msg.reaction
+      ? { senderName: msg.senderName }
+      : {}),
     senderTeamId: msg.senderTeamId,
     messageId: msg.messageId,
     threadId: msg.threadId,

@@ -78,7 +78,7 @@ import {
 } from "./turn-input-state";
 import type { TurnLease } from "./turn-lifecycle";
 import { finishTurnIfMaxTurnsReached } from "./turn-max-turns";
-import { notifyTurnFinished, notifyTurnStarted } from "./turn-observers";
+import { runObservedTurn } from "./turn-observers";
 import {
   prepareProviderRetryInput,
   shouldRetryPostStopTurn,
@@ -92,13 +92,7 @@ import type { ConversationRuntime, IncomingMessage } from "./types";
 export async function handleIncomingMessage(
   ...args: Parameters<typeof handleIncomingMessageInner>
 ): Promise<void> {
-  const [msg] = args;
-  notifyTurnStarted(msg);
-  try {
-    await handleIncomingMessageInner(...args);
-  } finally {
-    notifyTurnFinished(msg);
-  }
+  await runObservedTurn(args[0], () => handleIncomingMessageInner(...args));
 }
 async function handleIncomingMessageInner(
   msg: IncomingMessage,

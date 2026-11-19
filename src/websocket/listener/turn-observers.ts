@@ -1,3 +1,4 @@
+import { runWithRuntimeContext } from "@/runtime-context";
 import { debugWarn } from "@/utils/debug";
 import type { IncomingMessage } from "./types";
 
@@ -39,6 +40,18 @@ function otidsOf(msg: IncomingMessage): string[] {
     if (typeof otid === "string" && otid) otids.push(otid);
   }
   return otids;
+}
+
+export async function runObservedTurn(
+  msg: IncomingMessage,
+  run: () => Promise<void>,
+): Promise<void> {
+  notifyTurnStarted(msg);
+  try {
+    await runWithRuntimeContext({ gitAttribution: msg.gitAttribution }, run);
+  } finally {
+    notifyTurnFinished(msg);
+  }
 }
 
 export function notifyTurnStarted(msg: IncomingMessage): void {

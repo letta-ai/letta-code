@@ -18,6 +18,7 @@ import {
 } from "@/reminders/engine";
 import { createSharedReminderState } from "@/reminders/state";
 import {
+  applyTurnGitAttribution,
   getCurrentWorkingDirectory,
   getRuntimeActingUserAttribution,
   getRuntimeContext,
@@ -552,6 +553,7 @@ export async function buildExternalWorkerLaunchEnv(
   ) {
     delete env[ACTING_USER_ID_ENV];
   }
+  applyTurnGitAttribution(env);
   return { env, secretEnv, mcpReminder };
 }
 

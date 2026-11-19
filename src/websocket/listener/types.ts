@@ -123,6 +123,7 @@ export interface IncomingMessage {
   /** Exclude interactive user-input tools (AskUserQuestion) from this turn's toolset. */
   excludeInteractiveTools?: boolean;
   responseFormat?: Record<string, unknown>;
+  gitAttribution?: import("@/types/git-attribution").GitAttribution;
   messages: Array<
     (AttributedMessageCreate & { client_message_id?: string }) | ApprovalCreate
   >;

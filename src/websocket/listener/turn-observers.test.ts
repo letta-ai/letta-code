@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { getRuntimeContext } from "@/runtime-context";
+import { createIncomingMessage } from "./inbound-dispatch";
 import { notifyStreamObserversRuntimeStopped } from "./stream-observers";
 import {
   notifyTurnFinished,
   notifyTurnStarted,
   registerTurnObserver,
+  runObservedTurn,
 } from "./turn-observers";
 import type { IncomingMessage, ListenerRuntime } from "./types";
 
@@ -21,6 +24,28 @@ function incoming(otids: Array<string | undefined>): IncomingMessage {
 }
 
 describe("turn observers", () => {
+  test("scopes the attribution from an input to its own turn", async () => {
+    const msg = createIncomingMessage(
+      { agent_id: "agent-1", conversation_id: "conv-1" },
+      {
+        kind: "create_message",
+        messages: [{ role: "user", content: "hello" }],
+        git_attribution: { requester: "Alice", conversation: "conv-1" },
+      },
+    );
+    await runObservedTurn(msg, async () => {
+      expect(getRuntimeContext()?.gitAttribution).toEqual({
+        requester: "Alice",
+        conversation: "conv-1",
+      });
+      await runObservedTurn(incoming([]), async () => {
+        expect(getRuntimeContext()?.gitAttribution).toBeUndefined();
+      });
+      expect(getRuntimeContext()?.gitAttribution?.requester).toBe("Alice");
+    });
+    expect(getRuntimeContext()?.gitAttribution).toBeUndefined();
+  });
+
   test("notifies hooks for matching OTIDs only", () => {
     const events: string[] = [];
     const unregister = registerTurnObserver("otid-a", {

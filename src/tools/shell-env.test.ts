@@ -845,3 +845,15 @@ test("getShellEnv does not inject hosted MemFS git header for other backends", (
   expect(env.GIT_CONFIG_KEY_0).toBeUndefined();
   expect(env.GIT_CONFIG_VALUE_0).toBeUndefined();
 });
+
+test("exports the turn attribution to shell tools and clears it for unattributed turns", () => {
+  withTemporaryEnv({ LETTA_GIT_REQUESTER: "Old requester" }, () => {
+    const env = runWithRuntimeContext(
+      { gitAttribution: { requester: "Alice", conversation: "conv-1" } },
+      getShellEnv,
+    );
+    expect(env.LETTA_GIT_REQUESTER).toBe("Alice");
+    expect(env.LETTA_GIT_CONVERSATION).toBe("conv-1");
+    expect(getShellEnv().LETTA_GIT_REQUESTER).toBeUndefined();
+  });
+});
