@@ -3,8 +3,17 @@ import { telemetry } from "@/telemetry";
 import { type QueuedDelivery, withQueuedDelivery } from "./queued-delivery";
 
 export function withCodexSteerReceipt<T>(
+  queuedReply: (() => boolean) | undefined,
   operation: (delivery: QueuedDelivery<T>) => Promise<T>,
 ): Promise<T> {
+  if (queuedReply) {
+    return operation({
+      get queued() {
+        return queuedReply();
+      },
+      wait: (request) => request,
+    });
+  }
   return withQueuedDelivery(operation, (error) =>
     telemetry.trackError(
       "codex_queued_steer_failed",
@@ -31,11 +40,13 @@ export async function withSessionLock<T>(
 }
 
 /** Let the completion notification reach its original waiter before starting again. */
-export async function waitForRejectedCodexSteer(
+export async function recoverRejectedSteer(
   session: { activeTurnId?: string },
   turnId: string,
   error: unknown,
+  delivery: Pick<QueuedDelivery<unknown>, "queued">,
 ): Promise<void> {
+  if (delivery.queued) throw error;
   const message = error instanceof Error ? error.message : String(error);
   if (
     /no active turn to steer|expected[ _-]?turn[ _-]?id.*(?:does not match|mismatch)|turn[ _-]?id mismatch/i.test(
@@ -43,9 +54,13 @@ export async function waitForRejectedCodexSteer(
     )
   ) {
     const deadline = Date.now() + 3_000;
-    while (session.activeTurnId === turnId && Date.now() < deadline) {
+    while (
+      !delivery.queued &&
+      session.activeTurnId === turnId &&
+      Date.now() < deadline
+    ) {
       await sleep(25);
     }
   }
-  if (session.activeTurnId === turnId) throw error;
+  if (delivery.queued || session.activeTurnId === turnId) throw error;
 }

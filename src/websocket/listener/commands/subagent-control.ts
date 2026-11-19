@@ -164,8 +164,10 @@ export async function handleSubagentMessageCommand(
     runtime: command.runtime,
   };
   const ownedTask = findOwnedTask(parent, command.agent_id)?.[1];
-  const steering = ownedTask?.status === "running";
-  const deliver = async (): Promise<SubagentMessageResponse> => {
+  let steering = ownedTask?.status === "running";
+  const deliver = async (
+    queuedReply?: () => boolean,
+  ): Promise<SubagentMessageResponse> => {
     if (
       parent.agentId !== command.runtime.agent_id ||
       parent.conversationId !== command.runtime.conversation_id
@@ -193,6 +195,21 @@ export async function handleSubagentMessageCommand(
 
     let captureReservation: NativeSessionCaptureReservation | undefined;
     const source = target.type === "claude-code" ? "claude_code" : "codex";
+    const beforeStart = async () => {
+      if (queuedReply?.())
+        throw new Error(
+          "Worker turn ended before the queued steer was delivered",
+        );
+      // From this point on, an early reply must attach a caller task.
+      steering = false;
+      captureReservation = await (
+        deps.reserveCapture ?? reserveNativeSessionCapture
+      )(source, sessionId, {
+        agentId: command.runtime.agent_id,
+        conversationId: command.runtime.conversation_id,
+        actingUserId: command.runtime.acting_user_id,
+      });
+    };
     const secrets =
       target.type === "cursor"
         ? await resolveExternalCodingAgentSecretEnv(parent.agentId)
@@ -233,15 +250,8 @@ export async function handleSubagentMessageCommand(
                   cwd: getCurrentWorkingDirectory(),
                   mcpReminder: worker?.mcpReminder,
                   cloudSkillRepositories,
-                  beforeStart: async () => {
-                    captureReservation = await (
-                      deps.reserveCapture ?? reserveNativeSessionCapture
-                    )(source, sessionId, {
-                      agentId: command.runtime.agent_id,
-                      conversationId: command.runtime.conversation_id,
-                      actingUserId: command.runtime.acting_user_id,
-                    });
-                  },
+                  queuedReply,
+                  beforeStart,
                 },
                 { env: worker?.env },
               )
@@ -257,15 +267,8 @@ export async function handleSubagentMessageCommand(
                   cwd: getCurrentWorkingDirectory(),
                   mcpReminder: worker?.mcpReminder,
                   cloudSkillRepositories,
-                  beforeStart: async () => {
-                    captureReservation = await (
-                      deps.reserveCapture ?? reserveNativeSessionCapture
-                    )(source, sessionId, {
-                      agentId: command.runtime.agent_id,
-                      conversationId: command.runtime.conversation_id,
-                      actingUserId: command.runtime.acting_user_id,
-                    });
-                  },
+                  queuedReply,
+                  beforeStart,
                 },
                 { env: worker?.env },
               );
@@ -325,19 +328,26 @@ export async function handleSubagentMessageCommand(
   };
   const response = withQueuedDelivery<SubagentMessageResponse>(
     (delivery) => {
-      const pending = deliver().finally(() => {
+      const canReplyEarly = steering || command.accepts_pending_resume === true;
+      const pending = deliver(
+        canReplyEarly ? () => steering && delivery.queued : undefined,
+      ).finally(() => {
         // Keep retries on the same receipt during delivery and after it settles.
         const entry = responses.get(key);
         if (entry?.response === response) {
           entry.expiresAt = (deps.now ?? Date.now)() + DEDUPE_TTL_MS;
         }
       });
-      if (!steering && command.accepts_pending_resume !== true) return pending;
-      return delivery.wait(pending, {
-        ...base,
-        success: true,
-        delivery: steering ? "queued" : "resuming",
-      });
+      if (!canReplyEarly) return pending;
+      return delivery.wait(pending, () =>
+        steering || command.accepts_pending_resume === true
+          ? {
+              ...base,
+              success: true,
+              delivery: steering ? "queued" : "resuming",
+            }
+          : undefined,
+      );
     },
     () =>
       telemetry.trackError(

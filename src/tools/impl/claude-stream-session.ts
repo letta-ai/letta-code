@@ -881,7 +881,12 @@ async function queueSteerPrompt(
  * hasn't exited yet. Reserve the next process while its options are prepared.
  */
 async function deliverClaudeMessage(
-  options: { sessionId: string; prompt: string; signal?: AbortSignal },
+  options: {
+    sessionId: string;
+    prompt: string;
+    signal?: AbortSignal;
+    queuedReply?: () => boolean;
+  },
   deps: ClaudeSessionDependencies,
   launch?: () => Promise<ClaudeSession>,
 ): Promise<
@@ -913,10 +918,18 @@ async function deliverClaudeMessage(
         session: existing,
       };
     } catch (error) {
-      if (sessions.get(options.sessionId) === existing && !existing.settled)
+      if (
+        options.queuedReply?.() ||
+        (sessions.get(options.sessionId) === existing && !existing.settled)
+      )
         throw error;
       // Settled while acquiring the write lock; wait for its exit, then retry.
     }
+  }
+  if (options.queuedReply?.()) {
+    throw new Error(
+      "Claude Code session ended before the queued steer was delivered",
+    );
   }
   if (!launch) return undefined;
   const pending = launch().finally(() =>
@@ -954,6 +967,7 @@ export async function sendClaudeMessage(
     "resumeSessionId" | "sessionId" | "onStarted"
   > & {
     sessionId: string;
+    queuedReply?: () => boolean;
   },
   deps: ClaudeSessionDependencies = {},
 ): Promise<ClaudeMessageReceipt> {

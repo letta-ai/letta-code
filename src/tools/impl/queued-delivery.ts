@@ -2,7 +2,10 @@ const DELIVERY_GRACE_MS = 10_000;
 
 export interface QueuedDelivery<T> {
   queued: boolean;
-  wait: <Result>(request: Promise<Result>, receipt: T) => Promise<Result>;
+  wait: <Result>(
+    request: Promise<Result>,
+    receipt: () => T | undefined,
+  ) => Promise<Result>;
 }
 
 /** Return a queued receipt while the original operation continues. */
@@ -15,8 +18,10 @@ export function withQueuedDelivery<T>(
       queued: false,
       async wait(request, receipt) {
         const timer = setTimeout(() => {
+          const earlyReceipt = receipt();
+          if (earlyReceipt === undefined) return;
           delivery.queued = true;
-          resolve(receipt);
+          resolve(earlyReceipt);
         }, DELIVERY_GRACE_MS);
         try {
           return await request;
