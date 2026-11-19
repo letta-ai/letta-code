@@ -53,6 +53,7 @@ import { read_lsp } from "./impl/read-lsp";
 import { send_agent_message } from "./impl/send-agent-message";
 import { set_working_directory } from "./impl/set-working-directory";
 import { skill } from "./impl/skill";
+import { resolveSubagentComputer } from "./impl/subagent-computer";
 import { task } from "./impl/task";
 import { task_create } from "./impl/task-create";
 import { task_get } from "./impl/task-get";
@@ -118,6 +119,32 @@ export function buildBashDescriptionForPlatform(
   return platform === "win32"
     ? `${baseDescription}\n\n${WINDOWS_BASH_EXECUTION_GUIDANCE}`
     : baseDescription;
+}
+
+export function buildTaskSchema(env: NodeJS.ProcessEnv = process.env) {
+  const { computer } = resolveSubagentComputer({
+    requested: undefined,
+    subagentType: "general-purpose",
+    config: { fork: false, launchProfile: "default" },
+    env,
+  });
+  if (!computer) return TaskSchema;
+
+  const destination =
+    computer.toLowerCase() === "cloud"
+      ? "a fresh Cloud sandbox"
+      : `the connected computer ${JSON.stringify(computer)}`;
+
+  return {
+    ...TaskSchema,
+    properties: {
+      ...TaskSchema.properties,
+      computer: {
+        ...TaskSchema.properties.computer,
+        description: `Omitting computer sends eligible workers to ${destination}, where this machine's files are unavailable. Pass "local" to stay on this machine, "cloud" for a fresh Cloud sandbox, or a connected computer ID or name.`,
+      },
+    },
+  };
 }
 
 function execCommandDescription(): string {
@@ -233,7 +260,7 @@ const toolDefinitions = {
     impl: skill,
   }),
   Task: defineTool({
-    schema: TaskSchema,
+    schema: buildTaskSchema(),
     description: TaskDescription.trim(),
     impl: task,
   }),
