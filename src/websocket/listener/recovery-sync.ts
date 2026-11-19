@@ -9,7 +9,6 @@ import {
   type ResumeData,
 } from "@/agent/check-approval";
 import {
-  buildFreshDenialApprovals,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   STARTED_TOOL_CALL_RECOVERY_DENIAL_REASON,
 } from "@/agent/turn-recovery-policy";
@@ -230,10 +229,14 @@ export async function recoverApprovalStateForSync(
       clearRecoveredApprovalState(runtime);
       return "deferred";
     }
-    runtime.pendingInterruptedResults = buildFreshDenialApprovals(
-      pendingApprovals,
-      STALE_APPROVAL_RECOVERY_DENIAL_REASON,
-    );
+    runtime.pendingInterruptedResults = staleDenialDecisions
+      .filter((decision) => decision.type === "deny")
+      .map(({ approval, reason }) => ({
+        type: "approval",
+        tool_call_id: approval.toolCallId,
+        approve: false,
+        reason,
+      }));
     runtime.pendingInterruptedContext = {
       agentId: scope.agent_id,
       conversationId: scope.conversation_id,
