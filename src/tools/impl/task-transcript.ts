@@ -19,12 +19,18 @@ import {
   scrubSecretsDeep,
 } from "@/tools/secret-substitution";
 import type { SubagentEventRecord } from "@/types/subagent-protocol";
+import type { addToMessageQueue } from "@/utils/message-queue-bridge";
+import {
+  formatTaskNotification,
+  taskNotificationMessage,
+} from "@/utils/task-notifications";
 import {
   type ExternalToolCall,
   type ExternalWorkerListeners,
   parseToolInput,
 } from "./external-tool-call";
-import { appendToOutputFile } from "./process_manager.js";
+import { appendToOutputFile, type BackgroundTask } from "./process_manager.js";
+import { watchWorkerSilence } from "./worker-stall-alert";
 
 export function buildTaskResultHeader(
   subagentType: string,
@@ -123,6 +129,7 @@ interface TaskProgressLog {
   redactions: Record<string, string>;
   /** Keep events for a parent on another computer to read. */
   serve: boolean;
+  stallAlert?: ReturnType<typeof watchWorkerSilence>;
 }
 
 const progressLogs = new Map<string, TaskProgressLog>();
@@ -230,6 +237,54 @@ export function openTaskProgressLog(
   });
 }
 
+/** Monitor caller-owned tasks whose worker streams feed this log. */
+export function openBackgroundTaskProgressLog(
+  taskId: string,
+  task: BackgroundTask,
+  notifyParent: boolean,
+  enqueue: typeof addToMessageQueue,
+  clientMessageIds?: string[],
+): void {
+  const {
+    subagentId,
+    subagentType,
+    outputFile,
+    runtimeScope,
+    abortController,
+  } = task;
+  writeTaskTranscriptStart(outputFile, task.description, subagentType);
+  openTaskProgressLog(subagentId, outputFile, runtimeScope?.agentId);
+  if (
+    !notifyParent ||
+    (subagentType !== "codex" && subagentType !== "claude-code") ||
+    !abortController
+  )
+    return;
+
+  const log = progressLogs.get(subagentId);
+  if (!log) return;
+  log.stallAlert = watchWorkerSilence(
+    abortController.signal,
+    (summary, result) => {
+      const notification = formatTaskNotification({
+        taskId,
+        status: "running",
+        summary: `${taskId} (${subagentType}) ${summary}`,
+        result,
+        outputFile,
+      });
+      enqueue({
+        kind: "task_notification",
+        ...taskNotificationMessage(notification),
+        agentId: runtimeScope?.agentId,
+        conversationId: runtimeScope?.conversationId,
+        actingUserId: task.actingUserId,
+        clientMessageIds,
+      });
+    },
+  );
+}
+
 /**
  * Also keep a task's events for a parent on another computer to read, and
  * announce the latest `event_seq` in its snapshots.
@@ -244,6 +299,7 @@ export function serveTaskEvents(subagentId: string): void {
 
 /** Stop recording progress, so nothing lands after the final result. */
 export function closeTaskProgressLog(subagentId: string): void {
+  progressLogs.get(subagentId)?.stallAlert?.stop();
   progressLogs.delete(subagentId);
 }
 
@@ -298,6 +354,10 @@ export function recordTaskEvent(
   const record = { seq: ++log.seq, at, ...event };
   appendEvent(log, record);
   const line = readableLine(event);
+  log.stallAlert?.record(
+    at,
+    event.type === "tool_call" ? `tool: ${event.name}` : (line ?? event.type),
+  );
   if (line !== null) appendProgress(log, line, at);
   if (log.serve) {
     storeSubagentEvent(subagentId, record);
@@ -324,6 +384,7 @@ export function recordMissedRemoteEvents(subagentId: string, missed: number) {
   const log = progressLogs.get(subagentId);
   if (!log || missed <= 0) return;
   const at = log.now().toISOString();
+  log.stallAlert?.record(at, "remote worker events were missed");
   appendEvent(log, { seq: ++log.seq, at, type: "events_missed", missed });
   appendProgress(log, `[${missed} earlier events were not received]`, at);
 }

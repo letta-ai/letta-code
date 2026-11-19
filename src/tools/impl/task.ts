@@ -86,11 +86,10 @@ import {
   buildTaskResultHeader,
   closeTaskProgressLog,
   externalWorkerProgressListeners,
-  openTaskProgressLog,
+  openBackgroundTaskProgressLog,
   serveTaskEvents,
   taskEventsFileFor,
   writeTaskTranscriptResult,
-  writeTaskTranscriptStart,
 } from "./task-transcript";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation";
@@ -338,17 +337,18 @@ export function spawnBackgroundSubagentTask(
     actingUserId,
   };
   backgroundTasks.set(taskId, bgTask);
-  // Register the abort trigger for interruptActiveSubagents (fire-and-forget).
   registerSubagentAbortHook(
     subagentId,
     buildBackgroundTaskAbortHook(taskId, abortController),
   );
-  writeTaskTranscriptStart(outputFile, description, subagentType);
-  openTaskProgressLog(subagentId, outputFile, resolvedParentScope?.agentId);
+  openBackgroundTaskProgressLog(
+    taskId,
+    bgTask,
+    shouldEmitCompletionNotification && !existingAgentId,
+    addToMessageQueueFn,
+    resolvedParentScope?.clientMessageIds,
+  );
   if (publishResult) serveTaskEvents(subagentId);
-  // Fire-and-forget: tasks own their lifecycle. Capture parentAgentId
-  // synchronously (spawnSubagent runs after async yields): scope.agentId wins.
-  const parentAgentIdForSpawn = resolvedParentScope?.agentId;
   const workerMemoryDir =
     subagentType === "memory" && resolvedParentScope
       ? (memoryScope?.primaryRoot ??
@@ -374,7 +374,7 @@ export function spawnBackgroundSubagentTask(
       existingConversationId,
       maxTurns,
       forkedContext,
-      parentAgentIdForSpawn,
+      resolvedParentScope?.agentId,
       parentTranscript,
       resolvedParentScope?.conversationId,
       scope,
