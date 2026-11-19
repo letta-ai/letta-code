@@ -1,3 +1,4 @@
+import { isCloudRepositoryNames } from "@/utils/cloud-repository-roots";
 import {
   readSubagentDepth,
   SUBAGENT_DEPTH_ENV,
@@ -7,6 +8,7 @@ import {
 export interface RuntimeExecutionSettings {
   tools?: string[];
   preload_skills?: string[];
+  cloud_skill_repositories?: string[];
   allowed_tools: string[];
   disallowed_tools: string[];
   max_turns?: number;
@@ -33,6 +35,8 @@ export function isRuntimeExecutionSettings(
     (settings.tools === undefined || strings(settings.tools)) &&
     (settings.preload_skills === undefined ||
       strings(settings.preload_skills)) &&
+    (settings.cloud_skill_repositories === undefined ||
+      isCloudRepositoryNames(settings.cloud_skill_repositories)) &&
     typeof settings.disable_memory_guard === "boolean" &&
     (settings.max_turns === undefined ||
       (typeof settings.max_turns === "number" &&

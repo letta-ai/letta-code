@@ -6,8 +6,10 @@ import {
   type RunningSubagentProcess,
   spawnManagedWorkloadProcess,
 } from "@/agent/subagents/subagent-process";
+import { cloudRepositoryRoots } from "@/utils/cloud-repository-roots";
 import { confirmProcessExit } from "@/utils/confirm-process-exit";
 import { withNativeCliPath } from "@/utils/native-cli-env";
+import { stageClaudeRepositorySkills } from "./claude-repository-skills";
 import {
   CLAUDE_CONTROL_RESPONSE_TIMEOUT_MS,
   CLAUDE_INTERRUPT_ACK_TIMEOUT_ERROR,
@@ -57,6 +59,7 @@ export function buildClaudeStreamArgs(options: {
   mcpReminder?: string;
   resumeSessionId?: string;
   sessionId?: string;
+  skillDirectories?: string[];
 }): string[] {
   const args = [
     "--print",
@@ -79,6 +82,8 @@ export function buildClaudeStreamArgs(options: {
   else if (options.sessionId) args.push("--session-id", options.sessionId);
   if (options.mcpReminder)
     args.push("--append-system-prompt", options.mcpReminder);
+  if (options.skillDirectories?.length)
+    args.push("--add-dir", ...options.skillDirectories);
   return args;
 }
 
@@ -491,14 +496,21 @@ async function launchSession(
   const trace = deps.createTransport
     ? undefined
     : await traceClaudeLaunch(options.traceContext, env, sessionId);
+  let skills:
+    | Awaited<ReturnType<typeof stageClaudeRepositorySkills>>
+    | undefined;
   let transport: ClaudeSessionTransport;
   try {
+    skills = await stageClaudeRepositorySkills(
+      cloudRepositoryRoots(options.cloudSkillRepositories),
+    );
     transport = (deps.createTransport ?? createTransport)({
       args: buildClaudeStreamArgs({
         model: options.model,
         mcpReminder: options.mcpReminder,
         resumeSessionId: options.resumeSessionId,
         sessionId,
+        skillDirectories: skills.directories,
       }),
       cwd: options.cwd,
       env,
@@ -506,6 +518,7 @@ async function launchSession(
     });
   } catch (error) {
     void trace?.close();
+    await skills?.cleanup().catch(() => undefined);
     removeUpstreamAbort();
     throw new Error(`Failed to start Claude Code: ${errorMessage(error)}`);
   }
@@ -601,7 +614,7 @@ async function launchSession(
     }
   });
   void transport.completion
-    .finally(() => trace?.close())
+    .finally(() => Promise.allSettled([trace?.close(), skills?.cleanup()]))
     .catch(() => undefined);
   transport.completion
     .then(({ exitCode, exitSignal }) => {

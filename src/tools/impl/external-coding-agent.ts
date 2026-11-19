@@ -74,6 +74,7 @@ export interface ExternalCodingAgentRunOptions extends ExternalWorkerListeners {
   actingUserId?: string | null;
   resumeSessionId?: string;
   cwd?: string;
+  cloudSkillRepositories?: string[];
   mcpReminder?: string;
   signal?: AbortSignal;
   onStarted?: (agentId: string) => void;
@@ -640,6 +641,7 @@ export async function runExternalCodingAgent(
         agentId: options.parentAgentId,
         conversationId: options.parentConversationId,
         actingUserId: captureActingUserId,
+        cloudSkillRepositories: options.cloudSkillRepositories,
       }
     : undefined;
   const source = options.type === "claude-code" ? "claude_code" : "codex";
@@ -747,6 +749,7 @@ export async function runExternalCodingAgent(
             prompt: options.prompt,
             parentAgentId: options.parentAgentId,
             cwd,
+            cloudSkillRepositories: options.cloudSkillRepositories,
             model: options.model,
             mcpReminder: options.mcpReminder,
             signal: options.signal,
@@ -814,6 +817,7 @@ export async function runExternalCodingAgent(
             prompt: options.prompt,
             parentAgentId: options.parentAgentId,
             cwd,
+            cloudSkillRepositories: options.cloudSkillRepositories,
             model: options.model,
             mcpReminder: options.mcpReminder,
             signal: options.signal,

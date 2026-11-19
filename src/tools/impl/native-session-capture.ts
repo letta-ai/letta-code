@@ -16,6 +16,7 @@ import { debugWarn } from "@/utils/debug";
 
 import {
   clearNativeSessionOwnersForTests,
+  type NativeSessionOwner,
   persistNativeSessionOwner,
   readNativeSessionOwner,
 } from "./native-session-owner";
@@ -822,12 +823,12 @@ export async function awaitNativeSessionCaptureDrainForTests(
 // capture state, this is kept for every server: remote steering and resume
 // check it once the launch's background task and subagent row are evicted.
 const MAX_NATIVE_SESSION_OWNERS = 1024;
-const owners = new Map<string, NativeSessionScope>();
+const owners = new Map<string, NativeSessionOwner>();
 
 export function getNativeSessionOwner(
   source: NativeSessionSource,
   sessionId: string,
-): NativeSessionScope | undefined {
+): NativeSessionOwner | undefined {
   return (
     owners.get(key(source, sessionId)) ??
     readNativeSessionOwner(source, sessionId)
@@ -837,7 +838,7 @@ export function getNativeSessionOwner(
 export function rememberNativeSession(
   source: NativeSessionSource,
   sessionId: string,
-  scope: NativeSessionScope,
+  scope: NativeSessionOwner,
   cloudUrl = getServerUrl(),
 ): void {
   scavengeStaleSpoolDirectories();

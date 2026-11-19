@@ -10,12 +10,14 @@ import {
 } from "@/backend/api/agents";
 import type { EnqueueReceipt } from "@/backend/api/conversation-enqueue";
 import {
+  type AgentSandboxOptions,
   type EnvironmentConnection,
   getEnvironmentConnection,
   isEnvironmentOnline,
   resolveAgentSandboxConnectionId,
   resolveEnvironmentConnectionId,
   type SendEnvironmentMessageBody,
+  SUBAGENT_CLOUD_OPTIONS_ENV,
 } from "@/backend/api/environments";
 import { ApiRequestError } from "@/backend/api/request";
 import { toolFilter } from "@/tools/filter";
@@ -105,6 +107,12 @@ export function buildEnvironmentLaunchResult(
   };
 }
 
+export function takeSubagentCloudOptions(): string | undefined {
+  const json = process.env[SUBAGENT_CLOUD_OPTIONS_ENV];
+  delete process.env[SUBAGENT_CLOUD_OPTIONS_ENV];
+  return json;
+}
+
 export function isCloudEnvironmentSelector(
   selector: string | boolean | undefined,
 ): boolean {
@@ -130,13 +138,18 @@ export async function resolveListenerLaunchTarget(input: {
   agentId: string | null | undefined;
   conversationId: string;
   inheritedConnectionId?: string | null;
+  sandboxOptionsJson?: string;
   resolveComputer?: (selector: string) => Promise<EnvironmentRouting>;
   resolveCloudSandbox?: (
     agentId: string,
-    options: { conversationId: string },
+    options: AgentSandboxOptions & { conversationId: string },
   ) => Promise<EnvironmentRouting>;
 }): Promise<
-  | { connectionId: string; responseEnvironment: ReplyEnvironmentMetadata }
+  | {
+      connectionId: string;
+      responseEnvironment: ReplyEnvironmentMetadata;
+      cloudSkillRepositories?: string[];
+    }
   | { error: string }
 > {
   const { selector, agentId } = input;
@@ -147,12 +160,19 @@ export async function resolveListenerLaunchTarget(input: {
     };
   const useCloudSandbox = isCloudEnvironmentSelector(selector);
   let routing: EnvironmentRouting | null = null;
+  let sandboxOptions: AgentSandboxOptions | undefined;
   try {
+    if (useCloudSandbox && input.sandboxOptionsJson) {
+      sandboxOptions = JSON.parse(input.sandboxOptionsJson);
+    }
     if (selector)
       routing = useCloudSandbox
         ? await (input.resolveCloudSandbox ?? resolveAgentSandboxConnectionId)(
             agentId,
-            { conversationId: input.conversationId },
+            {
+              ...sandboxOptions,
+              conversationId: input.conversationId,
+            },
           )
         : await (input.resolveComputer ?? resolveEnvironmentConnectionId)(
             selector,
@@ -165,6 +185,11 @@ export async function resolveListenerLaunchTarget(input: {
     return { error: "No listener connection was resolved for this launch" };
   return {
     connectionId,
+    ...(sandboxOptions?.githubRepositories?.length && {
+      cloudSkillRepositories: sandboxOptions.githubRepositories.map(
+        ({ repo }) => repo,
+      ),
+    }),
     responseEnvironment: routing
       ? buildEnvironmentResponseMetadata({
           source: useCloudSandbox ? "cloud-sandbox" : "explicit",

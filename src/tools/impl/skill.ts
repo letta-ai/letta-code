@@ -2,6 +2,7 @@ import { type Dirent, existsSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { AttachedAgentRepository } from "@/agent/attached-repositories";
+import { getCloudProjectSkillDirectories } from "@/agent/client-skills";
 import {
   getCurrentAgentId,
   getSkillSources,
@@ -163,6 +164,9 @@ export async function readSkillContent(
   const projectSkillsDirs = new Set<string>([
     join(getCurrentWorkingDirectory(), PROJECT_SKILLS_DIR),
     skillsDir,
+    ...(getSkillSources().includes("project")
+      ? getCloudProjectSkillDirectories().reverse()
+      : []),
   ]);
   for (const projectSkillsDir of projectSkillsDirs) {
     const result = await readSkillFromRoot(projectSkillsDir, skillId);

@@ -1,10 +1,3 @@
-/**
- * Task tool implementation
- *
- * Spawns specialized subagents to handle complex, multi-step tasks autonomously.
- * Supports both built-in subagent types and custom subagents defined in .letta/agents/.
- */
-
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
@@ -33,6 +26,7 @@ import { forkParentConversation } from "@/agent/subagents/fork-conversation";
 import { spawnSubagent } from "@/agent/subagents/manager";
 import { formatSubagentError } from "@/agent/subagents/subagent-refusal";
 import { getBackend } from "@/backend";
+import type { AgentSandboxOptions } from "@/backend/api/environments";
 import { runSubagentStopHooks } from "@/hooks";
 import {
   getCurrentWorkingDirectory,
@@ -82,6 +76,7 @@ import {
   resolveTaskAgentSelection,
   shouldForkTaskContext,
 } from "./task-agent-selection";
+import { parseTaskCloudOptions } from "./task-cloud-options";
 import {
   buildTaskResultHeader,
   closeTaskProgressLog,
@@ -97,6 +92,7 @@ import { validateRequiredParams } from "./validation";
 
 interface TaskArgs extends Partial<SubagentLaunchArgs> {
   command?: "run" | "refresh";
+  cloud?: unknown;
   toolCallId?: string; // Injected by executeTool for linking subagent to parent tool call
   signal?: AbortSignal; // Injected by executeTool for interruption handling
   parentScope?: { agentId: string; conversationId: string }; // Injected by executeTool for notification routing
@@ -138,12 +134,9 @@ export interface SpawnBackgroundSubagentTaskArgs {
   transcriptPath?: string;
   /** Optional exact memory scope for harness-created memory worktrees. */
   memoryScope?: SubagentMemoryScope;
-  /**
-   * Optional computer selector passed to the child as `--computer`.
-   * The child routes its turn to that connected computer and fails fast
-   * if the device is offline, ambiguous, or too old to support routing.
-   */
+  /** Remote computer selector passed to the child. */
   environment?: string;
+  cloudOptions?: AgentSandboxOptions;
   /**
    * When true, skip injecting the completion notification into the primary
    * agent's message queue and hide from SubagentGroupDisplay.
@@ -383,6 +376,7 @@ export function spawnBackgroundSubagentTask(
       actingUserId,
       args.config,
       args.clientMessageId,
+      args.cloudOptions,
     );
   };
   const memoryTask =
@@ -640,6 +634,7 @@ export function spawnBackgroundSubagentTask(
 /** Launch through the same task lifecycle for tools and App Server commands. */
 export async function launchSubagent(
   args: TaskArgs,
+  cloudSkillRepositories?: string[],
 ): Promise<SubagentLaunchResult> {
   // `custom` + identity is the App Server's prepared-conversation protocol,
   // not a named preset. The Agent adapter strips overrides before reaching here.
@@ -745,6 +740,8 @@ export async function launchSubagent(
     return { success: false, error: resolvedComputer.error };
   }
 
+  const cloud = parseTaskCloudOptions(args.computer, args.cloud);
+  if ("error" in cloud) return { success: false, error: cloud.error };
   let effectiveAgentId = args.agent_id;
   let effectiveConversationId = args.conversation_id;
   const callerNotification = args.notifyCaller
@@ -774,6 +771,7 @@ export async function launchSubagent(
           description,
           model,
           mcp: args.mcp,
+          cloudOptions: cloud.options,
           toolCallId,
           parentScope: {
             conversationId: getConversationId() ?? "default",
@@ -834,6 +832,7 @@ export async function launchSubagent(
             parentConversationId: resolvedParentScope?.conversationId,
             actingUserId: resolvedParentScope?.actingUserId,
             cwd: getCurrentWorkingDirectory(),
+            cloudSkillRepositories,
             mcpReminder,
             signal: childSignal,
             onStarted: (agentId) =>
@@ -943,6 +942,7 @@ export async function launchSubagent(
     parentScope: resolvedParentScope,
     ...callerNotification,
     environment: resolvedComputer.computer,
+    cloudOptions: cloud.options,
   });
 
   const abortStartup = () =>

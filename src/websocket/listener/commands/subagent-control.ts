@@ -179,6 +179,9 @@ export async function handleSubagentMessageCommand(
       if (!target.sessionId)
         throw new Error("External coding agent ID has no session ID");
       const sessionId = target.sessionId;
+      const cloudSkillRepositories = nativeSessionOwner(
+        command.agent_id,
+      )?.cloudSkillRepositories;
       const traceContext = {
         parent_agent_id: parent.agentId,
         parent_conversation_id: parent.conversationId,
@@ -229,6 +232,7 @@ export async function handleSubagentMessageCommand(
                     parentAgentId: command.runtime.agent_id,
                     cwd: getCurrentWorkingDirectory(),
                     mcpReminder: worker?.mcpReminder,
+                    cloudSkillRepositories,
                     beforeStart: async () => {
                       captureReservation = await (
                         deps.reserveCapture ?? reserveNativeSessionCapture
@@ -252,6 +256,7 @@ export async function handleSubagentMessageCommand(
                     parentAgentId: command.runtime.agent_id,
                     cwd: getCurrentWorkingDirectory(),
                     mcpReminder: worker?.mcpReminder,
+                    cloudSkillRepositories,
                     beforeStart: async () => {
                       captureReservation = await (
                         deps.reserveCapture ?? reserveNativeSessionCapture

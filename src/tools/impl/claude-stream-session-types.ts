@@ -85,6 +85,7 @@ export interface ClaudeTurnOptions
   prompt: string;
   parentAgentId: string;
   cwd: string;
+  cloudSkillRepositories?: string[];
   model?: string;
   mcpReminder?: string;
   signal?: AbortSignal;

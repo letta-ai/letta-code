@@ -1,13 +1,15 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { isCloudRepositoryNames } from "@/utils/cloud-repository-roots";
 import { resolveGlobalConfigDir } from "@/utils/settings-path";
 
 type NativeSessionSource = "claude_code" | "codex";
-interface NativeSessionScope {
+export interface NativeSessionOwner {
   agentId: string;
   conversationId: string;
   actingUserId?: string | null;
+  cloudSkillRepositories?: string[];
 }
 
 function ownerPath(source: NativeSessionSource, sessionId: string): string {
@@ -20,14 +22,16 @@ function ownerPath(source: NativeSessionSource, sessionId: string): string {
 export function readNativeSessionOwner(
   source: NativeSessionSource,
   sessionId: string,
-): NativeSessionScope | undefined {
+): NativeSessionOwner | undefined {
   try {
     const owner = JSON.parse(
       readFileSync(ownerPath(source, sessionId), "utf8"),
     );
     if (
       typeof owner.agentId === "string" &&
-      typeof owner.conversationId === "string"
+      typeof owner.conversationId === "string" &&
+      (owner.cloudSkillRepositories === undefined ||
+        isCloudRepositoryNames(owner.cloudSkillRepositories))
     )
       return owner;
     throw new Error("Invalid native session owner record");
@@ -40,7 +44,7 @@ export function readNativeSessionOwner(
 export function persistNativeSessionOwner(
   source: NativeSessionSource,
   sessionId: string,
-  scope: NativeSessionScope,
+  scope: NativeSessionOwner,
 ): void {
   const path = ownerPath(source, sessionId);
   mkdirSync(join(path, ".."), { recursive: true, mode: 0o700 });

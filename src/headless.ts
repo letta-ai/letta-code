@@ -132,6 +132,7 @@ import {
   type ListenerLaunchResult,
   type ReplyEnvironmentMetadata,
   resolveListenerLaunchTarget,
+  takeSubagentCloudOptions,
 } from "./headless-environment-response";
 import {
   clearHeadlessClientToolRules,
@@ -1859,8 +1860,7 @@ export async function handleHeadlessCommand(
     }
   }
 
-  // Pre-load specific skills' full content (used by subagents with skills: field).
-  // Remote computer turns inject their own local context and skills.
+  // Remote turns preload skills on the destination computer.
   if (preLoadSkillsRaw && !usesRemoteEnvironment) {
     pushPart(
       await loadPreloadedSkills(
@@ -1880,11 +1880,8 @@ export async function handleHeadlessCommand(
       ),
     );
   }
-
   pushPart(prompt);
-
   telemetry.trackUserInput(prompt, "user", reportModel ?? "unknown");
-
   if (usesRemoteEnvironment) {
     const environmentSelector = explicitEnvironmentSelector ?? "";
     const target = await resolveListenerLaunchTarget({
@@ -1892,6 +1889,7 @@ export async function handleHeadlessCommand(
       agentId: publicAgentId ?? parentAgentId,
       conversationId,
       inheritedConnectionId: inheritedListenerConnectionId,
+      sandboxOptionsJson: takeSubagentCloudOptions(),
     });
     if ("error" in target)
       return reportStartupErrorAndExit(
@@ -1949,6 +1947,7 @@ export async function handleHeadlessCommand(
         disable_memory_guard: cliPermissions.isMemoryGuardDisabled(),
         max_turns: maxTurns,
         preload_skills: parseCsvListFlag(preLoadSkillsRaw),
+        cloud_skill_repositories: target.cloudSkillRepositories,
         ...subagentExecutionSettings(process.env),
         ...(!environmentSelector
           ? {
