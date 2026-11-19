@@ -160,6 +160,8 @@ export function isSubagentMessageCommand(
   return (
     typeof value.message === "string" &&
     value.message.trim().length > 0 &&
+    (value.accepts_pending_resume === undefined ||
+      typeof value.accepts_pending_resume === "boolean") &&
     (value.tool_call_id === undefined ||
       (typeof value.tool_call_id === "string" &&
         value.tool_call_id.trim().length > 0))

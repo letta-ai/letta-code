@@ -163,16 +163,15 @@ export async function handleSubagentMessageCommand(
     request_id: command.request_id,
     runtime: command.runtime,
   };
+  const ownedTask = findOwnedTask(parent, command.agent_id)?.[1];
+  const steering = ownedTask?.status === "running";
   const deliver = async (): Promise<SubagentMessageResponse> => {
     if (
       parent.agentId !== command.runtime.agent_id ||
       parent.conversationId !== command.runtime.conversation_id
     )
       throw new Error("Parent runtime does not match the message request");
-    if (
-      !findOwnedTask(parent, command.agent_id) &&
-      !ownsNativeSession(parent, command.agent_id)
-    )
+    if (!ownedTask && !ownsNativeSession(parent, command.agent_id))
       throw new Error(subagentAccessError(command.agent_id));
     const target = parseExternalCodingAgentId(command.agent_id);
     if (!target || target.computer || !isExternalCodingAgentType(target.type))
@@ -325,18 +324,21 @@ export async function handleSubagentMessageCommand(
     return { ...base, success: true, delivery: "resumed" };
   };
   const response = withQueuedDelivery<SubagentMessageResponse>(
-    async (delivery) =>
-      delivery.wait(
-        deliver().finally(() => {
-          // Retain the original receipt while delivery runs, then for a full
-          // retry window after it settles. An expired entry may have been replaced.
-          const entry = responses.get(key);
-          if (entry?.response === response) {
-            entry.expiresAt = (deps.now ?? Date.now)() + DEDUPE_TTL_MS;
-          }
-        }),
-        { ...base, success: true, delivery: "queued" },
-      ),
+    (delivery) => {
+      const pending = deliver().finally(() => {
+        // Keep retries on the same receipt during delivery and after it settles.
+        const entry = responses.get(key);
+        if (entry?.response === response) {
+          entry.expiresAt = (deps.now ?? Date.now)() + DEDUPE_TTL_MS;
+        }
+      });
+      if (!steering && command.accepts_pending_resume !== true) return pending;
+      return delivery.wait(pending, {
+        ...base,
+        success: true,
+        delivery: steering ? "queued" : "resuming",
+      });
+    },
     () =>
       telemetry.trackError(
         "remote_queued_followup_failed",

@@ -89,15 +89,18 @@ export interface SubagentMessageCommand {
   agent_id: string;
   message: string;
   tool_call_id?: string;
+  /** The caller can track a resume before the new task is published. */
+  accepts_pending_resume?: boolean;
 }
 
+// `resuming`: accepted for a new task whose first snapshot may arrive later.
 // `queued`: the listener accepted the follow-up and delivery is still pending.
 export type SubagentMessageResponse = {
   type: "subagent_message_response";
   request_id: string;
   runtime?: AgentRuntimeScope;
 } & (
-  | { success: true; delivery: "steered" | "queued" | "resumed" }
+  | { success: true; delivery: "steered" | "queued" | "resuming" | "resumed" }
   | { success: false; error: string }
 );
 
