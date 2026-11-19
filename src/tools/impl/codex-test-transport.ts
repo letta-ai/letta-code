@@ -14,6 +14,7 @@ export class FakeCodexTransport {
   steerRace = false;
   completeBeforeTurnStartSettles = false;
   initializeError = false;
+  onInitialize?: (id: number) => void;
   failNextTurns = 0;
   failure: Record<string, unknown> = {
     message: CAPACITY_MESSAGE,
@@ -82,6 +83,7 @@ export class FakeCodexTransport {
     if (typeof request.id !== "number") return;
     const method = request.method;
     if (method === "initialize") {
+      this.onInitialize?.(request.id);
       if (this.initializeError) {
         this.send({ id: request.id, error: { message: "initialize failed" } });
       } else {
@@ -177,7 +179,7 @@ export class FakeCodexTransport {
     this.stdout.end();
   }
 
-  private send(message: Record<string, unknown>): void {
+  send(message: Record<string, unknown>): void {
     this.stdout.write(`${JSON.stringify(message)}\n`);
   }
 }
