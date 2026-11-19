@@ -10,9 +10,11 @@ import type {
   AppServerClient,
   AppServerMessageHandler,
 } from "@/app-server-client";
+import { telemetry } from "@/telemetry";
 import {
   __resetCodexSessionsForTests,
   sendCodexMessage,
+  startCodexTurn,
 } from "@/tools/impl/codex-app-server";
 import {
   clearNativeSessionCaptureForTests,
@@ -91,6 +93,29 @@ function remoteClient(
   };
 }
 
+function registerRunningTask(agentId: string) {
+  registerSubagent(
+    "existing",
+    "codex",
+    "Work",
+    "call",
+    true,
+    false,
+    parentScope,
+  );
+  updateSubagent("existing", { agentId, status: "running" });
+  const task = {
+    description: "Work",
+    subagentType: "codex" as const,
+    subagentId: "existing",
+    status: "running" as "running" | "completed",
+    startTime: new Date(),
+    outputFile: "/tmp/existing",
+  };
+  backgroundTasks.set("existing", task);
+  return task;
+}
+
 const workerEnv = {
   resolveSecretEnv: async () => ({}),
   resolveMcpReminder: async () => undefined,
@@ -98,6 +123,7 @@ const workerEnv = {
 
 afterEach(async () => {
   jest.useRealTimers();
+  jest.restoreAllMocks();
   clearAllSubagents();
   backgroundTasks.clear();
   __resetCodexSessionsForTests();
@@ -122,6 +148,8 @@ test.each(["environment setup", "thread/resume", "turn/start"])(
       { agentId: runtime.agent_id, conversationId: runtime.conversation_id },
       "http://localhost:8283",
     );
+    // The original task can still be marked running when its native turn is gone.
+    if (slowMethod === "turn/start") registerRunningTask(agentId);
     const stdin = new PassThrough();
     const stdout = new PassThrough();
     const release = Promise.withResolvers<void>();
@@ -271,62 +299,113 @@ test.each(["environment setup", "thread/resume", "turn/start"])(
   },
 );
 
-test("a slow steer into a running task is queued without creating a caller task", async () => {
-  jest.useFakeTimers();
-  const parent = createConversationRuntime(
-    createRuntime(),
-    runtime.agent_id,
-    runtime.conversation_id,
-  );
-  const threadId = "22222222-2222-4222-8222-222222222222";
-  const agentId = `codex_${threadId}`;
-  registerSubagent(
-    "existing",
-    "codex",
-    "Work",
-    "call",
-    true,
-    false,
-    parentScope,
-  );
-  updateSubagent("existing", { agentId, status: "running" });
-  backgroundTasks.set("existing", {
-    description: "Work",
-    subagentType: "codex",
-    subagentId: "existing",
-    status: "running",
-    startTime: new Date(),
-    outputFile: "/tmp/existing",
-  });
-  const started = Promise.withResolvers<void>();
-  const release = Promise.withResolvers<void>();
-  const remote = remoteClient((command) =>
-    handleSubagentMessageCommand(command, parent, {
-      workerEnv,
-      sendCodex: async () => {
-        started.resolve();
-        await release.promise;
-        return { mode: "steered", threadId, turnId: "existing-turn" };
-      },
-    }),
-  );
-  const track = jest.fn(() => {
-    throw new Error("A steer uses the existing task");
-  });
-  const caller = sendRemoteExternalCodingAgentMessage(
-    { agentId: `${agentId}@worker`, parentScope, message: "Continue" },
-    { ...remote.deps, track },
-  );
-  await started.promise;
-  jest.advanceTimersByTime(10_000);
-  try {
-    expect(await caller).toEqual({ delivery: "queued" });
-    expect(track).not.toHaveBeenCalled();
-    expect(remote.close).toHaveBeenCalledTimes(1);
-  } finally {
-    release.resolve();
-  }
-});
+test.each([false, true])(
+  "a slow steer uses the existing task (worker rejects: %s)",
+  async (rejectSteer) => {
+    jest.useFakeTimers();
+    const parent = createConversationRuntime(
+      createRuntime(),
+      runtime.agent_id,
+      runtime.conversation_id,
+    );
+    const threadId = "22222222-2222-4222-8222-222222222222";
+    const agentId = `codex_${threadId}`;
+    const task = registerRunningTask(agentId);
+    const stdin = new PassThrough();
+    const stdout = new PassThrough();
+    const send = (value: unknown) => stdout.write(`${JSON.stringify(value)}\n`);
+    const settle = () =>
+      send({
+        method: "turn/completed",
+        params: {
+          threadId,
+          turn: { id: "turn-1", status: "completed", items: [] },
+        },
+      });
+    let starts = 0;
+    let steers = 0;
+    stdin.on("data", (chunk) => {
+      const { id, method } = JSON.parse(chunk.toString());
+      if (typeof id !== "number") return;
+      if (method === "thread/start") {
+        send({ id, result: { thread: { id: threadId } } });
+      } else if (method === "turn/start") {
+        send({ id, result: { turn: { id: `turn-${++starts}` } } });
+      } else if (method === "turn/steer") {
+        steers++;
+        if (rejectSteer) {
+          task.status = "completed";
+          settle();
+          send({ id, error: { message: "no active turn to steer" } });
+        } else {
+          send({ id, result: {} });
+        }
+      } else {
+        send({ id, result: {} });
+      }
+    });
+    const initial = await startCodexTurn(
+      { parentAgentId: parentScope.agentId, cwd: "/tmp", prompt: "Initial" },
+      { createTransport: () => ({ stdin, stdout }) },
+    );
+
+    const envStarted = Promise.withResolvers<void>();
+    const releaseEnv = Promise.withResolvers<void>();
+    const deliverySettled = Promise.withResolvers<void>();
+    const reserveCapture = jest.fn(async () => ({ capture: async () => {} }));
+    const report = jest
+      .spyOn(telemetry, "trackError")
+      .mockImplementation(() => {});
+    const remote = remoteClient((command) =>
+      handleSubagentMessageCommand(command, parent, {
+        workerEnv: {
+          ...workerEnv,
+          resolveMcpReminder: async () => {
+            envStarted.resolve();
+            await releaseEnv.promise;
+            return undefined;
+          },
+        },
+        sendCodex: (options) =>
+          sendCodexMessage(options).finally(deliverySettled.resolve),
+        reserveCapture,
+      }),
+    );
+    const track = jest.fn(() => {
+      throw new Error("A steer uses the existing task");
+    });
+    const caller = sendRemoteExternalCodingAgentMessage(
+      { agentId: `${agentId}@worker`, parentScope, message: "Continue" },
+      { ...remote.deps, track },
+    );
+    await envStarted.promise;
+    jest.advanceTimersByTime(10_000);
+    try {
+      expect(await caller).toEqual({ delivery: "queued" });
+      expect(track).not.toHaveBeenCalled();
+      expect(remote.close).toHaveBeenCalledTimes(1);
+    } finally {
+      releaseEnv.resolve();
+    }
+    await deliverySettled.promise;
+    // Let the listener handle the settled native delivery.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(steers).toBe(1);
+    expect(starts).toBe(1);
+    expect(reserveCapture).not.toHaveBeenCalled();
+    if (rejectSteer) {
+      expect(report).toHaveBeenCalledTimes(1);
+      expect(report).toHaveBeenCalledWith(
+        "remote_queued_followup_failed",
+        "Queued remote follow-up delivery failed",
+      );
+    } else {
+      expect(report).not.toHaveBeenCalled();
+      settle();
+    }
+    await initial.completion;
+  },
+);
 
 test("a caller without pending-resume support gets the ordinary resumed receipt", async () => {
   jest.useFakeTimers();

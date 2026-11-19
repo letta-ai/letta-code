@@ -24,7 +24,7 @@ import {
   turnReport,
 } from "./codex-app-server-payloads";
 import {
-  waitForRejectedCodexSteer,
+  recoverRejectedSteer,
   withCodexSteerReceipt,
   withSessionLock,
 } from "./codex-steer-receipt";
@@ -120,6 +120,7 @@ export interface CodexTurnOptions
   onToolCall?: ExternalToolCallListener;
   onText?: ExternalTextListener;
   beforeStart?: (threadId: string) => Promise<void>;
+  queuedReply?: () => boolean;
 }
 
 export interface CodexTurnHandle {
@@ -878,8 +879,8 @@ export async function sendCodexMessage(
 ): Promise<CodexMessageReceipt> {
   const session = await resumeSession(options.threadId, options, deps);
   try {
-    return await withCodexSteerReceipt<CodexMessageReceipt>((delivery) =>
-      withSessionLock(session, async () => {
+    return await withCodexSteerReceipt(options.queuedReply, (delivery) =>
+      withSessionLock<CodexMessageReceipt>(session, async () => {
         const activeTurnId = session.activeTurnId;
         if (activeTurnId) {
           try {
@@ -889,12 +890,12 @@ export async function sendCodexMessage(
                 expectedTurnId: activeTurnId,
                 input: textInput(options.prompt),
               }),
-              {
+              () => ({
                 mode: "steered",
                 threadId: session.threadId,
                 turnId: activeTurnId,
                 queued: true,
-              },
+              }),
             );
             if (session.activeWaiter?.turnId === activeTurnId) {
               session.activeWaiter.steered = true;
@@ -905,8 +906,7 @@ export async function sendCodexMessage(
               turnId: activeTurnId,
             };
           } catch (error) {
-            if (delivery.queued) throw error;
-            await waitForRejectedCodexSteer(session, activeTurnId, error);
+            await recoverRejectedSteer(session, activeTurnId, error, delivery);
           }
         }
         options.signal?.throwIfAborted();
