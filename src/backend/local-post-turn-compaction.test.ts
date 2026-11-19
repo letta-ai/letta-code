@@ -255,8 +255,8 @@ describe("local post-turn compaction", () => {
         const [first] = harness.providerRequests;
         expect(compaction?.systemPrompt).toBe(first?.systemPrompt);
         expect(compaction?.tools).toEqual(first?.tools);
-        // The request that produced the call, then the call, its result, the
-        // acknowledgement and the compaction prompt.
+        // The request that produced the call, then the call, its result and
+        // the compaction prompt.
         const firstMessages = first?.messages ?? [];
         expect(compaction?.messages.slice(0, firstMessages.length)).toEqual(
           firstMessages,
@@ -265,7 +265,6 @@ describe("local post-turn compaction", () => {
           ...shape(first),
           "assistant:call-1",
           "toolResult:call-1",
-          "assistant",
           "user",
         ]);
         expect(compaction?.messages[firstMessages.length]).toMatchObject({
