@@ -8,6 +8,7 @@ import {
 import {
   extractTaskNotificationsForDisplay,
   formatTaskNotification,
+  subagentResultReminder,
   taskNotificationMessage,
 } from "@/utils/task-notifications";
 
@@ -119,7 +120,7 @@ describe("turnQueueRuntime", () => {
   });
 });
 
-test("subagent XML and transcript reach the model as separate parts with unchanged display", () => {
+test("subagent XML and transcript reach the model in one part", () => {
   const text = formatTaskNotification({
     taskId: "task-1",
     status: "completed",
@@ -132,13 +133,14 @@ test("subagent XML and transcript reach the model as separate parts with unchang
     [{ kind: "task_notification", ...notification }],
     { normalizeUserContent: (content: string) => content },
   );
+  const reminder = subagentResultReminder().trimStart();
   expect(parts).toEqual([
-    {
-      type: "text",
-      text: text.slice(0, text.indexOf("\nFull transcript available at:")),
-    },
-    { type: "text", text: "Full transcript available at: /tmp/task-1.log" },
+    { type: "text", text },
+    ...(reminder ? [{ type: "text" as const, text: reminder }] : []),
   ]);
+  expect(text).toEndWith(
+    "<transcript>/tmp/task-1.log</transcript>\n</task-notification>",
+  );
   expect(extractTaskNotificationsForDisplay(notification.text)).toEqual({
     notifications: ["Work finished"],
     cleanedText: "",
