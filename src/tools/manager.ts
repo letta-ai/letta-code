@@ -63,6 +63,7 @@ import type {
 } from "@/tools/external-tool-types";
 import { autoBackgroundRemoteExternalTool } from "@/tools/remote-external-tool-background";
 import * as contextRetention from "@/tools/tool-context-retention";
+import { trackToolOutcome } from "@/tools/tool-outcome-telemetry";
 
 export type {
   ClientTool,
@@ -2125,15 +2126,11 @@ async function executeToolInner(
         internalName,
       );
 
-      const responseSize =
-        typeof flattenedResponse === "string"
-          ? flattenedResponse.length
-          : JSON.stringify(flattenedResponse).length;
-      telemetry.trackToolUsage(
+      trackToolOutcome(
         internalName,
         toolStatus === "success",
         duration,
-        responseSize,
+        flattenedResponse,
         toolStatus === "error" ? "tool_error" : undefined,
         stderr ? stderr.join("\n") : undefined,
       );
@@ -2187,11 +2184,11 @@ async function executeToolInner(
             invocationRedactions,
           );
 
-      telemetry.trackToolUsage(
+      trackToolOutcome(
         internalName,
         false,
         duration,
-        errorMessage.length,
+        errorMessage,
         errorType,
         errorMessage,
       );
