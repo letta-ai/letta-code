@@ -27,6 +27,8 @@ export interface SdkSpawnerConfig {
   parentAgentId: string;
   /** Default model handle for subagents. */
   model: string;
+  /** Actual parent model, which may differ from the workflow's default. */
+  parentModelHandle?: string | null;
   /** Resolves a handle or alias from agent() opts; null when unknown. */
   resolveModel?: (identifier: string) => string | null;
   /** Parent tool pool, or the workflow's explicit allowlist override. */
@@ -39,9 +41,9 @@ export interface SdkSpawnerConfig {
   permissionMode?: RuntimePermissionMode;
   /** Working directory for subagent sessions. */
   cwd?: string;
-  /** Local parent provider settings snapshotted when the workflow starts. */
+  /** Parent settings snapshotted when the workflow starts. */
   parentModelSettings?: Record<string, unknown>;
-  /** Local parent context limit snapshotted when the workflow starts. */
+  /** Parent context limit snapshotted when the workflow starts. */
   parentContextWindowLimit?: number | null;
   /** Resume is gated on a verified SDK release; 0.8.17 silently creates a new child. */
   supportsAgentFreeResume?: boolean;
@@ -402,8 +404,21 @@ function buildQueryOptions(
   ]
     .filter(Boolean)
     .join("\n\n");
+  const parentModel =
+    config.parentModelHandle === undefined
+      ? config.model
+      : config.parentModelHandle;
+  const inheritParent = !options.conversationId && model === parentModel;
+  const parentSettings = inheritParent ? config.parentModelSettings : undefined;
+  // An explicit model can select a different effort preset on the same handle.
+  // Inherit budgets without overriding that preset's other provider settings.
+  const inheritedSettings = options.model
+    ? parentSettings?.max_output_tokens !== undefined
+      ? { max_output_tokens: parentSettings.max_output_tokens }
+      : undefined
+    : parentSettings;
   const modelSettings = {
-    ...(!options.model ? config.parentModelSettings : {}),
+    ...inheritedSettings,
     ...(options.effort ? { reasoning_effort: options.effort } : {}),
   };
   const explicitAllowedTools = options.allowedTools ?? config.allowedTools;
@@ -463,7 +478,7 @@ function buildQueryOptions(
     ...(config.cwd ? { cwd: config.cwd } : {}),
     disableMemoryGuard: true,
     ...(Object.keys(modelSettings).length > 0 ? { modelSettings } : {}),
-    ...(!options.model && config.parentContextWindowLimit !== undefined
+    ...(inheritParent && config.parentContextWindowLimit !== undefined
       ? { contextWindowLimit: config.parentContextWindowLimit }
       : {}),
   };

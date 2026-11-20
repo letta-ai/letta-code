@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { setAgentContext } from "@/agent/context";
 import { buildEphemeralConversationCreateBody } from "@/agent/ephemeral-conversation";
 import type { SubagentConfig } from "@/agent/subagents";
@@ -293,6 +293,13 @@ describe("child arguments", () => {
 });
 
 describe("create payload", () => {
+  beforeEach(() => {
+    __testSetBackend({
+      ...conversationBackend({}),
+      capabilities: { localMemfs: false },
+    } as Backend);
+  });
+  afterEach(() => __testSetBackend(null));
   test("links the conversation to the parent agent as a named subagent", async () => {
     const body = await buildEphemeralConversationCreateBody(
       { model: "gpt-5.6-luna", systemPromptCustom: "preset prompt" },
