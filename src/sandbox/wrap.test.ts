@@ -41,27 +41,3 @@ test("bwrap wrapping defaults to bare 'bwrap' when no path given", () => {
   const wrapped = wrapLauncher(LAUNCHER, POLICY, { backend: "bwrap" });
   expect(wrapped?.[0]).toBe("bwrap");
 });
-
-test("bwrap leaves processes visible even when process isolation is requested", () => {
-  const wrapped = wrapLauncher(LAUNCHER, POLICY, {
-    backend: "bwrap",
-    isolateProcesses: true,
-  });
-  expect(wrapped).not.toContain("--unshare-pid");
-  expect(wrapped).not.toContain("--new-session");
-});
-
-test("only opt-in Seatbelt wraps scope process access after the default allow", () => {
-  const options = { backend: "seatbelt" } as const;
-  const regular = wrapLauncher(LAUNCHER, POLICY, options)?.[2];
-  const isolated = wrapLauncher(LAUNCHER, POLICY, {
-    ...options,
-    isolateProcesses: true,
-  })?.[2];
-  for (const operation of ["signal", "process-info*"]) {
-    expect(regular).not.toContain(`(deny ${operation})`);
-    expect(isolated).toContain(
-      `(deny ${operation})\n(allow ${operation} (target same-sandbox))`,
-    );
-  }
-});

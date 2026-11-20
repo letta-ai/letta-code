@@ -1,6 +1,4 @@
 import { expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
-import { detectSandboxBackend } from "@/sandbox/availability";
 
 import { buildFsSandboxPolicy } from "@/sandbox/policy";
 import {
@@ -8,8 +6,6 @@ import {
   buildSeatbeltProfile,
   SANDBOX_EXEC_PATH,
 } from "@/sandbox/seatbelt";
-
-import { wrapLauncher } from "@/sandbox/wrap";
 
 const CROSS_AGENT = buildFsSandboxPolicy({
   deniedRoots: ["/home/u/.letta/agents"],
@@ -187,28 +183,4 @@ test("args carry the profile and -D defines for the inner launcher", () => {
   expect(args).toContain("-DWRITABLE_1=/tmp");
   // SANDBOX_EXEC_PATH itself is added by wrapLauncher, not here.
   expect(args).not.toContain(SANDBOX_EXEC_PATH);
-});
-
-test.skipIf(
-  process.platform !== "darwin" ||
-    detectSandboxBackend().backend !== "seatbelt",
-)("Seatbelt permits signaling a child but denies signaling the parent", () => {
-  const [bin, ...args] =
-    wrapLauncher(
-      [
-        "/bin/sh",
-        "-ec",
-        'sleep 10 & child=$!; trap \'kill "$child" 2>/dev/null || true\' EXIT; kill -CONT "$child"; if kill -CONT "$1" 2>/dev/null; then exit 23; fi',
-        "wrapped",
-        String(process.pid),
-      ],
-      buildFsSandboxPolicy({}),
-      { backend: "seatbelt", isolateProcesses: true },
-    ) ?? [];
-  const result = spawnSync(bin ?? "", args, {
-    encoding: "utf8",
-    timeout: 5000,
-  });
-  expect(result.stderr).toBe("");
-  expect(result.status).toBe(0);
 });

@@ -35,6 +35,7 @@ import {
   buildShellLaunchers,
   selectAvailableShellLauncher,
 } from "./shell-launchers.js";
+import { withShellProcessGuard } from "./shell-process-guard.js";
 import {
   type RunningShellProcess,
   ShellExecutionError,
@@ -636,23 +637,19 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
   if (!rawLauncher) {
     throw new Error("Command must be a non-empty string");
   }
+  const protectedTarget = findProtectedShellProcess(args.cmd);
+  if (protectedTarget) {
+    throw new Error(protectedShellProcessMessage(protectedTarget));
+  }
   // Confine the session (pipe or PTY) under the cross-agent shell sandbox.
   // The spawn helpers re-note the launcher for worktree ownership, but the
   // wrapper hides the inner shell from that inspection, so note the unwrapped
   // launcher here first.
-  const sandboxed = applyShellSandbox(rawLauncher, cwd, env);
-  const protectedTarget =
-    sandboxed.backend === "seatbelt"
-      ? undefined
-      : findProtectedShellProcess(args.cmd);
-  if (protectedTarget) {
-    throw new Error(protectedShellProcessMessage(protectedTarget));
-  }
+  const guarded = withShellProcessGuard(rawLauncher, env);
+  const sandboxed = applyShellSandbox(guarded.launcher, cwd, guarded.env);
   const outputFile = createBackgroundOutputFile(`exec_${id}`);
 
-  if (sandboxed.backend) {
-    noteExpectedWorktreeForLauncher(rawLauncher, cwd);
-  }
+  noteExpectedWorktreeForLauncher(rawLauncher, cwd);
   const launcher = sandboxed.launcher;
   const spawnEnv = sandboxed.env;
 

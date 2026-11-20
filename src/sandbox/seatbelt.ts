@@ -11,8 +11,8 @@ import { type FsSandboxPolicy, getOrderedSandboxPathRules } from "./policy.js";
  * The profile is `(allow default)` plus targeted denies — deliberately narrower
  * than Codex's Chrome-derived `(deny default)` base. Our threat model is
  * filesystem scoping for memory isolation, not general untrusted-code
- * confinement. Shell command profiles additionally scope signals and process
- * information to processes in the same sandbox. SBPL is
+ * confinement, so allow-default keeps network, signals, ttys, and arbitrary dev
+ * tools working untouched while the FS rules do the isolation. SBPL is
  * last-match-wins, which is why the deny/allow ordering below matters.
  */
 
@@ -29,10 +29,7 @@ interface SeatbeltDefine {
  * Build the SBPL profile text plus the `-D NAME=value` defines it references.
  * Exposed for snapshot testing; `buildSeatbeltArgs` is what callers use.
  */
-export function buildSeatbeltProfile(
-  policy: FsSandboxPolicy,
-  isolateProcesses = false,
-): {
+export function buildSeatbeltProfile(policy: FsSandboxPolicy): {
   profile: string;
   defines: SeatbeltDefine[];
 } {
@@ -84,15 +81,6 @@ export function buildSeatbeltProfile(
     }
   }
 
-  if (isolateProcesses) {
-    for (const operation of ["signal", "process-info*"]) {
-      lines.push(
-        `(deny ${operation})`,
-        `(allow ${operation} (target same-sandbox))`,
-      );
-    }
-  }
-
   return { profile: `${lines.join("\n")}\n`, defines };
 }
 
@@ -101,11 +89,8 @@ export function buildSeatbeltProfile(
  * ...]`. The caller prepends {@link SANDBOX_EXEC_PATH} and appends
  * `"--"` + the inner launcher.
  */
-export function buildSeatbeltArgs(
-  policy: FsSandboxPolicy,
-  isolateProcesses = false,
-): string[] {
-  const { profile, defines } = buildSeatbeltProfile(policy, isolateProcesses);
+export function buildSeatbeltArgs(policy: FsSandboxPolicy): string[] {
+  const { profile, defines } = buildSeatbeltProfile(policy);
   const args = ["-p", profile];
   for (const { name, value } of defines) {
     args.push(`-D${name}=${value}`);

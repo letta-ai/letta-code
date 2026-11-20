@@ -78,7 +78,6 @@ export function applyShellSandbox(
       {
         backend,
         bwrapPath: available.bwrapPath,
-        isolateProcesses: true,
       },
     );
     if (!wrapped || wrapped.length === 0) {
@@ -110,7 +109,6 @@ export function applyShellSandbox(
   const wrapped = wrapLauncher(launcher, policy, {
     backend: ctx.backend,
     bwrapPath: ctx.bwrapPath,
-    isolateProcesses: true,
   });
   if (!wrapped || wrapped.length === 0) return unchanged;
 

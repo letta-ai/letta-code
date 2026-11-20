@@ -49,6 +49,7 @@ import {
   selectAvailableShellLauncher,
   withStrictShellPrelude,
 } from "./shell-launchers.js";
+import { withShellProcessGuard } from "./shell-process-guard.js";
 import {
   type ShellExecutionError,
   spawnWithLauncher,
@@ -144,12 +145,13 @@ export async function spawnCommand(
     // On macOS, prefer zsh due to bash 3.2's HEREDOC bug with apostrophes
     const executable = process.platform === "darwin" ? "/bin/zsh" : "bash";
     const innerLauncher = [executable, "-c", commandToRun];
-    const sandboxed = applyShellSandbox(innerLauncher, options.cwd, env);
-    if (sandboxed.backend) {
-      // The sandbox wrapper hides the inner shell from launcher inspection;
-      // note the unwrapped launcher so `git worktree add` ownership resolves.
-      noteExpectedWorktreeForLauncher(innerLauncher, options.cwd);
-    }
+    noteExpectedWorktreeForLauncher(innerLauncher, options.cwd);
+    const guarded = withShellProcessGuard(innerLauncher, env);
+    const sandboxed = applyShellSandbox(
+      guarded.launcher,
+      options.cwd,
+      guarded.env,
+    );
     return spawnWithLauncher(sandboxed.launcher, {
       cwd: options.cwd,
       env: sandboxed.env,
@@ -435,6 +437,15 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     };
   }
 
+  const protectedTarget = findProtectedShellProcess(command);
+  if (protectedTarget) {
+    return {
+      content: [
+        { type: "text", text: protectedShellProcessMessage(protectedTarget) },
+      ],
+      status: "error",
+    };
+  }
   const bgEnv = secretEnv ? { ...getShellEnv(), ...secretEnv } : getShellEnv();
   const bgCommand = withStrictShellPrelude(command, bgEnv);
   const bashId = getNextBashId();
@@ -449,19 +460,8 @@ export async function bash(args: BashArgs): Promise<BashResult> {
   // Note the unwrapped launcher first; the sandbox wrapper (below) hides the
   // inner shell from launcher inspection.
   noteExpectedWorktreeForLauncher(launcher, userCwd);
-  const sandboxed = applyShellSandbox(launcher, userCwd, bgEnv);
-  const protectedTarget =
-    sandboxed.backend === "seatbelt"
-      ? undefined
-      : findProtectedShellProcess(command);
-  if (protectedTarget) {
-    return {
-      content: [
-        { type: "text", text: protectedShellProcessMessage(protectedTarget) },
-      ],
-      status: "error",
-    };
-  }
+  const guarded = withShellProcessGuard(launcher, bgEnv);
+  const sandboxed = applyShellSandbox(guarded.launcher, userCwd, guarded.env);
   const outputFile = createBackgroundOutputFile(bashId);
   let bgProcess: BackgroundProcess;
   let outputWriteFailed = false;

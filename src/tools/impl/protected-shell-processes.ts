@@ -44,6 +44,22 @@ function readProcessInfo(pid: number): ProcessInfo | undefined {
   return { parent, group };
 }
 
+function* walkProcessAncestors(pid: number, info: ProcessLookup["info"]) {
+  const visited = new Set<number>();
+  while (pid > 0 && !visited.has(pid)) {
+    yield pid;
+    visited.add(pid);
+    pid = info(pid)?.parent ?? 0;
+  }
+}
+
+let protectedPids: readonly number[] | undefined;
+
+export function getProtectedShellPids(): readonly number[] {
+  protectedPids ??= [...walkProcessAncestors(process.pid, readProcessInfo)];
+  return protectedPids;
+}
+
 function pgrep(args: string[]): number[] {
   if (process.platform !== "linux" && process.platform !== "darwin") return [];
   const result = spawnSync("pgrep", args, { encoding: "utf8", timeout: 250 });
@@ -178,18 +194,16 @@ export function findProtectedShellProcess(
       return `the process group (PGID ${group}) of the Letta Code CLI running this agent`;
     if (targets.includes(-1))
       return `the Letta Code CLI running this agent (PID ${lookup.pid}) along with other accessible processes`;
-    const visited = new Set<number>();
-    for (
-      let pid = lookup.pid;
-      pid > 0 && !visited.has(pid);
-      pid = lookup.info(pid)?.parent ?? 0
-    ) {
+    const pids =
+      lookup.info === readProcessInfo && lookup.pid === process.pid
+        ? getProtectedShellPids()
+        : walkProcessAncestors(lookup.pid, lookup.info);
+    for (const pid of pids) {
       if (targets.includes(pid)) {
         return pid === lookup.pid
           ? `the Letta Code CLI running this agent (PID ${pid})`
           : `an ancestor (PID ${pid}) of the Letta Code CLI running this agent`;
       }
-      visited.add(pid);
     }
   }
   return undefined;
