@@ -21,6 +21,7 @@ import { createRemoteIdleNotifier } from "./remote-turn-wait";
 
 export interface ChildSubagentIdentity {
   name: string;
+  isSubagent?: true;
   /** The `type:<subagent_type>` tag written at spawn, when present. */
   type: string;
 }
@@ -54,6 +55,9 @@ export async function resolveChildSubagent(
     if (readTag(agent.tags, "parent:") !== parentAgentId) return null;
     return {
       name: agent.name,
+      ...(readTag(agent.tags, "role:") === "subagent"
+        ? { isSubagent: true as const }
+        : {}),
       type: readTag(agent.tags, "type:") ?? "general-purpose",
     };
   } catch {
