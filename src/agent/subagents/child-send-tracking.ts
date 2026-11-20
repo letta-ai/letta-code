@@ -1,3 +1,4 @@
+import type { ChildProcess } from "node:child_process";
 import {
   completeSubagent,
   generateSubagentId,
@@ -137,4 +138,50 @@ export function trackChildSend(input: TrackChildSendInput): string {
   );
 
   return subagentId;
+}
+
+/** Track only the local process lifetime; SendAgentMessage does not forward replies. */
+export function trackLocalChildSend(input: {
+  process: ChildProcess;
+  agentId: string;
+  conversationId: string;
+  child: ChildSubagentIdentity;
+  prompt: string;
+  parentScope: { agentId: string; conversationId: string };
+}): string {
+  const id = generateSubagentId();
+  registerSubagent(
+    id,
+    input.child.type,
+    input.child.name,
+    undefined,
+    true,
+    false,
+    input.parentScope,
+    input.prompt,
+    false,
+  );
+  updateSubagent(id, {
+    status: "running",
+    agentId: input.agentId,
+    conversationId: input.conversationId,
+    agentURL: buildAgentReference(input.agentId, {
+      conversationId: input.conversationId,
+    }),
+  });
+  let settled = false;
+  const settle = (error?: string) => {
+    if (settled) return;
+    settled = true;
+    completeSubagent(id, { success: error === undefined, error });
+  };
+  input.process.once("error", (error) => settle(getErrorMessage(error)));
+  input.process.once("exit", (code, signal) => {
+    settle(
+      code === 0
+        ? undefined
+        : `Local send process exited with ${signal ? `signal ${signal}` : `code ${code}`}.`,
+    );
+  });
+  return id;
 }
