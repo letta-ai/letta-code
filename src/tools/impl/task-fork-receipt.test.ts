@@ -351,6 +351,7 @@ describe("fork launch receipt", () => {
       );
 
       expect(forkConversation).toHaveBeenCalledWith("conv-parent", {
+        headers: { "x-letta-subagent-type": selection.subagent_type ?? "fork" },
         hidden: true,
         signal: undefined,
       });

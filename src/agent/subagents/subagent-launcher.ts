@@ -241,6 +241,7 @@ export function composeSubagentChildEnv(
     // Subagents run from the parent's install and must not replace it.
     DISABLE_AUTOUPDATER: "1",
     LETTA_CODE_AGENT_ROLE: "subagent",
+    LETTA_CODE_SUBAGENT_TYPE: subagentType,
     [MEMORY_WORKER_SESSION_ENV]: subagentType === "memory" ? "1" : undefined,
     [SUBAGENT_LAUNCH_ENV]: "1",
     [SUBAGENT_LAUNCH_PROFILE_ENV]: launchProfile ?? "default",

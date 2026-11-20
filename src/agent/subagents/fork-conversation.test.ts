@@ -17,7 +17,11 @@ const forkConfig: SubagentConfig = {
 
 function backendFixture(events: string[]) {
   return {
-    forkConversation: async (conversationId: string) => {
+    forkConversation: async (
+      conversationId: string,
+      options: { headers?: Record<string, string> },
+    ) => {
+      expect(options.headers).toEqual({ "x-letta-subagent-type": "fork" });
       events.push(`fork:${conversationId}`);
       return { id: "conv-fork" };
     },

@@ -26,5 +26,12 @@ export async function createEphemeralConversation(
     "POST",
     "/v1/conversations/ephemeral",
     body,
+    body.is_subagent && process.env.LETTA_CODE_SUBAGENT_TYPE
+      ? {
+          headers: {
+            "x-letta-subagent-type": process.env.LETTA_CODE_SUBAGENT_TYPE,
+          },
+        }
+      : {},
   );
 }

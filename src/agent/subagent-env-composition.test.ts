@@ -441,3 +441,14 @@ describe("resolveSubagentInheritedPrimaryRoot", () => {
     ).toBe(PARENT_MEMORY_DIR);
   });
 });
+
+test("child launch metadata replaces the parent's preset type", () => {
+  const env = composeSubagentChildEnv({
+    parentProcessEnv: { LETTA_CODE_SUBAGENT_TYPE: "reflection" },
+    parentAgentId: PARENT_ID,
+    subagentType: "general-purpose",
+    launchProfile: "default",
+    inheritedPrimaryRoot: null,
+  });
+  expect(env.LETTA_CODE_SUBAGENT_TYPE).toBe("general-purpose");
+});
