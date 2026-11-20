@@ -10,21 +10,10 @@ import {
 import { readFileSync } from "node:fs";
 import { clearAllSubagents } from "@/agent/subagent-state";
 import type { SubagentResult } from "@/agent/subagents";
-import type {
-  AppServerClient,
-  AppServerDisconnectHandler,
-  AppServerMessageHandler,
-} from "@/app-server-client";
+import type { AppServerClient } from "@/app-server-client";
 import type { EnvironmentConnection } from "@/backend/api/environments";
 import { settingsManager } from "@/settings-manager";
-import type { SubagentSnapshot } from "@/types/protocol_v2";
-import type {
-  LaunchSubagentCommand,
-  LaunchSubagentResponse,
-  SubagentMessageCommand,
-  SubagentMessageResponse,
-  SubagentStopCommand,
-} from "@/types/subagent-protocol";
+import { FakeComputer, runtime } from "@/test-utils/remote-worker-computer";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
 import { backgroundTasks } from "./process_manager";
 import {
@@ -40,137 +29,6 @@ import { task_stop } from "./task-stop";
 const scope = { agentId: "agent-parent", conversationId: "conv-parent" };
 const originalApiKey = process.env.LETTA_API_KEY;
 const originalBaseUrl = process.env.LETTA_BASE_URL;
-const runtime = {
-  agent_id: scope.agentId,
-  conversation_id: scope.conversationId,
-};
-
-class FakeComputer {
-  readonly launches: LaunchSubagentCommand[] = [];
-  readonly messages: SubagentMessageCommand[] = [];
-  readonly stops: SubagentStopCommand[] = [];
-  readonly acks: number[] = [];
-  syncs = 0;
-  closed = false;
-  private readonly messageHandlers = new Set<AppServerMessageHandler>();
-  private readonly disconnectHandlers = new Set<AppServerDisconnectHandler>();
-
-  constructor(
-    private readonly respond: (
-      command: LaunchSubagentCommand,
-    ) => Partial<LaunchSubagentResponse>,
-    private readonly onSync: (computer: FakeComputer) => void = () => {},
-  ) {}
-
-  asClient(): AppServerClient {
-    return this as unknown as AppServerClient;
-  }
-
-  onMessage(handler: AppServerMessageHandler) {
-    this.messageHandlers.add(handler);
-    return () => this.messageHandlers.delete(handler);
-  }
-
-  onDisconnect(handler: AppServerDisconnectHandler) {
-    this.disconnectHandlers.add(handler);
-    return () => this.disconnectHandlers.delete(handler);
-  }
-
-  sendRaw(command: { type: string; seq?: unknown }) {
-    if (command.type === "ack" && typeof command.seq === "number")
-      this.acks.push(command.seq);
-  }
-
-  async launchSubagent(
-    command: LaunchSubagentCommand,
-  ): Promise<LaunchSubagentResponse> {
-    this.launches.push(command);
-    return {
-      type: "launch_subagent_response",
-      request_id: command.request_id,
-      runtime,
-      ...this.respond(command),
-    } as LaunchSubagentResponse;
-  }
-
-  async sendSubagentMessage(
-    command: SubagentMessageCommand,
-  ): Promise<SubagentMessageResponse> {
-    this.messages.push(command);
-    return {
-      type: "subagent_message_response" as const,
-      request_id: command.request_id,
-      runtime,
-      success: true as const,
-      delivery: "steered" as const,
-    };
-  }
-
-  async stopSubagent(command: SubagentStopCommand) {
-    this.stops.push(command);
-    return {
-      type: "subagent_stop_response" as const,
-      request_id: command.request_id,
-      runtime,
-      agent_id: command.agent_id,
-      success: true,
-      stopped: true,
-      cleanup_confirmed: true,
-    };
-  }
-
-  async sync() {
-    this.syncs += 1;
-    this.onSync(this);
-    return { type: "sync_response" };
-  }
-
-  close() {
-    this.closed = true;
-  }
-
-  snapshot(snapshot: Partial<SubagentSnapshot>, seq = 1) {
-    for (const handler of this.messageHandlers)
-      handler(
-        {
-          type: "update_subagent_state",
-          runtime,
-          seq,
-          subagents: [
-            {
-              subagent_id: "remote-subagent",
-              subagent_type: "claude-code",
-              description: "Fix the bug",
-              status: "running",
-              agent_url: null,
-              tool_call_id: "call-1",
-              start_time: 0,
-              tool_calls: [],
-              total_tokens: 0,
-              duration_ms: 0,
-              ...snapshot,
-            },
-          ],
-        } as never,
-        "control",
-      );
-  }
-
-  /** A snapshot from a listener that has no subagents for this conversation. */
-  emptySnapshot(seq = 1) {
-    for (const handler of this.messageHandlers)
-      handler(
-        { type: "update_subagent_state", runtime, seq, subagents: [] } as never,
-        "control",
-      );
-  }
-
-  drop() {
-    for (const handler of this.disconnectHandlers)
-      handler({ channel: "control", event: { code: 1013 } });
-  }
-}
-
 const accepted = {
   success: true as const,
   task_id: "remote-task",
@@ -702,6 +560,28 @@ describe("launchRemoteExternalCodingAgent", () => {
     const message = await notified();
     expect(second.syncs).toBe(1);
     expect(message.text).toContain("Done after drop");
+  });
+
+  test("retries when the replacement socket opens but snapshot sync fails", async () => {
+    const first = new FakeComputer(() => accepted);
+    const unsynced = new FakeComputer(
+      () => accepted,
+      () => {
+        throw new Error("sync timed out");
+      },
+    );
+    const recovered = new FakeComputer(
+      () => accepted,
+      (computer) =>
+        computer.snapshot({ status: "completed", result: "Recovered" }),
+    );
+    const result = await launch([first, unsynced, recovered]);
+    if (!result.success) throw new Error(result.error);
+    first.drop();
+    const message = await notified();
+    expect(message.text).toContain("Recovered");
+    expect(unsynced.closed).toBe(true);
+    expect(recovered.syncs).toBe(1);
   });
 
   /** Advances Date.now by `stepMs` on each refused reconnect to simulate an outage. */

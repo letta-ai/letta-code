@@ -36,6 +36,7 @@ import type {
   SubagentLaunchResult,
   SubagentStartupErrorCode,
 } from "@/types/subagent-protocol";
+import { getErrorMessage as errorMessage } from "@/utils/error";
 import { compareSemver } from "@/utils/version";
 import {
   CLAUDE_INTERRUPT_ACK_TIMEOUT_ERROR,
@@ -188,15 +189,7 @@ async function resolveQualifiedComputer(deviceId: string, scope: ParentScope) {
   return { connectionId: environment.connectionId, environment };
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-/**
- * The computer's listener no longer has the worker. Subagent state lives in
- * the listener process, so this means the listener restarted (taking the CLI
- * child with it) before the caller saw a result.
- */
+/** The computer dropped the worker before this follower saw its result. */
 class RemoteWorkerLostError extends Error {}
 
 class OutdatedRemoteWorkerError extends Error {}
@@ -426,16 +419,23 @@ class RemoteSubagentFollower {
             }
             this.attach(client);
             // Replays the snapshot, including a completion missed while offline.
-            await this.untilStopped(
-              client.sync({
-                runtime: {
-                  agent_id: this.scope.agentId,
-                  conversation_id: this.scope.conversationId,
-                },
-                recover_approvals: false,
-              }),
-              signal,
-            );
+            try {
+              await this.untilStopped(
+                client.sync({
+                  runtime: {
+                    agent_id: this.scope.agentId,
+                    conversation_id: this.scope.conversationId,
+                  },
+                  recover_approvals: false,
+                }),
+                signal,
+              );
+            } catch (error) {
+              this.detach?.();
+              client.close();
+              this.disconnected = true;
+              throw error;
+            }
             failedReconnects = 0;
             disconnectedSince = undefined;
           } catch (error) {
