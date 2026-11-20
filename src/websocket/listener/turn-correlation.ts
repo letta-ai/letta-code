@@ -90,10 +90,19 @@ export function createTurnCorrelation(
       }
     },
     observeRun(runId) {
-      if (clientMessageIds.size === 0) return;
+      // Publish current input anchors as well as ancestor send identities.
+      // Keep these out of clientMessageIds: background work must inherit send
+      // lineage, not the notification that happened to trigger this turn.
+      const currentInputOtids = message.messages.flatMap((payload) =>
+        "content" in payload && typeof payload.otid === "string" && payload.otid
+          ? [payload.otid]
+          : [],
+      );
+      if (clientMessageIds.size === 0 && currentInputOtids.length === 0) return;
       const merged = new Set([
         ...(correlations.get(runId) ?? []),
         ...clientMessageIds,
+        ...currentInputOtids,
       ]);
       correlations.delete(runId);
       correlations.set(
