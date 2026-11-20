@@ -55,6 +55,9 @@ test("runtime workspace sandbox is fail-closed and does not need the global flag
       canonicalizeRoot(root),
     );
     expect(result.launcher[2]).toContain("(deny file-write*");
+    expect(result.launcher[2]).toContain(
+      "(allow signal (target same-sandbox))",
+    );
 
     expect(() =>
       runWithRuntimeContext({ workspaceSandbox: { root, isolationRoot } }, () =>
@@ -94,6 +97,7 @@ test("wraps unsandboxed subagent shell commands", () => {
   );
   expect(result.backend).toBe("seatbelt");
   expect(result.env[SANDBOX_ENV_VAR]).toBe("seatbelt");
+  expect(result.launcher[2]).toContain("(allow signal (target same-sandbox))");
 });
 
 test("no-op for already sandboxed subagent processes", () => {
