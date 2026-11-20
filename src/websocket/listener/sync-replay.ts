@@ -10,6 +10,7 @@ import {
   startRecoveredApprovalContinuation,
 } from "./recovery";
 import { recoverApprovalStateForSync } from "./recovery-sync";
+import { isSidebandOnlyScope } from "./runtime";
 import { handleIncomingMessage } from "./turn";
 import type { ListenerRuntime, SyncReplayOptions } from "./types";
 import { scheduleListenerWarmupsAfterSync } from "./warmup";
@@ -47,7 +48,11 @@ export async function replaySyncStateForRuntime(
   // Recovery runs only when the sender asked for it. cloud-api's readiness
   // probes and activity claims send recover_approvals=false so a prewarmed or
   // idle sandbox never touches a conversation it merely observes.
-  if (opts?.recoverApprovals ?? true) {
+  const canRecover = !isSidebandOnlyScope(
+    listenerRuntime,
+    syncScopedRuntime.key,
+  );
+  if (canRecover && (opts?.recoverApprovals ?? true)) {
     try {
       await recoverFn(syncScopedRuntime, scope, undefined, {
         resumeInterruptedTurn: opts?.resumeInterruptedTurn === true,
@@ -72,6 +77,7 @@ export async function replaySyncStateForRuntime(
   // lease; sync must not start a competing turn during either side of a
   // teleport.
   if (
+    canRecover &&
     syncScopedRuntime.recoveredApprovalState &&
     (syncScopedRuntime.recoveredApprovalState.autoDecisions?.length ?? 0) > 0
   ) {

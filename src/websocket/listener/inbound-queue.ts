@@ -1,4 +1,5 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import { markLocalTurnScope } from "./runtime";
 import type { ConversationRuntime, IncomingMessage } from "./types";
 
 export function getInboundClientMessageId(
@@ -57,6 +58,7 @@ export function enqueueInboundUserMessage(
     return false;
   }
 
+  markLocalTurnScope(runtime);
   runtime.queuedMessagesByItemId.set(enqueuedItem.id, incoming);
   return true;
 }
