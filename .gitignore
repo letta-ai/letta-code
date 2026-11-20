@@ -26,6 +26,7 @@ letta.js
 letta.js.map
 image-resize-worker.js
 image-resize-worker.js.map
+syntax-highlight-worker.js
 image-resize.js
 image-resize.js.map
 cursor-worker.js
