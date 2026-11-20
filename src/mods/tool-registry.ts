@@ -84,7 +84,7 @@ export function registerModTool(tool: ModToolDefinition): void {
 export function unregisterModTool(name: string, owner: ModOwner): void {
   const registry = getMutableModToolsRegistry();
   const existing = registry.get(name);
-  if (existing?.owner?.id === owner.id) {
+  if (existing?.owner === owner) {
     registry.delete(name);
   }
 }
@@ -92,7 +92,7 @@ export function unregisterModTool(name: string, owner: ModOwner): void {
 export function unregisterModToolsForOwner(owner: ModOwner): void {
   const registry = getMutableModToolsRegistry();
   for (const [name, tool] of registry.entries()) {
-    if (tool.owner?.id === owner.id) {
+    if (tool.owner === owner) {
       registry.delete(name);
     }
   }
