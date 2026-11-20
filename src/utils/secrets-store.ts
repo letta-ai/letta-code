@@ -163,7 +163,7 @@ async function deleteAutoLocalSecretValue(name: string): Promise<boolean> {
   return deleteFileBackedLocalSecret(name) || deleted;
 }
 
-function getLocalSecretStorage(): LocalSecretStorage {
+export function getLocalSecretStorage(): LocalSecretStorage {
   return (
     testLocalSecretStorageOverride ?? {
       delete: deleteAutoLocalSecretValue,
