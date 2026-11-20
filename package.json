@@ -180,7 +180,7 @@
     "shiki": "^4.0.2",
     "strip-ansi": "^7.2.0",
     "ws": "^8.19.0",
-    "zod": "4.4.3"
+    "zod": "4.6.7"
   },
   "optionalDependencies": {
     "@vscode/ripgrep": "^1.17.0"
@@ -289,7 +289,7 @@
   },
   "lettaLifecycleProtocol": 1,
   "lettaRuntimeGraphProtocol": 1,
-  "lettaRuntimeGraphSha512": "sha512-dAy5+n/BzB5Uau9Ra6uJbEFp6S71pJ9yzlKOoiVTX8Q65h+F4bG+8zUfbHRAg3zDCqsZmxMTh1ZoCgJCp5BdPg==",
+  "lettaRuntimeGraphSha512": "sha512-Y8eua4T1ButnW5MpSFzwBotO/s21GYiqcYD+2CnV/JdglVjr3bAClXLlXD9TVy/2e+m5Ks4u1AootS7JIou1pA==",
   "patchedDependencies": {
     "@earendil-works/pi-ai@1.5.2": "patches/@earendil-works%2Fpi-ai@1.5.2.patch"
   }

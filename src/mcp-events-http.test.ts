@@ -453,3 +453,41 @@ test("polls over Streamable HTTP using the existing saved OAuth provider", async
     await fixture.stop();
   }
 });
+
+test("only accepts the preview capability on Vercel's discovery response", async () => {
+  const methods: string[] = [];
+  const fetch = async (_url: string | URL, init?: RequestInit) => {
+    if (typeof init?.body !== "string") throw new Error("Expected JSON-RPC");
+    const { id, method } = rpcRequest.parse(JSON.parse(init.body));
+    methods.push(method);
+    const body =
+      method === "server/discover"
+        ? { supportedVersions: ["2026-07-28"], capabilities: { events: {} } }
+        : { events: [descriptor("issue.closed", ["webhook"])] };
+    return Response.json({
+      jsonrpc: "2.0",
+      id,
+      result: { resultType: "complete", ...body },
+    });
+  };
+  const config = { name: "fixture", transport: "http" as const };
+  const connection = await connectMcpEvents(
+    { ...config, url: "https://mcp.vercel.com" },
+    { fetch },
+  );
+  try {
+    expect((await connection.list()).map(({ name }) => name)).toEqual([
+      "issue.closed",
+    ]);
+    await expect(
+      connectMcpEvents({ ...config, url: "https://mcp.example" }, { fetch }),
+    ).rejects.toThrow("does not advertise the Events extension");
+    expect(methods).toEqual([
+      "server/discover",
+      "events/list",
+      "server/discover",
+    ]);
+  } finally {
+    await connection.close();
+  }
+});

@@ -1,9 +1,10 @@
 import { setTimeout as delay } from "node:timers/promises";
 import {
   Client,
+  type JSONRPCMessage,
   type RequestId,
   StreamableHTTPClientTransport,
-  type Transport,
+  type TransportSendOptions,
 } from "@modelcontextprotocol/client";
 import {
   getDefaultEnvironment,
@@ -45,6 +46,43 @@ const NAMED_EVENT_METHODS = new Set([
   "events/unsubscribe",
 ]);
 
+type ObserveStream = (id: RequestId) => () => void;
+
+function streamRequestId(message: JSONRPCMessage): RequestId | undefined {
+  if (
+    "method" in message &&
+    message.method === "events/stream" &&
+    "id" in message
+  ) {
+    return message.id;
+  }
+  return undefined;
+}
+
+class EventsHttpTransport extends StreamableHTTPClientTransport {
+  observeStream?: ObserveStream;
+
+  override send(message: JSONRPCMessage, options?: TransportSendOptions) {
+    const id = streamRequestId(message);
+    return super.send(
+      message,
+      id === undefined
+        ? options
+        : { ...options, onRequestStreamEnd: this.observeStream?.(id) },
+    );
+  }
+}
+
+class EventsStdioTransport extends StdioClientTransport {
+  observeStream?: ObserveStream;
+
+  override send(message: JSONRPCMessage) {
+    const id = streamRequestId(message);
+    if (id !== undefined) this.observeStream?.(id);
+    return super.send(message);
+  }
+}
+
 export async function connectMcpEvents(
   config: StdioMcpServerConfig | HttpMcpServerConfig,
   { signal, oauth, fetch }: ConnectMcpServerOptions = {},
@@ -63,13 +101,14 @@ export async function connectMcpEvents(
         capabilities: { extensions: EXTENSIONS },
       },
     );
-    const transport: Transport =
+    let vercelPreview = false;
+    const transport =
       config.transport === "http"
-        ? new StreamableHTTPClientTransport(new URL(config.url), {
+        ? new EventsHttpTransport(new URL(config.url), {
             ...createMcpHttpTransportOptions(config, { oauth }),
             // The SDK reserves Mcp-Name for its built-in method table, which
             // does not yet know the Events extension.
-            fetch: (url, init) => {
+            fetch: async (url, init) => {
               const headers = new Headers(init?.headers);
               const method = headers.get("mcp-method");
               if (
@@ -81,56 +120,41 @@ export async function connectMcpEvents(
                 if (typeof name === "string")
                   headers.set("mcp-name", encodeEventHeader(name));
               }
-              return (fetch ?? globalThis.fetch)(url, { ...init, headers });
+              const response = await (fetch ?? globalThis.fetch)(url, {
+                ...init,
+                headers,
+              });
+              // The SDK drops unknown capability keys. Inspect a clone of
+              // Vercel's JSON discovery response before handing it to the SDK.
+              if (
+                method === "server/discover" &&
+                new URL(url).origin === "https://mcp.vercel.com" &&
+                response.ok &&
+                response.headers
+                  .get("content-type")
+                  ?.includes("application/json")
+              ) {
+                const raw: unknown = await response
+                  .clone()
+                  .json()
+                  .catch(() => undefined);
+                vercelPreview =
+                  isRecord(raw) &&
+                  isRecord(raw.result) &&
+                  Array.isArray(raw.result.supportedVersions) &&
+                  isRecord(raw.result.capabilities) &&
+                  isRecord(raw.result.capabilities.events);
+              }
+              return response;
             },
           })
-        : new StdioClientTransport({
+        : new EventsStdioTransport({
             command: config.command,
             args: config.args,
             cwd: config.cwd,
             env: { ...getDefaultEnvironment(), ...config.env },
             stderr: "inherit",
           });
-    let observe: ((id: RequestId) => () => void) | undefined;
-    const send = transport.send.bind(transport);
-    transport.send = (message, options) => {
-      if (
-        "method" in message &&
-        message.method === "events/stream" &&
-        "id" in message
-      ) {
-        const onRequestStreamEnd = observe?.(message.id);
-        return send(message, { ...options, onRequestStreamEnd });
-      }
-      return send(message, options);
-    };
-    let vercelPreview = false;
-    if (
-      config.transport === "http" &&
-      new URL(config.url).origin === "https://mcp.vercel.com"
-    ) {
-      // The SDK drops unrecognized capability keys during discovery decoding.
-      // Vercel still advertises the pre-SEP top-level Events capability.
-      let handler = transport.onmessage;
-      Object.defineProperty(transport, "onmessage", {
-        configurable: true,
-        get: () => handler,
-        set: (next: Transport["onmessage"]) => {
-          handler =
-            next &&
-            ((message) => {
-              if (
-                "result" in message &&
-                isRecord(message.result?.capabilities) &&
-                Array.isArray(message.result.supportedVersions)
-              ) {
-                vercelPreview = isRecord(message.result.capabilities.events);
-              }
-              next(message);
-            });
-        },
-      });
-    }
     const disconnected = new AbortController();
     client.onclose = () => disconnected.abort();
     try {
@@ -147,8 +171,8 @@ export async function connectMcpEvents(
       return {
         client,
         disconnected: disconnected.signal,
-        observeStreamRequest(handler?: (id: RequestId) => () => void) {
-          observe = handler;
+        observeStreamRequest(handler?: ObserveStream) {
+          transport.observeStream = handler;
         },
       };
     } catch (error) {
