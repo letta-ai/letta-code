@@ -1,8 +1,6 @@
-import { join } from "node:path";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 import { setTimeout as sleep } from "node:timers/promises";
-import { PROJECT_SKILLS_DIR } from "@/agent/skills";
 import type { SubagentResult } from "@/agent/subagents";
 import { spawnManagedWorkloadProcess } from "@/agent/subagents/subagent-process";
 import { cloudRepositoryRoots } from "@/utils/cloud-repository-roots";
@@ -21,6 +19,7 @@ import {
   turnFailureMessage,
   turnReport,
 } from "./codex-app-server-payloads";
+import { registerCodexRepositorySkills } from "./codex-repository-skills";
 import {
   waitForRejectedCodexSteer,
   withCodexSteerReceipt,
@@ -97,6 +96,7 @@ interface CodexSession {
   activeTurnId?: string;
   activeWaiter?: TurnWaiter;
   startLock: Promise<void>;
+  refreshRepositorySkills?: () => Promise<void>;
   pendingNotifications: JsonRpcMessage[];
   idleTimer?: ReturnType<typeof setTimeout>;
   idleTimeoutMs: number;
@@ -631,6 +631,7 @@ async function createSession(
   let client = makeClient();
   let trace: Awaited<ReturnType<typeof traceCodexLaunch>>;
   let response: Record<string, unknown>;
+  let refreshRepositorySkills: CodexSession["refreshRepositorySkills"];
   try {
     await client.initialize();
     await assertCodexSignedIn(client);
@@ -651,13 +652,10 @@ async function createSession(
       void transport.exited
         ?.finally(() => trace?.close())
         .catch(() => undefined);
-    if (options.cloudSkillRepositories?.length) {
-      await client.request("skills/extraRoots/set", {
-        extraRoots: cloudRepositoryRoots(options.cloudSkillRepositories).map(
-          (root) => join(root, PROJECT_SKILLS_DIR),
-        ),
-      });
-    }
+    refreshRepositorySkills = await registerCodexRepositorySkills(
+      cloudRepositoryRoots(options.cloudSkillRepositories),
+      (extraRoots) => client.request("skills/extraRoots/set", { extraRoots }),
+    );
     const method = options.resumeThreadId ? "thread/resume" : "thread/start";
     const params = options.resumeThreadId
       ? {
@@ -693,6 +691,7 @@ async function createSession(
     parentAgentId: options.parentAgentId,
     model: options.model,
     startLock: Promise.resolve(),
+    refreshRepositorySkills,
     pendingNotifications,
     idleTimeoutMs: deps.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS,
     sleep: deps.sleep ?? sleep,
@@ -725,6 +724,7 @@ async function startTurnAttempt(
     throw new Error("Codex thread already has an active turn");
   }
   clearIdleSessionCleanup(session);
+  await session.refreshRepositorySkills?.();
   const response = await session.client.request("turn/start", {
     threadId: session.threadId,
     input: textInput(prompt),

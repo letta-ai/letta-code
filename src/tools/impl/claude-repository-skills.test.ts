@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readlink, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stageClaudeRepositorySkills } from "./claude-repository-skills";
@@ -13,7 +13,7 @@ test("Claude adds scoped skill overlays for native and .agents repositories", as
     const sources = [
       join(first, ".claude", "skills"),
       join(second, ".agents", "skills"),
-    ];
+    ] as const;
     for (const source of sources) await mkdir(source, { recursive: true });
     const staged = await stageClaudeRepositorySkills([first, second]);
     try {
@@ -26,9 +26,39 @@ test("Claude adds scoped skill overlays for native and .agents repositories", as
       const links = staged.directories.map((dir) =>
         join(dir, ".claude", "skills"),
       );
-      expect(await Promise.all(links.map((link) => realpath(link)))).toEqual(
-        await Promise.all(sources.map((source) => realpath(source))),
+      expect(await Promise.all(links.map((link) => readlink(link)))).toEqual([
+        sources[0],
+        join(first, ".agents", "skills"),
+        join(second, ".claude", "skills"),
+        sources[1],
+      ]);
+    } finally {
+      await staged.cleanup();
+    }
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
+});
+
+test("Claude skill overlays resolve after a late checkout", async () => {
+  const scratch = await mkdtemp(join(tmpdir(), "claude-late-repo-"));
+  const repo = join(scratch, "repo");
+  try {
+    const staged = await stageClaudeRepositorySkills([repo]);
+    try {
+      const target = join(repo, ".agents", "skills");
+      const links = staged.directories.map((dir) =>
+        join(dir, ".claude", "skills"),
       );
+      expect(links).toHaveLength(2);
+      await mkdir(target, { recursive: true });
+      const resolved = await Promise.allSettled(
+        links.map((link) => realpath(link)),
+      );
+      expect(resolved[1]).toEqual({
+        status: "fulfilled",
+        value: await realpath(target),
+      });
     } finally {
       await staged.cleanup();
     }

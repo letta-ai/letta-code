@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import { join } from "node:path";
 
 export function isCloudRepositoryNames(value: unknown): value is string[] {
@@ -17,4 +18,15 @@ export function isCloudRepositoryNames(value: unknown): value is string[] {
 
 export function cloudRepositoryRoots(names: readonly string[] = []): string[] {
   return [...new Set(names)].map((name) => join("/root/workspace", name));
+}
+
+export function cloudSkillDirectoryRevision(path: string): string | null {
+  try {
+    const stats = statSync(path, { throwIfNoEntry: false });
+    return stats?.isDirectory()
+      ? JSON.stringify([stats.dev, stats.ino, stats.mtimeMs, stats.ctimeMs])
+      : null;
+  } catch {
+    return null;
+  }
 }
