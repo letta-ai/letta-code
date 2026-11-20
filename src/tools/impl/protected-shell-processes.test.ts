@@ -68,7 +68,7 @@ test("passes matching arguments directly to pgrep", () => {
     'kill "$(pgrep -f "two words")"',
     "killall -KILL node",
   ]) {
-    expect(findProtectedShellProcess(command, lookup)).toBe(
+    expect(findProtectedShellProcess(command, lookup, "linux")).toBe(
       "the Letta Code CLI running this agent (PID 123)",
     );
   }
@@ -99,6 +99,46 @@ test("passes matching arguments directly to pgrep", () => {
   ).toBe(
     "Blocked: This command would signal the Letta Code CLI running this agent (PID 123). Target a specific child PID such as $!, or use KillBash to stop a background task.",
   );
+});
+
+test("Darwin only includes ancestors for killall or an explicit -a", () => {
+  const queries: string[][] = [];
+  const lookup = {
+    pid: 123,
+    info: () => undefined,
+    pgrep: (args: string[]) => {
+      queries.push(args);
+      return args.includes("-a") ? [123] : [];
+    },
+  };
+  for (const command of [
+    "killall node",
+    "killall -TERM node",
+    "pkill -a -f node",
+    "kill $(pgrep -a -f node)",
+  ]) {
+    expect(findProtectedShellProcess(command, lookup, "darwin")).toContain(
+      "(PID 123)",
+    );
+  }
+  for (const command of [
+    "pkill -f node",
+    "kill $(pgrep -f node)",
+    "killall -s node",
+    "killall -0 node",
+  ]) {
+    expect(
+      findProtectedShellProcess(command, lookup, "darwin"),
+    ).toBeUndefined();
+  }
+  expect(queries).toEqual([
+    ["-a", "-x", "--", "node"],
+    ["-a", "-x", "--", "node"],
+    ["-a", "-f", "node"],
+    ["-a", "-f", "node"],
+    ["-f", "node"],
+    ["-f", "node"],
+  ]);
 });
 
 test.skipIf(process.platform !== "linux")(

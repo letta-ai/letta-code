@@ -1,7 +1,13 @@
 import { expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { detectSandboxBackend } from "@/sandbox/availability";
@@ -11,8 +17,97 @@ import { withShellProcessGuard } from "./shell-process-guard.js";
 const strictEnv = { LETTA_BASH_STRICT: "1", LETTA_FS_SANDBOX: "0" };
 
 function refusal(tool: string, pid: number, suggestion: string) {
-  return `${tool}: refusing to run — this pattern matches the Letta Code CLI process (PID ${pid}). Narrow the pattern, or target your own children with \`pkill -P $$ ${suggestion}\`.`;
+  return `${tool}: refusing to run - this pattern matches the Letta Code CLI process (PID ${pid}). Narrow the pattern, or target your own children with \`pkill -P $$ ${suggestion}\`.`;
 }
+
+test.skipIf(process.platform === "win32")(
+  "pkill and killall guard a non-ancestor process without blocking signal zero",
+  async () => {
+    const darwin = process.platform === "darwin";
+    const sleep = spawnSync("which", ["sleep"], { encoding: "utf8" });
+    expect(sleep.status, sleep.stderr).toBe(0);
+    const dir = mkdtempSync(join(tmpdir(), "letta-signal-test-"));
+    const name = `lettadummy${randomUUID().slice(0, 5)}`;
+    const executable = join(dir, name);
+    try {
+      copyFileSync(sleep.stdout.trim(), executable);
+      chmodSync(executable, 0o700);
+      const child = spawn(executable, ["300"], { stdio: "ignore" });
+      const closed = new Promise<void>((resolve) => {
+        child.once("close", () => resolve());
+      });
+      try {
+        await new Promise<void>((resolve, reject) => {
+          child.once("spawn", resolve);
+          child.once("error", reject);
+        });
+        const pid = child.pid;
+        if (!pid) throw new Error("Missing sleeper PID");
+        const run = (command: string) => {
+          const { launcher, env } = withShellProcessGuard(
+            [darwin ? "/bin/zsh" : "/bin/bash", "-c", command],
+            { ...process.env, DUMMY_NAME: name },
+          );
+          const [shell, ...args] = launcher;
+          if (!shell) throw new Error("Missing shell launcher");
+          return spawnSync(shell, args, {
+            env: {
+              ...env,
+              LETTA_CLI_PID: String(pid),
+              LETTA_PROTECTED_PIDS: String(pid),
+            },
+            encoding: "utf8",
+            timeout: 3000,
+          });
+        };
+        const refusals = [
+          'killall "$DUMMY_NAME"',
+          'killall -TERM "$DUMMY_NAME"',
+          'pkill -f "$DUMMY_NAME"',
+          'pkill -l -f "$DUMMY_NAME"',
+          'pkill -lf "$DUMMY_NAME"',
+          'pkill -d : -f "$DUMMY_NAME"',
+          ...(darwin
+            ? [
+                'killall -c "$DUMMY_NAME"',
+                'killall -m "$DUMMY_NAME"',
+                'pkill -I -f "$DUMMY_NAME"',
+                'pkill -Iaf "$DUMMY_NAME"',
+              ]
+            : [
+                'pkill --delimiter=: --list-full -f "$DUMMY_NAME"',
+                'pkill -H -f "$DUMMY_NAME"',
+              ]),
+        ];
+        for (const command of refusals) {
+          const result = run(command);
+          const tool = command.startsWith("killall") ? "killall" : "pkill";
+          expect(result.status, command).toBe(1);
+          expect(result.stderr, command).toBe(
+            `${refusal(tool, pid, tool === "pkill" ? "..." : name)}\n`,
+          );
+          expect(() => process.kill(pid, 0)).not.toThrow();
+        }
+        for (const command of [
+          'killall -0 "$DUMMY_NAME"',
+          'pkill -0 -f "$DUMMY_NAME"',
+          ...(darwin
+            ? ['killall -s "$DUMMY_NAME"', 'killall -d "$DUMMY_NAME"']
+            : []),
+        ]) {
+          const result = run(command);
+          expect(result.status, result.stderr).toBe(0);
+          expect(result.stderr).not.toContain("refusing to run");
+        }
+      } finally {
+        child.kill();
+        await closed;
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
 
 test.skipIf(process.platform !== "linux")(
   "Bash refuses a runtime pkill pattern matching the CLI argv",
@@ -101,7 +196,7 @@ test.skipIf(process.platform !== "linux")(
       [
         "-e",
         `
-          import { spawnSync } from "node:child_process";
+          import { spawn, spawnSync } from "node:child_process";
           import { withShellProcessGuard } from ${JSON.stringify(join(import.meta.dir, "shell-process-guard.ts"))};
           const { launcher: [shell, ...args], env } = withShellProcessGuard(
             ["/bin/sh", "-c", ${JSON.stringify(`

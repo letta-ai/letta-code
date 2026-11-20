@@ -89,7 +89,9 @@ function matchingTargets(
   args: string[],
   lookup: ProcessLookup,
   substitutions: Map<string, string[]>,
+  platform: NodeJS.Platform,
 ): number[] {
+  const bsdKillall = tool === "killall" && platform === "darwin";
   const first = args[0];
   if (
     tool === "kill" &&
@@ -98,13 +100,14 @@ function matchingTargets(
     return [];
   }
   if (
-    (first === "-s" && tool !== "pkill") ||
-    first === "--signal" ||
+    (first === "-s" && tool === "kill") ||
+    (!bsdKillall &&
+      (first === "--signal" || (first === "-s" && tool === "killall"))) ||
     (first === "-n" && tool === "kill")
   ) {
     if (!args[1] || !isSignal(args[1]) || Number(args[1]) === 0) return [];
     args = args.slice(2);
-  } else if (first?.startsWith("--signal=")) {
+  } else if (!bsdKillall && first?.startsWith("--signal=")) {
     if (!isSignal(first.slice(9)) || Number(first.slice(9)) === 0) return [];
     args = args.slice(1);
   } else if (first?.startsWith("-") && isSignal(first.slice(1))) {
@@ -137,8 +140,9 @@ function matchingTargets(
 
   const names = args[0] === "--" ? args.slice(1) : args;
   if (names.some((name) => name.startsWith("-"))) return [];
+  const flags = bsdKillall ? ["-a", "-x", "--"] : ["-x", "--"];
   return names.flatMap((name) =>
-    lookup.pgrep(["-x", "--", name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")]),
+    lookup.pgrep([...flags, name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")]),
   );
 }
 
@@ -149,6 +153,7 @@ function matchingTargets(
 export function findProtectedShellProcess(
   command: string,
   lookup: ProcessLookup = { pid: process.pid, info: readProcessInfo, pgrep },
+  platform: NodeJS.Platform = process.platform,
 ): string | undefined {
   if (!/\b(?:kill|pkill|killall)\b/.test(command)) return undefined;
   const substitutions = new Map<string, string[]>();
@@ -187,7 +192,13 @@ export function findProtectedShellProcess(
     );
     const tool = word?.split("/").pop();
     if (tool !== "kill" && tool !== "pkill" && tool !== "killall") continue;
-    const targets = matchingTargets(tool, args, lookup, substitutions);
+    const targets = matchingTargets(
+      tool,
+      args,
+      lookup,
+      substitutions,
+      platform,
+    );
     if (targets.length === 0) continue;
     const group = lookup.info(lookup.pid)?.group;
     if (group && targets.includes(-group))
