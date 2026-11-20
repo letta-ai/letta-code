@@ -16,8 +16,8 @@ import { debugWarn } from "@/utils/debug";
  * every subsequent chunk. After a stop_reason, the server only sends
  * usage_statistics and [DONE], so the guard fires only after sustained silence
  * following the terminal sequence — at which point it aborts the HTTP read.
- * The SDK iterator returns cleanly on its own controller's abort, so
- * drainStream proceeds with the stop reason it already received.
+ * Release the drain independently: aborting does not guarantee a pending
+ * iterator read will settle.
  */
 // The terminal frames normally follow within milliseconds (observed ~11ms in
 // production traces), and firing early costs nothing: the terminal state is
@@ -37,6 +37,7 @@ function getTerminalEofGraceMs(): number {
 }
 
 export type TerminalEofGuard = {
+  untilEof: <T>(stream: AsyncIterable<T>) => AsyncIterable<T>;
   /** (Re-)start the grace timer. Call on every chunk after stop_reason. */
   arm: () => void;
   /** Cancel the timer. Call when the stream ends for any reason. */
@@ -52,15 +53,40 @@ export function createTerminalEofGuard(context: {
 }): TerminalEofGuard {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let fired = false;
+  const eof = { done: true, value: undefined } as const;
+  let deadline: PromiseWithResolvers<typeof eof> | undefined;
+  let closeIterator: (() => void) | undefined;
 
   return {
+    untilEof<T>(stream: AsyncIterable<T>): AsyncIterable<T> {
+      return {
+        [Symbol.asyncIterator]() {
+          const iterator = stream[Symbol.asyncIterator]();
+          // An async generator may queue return() behind the hung next().
+          // Request cleanup, but never make turn completion depend on it.
+          closeIterator = () => {
+            void iterator.return?.().catch(() => {});
+          };
+          return {
+            next() {
+              if (!deadline) return iterator.next();
+              if (fired) return Promise.resolve(eof);
+              return Promise.race([iterator.next(), deadline.promise]);
+            },
+            return: iterator.return?.bind(iterator),
+          };
+        },
+      };
+    },
     arm: () => {
       if (timer) {
         clearTimeout(timer);
       }
       const graceMs = getTerminalEofGraceMs();
+      deadline = Promise.withResolvers<typeof eof>();
       timer = setTimeout(() => {
         fired = true;
+        deadline?.resolve(eof);
         debugWarn(
           "drainStream",
           "Terminal-EOF guard fired: stop_reason=%s received but stream did not end within %dms - aborting HTTP read",
@@ -76,6 +102,7 @@ export function createTerminalEofGuard(context: {
           },
         );
         context.abortHttpRead();
+        closeIterator?.();
       }, graceMs);
     },
     clear: () => {

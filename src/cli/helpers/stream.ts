@@ -195,7 +195,7 @@ export async function drainStream(
     }
 
     stallReconciler.arm();
-    for await (const chunk of stream) {
+    for await (const chunk of terminalEofGuard.untilEof(stream)) {
       stallReconciler.arm();
       lastChunkDebugSummary = summarizeChunkForDebug(chunk);
       recordTuiJsonPayload(
