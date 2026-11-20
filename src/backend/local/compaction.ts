@@ -460,10 +460,13 @@ async function runGenerateText(
     // those models reject with a 400 invalid_request_error — breaking every
     // compaction (automatic and manual /compact).
     ...(reasoning ? { reasoning } : {}),
-    // The self request samples as the agent's own turn does.
+    // The self request samples as the agent's own turn does. Summary requests
+    // keep the default sampling but still honor explicit provider overrides.
     ...(turnSampling
       ? samplingOptionsForSettings(input.agent.model_settings)
-      : {}),
+      : isRecord(localModel.modelSettings.sampling_params)
+        ? { samplingParams: localModel.modelSettings.sampling_params }
+        : {}),
     maxRetries: 0,
     sessionId: input.conversationId,
   };
