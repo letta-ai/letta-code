@@ -416,6 +416,24 @@ describe("reflection worktree completion messaging", () => {
     });
   });
 
+  test("failed reflection surfaces insufficient-credit guidance without model suppression", async () => {
+    const worktree = await createReflectionMemoryWorktree({
+      parentMemoryDir: memoryDir,
+    });
+
+    const result = await finalizeLaunch(worktree, false, {
+      subagentError:
+        "Insufficient credits ($0.00) to fulfill this request: minimum $1 in credits is required. Please purchase more credits at https://chat.letta.com/preferences/usage",
+    });
+
+    expect(result.integration.status).toBe("failed");
+    expect(result.completionSuccess).toBe(false);
+    expect(result.completionMessage).toBe(
+      "Reflection failed: This model needs your own API key or Letta credits. Run /connect to add a provider key, or buy credits at https://chat.letta.com/preferences/usage.",
+    );
+    expect(isAutomaticReflectionSuppressed("agent-test")).toBe(false);
+  });
+
   test("failed reflection surfaces a model configuration error", async () => {
     const worktree = await createReflectionMemoryWorktree({
       parentMemoryDir: memoryDir,
