@@ -25,6 +25,10 @@ import {
   scheduleBackgroundProcessCleanup,
   scrubCompletedBackgroundOutput,
 } from "./process_manager.js";
+import {
+  findProtectedShellProcess,
+  protectedShellProcessMessage,
+} from "./protected-shell-processes.js";
 import { getShellEnv } from "./shell-env.js";
 import {
   buildPowerShellCommand,
@@ -621,7 +625,6 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
   assertBackgroundProcessCapacity();
 
   const id = getNextExecSessionId();
-  const outputFile = createBackgroundOutputFile(`exec_${id}`);
   const cwd = resolveShellWorkdir(args.workdir);
   const env = { ...getShellEnv(), ...args.variableEnv, ...args.secretEnv };
   const redactions = captureSecretRedactions(
@@ -638,6 +641,15 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
   // wrapper hides the inner shell from that inspection, so note the unwrapped
   // launcher here first.
   const sandboxed = applyShellSandbox(rawLauncher, cwd, env);
+  const protectedTarget =
+    sandboxed.backend === "seatbelt"
+      ? undefined
+      : findProtectedShellProcess(args.cmd);
+  if (protectedTarget) {
+    throw new Error(protectedShellProcessMessage(protectedTarget));
+  }
+  const outputFile = createBackgroundOutputFile(`exec_${id}`);
+
   if (sandboxed.backend) {
     noteExpectedWorktreeForLauncher(rawLauncher, cwd);
   }

@@ -7,6 +7,8 @@ export interface WrapOptions {
   backend: SandboxBackend | null;
   /** Resolved bwrap binary path (system or bundled). Defaults to `bwrap`. */
   bwrapPath?: string;
+  /** Seatbelt only: restrict signals and process information to the same sandbox. */
+  isolateProcesses?: boolean;
 }
 
 /**
@@ -30,7 +32,7 @@ export function wrapLauncher(
     case "seatbelt":
       return [
         SANDBOX_EXEC_PATH,
-        ...buildSeatbeltArgs(policy),
+        ...buildSeatbeltArgs(policy, options.isolateProcesses),
         "--",
         ...launcher,
       ];

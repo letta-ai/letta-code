@@ -36,6 +36,10 @@ import {
   scrubCompletedBackgroundOutput,
 } from "./process_manager.js";
 import {
+  findProtectedShellProcess,
+  protectedShellProcessMessage,
+} from "./protected-shell-processes.js";
+import {
   findSelfMatchingPgrepPattern,
   selfMatchingPgrepMessage,
 } from "./self-matching-pgrep.js";
@@ -434,7 +438,6 @@ export async function bash(args: BashArgs): Promise<BashResult> {
   const bgEnv = secretEnv ? { ...getShellEnv(), ...secretEnv } : getShellEnv();
   const bgCommand = withStrictShellPrelude(command, bgEnv);
   const bashId = getNextBashId();
-  const outputFile = createBackgroundOutputFile(bashId);
   const launcher = getBackgroundLauncher(bgCommand, bgEnv, secretEnv);
   const [executable] = launcher;
   if (!executable) {
@@ -447,6 +450,19 @@ export async function bash(args: BashArgs): Promise<BashResult> {
   // inner shell from launcher inspection.
   noteExpectedWorktreeForLauncher(launcher, userCwd);
   const sandboxed = applyShellSandbox(launcher, userCwd, bgEnv);
+  const protectedTarget =
+    sandboxed.backend === "seatbelt"
+      ? undefined
+      : findProtectedShellProcess(command);
+  if (protectedTarget) {
+    return {
+      content: [
+        { type: "text", text: protectedShellProcessMessage(protectedTarget) },
+      ],
+      status: "error",
+    };
+  }
+  const outputFile = createBackgroundOutputFile(bashId);
   let bgProcess: BackgroundProcess;
   let outputWriteFailed = false;
   const foregroundOutput = { stdout: "", stderr: "" };
