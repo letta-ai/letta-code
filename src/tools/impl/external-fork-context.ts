@@ -132,7 +132,7 @@ export function withReportBackInstruction(
   return [
     prompt,
     "",
-    `When you open a pull request (draft or ready) or hit a blocker you can't get past, tell the parent right away, then keep working: run \`letta -p ${buildAgentSendCliTarget(parentAgentId, parentConversationId)} --no-wait "<what happened, with the link>. Tell the person who asked now; a draft is a result."\` (for a blocker, end with "Tell the person who asked now."). Use the same command to ask the parent something mid-task.`,
+    `When you open a pull request (draft or ready) or hit a blocker you can't get past, tell the parent right away, then keep working. For a PR, run \`letta -p ${buildAgentSendCliTarget(parentAgentId, parentConversationId)} --no-wait "<what happened, with the link>. Start WatchPR on it, then tell the person who asked; a draft is a result."\`. For a blocker, use the same command and end the message with "Tell the person who asked now." Use the same command to ask the parent something mid-task.`,
   ].join("\n");
 }
 
