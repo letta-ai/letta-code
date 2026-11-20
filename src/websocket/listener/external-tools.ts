@@ -1,12 +1,17 @@
 import type { ListenerExternalToolNotificationGuard } from "@/tools/external-tool-background-eligibility";
 import { enableListenerExternalToolBackground } from "@/tools/external-tool-background-eligibility";
 import { EXTERNAL_TOOL_FOREGROUND_INTERRUPTED } from "@/tools/external-tool-types";
+import { INTERACTIVE_USER_INPUT_TOOL_NAMES } from "@/tools/interactive-policy";
 import {
   type ExternalToolDefinition,
   registerExternalTools,
   setExternalToolExecutor,
   unregisterExternalTools,
 } from "@/tools/manager";
+import {
+  resolveTurnToolSelection,
+  type TurnToolSelection,
+} from "@/tools/tool-policy";
 import type {
   ExternalToolCallCancelMessage,
   ExternalToolCallRequestMessage,
@@ -488,6 +493,26 @@ export function resolveRuntimeToolOwner(
   return {
     connectionId: owner.connectionId,
     ...(owner.toolPolicy ? { toolPolicy: owner.toolPolicy } : {}),
+  };
+}
+
+/** Build the tool context from the runtime controller and any turn overrides. */
+export function resolveRuntimeToolContextOptions(
+  runtime: ListenerRuntime,
+  scope: RuntimeScope<string | null>,
+  connectionId?: ListenerConnectionId,
+  overrides: TurnToolSelection = {},
+) {
+  const owner = resolveRuntimeToolOwner(runtime, scope, connectionId);
+  const selection = resolveTurnToolSelection(overrides, owner.toolPolicy);
+  return {
+    externalToolOwnerConnectionId: owner.connectionId,
+    clientToolset: selection.clientToolset,
+    clientToolAllowlist: selection.clientToolAllowlist,
+    ...(selection.excludeInteractiveTools
+      ? { exclude: [...INTERACTIVE_USER_INPUT_TOOL_NAMES] }
+      : {}),
+    foregroundYieldMs: owner.toolPolicy?.foreground_yield_ms,
   };
 }
 

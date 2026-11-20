@@ -1,6 +1,11 @@
-import { describe, expect, test } from "bun:test";
-import { STALE_APPROVAL_RECOVERY_DENIAL_REASON } from "@/agent/turn-recovery-policy";
+import { describe, expect, spyOn, test } from "bun:test";
+import {
+  STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+  STARTED_TOOL_CALL_RECOVERY_DENIAL_REASON,
+} from "@/agent/turn-recovery-policy";
+import * as agentApi from "@/backend/api/agents";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
+import { registerRuntimeExternalTools } from "./external-tools";
 import { enqueueInboundUserMessage } from "./inbound-queue";
 import type { InterruptedTurnRecord } from "./interrupted-turn-types";
 import { createRuntime } from "./lifecycle";
@@ -251,6 +256,8 @@ describe("stale approval recovery races another client", () => {
       drains?: unknown[];
       batches?: Record<string, string>;
       record?: InterruptedTurnRecord;
+      connectionId?: string;
+      toolAllowlist?: string[];
     } = {},
   ) {
     const runtime = getOrCreateScopedRuntime(
@@ -258,6 +265,20 @@ describe("stale approval recovery races another client", () => {
       "agent-1",
       "conv-1",
     );
+    runtime.listener.connectionId = opts.connectionId ?? null;
+    if (opts.toolAllowlist) {
+      registerRuntimeExternalTools(
+        runtime.listener,
+        "controller",
+        {
+          agent_id: "agent-1",
+          conversation_id: "conv-1",
+        },
+        [],
+        { allowlist: opts.toolAllowlist },
+      );
+    }
+    const prepared: unknown[] = [];
     for (const [id, batch] of Object.entries(opts.batches ?? {})) {
       runtime.pendingApprovalBatchByToolCallId.set(id, batch);
     }
@@ -283,7 +304,10 @@ describe("stale approval recovery races another client", () => {
             messageHistory: [],
           };
         },
-        prepareToolExecutionContext: async () => createPreparedToolContext(),
+        prepareToolExecutionContext: async (options) => {
+          prepared.push(options);
+          return createPreparedToolContext();
+        },
         sendApprovalContinuation: async (_conversationId, messages) => {
           sent.push(JSON.stringify(messages));
           batchesAtSend.push(new Map(runtime.pendingApprovalBatchByToolCallId));
@@ -297,7 +321,7 @@ describe("stale approval recovery races another client", () => {
         readInterruptedTurn: () => opts.record ?? null,
       },
     );
-    return { result, sent, batchesAtSend, runtime };
+    return { result, sent, batchesAtSend, runtime, prepared };
   }
   const stream = async () => ({ kind: "stream" as const, stream: {} as never });
 
@@ -384,6 +408,62 @@ describe("stale approval recovery races another client", () => {
       "Ambiguous pending approval batch mapping during recovery",
     );
     expect(sent).toEqual([]);
+  });
+
+  test("does not close pending approvals owned by a different listener", async () => {
+    const readStatus = spyOn(
+      agentApi,
+      "getAgentRuntimeStatus",
+    ).mockResolvedValue({
+      statuses: [
+        {
+          conversation_id: "conv-1",
+          active_harness: { connection_id: "conn-active" },
+        },
+      ],
+    } as Awaited<ReturnType<typeof agentApi.getAgentRuntimeStatus>>);
+    try {
+      const { result, sent } = await recover([[call("call-1")]], stream, {
+        connectionId: "conn-recovering",
+      });
+
+      await expect(result).resolves.toBeNull();
+      expect(sent).toEqual([]);
+    } finally {
+      readStatus.mockRestore();
+    }
+  });
+
+  test("keeps the registered controller tool selection during recovery", async () => {
+    const { result, prepared } = await recover([[call("call-1")]], stream, {
+      toolAllowlist: ["publish_file"],
+    });
+
+    await expect(result).resolves.toMatchObject({ stopReason: "end_turn" });
+    expect(prepared).toMatchObject([
+      {
+        externalToolOwnerConnectionId: "controller",
+        clientToolAllowlist: ["publish_file"],
+      },
+    ]);
+  });
+
+  test("recovers a dispatched call with its recorded execution state", async () => {
+    const { result, sent } = await recover([[call("call-1")]], stream, {
+      record: {
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        runId: "run-previous",
+        toolCallIds: ["call-1"],
+        unstartedToolCallIds: [],
+        results: [],
+        requestOtid: "request-previous",
+        workingDirectory: process.cwd(),
+      },
+    });
+
+    await expect(result).resolves.toMatchObject({ stopReason: "end_turn" });
+    expect(sent[0]).toContain(STARTED_TOOL_CALL_RECOVERY_DENIAL_REASON);
   });
 
   describe("with a checkpointed tool result", () => {

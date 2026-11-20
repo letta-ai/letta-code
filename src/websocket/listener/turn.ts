@@ -47,6 +47,7 @@ import type {
   RecoveryAuthorityStore,
   RecoveryEvidenceWriter,
 } from "./recovery-evidence";
+import { getRecoveryEligibility } from "./recovery-ownership";
 import {
   clearRecoveredApprovalStateUnlessRetained,
   evictConversationRuntimeIfIdle,
@@ -440,7 +441,6 @@ async function handleIncomingMessageInner(
           runErrorInfo?.message ||
           fallbackError ||
           null;
-        const quotaError = latestErrorInfo ?? runErrorInfo ?? errorDetail;
         const deploymentInterrupted =
           isCloudApiDeploymentInterrupted(latestErrorInfo) ||
           isCloudApiDeploymentInterrupted(runErrorInfo);
@@ -454,8 +454,10 @@ async function handleIncomingMessageInner(
             latestErrorText:
               latestErrorInfo?.detail ?? latestErrorInfo?.message ?? null,
             fallbackError,
-          })
+          }) &&
+          (await getRecoveryEligibility(runtime)) === "owned"
         ) {
+          if (finishIfInterrupted(lastRunId || runtime.activeRunId)) break;
           postStopApprovalRecoveryRetries += 1;
           emitRecoverableStatusNotice(socket, runtime, {
             kind: "stale_approval_conflict_recovery",
@@ -466,7 +468,6 @@ async function handleIncomingMessageInner(
             agentId,
             conversationId,
           });
-
           try {
             const agent = await retrieveResumeState(agentId, conversationId);
             const { pendingApprovals: existingApprovals } =
@@ -523,7 +524,6 @@ async function handleIncomingMessageInner(
           );
           continue;
         }
-
         if (
           !deploymentInterrupted &&
           isEmptyResponseRetryable(
@@ -613,7 +613,7 @@ async function handleIncomingMessageInner(
             agentId,
             conversationId,
             currentHandle: null,
-            error: quotaError,
+            error: latestErrorInfo ?? runErrorInfo ?? errorDetail,
             exhaustedProviders: chatgptExhaustedProviders,
             signal: turnAbortSignal,
           });

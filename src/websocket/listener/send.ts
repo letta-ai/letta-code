@@ -35,7 +35,10 @@ import {
   MAX_PRE_STREAM_RECOVERY,
 } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
-import { captureNotificationWait } from "./external-tools";
+import {
+  captureNotificationWait,
+  resolveRuntimeToolContextOptions,
+} from "./external-tools";
 import { readInterruptedTurn } from "./interrupted-turn-read";
 import {
   createListenerAgentModContext,
@@ -52,6 +55,7 @@ import {
   drainRecoveryStreamWithEmission,
   isApprovalToolCallDesyncError,
 } from "./recovery";
+import { getRecoveryEligibility } from "./recovery-ownership";
 import { retryApprovalRecoveryRead } from "./recovery-read";
 import { injectQueuedSkillContent } from "./skill-injection";
 import type { ListenerTransport } from "./transport";
@@ -282,14 +286,7 @@ async function tryResumeBusyConversationStream(params: {
   }
 }
 
-/**
- * Attempt to resolve stale pending approvals by fetching them from the backend.
- * Calls whose result was already checkpointed in the interrupted-turn record are
- * resolved with that result; only calls with no recorded result are auto-denied.
- * This is the Phase 3 bounded recovery mechanism. Reusing recorded results also
- * drops any parked pendingInterruptedResults, as recover-recorded-turn does, so
- * stale denials for the same calls are not sent afterward.
- */
+/** Resume pending approvals using exact results when the checkpoint has them. */
 export async function resolveStaleApprovals(
   runtime: ConversationRuntime,
   socket: ListenerTransport,
@@ -397,6 +394,7 @@ export async function resolveStaleApprovals(
     agent_id: runtime.agentId,
     conversation_id: recoveryConversationId,
   } as const;
+  if ((await getRecoveryEligibility(runtime)) !== "owned") return null;
   const modAdapters = runtime.agentId
     ? await ensureListenerModAdaptersForAgent(runtime.listener, runtime.agentId)
     : [];
@@ -406,6 +404,7 @@ export async function resolveStaleApprovals(
       scope,
       runtime.activeConnectionId ?? undefined,
     ),
+    ...resolveRuntimeToolContextOptions(runtime.listener, scope),
     agentId: runtime.agentId,
     conversationId: recoveryConversationId,
     workingDirectory: recoveryWorkingDirectory,
@@ -432,6 +431,7 @@ export async function resolveStaleApprovals(
   const recoveryActingUserId = recoveryRecord?.actingUserId;
   pendingApprovals = await filterStillPending(pendingApprovals);
   while (pendingApprovals.length > 0) {
+    if ((await getRecoveryEligibility(runtime)) !== "owned") return null;
     assertCurrentTurnLease();
     const recoveryBatchId = resolveRecoveryBatchId(runtime, pendingApprovals);
     if (!recoveryBatchId) {
