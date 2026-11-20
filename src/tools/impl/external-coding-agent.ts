@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
+import { getConversationId } from "@/agent/context";
 import { buildParentMemoryNote } from "@/agent/parent-memory-note";
 import type { SubagentConfig, SubagentResult } from "@/agent/subagents";
 import { getCurrentSubagentDepth } from "@/agent/subagents/subagent-depth";
@@ -27,6 +28,7 @@ import {
   scrubSecretsFromString,
 } from "@/tools/secret-substitution";
 import type { SubagentStartupErrorCode } from "@/types/subagent-protocol";
+import { debugLog } from "@/utils/debug";
 import { withNativeCliPath } from "@/utils/native-cli-env";
 import { SUBAGENT_DEPTH_ENV } from "@/utils/subagent-depth-env";
 import { runClaudeTurn } from "./claude-stream-session";
@@ -68,9 +70,11 @@ export interface ExternalCodingAgentRunOptions extends ExternalWorkerListeners {
   model?: string;
   parentAgentId: string;
   parentConversationId?: string;
+  taskId?: string;
   actingUserId?: string | null;
   resumeSessionId?: string;
   cwd?: string;
+  cloudSkillRepositories?: string[];
   mcpReminder?: string;
   signal?: AbortSignal;
   onStarted?: (agentId: string) => void;
@@ -82,8 +86,8 @@ export interface ExternalCodingAgentCommand {
   stdin?: string;
 }
 
-/** `fork` marks a worker launched with the parent's transcript, which, like a
- * Letta fork, keeps it off the ambient default computer. */
+/** `fork` marks a worker launched with the parent's transcript, including
+ * when the ambient default computer routes it to a remote sandbox. */
 export function createExternalCodingAgentConfig(
   type: ExternalCodingAgentType,
   fork = false,
@@ -225,7 +229,7 @@ export function buildExternalCodingAgentMcpReminder(
 /**
  * Resolve the parent agent's MCP servers into the discovery reminder passed to
  * an external coding agent. Inherits by default; explicit false disables the
- * reminder. Throws when the inventory cannot be read.
+ * reminder. Falls back to discovery instructions when the inventory cannot be read.
  */
 export async function resolveExternalCodingAgentMcpReminder(
   parentAgentId: string,
@@ -233,11 +237,23 @@ export async function resolveExternalCodingAgentMcpReminder(
   deps: McpServersReminderDependencies = {},
 ): Promise<string | undefined> {
   if (mcp?.inherit === false) return undefined;
-  const inventory = await listMcpServersForAgent(
-    await getMcpScopeAgentId(parentAgentId, undefined, deps.lookupParentAgent),
-    createSharedReminderState(),
-    deps,
+  const scopeAgentId = await getMcpScopeAgentId(
+    parentAgentId,
+    undefined,
+    deps.lookupParentAgent,
   );
+  let inventory: ExternalCodingAgentMcpEntry[];
+  try {
+    ({ entries: inventory } = await listMcpServersForAgent(
+      scopeAgentId,
+      createSharedReminderState(),
+      deps,
+      5_000,
+    ));
+  } catch (error) {
+    debugLog("mcp", "Failed to load worker MCP inventory: %s", error);
+    return buildMcpServersReminderText(null);
+  }
   return buildExternalCodingAgentMcpReminder(
     selectExternalCodingAgentMcpEntries(inventory, mcp?.servers),
   );
@@ -499,7 +515,7 @@ export interface ExternalWorkerLaunchEnv {
 export async function buildExternalWorkerLaunchEnv(
   options: Pick<
     ExternalCodingAgentRunOptions,
-    "parentAgentId" | "actingUserId" | "mcpReminder"
+    "parentAgentId" | "parentConversationId" | "actingUserId" | "mcpReminder"
   >,
   deps: Pick<ExternalCodingAgentDependencies, "env" | "resolveSecretEnv"> = {},
 ): Promise<ExternalWorkerLaunchEnv> {
@@ -523,6 +539,8 @@ export async function buildExternalWorkerLaunchEnv(
     AGENT_ID: options.parentAgentId,
     LETTA_AGENT_ID: options.parentAgentId,
     LETTA_PARENT_AGENT_ID: options.parentAgentId,
+    LETTA_PARENT_CONVERSATION_ID:
+      options.parentConversationId ?? getConversationId() ?? "default",
     LETTA_CODE_AGENT_ROLE: "subagent",
     // A Letta CLI launched from the worker's shell stays inside the depth bound.
     [SUBAGENT_DEPTH_ENV]: String(getCurrentSubagentDepth() + 1),
@@ -623,6 +641,7 @@ export async function runExternalCodingAgent(
         agentId: options.parentAgentId,
         conversationId: options.parentConversationId,
         actingUserId: captureActingUserId,
+        cloudSkillRepositories: options.cloudSkillRepositories,
       }
     : undefined;
   const source = options.type === "claude-code" ? "claude_code" : "codex";
@@ -718,9 +737,19 @@ export async function runExternalCodingAgent(
       return capture(
         await (deps.runCodexTurn ?? runCodexTurn)(
           {
+            traceContext: scope
+              ? {
+                  actingUserId: scope.actingUserId,
+                  secretValues: Object.values(secretEnv),
+                  parent_agent_id: scope.agentId,
+                  parent_conversation_id: scope.conversationId,
+                  task_id: options.taskId ?? randomUUID(),
+                }
+              : undefined,
             prompt: options.prompt,
             parentAgentId: options.parentAgentId,
             cwd,
+            cloudSkillRepositories: options.cloudSkillRepositories,
             model: options.model,
             mcpReminder: options.mcpReminder,
             signal: options.signal,
@@ -776,9 +805,19 @@ export async function runExternalCodingAgent(
       return capture(
         await runClaudeTurn(
           {
+            traceContext: scope
+              ? {
+                  actingUserId: scope.actingUserId,
+                  secretValues: Object.values(secretEnv),
+                  parent_agent_id: scope.agentId,
+                  parent_conversation_id: scope.conversationId,
+                  task_id: options.taskId ?? randomUUID(),
+                }
+              : undefined,
             prompt: options.prompt,
             parentAgentId: options.parentAgentId,
             cwd,
+            cloudSkillRepositories: options.cloudSkillRepositories,
             model: options.model,
             mcpReminder: options.mcpReminder,
             signal: options.signal,

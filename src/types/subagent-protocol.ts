@@ -1,4 +1,7 @@
-import type { AgentRuntimeScope } from "./runtime-scope";
+import type {
+  AgentRuntimeScope,
+  ConversationRuntimeScope,
+} from "./runtime-scope";
 
 /** The public launch arguments shared by Agent and App Server clients. */
 export interface SubagentLaunchArgs {
@@ -55,7 +58,10 @@ export type SubagentLaunchNotify = "caller";
  * `toSubagentLaunchArgs`. Listeners that predate `harness` accept only
  * `subagent_type`, so remote external launches keep sending it.
  */
-export type LaunchSubagentWireArgs = SubagentLaunchArgs;
+export type LaunchSubagentWireArgs = SubagentLaunchArgs & {
+  /** Repository names provisioned by the caller on this Cloud sandbox. */
+  cloud_skill_repositories?: string[];
+};
 
 export interface LaunchSubagentCommand {
   type: "launch_subagent";
@@ -85,16 +91,21 @@ export interface SubagentMessageCommand {
   tool_call_id?: string;
 }
 
+// `queued`: the worker is in a long tool call and hasn't acknowledged the
+// interrupt yet; the message is queued and handled when the call stops.
 export type SubagentMessageResponse = {
   type: "subagent_message_response";
   request_id: string;
   runtime?: AgentRuntimeScope;
 } & (
-  | { success: true; delivery: "steered" | "resumed" }
+  | { success: true; delivery: "steered" | "queued" | "resumed" }
   | { success: false; error: string }
 );
 
 export interface SubagentStopCommand {
+  /** Stop an accepted listener conversation, including its background work. */
+  conversation?: ConversationRuntimeScope;
+  client_message_id?: string;
   type: "subagent_stop";
   request_id: string;
   runtime: AgentRuntimeScope;
@@ -102,6 +113,8 @@ export interface SubagentStopCommand {
 }
 
 export interface SubagentStopResponse {
+  /** The owner confirmed process exit and conversation cleanup. */
+  cleanup_confirmed?: boolean;
   type: "subagent_stop_response";
   request_id: string;
   runtime: AgentRuntimeScope;

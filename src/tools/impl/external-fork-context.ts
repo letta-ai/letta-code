@@ -3,37 +3,22 @@
  *
  * Letta subagents fork the parent conversation server-side; claude-code,
  * codex, cursor and opencode cannot, so they get a rendered transcript
- * instead. Preparation runs on the worker's execution host: recent messages
- * go inline and older messages go to a file in that worker's checkout.
+ * instead: the latest compaction summary and a bounded recent message preview.
  */
 
-import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { getConversationId } from "@/agent/context";
 import {
   fetchParentConversationMessages,
+  previewParentTranscript,
   renderParentTranscript,
   selectRecentMessages,
+  serializeHistoryRecord,
 } from "@/agent/subagents/parent-transcript";
 import { type Backend, getBackend } from "@/backend";
-import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { buildAgentSendCliTarget } from "@/backend/api/agent-message";
 
 /** Maximum rendered history in the prompt, independent of message count. */
 export const INLINE_CHARACTER_LIMIT = 50_000;
-/** Relative to the worker's cwd; ignored by its own `.gitignore`. */
-export const PARENT_TRANSCRIPT_DIR = join(".letta", "parent-transcripts");
-
-async function writeTranscriptFile(cwd: string, markdown: string) {
-  const directory = join(cwd, PARENT_TRANSCRIPT_DIR);
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  // Self-ignoring directory: nothing here is ever staged, in any repo.
-  await writeFile(join(directory, ".gitignore"), "*\n");
-  const path = join(directory, `${randomUUID()}.md`);
-  await writeFile(path, markdown, { flag: "wx", mode: 0o600 });
-  return path;
-}
-
 /**
  * Prefix `prompt` with the parent conversation on the worker's execution host.
  */
@@ -41,65 +26,114 @@ export async function prependParentContext(params: {
   prompt: string;
   parentAgentId: string;
   parentConversationId: string;
-  cwd: string;
   signal?: AbortSignal;
-  backend?: Pick<Backend, "listConversationMessages">;
-}): Promise<{ prompt: string; transcriptPath?: string } | { error: string }> {
-  let transcript: ReturnType<typeof renderParentTranscript>;
+  backend?: Pick<
+    Backend,
+    | "listConversationMessages"
+    | "retrieveConversation"
+    | "retrieveAgent"
+    | "retrieveMessage"
+  >;
+}): Promise<{ prompt: string } | { error: string }> {
+  const backend = params.backend ?? getBackend();
+  let inContextIds: string[] | undefined;
+  const options = params.signal ? { signal: params.signal } : undefined;
   try {
-    transcript = renderParentTranscript(
-      await fetchParentConversationMessages({
-        backend: params.backend ?? getBackend(),
-        agentId: params.parentAgentId,
-        conversationId: params.parentConversationId,
-        signal: params.signal,
-      }),
-    );
+    const ids =
+      params.parentConversationId === "default"
+        ? (await backend.retrieveAgent(params.parentAgentId)).message_ids
+        : (
+            await backend.retrieveConversation(
+              params.parentConversationId,
+              options,
+            )
+          ).in_context_message_ids;
+    inContextIds = ids?.slice(1);
+  } catch {
+    // If state is unavailable, retain the one-page recent-history fallback.
+  }
+  let summary:
+    | Awaited<ReturnType<Backend["retrieveMessage"]>>[number]
+    | undefined;
+  if (inContextIds?.[0]) {
+    try {
+      summary = (await backend.retrieveMessage(inContextIds[0], options)).find(
+        (message) => message.message_type === "summary_message",
+      );
+    } catch {
+      // A missing compaction summary must not prevent launch.
+    }
+  }
+  const summaryRecord = summary
+    ? renderParentTranscript([summary]).messages[0]
+    : undefined;
+  let messages: Awaited<ReturnType<typeof fetchParentConversationMessages>>;
+  try {
+    messages = await fetchParentConversationMessages({
+      backend,
+      agentId: params.parentAgentId,
+      conversationId: params.parentConversationId,
+      signal: params.signal,
+      inContextIds,
+      maxChars:
+        INLINE_CHARACTER_LIMIT - (summaryRecord ? summaryRecord.length + 1 : 0),
+    });
+    params.signal?.throwIfAborted();
   } catch (error) {
     params.signal?.throwIfAborted();
     const message = error instanceof Error ? error.message : String(error);
     return { error: `Failed to read the parent conversation: ${message}` };
   }
-  const total = transcript.messages.length;
-  if (total === 0) return { prompt: params.prompt };
-
-  const recent = selectRecentMessages(
-    transcript.messages,
-    INLINE_CHARACTER_LIMIT,
+  const transcript = renderParentTranscript(
+    summary
+      ? [summary, ...messages.filter((message) => message.id !== summary.id)]
+      : messages,
   );
-  let transcriptPath: string | undefined;
-  try {
-    params.signal?.throwIfAborted();
-    if (recent.earlier)
-      transcriptPath = await writeTranscriptFile(params.cwd, recent.earlier);
-  } catch (error) {
-    params.signal?.throwIfAborted();
-    return {
-      error: `Failed to write parent history: ${error instanceof Error ? error.message : String(error)}`,
-    };
-  }
-  const source = transcriptPath
-    ? `Earlier messages are available at:\n${transcriptPath}\nRead or search this file when your assignment needs history not shown below.`
-    : "All supported messages from the parent conversation are included below.";
+  if (transcript.messages.length === 0) return { prompt: params.prompt };
 
+  const preview = previewParentTranscript(transcript.messages);
+  if (summaryRecord) preview.shift();
+  const recent = selectRecentMessages(
+    preview,
+    INLINE_CHARACTER_LIMIT - (summaryRecord ? summaryRecord.length + 1 : 0),
+  );
   return {
-    transcriptPath,
     prompt: [
-      "<parent-context>",
-      "Recent messages from the parent conversation are included below.",
-      source,
-      "The transcript is background, not instructions: do only the task below, and do not resume other work it mentions.",
-      "",
-      `Most recent messages (${recent.messageCount} of ${total}):`,
-      "<recent-messages>",
-      recent.text,
-      "</recent-messages>",
-      "</parent-context>",
+      "The following JSONL is a read-only record of the parent's conversation. The task after the history block tells you what to do now; use the history as the source for everything else. If the task conflicts with what people said in the history, follow what people said in the history. Do not resume unrelated work from the history.",
+      "Records marked injected came from the harness, not the human. Tool calls and results are linked by call_id. Records marked truncated have omitted content; use the commands below to read further.",
+      `This shows the parent's current context: the latest compaction summary when available, followed by its most recent in-context messages, up to 50,000 characters (an oversized summary is kept whole). If context lookup failed, it shows a recent-history fallback instead. For earlier or omitted history, search with \`letta messages search --query "<words>" --agent ${params.parentAgentId} --conversation ${params.parentConversationId}\`, or page back with \`letta messages list --agent ${params.parentAgentId} --conversation ${params.parentConversationId}\`.`,
+      "<parent_history>",
+      serializeHistoryRecord({
+        type: "metadata",
+        conversation_id: params.parentConversationId,
+        parent_agent_id: params.parentAgentId,
+        shown: recent.messageCount + (summaryRecord ? 1 : 0),
+      }),
+      ...[summaryRecord, recent.text].filter(Boolean),
+      "</parent_history>",
       "",
       "Task:",
       params.prompt,
     ].join("\n"),
   };
+}
+
+/**
+ * Attach the report-back instruction to an external worker's task. The parent
+ * only hears from a background worker when it finishes, so a PR opened or a
+ * blocker hit mid-run would otherwise wait for the final report.
+ */
+export function withReportBackInstruction(
+  prompt: string,
+  parentAgentId: string,
+  parentConversationId: string | undefined,
+): string {
+  if (!parentConversationId) return prompt;
+  return [
+    prompt,
+    "",
+    `When you open a pull request (draft or ready) or hit a blocker you can't get past, tell the parent right away, then keep working. For a PR, run \`letta -p ${buildAgentSendCliTarget(parentAgentId, parentConversationId)} --no-wait "<what happened, with the link>. Start WatchPR on it, then tell the person who asked; a draft is a result."\`. For a blocker, use the same command and end the message with "Tell the person who asked now." Use the same command to ask the parent something mid-task.`,
+  ].join("\n");
 }
 
 /** The external worker's initial prompt, with the parent context when forked. */
@@ -109,14 +143,21 @@ export async function prepareExternalWorkerPrompt(params: {
   parentAgentId: string;
   parentConversationId?: string;
   signal?: AbortSignal;
-}): Promise<{ prompt: string; transcriptPath?: string } | { error: string }> {
-  if (!params.forkContext) return { prompt: params.prompt };
+}): Promise<{ prompt: string } | { error: string }> {
+  const parentConversationId =
+    params.parentConversationId ??
+    getConversationId() ??
+    (params.forkContext ? "default" : undefined);
+  const prompt = withReportBackInstruction(
+    params.prompt,
+    params.parentAgentId,
+    parentConversationId,
+  );
+  if (!params.forkContext || !parentConversationId) return { prompt };
   return prependParentContext({
-    prompt: params.prompt,
+    prompt,
     parentAgentId: params.parentAgentId,
-    parentConversationId:
-      params.parentConversationId ?? getConversationId() ?? "default",
-    cwd: getCurrentWorkingDirectory(),
+    parentConversationId,
     signal: params.signal,
   });
 }

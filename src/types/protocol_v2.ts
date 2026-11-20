@@ -28,6 +28,7 @@ import type {
   MessageListParams,
 } from "@letta-ai/letta-client/resources/conversations/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
+import type { ExperimentId } from "@/experiments/types";
 import type { ConnectProviderOAuthConfig } from "@/types/provider-oauth-config";
 import type { TurnFinishedAckCommand } from "@/types/turn-finished-protocol";
 import type {
@@ -50,7 +51,7 @@ import type {
 import type { ConversationForkBody } from "./conversation-fork-protocol";
 import type * as CwdProtocol from "./cwd-protocol";
 import type {
-  ExternalToolCallRequestMessage,
+  ExternalToolCallMessage,
   ExternalToolCallResponseCommand,
   RuntimeExternalToolsUpdateCommand,
   RuntimeExternalToolsUpdateResponseMessage,
@@ -106,15 +107,7 @@ export type * from "./teleport-protocol";
 export type * from "./toolset-protocol";
 
 export type DmPolicy = "pairing" | "allowlist" | "open";
-export type ExperimentId =
-  | "artifacts"
-  | "conversation_titles"
-  | "desktop_conversation_bootstrap"
-  | "diffs"
-  | "memory_palace"
-  | "reflection_arena"
-  | "tui_cron";
-
+export type { ExperimentId } from "@/experiments/types";
 export type ExperimentSource = "override" | "env" | "default";
 
 export interface ExperimentSnapshot {
@@ -2309,7 +2302,7 @@ export type WsProtocolMessage =
   | StreamDeltaMessage
   | TurnFinishedMessage
   | SubagentStateUpdateMessage
-  | ExternalToolCallRequestMessage
+  | ExternalToolCallMessage
   | AbortMessageResponseMessage
   | import("./queue-update-protocol").ResumeQueueResponseMessage
   | SyncResponseMessage

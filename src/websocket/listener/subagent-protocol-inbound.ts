@@ -6,6 +6,7 @@ import type {
   SubagentMessageCommand,
   SubagentStopCommand,
 } from "@/types/subagent-protocol";
+import { isCloudRepositoryNames } from "@/utils/cloud-repository-roots";
 import { isAgentRuntimeScope } from "./protocol-validation";
 
 const ARGUMENTS = new Set([
@@ -19,6 +20,7 @@ const ARGUMENTS = new Set([
   "conversation_id",
   "client_message_id",
   "computer",
+  "cloud_skill_repositories",
   "max_turns",
   "mcp",
 ]);
@@ -71,6 +73,11 @@ export function isLaunchSubagentCommand(
     )
       return false;
   }
+  if (
+    args.cloud_skill_repositories !== undefined &&
+    !isCloudRepositoryNames(args.cloud_skill_repositories)
+  )
+    return false;
   // launchSubagent validates the MCP selection's contents.
   if (
     args.mcp !== undefined &&
@@ -102,7 +109,9 @@ const LEGACY_EXTERNAL_SUBAGENT_TYPES = new Set([
  * client, where that field had its original meaning, so its value is mapped:
  * an external worker name becomes `harness`, `fork` becomes
  * `fork_context: true`, `general-purpose` becomes the default agent, and any
- * other name stays a Letta `subagent_type`.
+ * other name stays a Letta `subagent_type`. Those clients never forked an
+ * external worker or `general-purpose`, so both map to `fork_context: false`
+ * rather than inheriting the current fork-by-default.
  */
 export function toSubagentLaunchArgs(
   args: LaunchSubagentWireArgs,
@@ -116,9 +125,9 @@ export function toSubagentLaunchArgs(
   const { subagent_type: wireType, ...launchArgs } = args;
   const type = wireType.trim();
   if (LEGACY_EXTERNAL_SUBAGENT_TYPES.has(type))
-    return { ...launchArgs, harness: type };
+    return { ...launchArgs, harness: type, fork_context: false };
   if (type === "fork") return { ...launchArgs, fork_context: true };
-  if (type === "general-purpose") return launchArgs;
+  if (type === "general-purpose") return { ...launchArgs, fork_context: false };
   return { ...launchArgs, subagent_type: type };
 }
 
@@ -160,7 +169,22 @@ export function isSubagentMessageCommand(
 export function isSubagentStopCommand(
   value: unknown,
 ): value is SubagentStopCommand {
-  return hasValidControlBase(value) && value.type === "subagent_stop";
+  if (!hasValidControlBase(value) || value.type !== "subagent_stop")
+    return false;
+  if (
+    value.client_message_id !== undefined &&
+    (typeof value.client_message_id !== "string" ||
+      !value.client_message_id.trim())
+  )
+    return false;
+  if (value.conversation === undefined) return true;
+  const scope = value.conversation as Record<string, unknown> | null;
+  return Boolean(
+    scope &&
+      typeof scope === "object" &&
+      typeof scope.conversation_id === "string" &&
+      (scope.agent_id === null || typeof scope.agent_id === "string"),
+  );
 }
 
 export function isReadSubagentEventsCommand(

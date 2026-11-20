@@ -8,7 +8,10 @@ import type {
 } from "@letta-ai/letta-client/resources/conversations/conversations";
 import type { EphemeralConversationCreateBody } from "@/backend/api/ephemeral-conversations";
 import type { RuntimeExecutionSettings } from "@/runtime-execution-settings";
-import type { RuntimeStartExternalToolsGroup } from "./external-tool-protocol";
+import type {
+  RuntimeStartExternalToolsGroup,
+  RuntimeToolPolicy,
+} from "./external-tool-protocol";
 import type { ConversationRuntimeScope } from "./runtime-scope";
 
 export type DevicePermissionMode =
@@ -68,6 +71,11 @@ export interface RuntimeStartCommand {
   teleport_id?: string;
   /** Controller-owned tools registered atomically with the resolved runtime. */
   external_tools?: readonly RuntimeStartExternalToolsGroup[];
+  /**
+   * This connection's tool selection for every turn on the runtime, stored
+   * with its external tools. Omission clears it, like external_tools.
+   */
+  tool_policy?: RuntimeToolPolicy;
 }
 
 export interface RuntimeStartResponseMessage {

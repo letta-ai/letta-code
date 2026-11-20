@@ -132,9 +132,9 @@ describe("listener native model selection", () => {
       ...new Set(models.map((model) => model.handle)),
     ]);
     expect(
-      (await resolveModelForUpdateWithInventory({ model_id: "letta/auto" }))
+      (await resolveModelForUpdateWithInventory({ model_id: "letta/glm" }))
         ?.handle,
-    ).toBe("letta/auto");
+    ).toBe("letta/glm");
   });
 
   test("Cloud response exposes catalog hosted handles and organization BYOK only", async () => {
@@ -145,7 +145,7 @@ describe("listener native model selection", () => {
     expect(response.available_handles).not.toContain(
       "opencode/deepseek-v4-flash-free",
     );
-    expect(response.available_handles).toContain("letta/auto");
+    expect(response.available_handles).toContain("letta/glm");
     expect(response.available_handles).toContain("my-anthropic/claude-fable-5");
     expect(response.available_handles).toEqual([
       ...new Set(response.entries.map((entry) => entry.handle)),

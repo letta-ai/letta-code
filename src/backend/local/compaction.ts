@@ -3,26 +3,32 @@ import type {
   Context,
   Model,
   SimpleStreamOptions,
+  Tool,
 } from "@earendil-works/pi-ai";
 import { isContextOverflow } from "@earendil-works/pi-ai";
 import { isContextWindowOverflowError } from "@/backend/dev/context-window-overflow";
+import { toPiHistoryMessages } from "@/backend/dev/pi-messages";
 import {
   applyPiEnvOverrides,
   reasoningForSettings,
   resolvePiModelForAgent,
+  samplingOptionsForSettings,
 } from "@/backend/dev/pi-model-factory";
 import { LocalPiModelsRuntime } from "@/backend/dev/pi-models-runtime";
 import { resolvePiRequestHeaders } from "@/backend/dev/pi-request-headers";
 import { estimateLocalMessagesTokens } from "@/backend/local/local-context-estimate";
-import { isRecord } from "@/utils/type-guards";
-import type { LocalMessage } from "./local-message";
+import { formatLocalMessagesForSummary } from "./compaction-transcript";
+import type {
+  LocalCompactionStats,
+  LocalCompactionSummarySource,
+  LocalMessage,
+} from "./local-message";
 import { resolveAvailableLocalModelForTurn } from "./local-model-config";
 import type { LocalAgentRecord } from "./local-types";
 
 const ALL_WORD_LIMIT = 500;
 const SLIDING_WORD_LIMIT = 300;
 const SUMMARY_TRUNCATION_SUFFIX = "... [summary truncated to fit]";
-export const LOCAL_SUMMARY_TOOL_RETURN_TRUNCATION_CHARS = 2_000;
 const FABLE_5_MODEL_ID = "claude-fable-5";
 const FABLE_COMPACTION_SUMMARY_FALLBACK_MODEL = "anthropic/claude-opus-4-8";
 const FABLE_COMPACTION_SUMMARY_FALLBACK_CONTEXT_WINDOW = 1_000_000;
@@ -43,7 +49,30 @@ const TRANSCRIPT_FALLBACK_MAX_CHAR_STEPS = [
 export const LOCAL_DEFAULT_COMPACTION_MODE = "sliding_window";
 export const LOCAL_DEFAULT_SLIDING_WINDOW_PERCENTAGE = 0.3;
 
-export type LocalCompactionMode = "all" | "sliding_window";
+export type LocalCompactionMode =
+  | "all"
+  | "sliding_window"
+  | "self_compact_all"
+  | "self_compact_sliding_window";
+
+/** Self-compaction modes summarize inside the agent's own request context. */
+export function isLocalSelfCompactionMode(mode: LocalCompactionMode): boolean {
+  return mode === "self_compact_all" || mode === "self_compact_sliding_window";
+}
+
+export function isLocalSlidingWindowMode(mode: LocalCompactionMode): boolean {
+  return mode === "sliding_window" || mode === "self_compact_sliding_window";
+}
+
+/**
+ * The agent's own request context for self-compaction: the summary request is
+ * the turn's system prompt, history, and tools, plus the compaction prompt as
+ * a final user message.
+ */
+export interface LocalSelfCompactionContext {
+  systemPrompt: string;
+  tools?: Tool[];
+}
 
 export class LocalSlidingWindowCompactionPlanningError extends Error {
   constructor(message: string) {
@@ -59,17 +88,43 @@ export class LocalIrreducibleContextError extends Error {
   }
 }
 
+export function assertLocalPressureBudget(
+  tokens: number,
+  mode: LocalCompactionMode,
+  maxMessageTokens = Number.POSITIVE_INFINITY,
+): void {
+  if (tokens <= maxMessageTokens) return;
+  const ErrorType =
+    mode === "all" || mode === "self_compact_all"
+      ? LocalIrreducibleContextError
+      : LocalSlidingWindowCompactionPlanningError;
+  throw new ErrorType("Compaction would still exceed the pressure threshold.");
+}
+
+export interface LocalCompactionResult {
+  numMessagesBefore: number;
+  numMessagesAfter: number;
+  summary: string;
+  stats: LocalCompactionStats;
+}
+
 export function assertLocalCompactionProgress(
   stats: LocalCompactionStats,
   mode: LocalCompactionMode,
+  maxMessageTokens = Number.POSITIVE_INFINITY,
 ): void {
+  assertLocalPressureBudget(
+    stats.context_tokens_after ?? 0,
+    mode,
+    maxMessageTokens,
+  );
   const hasProgress =
     (stats.messages_count_after ?? Number.POSITIVE_INFINITY) <
       (stats.messages_count_before ?? 0) ||
     (stats.context_tokens_after ?? Number.POSITIVE_INFINITY) <
       (stats.context_tokens_before ?? 0);
   if (hasProgress) return;
-  if (mode === "all") {
+  if (mode === "all" || mode === "self_compact_all") {
     throw new LocalIrreducibleContextError(
       "Irreducible context: full compaction would not reduce the message count or estimated tokens.",
     );
@@ -112,6 +167,8 @@ export function finishLocalFullCompaction(input: {
       stats.trigger !== "context_window_overflow"
     )
       throw error;
+    // The model's summary is dropped below, so the stats report no source.
+    delete stats.summary_source;
     // Preserve the latest user turn, including its tool calls and results.
     let latestTurn = input.messages.findLastIndex(
       (message) => message.role === "user" && !message.metadata?.compaction,
@@ -209,7 +266,8 @@ Write in first person as a factual record of what occurred. Be concise but thoro
 
 Keep your summary under ${ALL_WORD_LIMIT} words. Only output the summary.`;
 
-export const LOCAL_SLIDING_WINDOW_COMPACTION_PROMPT = `The following messages are being evicted from the BEGINNING of your context window. Write a detailed summary that captures what happened in these messages to appear BEFORE the remaining recent messages in context, providing background for what comes after. Include the following sections:
+function slidingWindowCompactionPrompt(evictedMessages: string): string {
+  return `${evictedMessages} are being evicted from the BEGINNING of your context window. Write a detailed summary that captures what happened in these messages to appear BEFORE the remaining recent messages in context, providing background for what comes after. Include the following sections:
 
 1.**High level goals**: What is the high level goal and ongoing task? Capture the user's explicit requests and intent in detail. If there is an existing summary in the transcript, make sure to take it into consideration to continue tracking the higher level goals and long-term progress.
 
@@ -227,14 +285,25 @@ export const LOCAL_SLIDING_WINDOW_COMPACTION_PROMPT = `The following messages ar
 Write in first person as a factual record of what occurred. Be thorough and detailed - the goal is to preserve enough context that the recent messages make sense and important information isn't lost to prevent duplicate work or repeated mistakes.
 
 Keep your summary under ${SLIDING_WORD_LIMIT} words. Only output the summary.`;
+}
 
-export interface LocalCompactionStats {
-  trigger?: string;
-  context_tokens_before?: number;
-  context_tokens_after?: number;
-  context_window?: number;
-  messages_count_before?: number;
-  messages_count_after?: number;
+export const LOCAL_SLIDING_WINDOW_COMPACTION_PROMPT =
+  slidingWindowCompactionPrompt("The following messages");
+
+const SELF_COMPACTION_INSTRUCTIONS =
+  "Write the summary as your reply to this message. Do NOT continue the conversation, respond to questions in it, or call any tools: respond with ONLY the summary as text.";
+
+export const LOCAL_SELF_ALL_COMPACTION_PROMPT = `${LOCAL_ALL_COMPACTION_PROMPT}\n\n${SELF_COMPACTION_INSTRUCTIONS}`;
+
+// In self mode the evicted messages come before the prompt, not after it.
+export const LOCAL_SELF_SLIDING_WINDOW_COMPACTION_PROMPT = `${slidingWindowCompactionPrompt(
+  "The messages above",
+)}\n\n${SELF_COMPACTION_INSTRUCTIONS}`;
+
+/** A summary and the request that wrote it (unset when none ran). */
+export interface LocalCompactionSummary {
+  summary: string;
+  source?: LocalCompactionSummarySource;
 }
 
 export type LocalCompleteFunction = (
@@ -253,6 +322,8 @@ export interface LocalAllCompactionInput {
   abortSignal?: AbortSignal;
   localProviderAuthStorageDir?: string;
   modelsRuntime?: LocalPiModelsRuntime;
+  /** Set for self-compaction modes. */
+  self?: LocalSelfCompactionContext;
 }
 
 export interface LocalSlidingWindowCompactionPlan {
@@ -264,221 +335,6 @@ export interface LocalSlidingWindowCompactionPlan {
 export interface LocalAllCompactionPlan {
   messagesToSummarize: LocalMessage[];
   messagesToKeep: LocalMessage[];
-}
-
-function stringifyUnknown(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (value === undefined || value === null) return "";
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
-}
-
-function truncateToolReturn(content: string, limit?: number): string {
-  if (limit === undefined || content.length <= limit) return content;
-  return `${content.slice(0, limit)}... [truncated ${content.length - limit} chars]`;
-}
-
-function middleTruncateText(
-  text: string,
-  budgetChars: number,
-  headFrac = 0.3,
-  tailFrac = 0.3,
-): string {
-  if (budgetChars <= 0 || text.length <= budgetChars) return text;
-  const headLength = Math.max(0, Math.floor(budgetChars * headFrac));
-  let tailLength = Math.max(0, Math.floor(budgetChars * tailFrac));
-  if (headLength + tailLength > budgetChars) {
-    tailLength = Math.max(0, budgetChars - headLength);
-  }
-
-  const head = text.slice(0, headLength);
-  const tail = tailLength > 0 ? text.slice(-tailLength) : "";
-  const dropped = Math.max(0, text.length - (head.length + tail.length));
-  const marker = `\n[TRUNCATED: dropped ${dropped} middle chars due to context budget]\n`;
-  return `${head}${marker}${tail}`;
-}
-
-type SummaryOpenAIMessage = {
-  role: "assistant" | "developer" | "system" | "tool" | "user";
-  content?: string | null | Array<{ text?: string } | string>;
-  tool_calls?: Array<{
-    function?: {
-      name?: string;
-      arguments?: string;
-    };
-  }>;
-};
-
-function textFromUserContent(
-  content: LocalMessage & { role: "user" },
-): string | undefined {
-  const value = content.content;
-  if (typeof value === "string") return value || undefined;
-  const textParts: string[] = [];
-  let imageCount = 0;
-  for (const part of value) {
-    if (part.type === "text") {
-      textParts.push(part.text);
-      continue;
-    }
-    if (part.type === "image") imageCount += 1;
-  }
-  let textContent = textParts.join("\n\n");
-  if (imageCount > 0) {
-    const placeholder =
-      imageCount === 1 ? "[Image omitted]" : `[${imageCount} images omitted]`;
-    textContent = `${textContent}${textContent ? " " : ""}${placeholder}`;
-  }
-  return textContent || undefined;
-}
-
-function textFromAssistantContent(
-  message: LocalMessage & { role: "assistant" },
-): string | undefined {
-  const textParts: string[] = [];
-  for (const part of message.content) {
-    if (part.type === "text") {
-      textParts.push(part.text);
-      continue;
-    }
-    if (part.type === "thinking") {
-      textParts.push(part.thinking);
-    }
-  }
-  const textContent = textParts.join("\n\n");
-  return textContent || undefined;
-}
-
-function localToolCallArguments(input: unknown): string {
-  return typeof input === "string" ? input : stringifyUnknown(input ?? {});
-}
-
-function toolReturnToText(
-  value: LocalMessage & { role: "toolResult" },
-): string | undefined {
-  const textParts: string[] = [];
-  let imageCount = 0;
-  for (const item of value.content) {
-    if (item.type === "text") {
-      textParts.push(item.text);
-      continue;
-    }
-    if (item.type === "image") imageCount += 1;
-  }
-  let result = textParts.join("\n");
-  if (imageCount > 0) {
-    const placeholder =
-      imageCount === 1 ? "[Image omitted]" : `[${imageCount} images omitted]`;
-    result = `${result}${result ? " " : ""}${placeholder}`;
-  }
-  return result || undefined;
-}
-
-function localMessagesToSummaryOpenAIDicts(
-  messages: LocalMessage[],
-  options: { toolReturnTruncationChars?: number } = {},
-): SummaryOpenAIMessage[] {
-  const result: SummaryOpenAIMessage[] = [];
-  for (const message of messages) {
-    const compactionSummary = message.metadata?.compaction?.summary;
-    if (typeof compactionSummary === "string") {
-      result.push({ role: "user", content: compactionSummary });
-      continue;
-    }
-
-    if (message.role === "assistant") {
-      const toolCalls = message.content.filter(
-        (part) => part.type === "toolCall",
-      );
-      const content = textFromAssistantContent(message) ?? null;
-      if (content !== null || toolCalls.length > 0) {
-        result.push({
-          role: "assistant",
-          content,
-          ...(toolCalls.length > 0
-            ? {
-                tool_calls: toolCalls.map((toolCall) => ({
-                  function: {
-                    name: toolCall.name,
-                    arguments: localToolCallArguments(toolCall.arguments),
-                  },
-                })),
-              }
-            : {}),
-        });
-      }
-      continue;
-    }
-
-    if (message.role === "toolResult") {
-      const returnText = toolReturnToText(message);
-      result.push({
-        role: "tool",
-        content: returnText
-          ? truncateToolReturn(returnText, options.toolReturnTruncationChars)
-          : null,
-      });
-      continue;
-    }
-
-    if (message.role === "user") {
-      const content = textFromUserContent(message);
-      if (content !== undefined) {
-        result.push({ role: "user", content });
-      }
-    }
-  }
-  return result;
-}
-
-function simpleFormatter(messages: SummaryOpenAIMessage[]): string {
-  const lines: string[] = [];
-  for (const message of messages) {
-    try {
-      const role = message.role ?? "?";
-      let content: unknown = message.content;
-      if (Array.isArray(content)) {
-        content = content
-          .map((block) =>
-            isRecord(block) && typeof block.text === "string"
-              ? block.text
-              : String(block),
-          )
-          .join(" ");
-      }
-      let text = typeof content === "string" ? content : "";
-      if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
-        const callParts = message.tool_calls.map((toolCall) => {
-          const fn = toolCall.function ?? {};
-          return `${fn.name ?? "?"}(${fn.arguments ?? ""})`;
-        });
-        text = `${text}${text ? " " : ""}-> ${callParts.join(", ")}`;
-      }
-      if (text) lines.push(`[${role}] ${text}`);
-    } catch {
-      lines.push(JSON.stringify(message));
-    }
-  }
-
-  return ` \n${lines.join("\n")}\n \n. Generate the summary.`;
-}
-
-export function formatLocalMessagesForSummary(
-  messages: LocalMessage[],
-  options: { truncationChars?: number; maxChars?: number } = {},
-): string {
-  const transcript = simpleFormatter(
-    localMessagesToSummaryOpenAIDicts(messages, {
-      toolReturnTruncationChars:
-        options.truncationChars ?? LOCAL_SUMMARY_TOOL_RETURN_TRUNCATION_CHARS,
-    }),
-  );
-  return options.maxChars
-    ? middleTruncateText(transcript, options.maxChars)
-    : transcript;
 }
 
 function assistantMessageText(message: AssistantMessage): string {
@@ -531,10 +387,9 @@ function fableCompactionSummaryFallbackSettings(
 
 async function runGenerateText(
   input: LocalAllCompactionInput,
-  transcript: string,
-  defaultPrompt: string,
+  context: Context,
+  turnSampling = false,
 ): Promise<{ text: string }> {
-  const systemPrompt = input.prompt ?? defaultPrompt;
   const modelsRuntime =
     input.modelsRuntime ??
     new LocalPiModelsRuntime({
@@ -581,10 +436,6 @@ async function runGenerateText(
     );
   }
   const run = input.complete ?? runtimeComplete(modelsRuntime);
-  const context: Context = {
-    systemPrompt,
-    messages: [{ role: "user", content: transcript, timestamp: Date.now() }],
-  };
   const reasoning = reasoningForSettings(
     localModel.modelSettings,
     localModel.model,
@@ -609,6 +460,10 @@ async function runGenerateText(
     // those models reject with a 400 invalid_request_error — breaking every
     // compaction (automatic and manual /compact).
     ...(reasoning ? { reasoning } : {}),
+    // The self request samples as the agent's own turn does.
+    ...(turnSampling
+      ? samplingOptionsForSettings(input.agent.model_settings)
+      : {}),
     maxRetries: 0,
     sessionId: input.conversationId,
   };
@@ -628,24 +483,118 @@ async function runGenerateText(
   return { text: assistantMessageText(result) };
 }
 
+function transcriptContext(transcript: string, systemPrompt: string): Context {
+  return {
+    systemPrompt,
+    messages: [{ role: "user", content: transcript, timestamp: Date.now() }],
+  };
+}
+
+/**
+ * The agent's own context with the compaction prompt added, so the summary
+ * request continues the conversation. Nothing is written in the model's name:
+ * providers that need an assistant message between tool results and a user
+ * message get one from pi-ai. A trailing user message has not reached the
+ * model yet (the pre-call check compacts before the request that would carry
+ * it), so the prompt joins it rather than following as a second user message,
+ * which chat templates with strict role alternation reject.
+ */
+function selfCompactionContext(
+  self: LocalSelfCompactionContext,
+  messages: LocalMessage[],
+  prompt: string,
+): Context {
+  const history = toPiHistoryMessages(messages);
+  const last = history.at(-1);
+  if (last?.role === "user") {
+    const content =
+      typeof last.content === "string"
+        ? [{ type: "text" as const, text: last.content }]
+        : last.content;
+    history[history.length - 1] = {
+      ...last,
+      content: [...content, { type: "text", text: prompt }],
+    };
+  } else {
+    history.push({ role: "user", content: prompt, timestamp: Date.now() });
+  }
+  return {
+    systemPrompt: self.systemPrompt,
+    messages: history,
+    ...(self.tools ? { tools: self.tools } : {}),
+  };
+}
+
+/**
+ * Summarize within the agent's own context. When that request overflows or
+ * yields no text (e.g. the model called a tool), returns the reason instead,
+ * so the caller falls back to a transcript summary and reports why.
+ */
+async function summarizeInSelfContext(
+  input: LocalAllCompactionInput & { self: LocalSelfCompactionContext },
+  defaultPrompt: string,
+): Promise<
+  | { text: string }
+  | Exclude<LocalCompactionSummarySource, "self" | "transcript">
+> {
+  const prompt = input.prompt ?? defaultPrompt;
+  try {
+    const result = await runGenerateText(
+      input,
+      selfCompactionContext(input.self, input.messages, prompt),
+      true,
+    );
+    return result.text.trim() ? result : "transcript_after_no_text";
+  } catch (error) {
+    if (!isContextWindowOverflowError(error)) throw error;
+    return "transcript_after_overflow";
+  }
+}
+
 async function summarizeLocalMessagesWithPrompt(
   input: LocalAllCompactionInput,
   defaultPrompt: string,
-): Promise<string> {
-  if (input.messages.length === 0) return "No prior conversation messages.";
-  const primaryTranscript = formatLocalMessagesForSummary(input.messages, {
-    truncationChars: LOCAL_SUMMARY_TOOL_RETURN_TRUNCATION_CHARS,
-  });
+  defaultSelfPrompt: string,
+): Promise<LocalCompactionSummary> {
+  if (input.messages.length === 0) {
+    return { summary: "No prior conversation messages." };
+  }
+  const self = input.self
+    ? await summarizeInSelfContext(
+        { ...input, self: input.self },
+        defaultSelfPrompt,
+      )
+    : ("transcript" as const);
+  const [result, source] =
+    typeof self === "string"
+      ? [await summarizeTranscript(input, defaultPrompt), self]
+      : [self, "self" as const];
+  let summary = result.text.trim();
+  const clipChars = input.clipChars === undefined ? 50000 : input.clipChars;
+  if (clipChars !== null && summary.length > clipChars) {
+    summary = `${summary.slice(0, clipChars)}${SUMMARY_TRUNCATION_SUFFIX}`;
+  }
+  return { summary, source };
+}
+
+async function summarizeTranscript(
+  input: LocalAllCompactionInput,
+  defaultPrompt: string,
+): Promise<{ text: string }> {
+  const systemPrompt = input.prompt ?? defaultPrompt;
+  const primaryTranscript = formatLocalMessagesForSummary(input.messages);
   let result: { text: string } | undefined;
   try {
-    result = await runGenerateText(input, primaryTranscript, defaultPrompt);
+    result = await runGenerateText(
+      input,
+      transcriptContext(primaryTranscript, systemPrompt),
+    );
   } catch (error) {
     if (!isContextWindowOverflowError(error)) throw error;
     let overflowError: unknown = error;
     let previousTranscript: string | undefined;
     for (const maxChars of TRANSCRIPT_FALLBACK_MAX_CHAR_STEPS) {
       const fallbackTranscript = formatLocalMessagesForSummary(input.messages, {
-        truncationChars: LOCAL_SUMMARY_TOOL_RETURN_TRUNCATION_CHARS,
         maxChars,
       });
       if (fallbackTranscript === previousTranscript) continue;
@@ -653,8 +602,7 @@ async function summarizeLocalMessagesWithPrompt(
       try {
         result = await runGenerateText(
           input,
-          fallbackTranscript,
-          defaultPrompt,
+          transcriptContext(fallbackTranscript, systemPrompt),
         );
         break;
       } catch (fallbackError) {
@@ -668,18 +616,17 @@ async function summarizeLocalMessagesWithPrompt(
   if (!result) {
     throw new Error("Compaction summarizer did not return a result.");
   }
-  let summary = result.text.trim();
-  const clipChars = input.clipChars === undefined ? 50000 : input.clipChars;
-  if (clipChars !== null && summary.length > clipChars) {
-    summary = `${summary.slice(0, clipChars)}${SUMMARY_TRUNCATION_SUFFIX}`;
-  }
-  return summary;
+  return result;
 }
 
 export async function summarizeLocalMessagesAll(
   input: LocalAllCompactionInput,
-): Promise<string> {
-  return summarizeLocalMessagesWithPrompt(input, LOCAL_ALL_COMPACTION_PROMPT);
+): Promise<LocalCompactionSummary> {
+  return summarizeLocalMessagesWithPrompt(
+    input,
+    LOCAL_ALL_COMPACTION_PROMPT,
+    LOCAL_SELF_ALL_COMPACTION_PROMPT,
+  );
 }
 
 function hasPendingLocalToolCall(message: LocalMessage): boolean {
@@ -796,10 +743,11 @@ export function planLocalAllCompaction(
 
 export async function summarizeLocalMessagesSlidingWindow(
   input: LocalAllCompactionInput,
-): Promise<string> {
+): Promise<LocalCompactionSummary> {
   return summarizeLocalMessagesWithPrompt(
     input,
     LOCAL_SLIDING_WINDOW_COMPACTION_PROMPT,
+    LOCAL_SELF_SLIDING_WINDOW_COMPACTION_PROMPT,
   );
 }
 
@@ -813,7 +761,7 @@ export function packageLocalSummaryMessage(
   mode?: LocalCompactionMode,
 ): string {
   let message: string;
-  if (mode?.includes("sliding_window")) {
+  if (mode && isLocalSlidingWindowMode(mode)) {
     if (
       stats?.messages_count_before !== undefined &&
       stats.messages_count_after !== undefined

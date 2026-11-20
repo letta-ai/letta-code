@@ -10,6 +10,7 @@ import {
   listCodexModels,
   sendCodexMessage,
   startCodexTurn,
+  stopCodexSession,
 } from "./codex-app-server";
 import { CODEX_CAPACITY_ERROR } from "./codex-app-server-payloads";
 
@@ -107,6 +108,7 @@ class FakeCodexTransport {
       if (this.account) this.reply(request.id, this.account);
       else this.send({ id: request.id, error: { message: "unknown method" } });
     }
+    if (method === "skills/extraRoots/set") this.reply(request.id, {});
     if (method === "thread/start" || method === "thread/resume") {
       const params = request.params as Record<string, unknown>;
       if (typeof params.threadId === "string") this.threadId = params.threadId;
@@ -198,6 +200,22 @@ class FakeCodexTransport {
 
 afterEach(() => __resetCodexSessionsForTests());
 
+test("registers Codex repository skills before thread startup", async () => {
+  const fake = new FakeCodexTransport();
+  const options = {
+    prompt: "Work",
+    parentAgentId: "p",
+    cwd: "/",
+    cloudSkillRepositories: ["api"],
+  };
+  await startCodexTurn(options, { createTransport: () => fake.transport() });
+  const [roots, thread] = fake.requests.slice(-3, -1);
+  expect(roots?.method).toBe("skills/extraRoots/set");
+  expect(roots?.params).toEqual({
+    extraRoots: [join("/root/workspace", "api", ".agents", "skills")],
+  });
+  expect(thread?.method).toBe("thread/start");
+});
 describe("Codex app-server lifecycle", () => {
   test("starts a native thread and turn, then resolves completion", async () => {
     const fake = new FakeCodexTransport();
@@ -948,4 +966,35 @@ describe("Codex model discovery", () => {
       rmSync(emptyPath, { force: true, recursive: true });
     }
   });
+});
+
+test("stopping Codex waits for the CLI process exit rather than a turn interrupt", async () => {
+  const fake = new FakeCodexTransport();
+  let finish!: (exit: {
+    code: number | null;
+    signal: NodeJS.Signals | null;
+  }) => void;
+  const exited = new Promise<{
+    code: number | null;
+    signal: NodeJS.Signals | null;
+  }>((resolve) => {
+    finish = resolve;
+  });
+  const turn = await startCodexTurn(
+    { parentAgentId: "parent", cwd: "/repo", prompt: "work" },
+    {
+      createTransport: () => ({ ...fake.transport(), exited }),
+    },
+  );
+  let acknowledged = false;
+  const stopping = stopCodexSession(turn.threadId).then((result) => {
+    acknowledged = true;
+    return result;
+  });
+  await Bun.sleep(0);
+  expect(fake.killed).toBe(true);
+  expect(acknowledged).toBe(false);
+  finish({ code: null, signal: "SIGTERM" });
+  expect(await stopping).toBe(true);
+  await turn.completion;
 });

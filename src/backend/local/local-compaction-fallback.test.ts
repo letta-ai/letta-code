@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AssistantMessage, Context } from "@earendil-works/pi-ai";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
-import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
+import type {
+  LettaStreamingResponse,
+  SummaryMessage,
+} from "@letta-ai/letta-client/resources/agents/messages";
 import type { ConversationMessageCreateBody } from "@/backend";
 import type { HeadlessTurnExecutor } from "@/backend/dev/headless-turn-executor";
 import { LocalBackend } from "@/backend/local/local-backend";
@@ -177,6 +180,86 @@ describe("local compaction fallback keeps custom prompt", () => {
     await rm(storageDir, { recursive: true, force: true });
   });
 
+  test("reports the full pass's summary source when a self sliding window falls back", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-compaction-fallback-source-"),
+    );
+    const replies: AssistantMessage[] = [
+      // The sliding-window self summary still exceeds the context window...
+      assistantMessage({
+        responseId: "self-sliding",
+        stopReason: "stop",
+        content: [{ type: "text", text: "x".repeat(8000) }],
+      }),
+      // ...so the full self pass runs, where the model calls a tool instead.
+      assistantMessage({
+        responseId: "self-all",
+        stopReason: "toolUse",
+        content: [
+          { type: "toolCall", id: "call-1", name: "Shell", arguments: {} },
+        ],
+      }),
+      assistantMessage({
+        responseId: "transcript-all",
+        stopReason: "stop",
+        content: [{ type: "text", text: "Transcript summary." }],
+      }),
+    ];
+    const backend = new LocalBackend({
+      storageDir,
+      executor: turnExecutor(),
+      memfsEnabled: false,
+      complete: async () => {
+        const reply = replies.shift();
+        if (!reply) throw new Error("unexpected summary request");
+        return reply;
+      },
+    });
+    const agent = await backend.createAgent({
+      name: "Local",
+      model_settings: { context_window_limit: 1000 },
+    } as never);
+    await backend.updateAgent(agent.id, {
+      compaction_settings: { mode: "self_compact_sliding_window" },
+    } as never);
+    const conversation = await backend.createConversation({
+      agent_id: agent.id,
+    } as never);
+    for (const content of ["first", "second"]) {
+      await drain(
+        await backend.createConversationMessageStream(conversation.id, {
+          agent_id: agent.id,
+          messages: [{ role: "user", content }],
+        } as ConversationMessageCreateBody),
+      );
+    }
+
+    await backend.compactConversationMessages(conversation.id, {
+      agent_id: agent.id,
+    } as never);
+
+    expect(replies).toHaveLength(0);
+    const messages = await backend.listConversationMessages(conversation.id, {
+      agent_id: agent.id,
+      order: "asc",
+    } as never);
+    const summaries = messages
+      .getPaginatedItems()
+      .filter(
+        (message): message is SummaryMessage =>
+          message.message_type === "summary_message",
+      );
+    expect(summaries.at(-1)).toMatchObject({
+      summary: "Transcript summary.",
+      compaction_stats: {
+        trigger: "manual",
+        summary_source: "transcript_after_no_text",
+      },
+    });
+
+    await rm(storageDir, { recursive: true, force: true });
+  });
+
   test("leaves empty history unchanged when full compaction cannot reduce context", async () => {
     const storageDir = await mkdtemp(
       join(tmpdir(), "local-compaction-irreducible-"),
@@ -261,6 +344,68 @@ describe("local compaction fallback keeps custom prompt", () => {
     expect(messages.getPaginatedItems()).toHaveLength(0);
 
     await rm(storageDir, { recursive: true, force: true });
+  });
+
+  test("pressure compaction requires the full request to fit the threshold", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-pressure-budget-"));
+    let summaryCalls = 0;
+    const backend = new LocalBackend({
+      storageDir,
+      executor: turnExecutor(),
+      complete: async () => {
+        summaryCalls++;
+        return assistantMessage({
+          responseId: "pressure-summary",
+          stopReason: "stop",
+          content: [{ type: "text", text: "Compacted summary." }],
+        });
+      },
+      memfsEnabled: false,
+    });
+    try {
+      const agent = await backend.createAgent({ name: "Local" } as never);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as never);
+      for (let turn = 0; turn < 2; turn++) {
+        await drain(
+          await backend.createConversationMessageStream(conversation.id, {
+            agent_id: agent.id,
+            messages: [{ role: "user", content: "remember this ".repeat(100) }],
+          } as ConversationMessageCreateBody),
+        );
+      }
+      const compact = (contextTokens: number) =>
+        (
+          backend as unknown as {
+            compactForContextPressure: (
+              input: unknown,
+              pressure: unknown,
+            ) => Promise<unknown>;
+          }
+        ).compactForContextPressure(
+          { conversationId: conversation.id, agentId: agent.id },
+          {
+            contextTokens,
+            contextWindow: 1000,
+            phase: "post_turn",
+            source: "usage",
+          },
+        );
+      const before = await backend.listConversationMessages(conversation.id, {
+        agent_id: agent.id,
+      } as never);
+      expect(await compact(2000)).toBeNull();
+      expect(summaryCalls).toBe(0);
+      const after = await backend.listConversationMessages(conversation.id, {
+        agent_id: agent.id,
+      } as never);
+      expect(after.getPaginatedItems()).toEqual(before.getPaginatedItems());
+      expect(await compact(1300)).not.toBeNull();
+      expect(summaryCalls).toBe(1);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("irreducible pressure compaction preserves old history without warning", async () => {
@@ -405,6 +550,8 @@ describe("local compaction fallback keeps custom prompt", () => {
         result.uiMessages.filter((message) => message.metadata?.compaction),
       ).toHaveLength(1);
       expect(result.stats.context_tokens_after).toBeLessThan(1000);
+      // The warning is not a summary request's text.
+      expect(result.stats).not.toHaveProperty("summary_source");
       const notice = result.uiMessages[0];
       expect(notice?.role).toBe("user");
       expect(JSON.stringify(notice?.content)).toContain(

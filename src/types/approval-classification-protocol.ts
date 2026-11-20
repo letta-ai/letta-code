@@ -1,3 +1,5 @@
+import type { PermissionMode } from "@/permissions/mode";
+
 export interface UmiLifecycleMessageBase {
   id: string;
   date: string;
@@ -11,4 +13,5 @@ export interface ApprovalClassificationEndMessage
   auto_allowed_tool_call_ids: string[];
   auto_denied_tool_call_ids: string[];
   user_input_tool_call_ids: string[];
+  permission_mode: PermissionMode;
 }

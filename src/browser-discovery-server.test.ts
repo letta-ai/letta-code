@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { type AddressInfo, createConnection } from "node:net";
 import { join, relative } from "node:path";
+import { isProcessAlive } from "@/utils/process-liveness";
 import {
   BROWSER_DISCOVERY_HOST,
   type BrowserDiscoveryServerHandle,
@@ -366,8 +367,14 @@ async function readFirstLine(
     let output = "";
     const timeout = setTimeout(() => {
       cleanup();
+      // Windows CI has stalled here past 10s while later Node fixtures in
+      // the same job start in about 1s. Say whether Node was still running
+      // and what reached the pipe, to tell a stalled Node from a missed event.
+      const alive = child.pid !== undefined && isProcessAlive(child.pid);
       reject(
-        new Error(`Timed out waiting for Node fixture output: ${getStderr()}`),
+        new Error(
+          `Timed out waiting for Node fixture output (pid ${child.pid}, alive ${alive}, exitCode ${child.exitCode}, stdout ${JSON.stringify(output)}): ${getStderr()}`,
+        ),
       );
     }, NODE_FIXTURE_TIMEOUT_MS);
     const onData = (chunk: Buffer): void => {

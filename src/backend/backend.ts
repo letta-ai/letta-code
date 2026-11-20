@@ -6,6 +6,7 @@ import type {
   Message,
   Run,
 } from "@letta-ai/letta-client/resources/agents/messages";
+import { isManagedCloudRuntime } from "@/managed-cloud-runtime";
 import {
   type ChatGPTUsageSnapshot,
   normalizeCloudChatGPTUsageResponse,
@@ -26,11 +27,16 @@ import {
   type ReflectionRunRequest,
 } from "./api/reflection-runs";
 import { isCloudServerUrl } from "./api/server-url";
+import { conversationCostModel, withClientUsageCost } from "./api/usage-cost";
 import {
   type BackendMode,
   resolveBackendMode,
   setConfiguredBackendMode,
 } from "./backend-mode";
+import {
+  notifyConversationCompacted,
+  tapConversationCompaction,
+} from "./compaction-events";
 import { LocalBackend } from "./local/local-backend";
 import {
   getLocalBackendStorageDir as getLocalBackendStorageDirFromPaths,
@@ -390,8 +396,10 @@ export class APIBackend implements Backend {
       localModelCatalog: false,
       localMemfs: false,
       // Environment routing only exists on Letta Cloud; an APIBackend pointed
-      // at a self-hosted or remote app server has no environments API.
-      environmentRouting: isCloudServerUrl(),
+      // at a self-hosted or remote app server has no environments API. A
+      // Cloud sandbox may reach Cloud through another hostname, so its
+      // managed-runtime marker also counts.
+      environmentRouting: isCloudServerUrl() || isManagedCloudRuntime(),
     };
   }
 
@@ -566,7 +574,17 @@ export class APIBackend implements Backend {
     options?: ConversationMessageCompactOptions,
   ) {
     const client = await this.getClient();
-    return client.conversations.messages.compact(conversationId, body, options);
+    const result = await client.conversations.messages.compact(
+      conversationId,
+      body,
+      options,
+    );
+    notifyConversationCompacted({
+      backend: this,
+      conversationId,
+      agentId: body?.agent_id,
+    });
+    return result;
   }
 
   async listAgentMessages(
@@ -650,6 +668,14 @@ export class APIBackend implements Backend {
         message: `Connection error: expected text/event-stream, received ${contentType || "no content type"} (HTTP ${response.status}).`,
       });
     }
+    withClientUsageCost(stream, () =>
+      conversationCostModel(
+        client,
+        conversationId,
+        body?.agent_id,
+        body.override_model,
+      ),
+    );
     return stream;
   }
 
@@ -659,7 +685,20 @@ export class APIBackend implements Backend {
     options?: ConversationMessageStreamOptions,
   ) {
     const client = await this.getClient();
-    return client.conversations.messages.stream(conversationId, body, options);
+    const stream = await client.conversations.messages.stream(
+      conversationId,
+      body,
+      options,
+    );
+    withClientUsageCost(stream, () =>
+      conversationCostModel(client, conversationId, body?.agent_id),
+    );
+    // Resumes a run started by an earlier request; it can carry a compaction.
+    return tapConversationCompaction(stream, {
+      backend: this,
+      conversationId,
+      agentId: body?.agent_id,
+    });
   }
 
   async cancelConversation(conversationIdOrAgentId: string) {
@@ -706,7 +745,16 @@ export class APIBackend implements Backend {
     options?: RunMessageStreamOptions,
   ) {
     const client = await this.getClient();
-    return client.runs.messages.stream(runId, body, options);
+    const stream = await client.runs.messages.stream(runId, body, options);
+    withClientUsageCost(stream, async () => {
+      const run = await client.runs.retrieve(runId);
+      return conversationCostModel(
+        client,
+        run.conversation_id ?? "default",
+        run.agent_id,
+      );
+    });
+    return stream;
   }
 
   async forkConversation(

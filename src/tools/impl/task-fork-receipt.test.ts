@@ -23,6 +23,7 @@ import { __testSetBackend, type Backend, getBackend } from "@/backend";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { backgroundTasks } from "./process_manager";
+import * as wakes from "./wake";
 
 // Keep task(), the manager, and the state store real. Stub backend/credential I/O
 // and the child process, which emits no init event and exits only when requested.
@@ -193,7 +194,9 @@ describe("prepared conversation launch", () => {
           );
         } else {
           expect(spawnProcess).toHaveBeenCalledTimes(2);
-          expect(childInputs[1]?.args).toContain("--new-agent");
+          // The retry is a fresh subagent: an ephemeral Cloud conversation.
+          expect(childInputs[1]?.args).toContain("--ephemeral");
+          expect(childInputs[1]?.args).not.toContain("--new-agent");
           expect(childInputs[1]?.args).toContain("anthropic/test");
         }
       } finally {
@@ -238,6 +241,15 @@ describe("prepared conversation launch", () => {
   );
 
   test("uses the existing conversation without prompt or tool overrides and remains cancellable", async () => {
+    const cancelConversation = mock(async () => ({ "run-child": "cancelled" }));
+    const cancelWakes = spyOn(
+      wakes,
+      "cancelConversationWakes",
+    ).mockResolvedValue();
+    __testSetBackend({
+      ...getBackend(),
+      cancelConversation,
+    } as unknown as Backend);
     const controller = new AbortController();
     const receipt = await runWithRuntimeContext(
       { workingDirectory: testHome },
@@ -281,6 +293,14 @@ describe("prepared conversation launch", () => {
     expect(await task_stop({ task_id: receipt.task_id })).toEqual({
       killed: true,
     });
+    expect(cancelConversation).toHaveBeenCalledWith("conv-child");
+    expect(cancelWakes).toHaveBeenCalledWith({
+      agentId: "agent-parent",
+      conversationId: "conv-child",
+    });
+    expect(
+      backgroundTasks.get(receipt.task_id)?.abortController?.signal.aborted,
+    ).toBe(true);
     expect(backgroundTasks.get(receipt.task_id)?.status).toBe("failed");
   });
 
@@ -313,7 +333,6 @@ describe("fork launch receipt", () => {
       harness: "codex",
       fork_context: false,
       model: "ignored-model",
-      computer: "ignored-computer",
       agent_id: "ignored-agent",
       conversation_id: "ignored-conversation",
       mcp: { inherit: false },
@@ -357,6 +376,8 @@ describe("fork launch receipt", () => {
 describe("nested Agent launch", () => {
   test("a subagent's Agent call returns a background receipt without waiting for the child", async () => {
     const originalDepth = process.env.LETTA_SUBAGENT_DEPTH;
+    const originalReminder = process.env.LETTA_SUBAGENT_RESULT_REMINDER;
+    process.env.LETTA_SUBAGENT_RESULT_REMINDER = "Keep this work internal.";
     process.env.LETTA_SUBAGENT_DEPTH = "1";
     try {
       // The stubbed child never exits, so a blocking call would time out.
@@ -371,9 +392,15 @@ describe("nested Agent launch", () => {
       );
       expect(receipt).toContain("Task running in background with task ID:");
       expect(receipt).toContain("<task-notification>");
+      expect(receipt).toContain(
+        "\n\n<system-reminder>\nKeep this work internal.\n</system-reminder>",
+      );
       expect(spawnProcess).toHaveBeenCalledTimes(1);
       expect([...backgroundTasks.values()][0]?.status).toBe("running");
     } finally {
+      if (originalReminder === undefined)
+        delete process.env.LETTA_SUBAGENT_RESULT_REMINDER;
+      else process.env.LETTA_SUBAGENT_RESULT_REMINDER = originalReminder;
       if (originalDepth === undefined) delete process.env.LETTA_SUBAGENT_DEPTH;
       else process.env.LETTA_SUBAGENT_DEPTH = originalDepth;
     }
@@ -391,7 +418,9 @@ describe("background startup deadline", () => {
             harness: "letta",
             prompt: "Work",
             description: "Stalled startup",
+            fork_context: false,
           },
+          undefined,
           50,
         ),
     );
@@ -417,6 +446,7 @@ describe("background startup deadline", () => {
         harness: "letta",
         prompt: "Work",
         description: "Stalled startup",
+        fork_context: false,
         signal: controller.signal,
       }),
     );

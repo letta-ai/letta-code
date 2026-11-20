@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { removeTestDir } from "@/test-utils/test-fs";
 import { bash } from "@/tools/impl/bash";
 import { glob } from "@/tools/impl/glob";
 import { grep } from "@/tools/impl/grep";
@@ -27,7 +28,7 @@ describe("tool truncation integration tests", () => {
     if (originalUserCwd === undefined) delete process.env.USER_CWD;
     else process.env.USER_CWD = originalUserCwd;
     // Clean up the temp directory
-    await rm(testDir, { recursive: true, force: true });
+    await removeTestDir(testDir);
   });
 
   describe("Bash tool truncation", () => {

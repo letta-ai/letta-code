@@ -20,6 +20,7 @@ import {
 } from "./catalog";
 import { evaluateDiskSpaceReminder } from "./disk-space";
 import type { SessionContextReason, SharedReminderState } from "./state";
+import { buildVariablesInfoReminder } from "./variables";
 
 export interface AgentReminderContext {
   id: string;
@@ -151,7 +152,7 @@ async function buildSecretsInfoReminder(
       process.platform === "win32"
         ? "`$env:API_KEY = $API_KEY; python script.py`\n`$env:API_KEY = $API_KEY; bun run script.ts`"
         : '`API_KEY="$API_KEY" python3 script.py`\n`API_KEY="$API_KEY" bun run script.ts`';
-    return `${SYSTEM_REMINDER_OPEN}\n${intro}\n${list}\n\nWhen a shell command contains \`$NAME\`, the harness loads the matching secret into the child shell's environment; it does not rewrite the command text. The shell expands \`$NAME\` at execution time. If a program needs a secret but the command would not otherwise reference it, include it on the launch line so the harness can detect it:\n\n${launchExamples}\n\nInside the program, read it normally with \`os.environ["API_KEY"]\` or \`process.env.API_KEY\`.\n\nYou cannot read secret values. Tool output shows \`NAME=<REDACTED>\` when a value was injected and then scrubbed from model-visible output. An empty direct \`$NAME\` expansion means that secret was not available to that invocation; do not describe it as command-string replacement.\n${SYSTEM_REMINDER_CLOSE}`;
+    return `${SYSTEM_REMINDER_OPEN}\n${intro}\n${list}\n\nWhen a shell command contains \`$NAME\`, the harness loads the matching secret into the child shell's environment; it does not rewrite the command text. The shell expands \`$NAME\` at execution time. If a program needs a secret but the command would not otherwise reference it, include it on the launch line so the harness can detect it:\n\n${launchExamples}\n\nInside the program, read it normally with \`os.environ["API_KEY"]\` or \`process.env.API_KEY\`.\n\nYou cannot read secret values. Tool output shows \`NAME=<REDACTED>\` when a value was injected and then scrubbed from model-visible output. An empty direct \`$NAME\` expansion means that secret was not available to that invocation; do not describe it as command-string replacement.\n\nA secret's value is redacted wherever it appears in context, so store only credentials as secrets. Put usernames, emails, URLs and other non-sensitive values in variables (\`letta variable set\`), which you can read and which are never redacted.\n${SYSTEM_REMINDER_CLOSE}`;
   } catch (error) {
     debugLog(
       "secrets",
@@ -160,9 +161,6 @@ async function buildSecretsInfoReminder(
     return null;
   }
 }
-
-/** Cache tool counts, never the list of attached servers. */
-const MCP_TOOL_COUNTS_REFRESH_MS = 5 * 60 * 1000;
 
 export interface McpServerReminderEntry {
   name: string;
@@ -176,12 +174,13 @@ export interface McpServersReminderDependencies {
   /** Returns cloud-connected servers, or null when unavailable. */
   listServerSideServers?: (
     agentId: string,
+    timeoutMs?: number,
   ) => Promise<McpServerReminderEntry[] | null>;
 }
 
 async function defaultListServerSideServers(
   agentId: string,
-  state: SharedReminderContext["state"],
+  timeoutMs = 3_000,
 ): Promise<McpServerReminderEntry[] | null> {
   // An unavailable backend means no server-side MCP; local names are still
   // valid. A failed server fetch on an available backend throws instead, so a
@@ -199,44 +198,21 @@ async function defaultListServerSideServers(
   const { getClient } = await import("@/backend/api/client");
   const { getServerUrl } = await import("@/backend/api/server-url");
   const { LETTA_CLOUD_API_URL } = await import("@/auth/oauth");
-  const { listUnifiedMcpServers, listUnifiedMcpTools } = await import(
-    "@/backend/api/unified-mcp"
-  );
+  const { listUnifiedMcpServers } = await import("@/backend/api/unified-mcp");
   const client = (await getClient()) as Parameters<
     typeof listUnifiedMcpServers
   >[0];
-  const allServers = await listUnifiedMcpServers(client, agentId, 3_000);
+  const allServers = await listUnifiedMcpServers(client, agentId, timeoutMs);
   // Hosted Letta Cloud cannot execute stdio-type cloud servers; do not
   // advertise tools the agent cannot call.
   const servers =
     getServerUrl() === LETTA_CLOUD_API_URL
       ? allServers.filter((server) => server.serverType !== "stdio")
       : allServers;
-  const serverIds = new Set(servers.map((server) => server.id));
-  for (const id of state.mcpToolCounts.keys()) {
-    if (!serverIds.has(id)) state.mcpToolCounts.delete(id);
-  }
-  const now = Date.now();
-  return Promise.all(
-    servers.map(async (server) => {
-      const cached = state.mcpToolCounts.get(server.id);
-      if (cached && now - cached.fetchedAtMs < MCP_TOOL_COUNTS_REFRESH_MS) {
-        return { name: server.serverName, toolCount: cached.toolCount };
-      }
-      // New attachments get counts immediately. Existing servers reuse counts
-      // so fresh discovery costs one list request, not one per server as well.
-      const toolCount = await listUnifiedMcpTools(
-        client,
-        agentId,
-        server.id,
-        3_000,
-      )
-        .then((tools) => tools.length)
-        .catch(() => null);
-      state.mcpToolCounts.set(server.id, { toolCount, fetchedAtMs: now });
-      return { name: server.serverName, toolCount };
-    }),
-  );
+  return servers.map((server) => ({
+    name: server.serverName,
+    toolCount: server.cachedNumTools ?? null,
+  }));
 }
 
 function formatMcpServerEntry(entry: McpServerReminderEntry): string {
@@ -246,21 +222,32 @@ function formatMcpServerEntry(entry: McpServerReminderEntry): string {
   return `${entry.name} (${entry.toolCount} ${entry.toolCount === 1 ? "tool" : "tools"})`;
 }
 
+const MCP_MEMORY_GUIDANCE =
+  "Do not automatically store results of principal-restricted operations in shared memory.";
+const MCP_TOOL_USAGE = `Find tools (with schemas) with \`letta mcp search "<what you want to do>"\`, list one server's tools with \`letta mcp tools <server>\` (\`--full\` includes schemas, \`letta mcp schema <tool-name>\` fetches one), and invoke one with \`letta mcp call <tool-name> --args '{"key":"value"}'\`. For large or quote-heavy arguments, use \`--args-file <path>\` (\`-\` for stdin) instead of \`--args\`. Exit code 2 means the tool returned an error result: read its \`content\`, fix the arguments, and retry (exit 1 is a CLI/usage error).`;
+
 export function buildMcpServersReminderText(
-  entries: McpServerReminderEntry[],
+  entries: McpServerReminderEntry[] | null,
 ): string {
-  if (entries.length === 0) {
-    return `${SYSTEM_REMINDER_OPEN}\nMCP servers with available tools: None\nDo not automatically store results of principal-restricted operations in shared memory.\n${SYSTEM_REMINDER_CLOSE}`;
-  }
-  const rendered = entries.map(formatMcpServerEntry).join(", ");
-  return `${SYSTEM_REMINDER_OPEN}\nMCP servers with available tools: ${rendered}\nDo not automatically store results of principal-restricted operations in shared memory.\nFind tools (with schemas) with \`letta mcp search "<what you want to do>"\`, list one server's tools with \`letta mcp tools <server>\` (\`--full\` includes schemas, \`letta mcp schema <tool-name>\` fetches one), and invoke one with \`letta mcp call <tool-name> --args '{"key":"value"}'\`.\n${SYSTEM_REMINDER_CLOSE}`;
+  const inventory =
+    entries === null
+      ? 'MCP server list could not be loaded. Run `letta mcp search "<what you want to do>"` to find tools.'
+      : `MCP servers with available tools: ${entries.length ? entries.map(formatMcpServerEntry).join(", ") : "None"}`;
+  return `${SYSTEM_REMINDER_OPEN}\n${inventory}\n${MCP_MEMORY_GUIDANCE}\n${entries?.length === 0 ? "" : `${MCP_TOOL_USAGE}\n`}${SYSTEM_REMINDER_CLOSE}`;
+}
+
+export interface McpServerInventory {
+  entries: McpServerReminderEntry[];
+  /** False when the backend has no server-side MCP, so `entries` are local only. */
+  serverSideAvailable: boolean;
 }
 
 export async function listMcpServersForAgent(
   agentId: string,
-  state: SharedReminderContext["state"],
+  _state: SharedReminderContext["state"],
   deps: McpServersReminderDependencies = {},
-): Promise<McpServerReminderEntry[]> {
+  timeoutMs = 3_000,
+): Promise<McpServerInventory> {
   const localNames = (
     deps.getLocalServerNames ??
     ((id: string) =>
@@ -271,11 +258,13 @@ export async function listMcpServersForAgent(
     toolCount: null,
   }));
   const serverSideEntries = await (
-    deps.listServerSideServers ??
-    ((id: string) => defaultListServerSideServers(id, state))
-  )(agentId);
+    deps.listServerSideServers ?? defaultListServerSideServers
+  )(agentId, timeoutMs);
   if (serverSideEntries) entries.push(...serverSideEntries);
-  return [...new Map(entries.map((entry) => [entry.name, entry])).values()];
+  return {
+    entries: [...new Map(entries.map((entry) => [entry.name, entry])).values()],
+    serverSideAvailable: serverSideEntries !== null,
+  };
 }
 
 export async function buildMcpServersInfoReminderText(
@@ -283,21 +272,34 @@ export async function buildMcpServersInfoReminderText(
   deps: McpServersReminderDependencies = {},
 ): Promise<string | null> {
   try {
-    const uniqueEntries = await listMcpServersForAgent(
-      await getMcpScopeAgentId(
-        context.agent.id,
-        undefined,
-        deps.lookupParentAgent,
-      ),
-      context.state,
-      deps,
-    );
+    const { entries: uniqueEntries, serverSideAvailable } =
+      await listMcpServersForAgent(
+        await getMcpScopeAgentId(
+          context.agent.id,
+          undefined,
+          deps.lookupParentAgent,
+        ),
+        context.state,
+        deps,
+      );
     const namesKey = uniqueEntries
       .map((entry) => `${entry.name}\u0001${entry.toolCount ?? ""}`)
       .join("\0");
     if (
       context.state.hasSentMcpServersInfo &&
       context.state.lastSentMcpServerNamesKey === namesKey
+    ) {
+      return null;
+    }
+    // Without server-side MCP an empty local list is complete, so there is
+    // nothing to announce until a server appears. The key stays null so a
+    // later list is still sent. Backends with server-side MCP, such as Letta
+    // Cloud, keep the None form: an empty server-side list can hide servers
+    // that need the user's credentials, and the guardrail line covers them.
+    if (
+      uniqueEntries.length === 0 &&
+      !serverSideAvailable &&
+      context.state.lastSentMcpServerNamesKey === null
     ) {
       return null;
     }
@@ -541,6 +543,7 @@ export const sharedReminderProviders: Record<
   "agent-info": buildAgentInfoReminder,
   "conversation-bootstrap": buildConversationBootstrapReminderPart,
   "secrets-info": buildSecretsInfoReminder,
+  "variables-info": buildVariablesInfoReminder,
   "mcp-servers-info": buildMcpServersInfoReminder,
   "session-context": buildSessionContextReminder,
   "permission-mode": buildPermissionModeReminder,

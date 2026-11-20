@@ -72,6 +72,7 @@ describe("headless telemetry input tracking", () => {
     expect(queued).toEqual({
       kind: "task_notification",
       text: "<task-notification/>",
+      content: [{ type: "text", text: "<task-notification/>" }],
     });
   });
 });

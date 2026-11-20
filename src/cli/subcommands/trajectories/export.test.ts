@@ -1,13 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import {
-  mkdir,
-  mkdtemp,
-  readdir,
-  readFile,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -17,6 +10,7 @@ import {
   sessionHash,
 } from "@/cli/subcommands/trajectories/export";
 import { listSupportedSources } from "@/cli/subcommands/trajectories/sources";
+import { removeTestDir } from "@/test-utils/test-fs";
 
 const CLAUDE_CODE_SESSION = [
   JSON.stringify({
@@ -226,7 +220,7 @@ describe("trajectories export", () => {
   });
 
   afterEach(async () => {
-    await rm(baseDir, { recursive: true, force: true });
+    await removeTestDir(baseDir);
   });
 
   test("exports sessions from every seeded store into one directory", async () => {

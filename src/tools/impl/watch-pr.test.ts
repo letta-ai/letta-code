@@ -1,9 +1,16 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  resolveBackendMode,
+  setConfiguredBackendMode,
+} from "@/backend/backend-mode";
 import { checkPermission } from "@/permissions/checker";
 import { TOOL_DEFINITIONS } from "@/tools/tool-definitions";
 import { TOOLSET_CATALOG } from "@/tools/toolset-catalog";
 import { setMessageQueueAdder } from "@/utils/message-queue-bridge";
+import { GitHubPullRequestSnapshotPending } from "./github-pull-request-cloud";
 import type { GitHubPullRequestSnapshot } from "./github-pull-request-types";
 import { backgroundProcesses } from "./process_manager";
 import { task_stop } from "./task-stop";
@@ -11,8 +18,11 @@ import { watch_pr } from "./watch-pr";
 
 const url = "https://github.com/letta-ai/letta-code/pull/42";
 let previousManagedCloud: string | undefined;
+let previousBackendMode = resolveBackendMode();
 let previousMonitorMaxTimeout: string | undefined;
 beforeEach(() => {
+  previousBackendMode = resolveBackendMode();
+  setConfiguredBackendMode("local");
   previousMonitorMaxTimeout = process.env.LETTA_MONITOR_MAX_TIMEOUT_SECONDS;
   delete process.env.LETTA_MONITOR_MAX_TIMEOUT_SECONDS;
   previousManagedCloud = process.env.LETTA_MANAGED_CLOUD_RUNTIME;
@@ -41,6 +51,7 @@ function snapshot(
 }
 
 afterEach(() => {
+  setConfiguredBackendMode(previousBackendMode);
   if (previousMonitorMaxTimeout === undefined)
     delete process.env.LETTA_MONITOR_MAX_TIMEOUT_SECONDS;
   else
@@ -63,6 +74,103 @@ afterEach(() => {
 });
 
 describe("WatchPR background lifecycle", () => {
+  test("reports a comment posted between watches in the second initial result", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "watch-pr-resume-"));
+    const previousConfigDir = process.env.LETTA_CONFIG_DIR;
+    process.env.LETTA_CONFIG_DIR = configDir;
+    const args = {
+      url,
+      parentScope: { agentId: "agent-resume", conversationId: "conv-resume" },
+    };
+    const wait = async (signal: AbortSignal) => {
+      await new Promise<void>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        });
+      });
+    };
+    try {
+      const first = await watch_pr(args, {
+        fetchSnapshot: async () => snapshot(),
+        wait,
+      });
+      await task_stop({ task_id: first.taskId });
+      const second = await watch_pr(args, {
+        fetchSnapshot: async () =>
+          snapshot({
+            comments: [
+              {
+                id: "between-watches",
+                author: "alice",
+                body: "Please address this before merging",
+                url: "https://github.com/letta-ai/letta-code/pull/42#issuecomment-1",
+                updatedAt: "2",
+              },
+            ],
+          }),
+        wait,
+      });
+      await task_stop({ task_id: second.taskId });
+      expect(second.content[0]?.text).toContain(
+        "Changes since the previous watch ended",
+      );
+      expect(second.content[0]?.text).toContain(
+        "New PR comment from @alice: Please address this before merging",
+      );
+    } finally {
+      if (previousConfigDir === undefined) delete process.env.LETTA_CONFIG_DIR;
+      else process.env.LETTA_CONFIG_DIR = previousConfigDir;
+      rmSync(configDir, { recursive: true, force: true });
+    }
+  });
+
+  test("restarting after a merge-ready poll reports no readiness change", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "watch-pr-readiness-"));
+    const previousConfigDir = process.env.LETTA_CONFIG_DIR;
+    process.env.LETTA_CONFIG_DIR = configDir;
+    const args = {
+      url,
+      parentScope: { agentId: "agent-ready", conversationId: "conv-ready" },
+    };
+    let pollFinished!: () => void;
+    const polled = new Promise<void>((resolve) => {
+      pollFinished = resolve;
+    });
+    let waits = 0;
+    const wait = async (signal: AbortSignal) => {
+      if (++waits === 1) return;
+      pollFinished();
+      await new Promise<void>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        });
+      });
+    };
+    try {
+      const first = await watch_pr(args, {
+        fetchSnapshot: async () => snapshot({ readinessConfirmed: false }),
+        wait,
+      });
+      await polled;
+      await task_stop({ task_id: first.taskId });
+      const second = await watch_pr(args, {
+        fetchSnapshot: async () => snapshot({ readinessConfirmed: false }),
+        wait,
+      });
+      await task_stop({ task_id: second.taskId });
+      expect(second.content[0]?.text).not.toContain(
+        "PR is no longer merge-ready",
+      );
+      expect(second.content[0]?.text).not.toContain(
+        "Changes since the previous watch ended",
+      );
+    } finally {
+      if (previousConfigDir === undefined) delete process.env.LETTA_CONFIG_DIR;
+      else process.env.LETTA_CONFIG_DIR = previousConfigDir;
+      rmSync(configDir, { recursive: true, force: true });
+    }
+  });
+
   test("Cloud deadline aborts an in-flight poll and sends one scoped notification", async () => {
     process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
     process.env.LETTA_MONITOR_MAX_TIMEOUT_SECONDS = "86400";
@@ -116,7 +224,7 @@ describe("WatchPR background lifecycle", () => {
       });
       expect(queued[0]?.text).toContain("24-hour Cloud sandbox limit");
       expect(queued[0]?.text).toContain("re-arm it by calling WatchPR again");
-      expect(queued[0]?.text).toContain("Wake or cron");
+      expect(queued[0]?.text).not.toContain("Wake or cron");
     } finally {
       timers.mockRestore();
     }
@@ -215,42 +323,192 @@ describe("WatchPR background lifecycle", () => {
     expect(backgroundProcesses.size).toBe(0);
   });
 
-  test("reports a refresh error once and reports recovery", async () => {
+  test("keeps short alternating cooldown failures and recoveries silent", async () => {
+    let now = 0;
     let fetchCount = 0;
-    const waits: number[] = [];
+    let finish!: () => void;
+    const finished = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
     const queued: string[] = [];
     setMessageQueueAdder((message) => queued.push(message.text));
-
     const result = await watch_pr(
       { url },
       {
+        now: () => now,
         fetchSnapshot: async () => {
-          fetchCount += 1;
-          if (fetchCount >= 2 && fetchCount <= 6) {
-            throw new Error("GitHub temporarily unavailable");
+          if (++fetchCount % 2 === 0) {
+            throw new Error("Cloud PR snapshot is still cooling down");
           }
-          return fetchCount >= 8 ? snapshot({ state: "MERGED" }) : snapshot();
+          return snapshot();
         },
-        wait: async (_signal, milliseconds) => {
-          waits.push(milliseconds);
-          if (waits.length > 8) throw new Error("test loop escaped");
+        wait: async (signal, milliseconds) => {
+          if (fetchCount >= 13) {
+            finish();
+            await new Promise<void>((_resolve, reject) => {
+              signal.addEventListener("abort", () => reject(signal.reason), {
+                once: true,
+              });
+            });
+          }
+          now += milliseconds;
         },
       },
     );
-
+    await finished;
     await Bun.sleep(250);
-    const notifications = queued.join("\n");
+    await task_stop({ task_id: result.taskId });
+    expect(queued).toEqual([]);
+    const outputFile = backgroundProcesses.get(result.taskId)?.outputFile;
+    expect(outputFile).toBeDefined();
     expect(
-      queued.filter((notification) =>
-        notification.includes("could not refresh"),
-      ),
-    ).toHaveLength(1);
-    expect(notifications).toContain("recovered after 5 failed polls");
-    expect(waits).toEqual([
-      30_000, 60_000, 120_000, 240_000, 300_000, 300_000, 30_000,
-    ]);
-    expect(backgroundProcesses.get(result.taskId)?.status).toBe("completed");
+      readFileSync(outputFile!, "utf8").match(/\[poll error 1\]/g),
+    ).toHaveLength(6);
   });
+
+  for (const pendingMinutes of [20, 35]) {
+    test(`${pendingMinutes} minutes of pending polls only reports prolonged silence and its recovery`, async () => {
+      let now = 0;
+      let fetchCount = 0;
+      let output = "";
+      const queued: string[] = [];
+      const waits: number[] = [];
+      let finish!: () => void;
+      const finished = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      setMessageQueueAdder((message) => queued.push(message.text));
+      const result = await watch_pr(
+        { url },
+        {
+          now: () => now,
+          createOutputWriter: () => ({
+            append: (text) => {
+              output += text;
+              return true;
+            },
+          }),
+          fetchSnapshot: async () => {
+            fetchCount++;
+            if (fetchCount > 1 && now <= pendingMinutes * 60_000) {
+              throw new GitHubPullRequestSnapshotPending();
+            }
+            return snapshot();
+          },
+          wait: async (signal, milliseconds) => {
+            if (now > pendingMinutes * 60_000) {
+              finish();
+              await new Promise<void>((_resolve, reject) => {
+                signal.addEventListener("abort", () => reject(signal.reason), {
+                  once: true,
+                });
+              });
+            }
+            waits.push(milliseconds);
+            now += milliseconds;
+          },
+        },
+      );
+      await finished;
+      await Bun.sleep(250);
+      await task_stop({ task_id: result.taskId });
+      expect(waits.every((ms) => ms === 30_000)).toBe(true);
+      expect(output).toContain("[poll pending]");
+      expect(output).not.toContain("[poll error");
+      expect(output).not.toContain("could not refresh");
+      expect(output).not.toContain("recovered after");
+      if (pendingMinutes === 20) {
+        expect(queued).toEqual([]);
+        expect(output).not.toContain("WatchPR hasn't received");
+        expect(output).not.toContain("receiving PR updates again");
+      } else {
+        expect(
+          output.match(
+            /WatchPR hasn't received fresh PR data for 30 minutes; still watching\./g,
+          ),
+        ).toHaveLength(1);
+        expect(
+          output.match(/WatchPR is receiving PR updates again\./g),
+        ).toHaveLength(1);
+        expect(queued.join("\n")).toContain("still watching.");
+        expect(queued.join("\n")).toContain("receiving PR updates again.");
+      }
+    });
+  }
+
+  for (const failedPollCount of [5, 12]) {
+    test(`${failedPollCount} failed polls only notify about prolonged stale data`, async () => {
+      let now = 0;
+      let fetchCount = 0;
+      let output = "";
+      const waits: number[] = [];
+      const queued: string[] = [];
+      let finish!: () => void;
+      const finished = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      setMessageQueueAdder((message) => queued.push(message.text));
+      const result = await watch_pr(
+        { url },
+        {
+          now: () => now,
+          createOutputWriter: () => ({
+            append: (text) => {
+              output += text;
+              return true;
+            },
+          }),
+          fetchSnapshot: async () => {
+            fetchCount++;
+            if (fetchCount >= 2 && fetchCount <= failedPollCount + 1) {
+              throw new Error("GitHub temporarily unavailable");
+            }
+            return snapshot();
+          },
+          wait: async (signal, milliseconds) => {
+            if (fetchCount > failedPollCount + 1) {
+              finish();
+              await new Promise<void>((_resolve, reject) => {
+                signal.addEventListener("abort", () => reject(signal.reason), {
+                  once: true,
+                });
+              });
+            }
+            waits.push(milliseconds);
+            now += milliseconds;
+          },
+        },
+      );
+      await finished;
+      await Bun.sleep(250);
+      await task_stop({ task_id: result.taskId });
+      expect(output.match(/\[poll error \d+\]/g)).toHaveLength(failedPollCount);
+      expect(output).toContain(
+        `[poll error ${failedPollCount}] GitHub temporarily unavailable`,
+      );
+      expect(output).not.toContain("could not refresh");
+      expect(output).not.toContain("recovered after");
+      if (failedPollCount === 5) {
+        expect(queued).toEqual([]);
+        expect(waits).toEqual([
+          30_000, 60_000, 120_000, 240_000, 300_000, 300_000,
+        ]);
+      } else {
+        expect(
+          output.match(/WatchPR hasn't received fresh PR data/g),
+        ).toHaveLength(1);
+        expect(
+          output.match(/WatchPR is receiving PR updates again/g),
+        ).toHaveLength(1);
+        expect(queued.join("\n")).toContain(
+          "WatchPR hasn't received fresh PR data for 30 minutes; still watching.",
+        );
+        expect(queued.join("\n")).toContain(
+          "WatchPR is receiving PR updates again.",
+        );
+      }
+    });
+  }
 
   test("requires a second same-head read before announcing readiness", async () => {
     const queued: string[] = [];
@@ -337,4 +595,40 @@ describe("WatchPR background lifecycle", () => {
       killed: false,
     });
   });
+});
+
+test("workflow completion stops the background task and records failed jobs and steps", async () => {
+  const { workflowRunSnapshot, parseGitHubWorkflowRunUrl } = await import(
+    "./github-workflow-run"
+  );
+  const ref = parseGitHubWorkflowRunUrl(
+    "https://github.com/owner/repo/actions/runs/42",
+  );
+  let reads = 0;
+  const result = await watch_pr(
+    { url: ref.url },
+    {
+      fetchSnapshot: async () =>
+        workflowRunSnapshot(ref, {
+          headSha: "abc",
+          status: ++reads === 1 ? "in_progress" : "completed",
+          conclusion: reads === 1 ? null : "failure",
+          jobs: [
+            {
+              name: "build",
+              conclusion: "failure",
+              steps: [{ name: "compile", conclusion: "failure" }],
+            },
+          ],
+        }),
+      wait: async () => {},
+    },
+  );
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const task = backgroundProcesses.get(result.taskId);
+  expect(task?.status).toBe("completed");
+  expect(reads).toBe(2);
+  expect(readFileSync(task?.outputFile ?? "", "utf8")).toContain(
+    "Failed jobs/steps: build (compile)",
+  );
 });

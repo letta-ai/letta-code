@@ -373,6 +373,35 @@ describe.skipIf(isWindows)("Codex unified exec tools", () => {
     expect(second.output).toContain("Output:\ninterrupted");
   });
 
+  test("reports a killed foreground command as an error", async () => {
+    const result = await exec_command({ cmd: "kill -KILL $$", login: false });
+
+    expect(result).toMatchObject({ status: "error" });
+    expect(result.output).toContain("Command was terminated (SIGKILL)");
+    expect(result.output).toContain("may not have completed");
+    expect(result.output).not.toContain("Process running with session ID");
+  });
+
+  test("reports a killed session as an error when polled", async () => {
+    const first = await exec_command({
+      cmd: "exec sleep 30",
+      yield_time_ms: 250,
+    });
+    const sessionId = first.output.match(
+      /Process running with session ID (\d+)/,
+    )?.[1];
+    expect(sessionId).toBeDefined();
+    expect(first).not.toMatchObject({ status: "error" });
+    expect(first.output).not.toContain("terminated");
+    backgroundProcesses.get(sessionId ?? "")?.process.kill("SIGTERM");
+
+    const result = await write_stdin({ session_id: sessionId as string });
+    expect(result).toMatchObject({ status: "error" });
+    expect(result.output).toContain("Command was terminated (SIGTERM)");
+    expect(result.output).toContain("may not have completed");
+    expect(result.output).not.toContain("Process running with session ID");
+  });
+
   test("preserves non-zero exit code in model-facing output", async () => {
     const result = await exec_command({
       cmd: "printf 'bad'; exit 7",
