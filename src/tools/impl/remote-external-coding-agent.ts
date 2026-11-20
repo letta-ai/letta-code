@@ -756,9 +756,8 @@ async function connectQualifiedTarget(
   return {
     target,
     lettaCodeVersion: resolved.environment.metadata?.lettaCodeVersion,
-    client: await (deps.connect ?? defaultConnect)(
-      resolved.connectionId,
-      parentScope,
+    client: await connectRemoteWorkerWithRetry(() =>
+      (deps.connect ?? defaultConnect)(resolved.connectionId, parentScope),
     ),
   };
 }
