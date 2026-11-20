@@ -13,6 +13,7 @@ export async function runMcpEvents(
   servers: readonly McpServerConfig[],
   deps: Parameters<typeof loadMcpToolArgs>[2],
   stdout: McpOutput,
+  agentId: string,
   oauthForConfig: (
     config: McpServerConfig,
   ) => Promise<McpOAuthConnection | undefined>,
@@ -35,6 +36,38 @@ export async function runMcpEvents(
     throw new McpCliError(
       "invalid_arguments",
       "Usage: letta mcp watch <server> <event>",
+    );
+  }
+  const delivery = stringValue(parsed.values.delivery);
+  if (
+    delivery !== undefined &&
+    delivery !== "poll" &&
+    delivery !== "push" &&
+    delivery !== "webhook"
+  ) {
+    throw new McpCliError(
+      "invalid_arguments",
+      "Use --delivery poll, push, or webhook",
+    );
+  }
+  function milliseconds(key: "max-age-ms" | "min-poll-ms", minimum: number) {
+    const raw = stringValue(parsed.values[key]);
+    if (raw === undefined) return undefined;
+    const value = Number(raw);
+    if (!/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value < minimum) {
+      throw new McpCliError("invalid_arguments", `Invalid --${key}`);
+    }
+    return value;
+  }
+  const maxAgeMs = milliseconds("max-age-ms", 0);
+  const minPollMs = milliseconds("min-poll-ms", 1);
+  if (
+    !event &&
+    (delivery || maxAgeMs !== undefined || minPollMs !== undefined)
+  ) {
+    throw new McpCliError(
+      "invalid_arguments",
+      "Delivery options require mcp watch",
     );
   }
   const webhookUrl = stringValue(parsed.values["webhook-url"]);
@@ -91,10 +124,17 @@ export async function runMcpEvents(
           event,
           args,
           async (notice) => {
-            await stdout(JSON.stringify(notice));
+            await stdout(
+              JSON.stringify(
+                notice.type === "event"
+                  ? { ...notice, trust: "untrusted" }
+                  : notice,
+              ),
+            );
           },
           controller.signal,
           url ? { url, port } : undefined,
+          { agentId, delivery, maxAgeMs, minPollMs },
         );
       } else {
         await stdout(JSON.stringify(await connection.list()));

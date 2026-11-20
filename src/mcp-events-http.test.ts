@@ -165,7 +165,9 @@ function httpFixture(webhookPort?: number) {
               ),
             });
           case "events/poll":
-            expect(params.name).toBe("issue.opened");
+            expect(["issue.opened", "issue.updated"]).toContain(
+              params.name ?? "",
+            );
             return reply({
               events:
                 params.cursor === null
@@ -252,6 +254,7 @@ function httpFixture(webhookPort?: number) {
                   [{ subscriptionId: "wrong-subscription" }, "wrong"],
                   [{}, "valid"],
                   [{}, "valid"],
+                  [{}, "same-event-new-message"],
                 ] as const) {
                   statuses.push(
                     (
@@ -381,7 +384,7 @@ test("verifies webhook challenge and raw signatures, deduplicates, refreshes and
           .length > 1,
     );
     await fixture.delivery();
-    expect(fixture.statuses).toEqual([401, 401, 401, 204, 204]);
+    expect(fixture.statuses).toEqual([401, 401, 401, 204, 204, 204]);
     expect(ids).toEqual(["hook-1"]);
     const subscriptions = fixture.calls.filter(
       ({ method }) => method === "events/subscribe",
@@ -489,5 +492,47 @@ test("only accepts the preview capability on Vercel's discovery response", async
     ]);
   } finally {
     await connection.close();
+  }
+});
+
+test("validates event arguments before delivery and honors an explicit poll override", async () => {
+  const fixture = httpFixture();
+  const connection = await connectMcpEvents(fixture.config);
+  try {
+    await expect(
+      connection.watch(
+        "issue.opened",
+        { filter: { project: 1 } },
+        () => {},
+        AbortSignal.timeout(2000),
+      ),
+    ).rejects.toThrow("Invalid MCP event arguments");
+    expect(fixture.calls.some(({ method }) => method === "events/poll")).toBe(
+      false,
+    );
+    const stop = new AbortController();
+    const delivered: string[] = [];
+    await connection.watch(
+      "issue.updated",
+      args,
+      (notice) => {
+        if (notice.type === "event") {
+          delivered.push(notice.event.eventId);
+          stop.abort();
+        }
+      },
+      AbortSignal.any([stop.signal, AbortSignal.timeout(2000)]),
+      undefined,
+      { delivery: "poll", maxAgeMs: 120000 },
+    );
+    expect(delivered).toEqual(["http-poll"]);
+    const poll = fixture.calls.find(({ method }) => method === "events/poll");
+    expect(poll?.params.maxAgeMs).toBe(120000);
+    expect(fixture.calls.some(({ method }) => method === "events/stream")).toBe(
+      false,
+    );
+  } finally {
+    await connection.close();
+    await fixture.stop();
   }
 });

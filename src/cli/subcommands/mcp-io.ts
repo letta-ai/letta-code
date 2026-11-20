@@ -112,7 +112,10 @@ Commands:
             the connection to the Cloud agent
 
 Options:
-  --webhook-url <url> HTTPS callback forwarding to this watch (selects webhook delivery)
+  --delivery <mode>   Override delivery mode (webhook, push, or poll)
+  --max-age-ms <n>    Bound replay to this many milliseconds
+  --min-poll-ms <n>   Poll interval floor (default: 1000)
+  --webhook-url <url> HTTPS callback forwarding to this watch (enables webhook delivery)
   --webhook-port <n>  Local loopback receiver port (default: 8765)
   --agent <id>       Agent ID. Defaults to LETTA_AGENT_ID or AGENT_ID
   --agent-id <id>    Alias for --agent
@@ -190,6 +193,9 @@ function parseMcpArgs(argv: string[]) {
       mode: { type: "string" },
       limit: { type: "string" },
       full: { type: "boolean" },
+      delivery: { type: "string" },
+      "max-age-ms": { type: "string" },
+      "min-poll-ms": { type: "string" },
       "webhook-url": { type: "string" },
       "webhook-port": { type: "string" },
       args: { type: "string" },
@@ -217,4 +223,12 @@ export function parseMcpCommandLine(argv: string[]): ParsedMcpArgs {
 
 export function stringValue(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+export function hasMcpAuthorizationHeader(
+  headers?: Record<string, string>,
+): boolean {
+  return Object.keys(headers ?? {}).some(
+    (name) => name.toLowerCase() === "authorization",
+  );
 }

@@ -15,6 +15,7 @@ import {
   occurrence,
   recentEventIds,
 } from "@/mcp-event-protocol";
+import type { openMcpEventState } from "@/mcp-event-state";
 import { isRecord } from "@/utils/type-guards";
 
 const subscribeResult = z.object({
@@ -100,16 +101,37 @@ export async function watchEventWebhook(input: {
   webhook: EventWebhookOptions;
   notice: (notice: McpEventNotice) => Promise<void>;
   signal: AbortSignal;
+  progress: ReturnType<typeof openMcpEventState>;
+  maxAgeMs?: number;
 }) {
-  const { client, server, name, args, headers, webhook, notice, signal } =
-    input;
+  const {
+    client,
+    server,
+    name,
+    args,
+    headers,
+    webhook,
+    notice,
+    signal,
+    progress,
+    maxAgeMs,
+  } = input;
   signal.throwIfAborted();
+  if (
+    webhook.url.protocol !== "https:" ||
+    webhook.url.username ||
+    webhook.url.password ||
+    webhook.url.hash
+  ) {
+    throw new Error(
+      "MCP webhook callbacks require an HTTPS URL without credentials or a fragment",
+    );
+  }
   const secret = randomBytes(32);
   const seen = recentEventIds();
   const stopped = new AbortController();
   const deliverySignal = AbortSignal.any([signal, stopped.signal]);
   let subscriptionId: string | undefined;
-  let cursor: string | null = null;
   let subscribed = false;
   let terminated = false;
   let deliveries = Promise.resolve();
@@ -146,13 +168,15 @@ export async function watchEventWebhook(input: {
           .writeHead(200, { "Content-Type": "application/json" })
           .end(JSON.stringify({ challenge: challenge.data.challenge }));
       }
+      if (!subscriptionId) return finish(425);
       if (seen.has(messageId)) return finish(204);
       const envelope = control.safeParse(decoded);
       if (envelope.success) {
         subscriptionId ??= id;
         if (envelope.data.type === "gap") {
-          await notice({ type: "gap", server, name });
-          cursor = envelope.data.cursor;
+          if (envelope.data.cursor !== null)
+            await notice({ type: "gap", server, name });
+          progress.advance(envelope.data.cursor);
         } else {
           await notice({
             type: "terminated",
@@ -170,7 +194,7 @@ export async function watchEventWebhook(input: {
         if (!event.success || event.data.name !== name) return finish(400);
         subscriptionId ??= id;
         await notice({ type: "event", server, event: event.data });
-        cursor = event.data.cursor;
+        progress.advance(event.data.cursor);
       }
       seen.add(messageId);
       return finish(204);
@@ -216,7 +240,8 @@ export async function watchEventWebhook(input: {
                 url: webhook.url.href,
                 secret: `whsec_${secret.toString("base64")}`,
               },
-              cursor,
+              cursor: progress.cursor(),
+              maxAgeMs,
               ttlMs: WEBHOOK_TTL_MS,
             },
           },
@@ -227,8 +252,9 @@ export async function watchEventWebhook(input: {
         throw new Error("MCP webhook subscription ID changed");
       }
       subscriptionId = grant.id;
-      cursor = grant.cursor;
-      if (grant.truncated) await notice({ type: "gap", server, name });
+      if (grant.truncated && grant.cursor !== null)
+        await notice({ type: "gap", server, name });
+      progress.advance(grant.cursor);
       if (grant.deliveryStatus?.active === false) {
         await notice({
           type: "error",

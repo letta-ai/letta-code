@@ -11,8 +11,8 @@ import {
   eventError,
   type McpEventNotice,
   occurrence,
-  recentEventIds,
 } from "@/mcp-event-protocol";
+import type { openMcpEventState } from "@/mcp-event-state";
 
 const SUBSCRIPTION_ID = "io.modelcontextprotocol/subscriptionId";
 const MAX_TIMEOUT_MS = 2_147_483_647;
@@ -37,10 +37,20 @@ export async function watchEventPush(input: {
   headers?: Record<string, string>;
   notice: (notice: McpEventNotice) => Promise<void>;
   signal: AbortSignal;
+  progress: ReturnType<typeof openMcpEventState>;
+  maxAgeMs?: number;
 }) {
-  const { connection, server, name, args, headers, notice, signal } = input;
-  const seen = recentEventIds();
-  let cursor: string | null = null;
+  const {
+    connection,
+    server,
+    name,
+    args,
+    headers,
+    notice,
+    signal,
+    progress,
+    maxAgeMs,
+  } = input;
 
   while (!signal.aborted) {
     const { client, observeStreamRequest, disconnected } = await connection();
@@ -74,23 +84,21 @@ export async function watchEventPush(input: {
         const grant = active.parse(params);
         heartbeatMs = grant.heartbeatMs;
         resetHeartbeat();
-        if (grant.truncated) await notice({ type: "gap", server, name });
-        cursor = grant.cursor;
+        if (grant.truncated && grant.cursor !== null)
+          await notice({ type: "gap", server, name });
+        progress.advance(grant.cursor);
         return;
       }
       if (heartbeatMs === undefined) return;
       switch (notification.method) {
         case "notifications/events/heartbeat":
-          cursor = eventCursor.parse(params?.cursor);
+          progress.advance(eventCursor.parse(params?.cursor));
           break;
         case "notifications/events/event": {
           const event = occurrence.parse(params);
           if (event.name !== name) return;
-          if (!seen.has(event.eventId)) {
-            await notice({ type: "event", server, event });
-            seen.add(event.eventId);
-          }
-          cursor = event.cursor;
+          await notice({ type: "event", server, event });
+          progress.advance(event.cursor);
           break;
         }
         case "notifications/events/error":
@@ -137,7 +145,15 @@ export async function watchEventPush(input: {
     resetHeartbeat();
     try {
       await client.request(
-        { method: "events/stream", params: { name, arguments: args, cursor } },
+        {
+          method: "events/stream",
+          params: {
+            name,
+            arguments: args,
+            cursor: progress.cursor(),
+            maxAgeMs,
+          },
+        },
         emptyResult,
         {
           headers,

@@ -79,3 +79,46 @@ test("prefers stdio push, ignores another stream and sends cancellation on stop"
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("opts into catalog changes and lists again when the server notifies", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-events-catalog-"));
+  const transcript = join(dir, "wire.jsonl");
+  const connection = await connectMcpEvents({
+    name: "example",
+    command: process.execPath,
+    args: [fixture, transcript, "changes"],
+  });
+  const stop = new AbortController();
+  try {
+    await connection.watch(
+      "issue.updated",
+      {},
+      async (message) => {
+        if (message.type !== "event") return;
+        const waitUntil = Date.now() + 1500;
+        while (!stop.signal.aborted) {
+          const calls = readFileSync(transcript, "utf8")
+            .trim()
+            .split("\n")
+            .map((line) => JSON.parse(line));
+          if (
+            calls.filter(
+              (call) => call.method === "events/list" && !call.params.cursor,
+            ).length === 2
+          ) {
+            stop.abort();
+            return;
+          }
+          if (Date.now() >= waitUntil)
+            throw new Error("Expected a catalog refresh");
+          await Bun.sleep(10);
+        }
+      },
+      AbortSignal.any([stop.signal, AbortSignal.timeout(3500)]),
+    );
+    expect(stop.signal.aborted).toBe(true);
+  } finally {
+    await connection.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

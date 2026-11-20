@@ -22,12 +22,14 @@ import {
   eventHttpHeaders,
 } from "@/mcp-event-http-headers";
 import {
+  emptyResult,
   eventList,
   type McpEventNotice,
   pollResult,
-  recentEventIds,
 } from "@/mcp-event-protocol";
 import { watchEventPush } from "@/mcp-event-push";
+import { openMcpEventState } from "@/mcp-event-state";
+import { validateMcpEventArguments } from "@/mcp-event-validation";
 import {
   type EventWebhookOptions,
   watchEventWebhook,
@@ -81,6 +83,15 @@ class EventsStdioTransport extends StdioClientTransport {
     if (id !== undefined) this.observeStream?.(id);
     return super.send(message);
   }
+}
+
+export type EventDelivery = "poll" | "push" | "webhook";
+
+export interface McpEventWatchOptions {
+  delivery?: EventDelivery;
+  maxAgeMs?: number;
+  minPollMs?: number;
+  agentId?: string;
 }
 
 export async function connectMcpEvents(
@@ -170,6 +181,8 @@ export async function connectMcpEvents(
       }
       return {
         client,
+        listChanged:
+          capabilities?.extensions?.[EVENTS_EXTENSION]?.listChanged === true,
         disconnected: disconnected.signal,
         observeStreamRequest(handler?: ObserveStream) {
           transport.observeStream = handler;
@@ -189,6 +202,7 @@ export async function connectMcpEvents(
     throw error;
   }
   let watching = false;
+  let catalog: ReturnType<typeof eventList.parse>["events"] | undefined;
   async function list(listSignal = connectionSignal) {
     const events: ReturnType<typeof eventList.parse>["events"] = [];
     const seen = new Set<string>();
@@ -222,7 +236,46 @@ export async function connectMcpEvents(
         seen.add(cursor);
       }
     } while (cursor !== undefined);
+    catalog = events;
     return events;
+  }
+
+  function followCatalog(connection: typeof current, signal: AbortSignal) {
+    if (!connection.listChanged) return;
+    connection.client.setNotificationHandler(
+      "notifications/events/list_changed",
+      { params: emptyResult },
+      async () => {
+        try {
+          await list(signal);
+        } catch {
+          if (!signal.aborted)
+            process.stderr.write("Could not refresh the MCP event catalog.\n");
+        }
+      },
+    );
+    // The extension adds this field to the SDK's core filter.
+    const filter = { eventsListChanged: true } as Parameters<
+      Client["listen"]
+    >[0];
+    void (async () => {
+      const listening = AbortSignal.any([signal, connection.disconnected]);
+      while (!listening.aborted) {
+        try {
+          const subscription = await connection.client.listen(filter, {
+            signal: listening,
+          });
+          if ((await subscription.closed) !== "remote") return;
+        } catch {
+          if (!listening.aborted)
+            process.stderr.write(
+              "Could not listen for MCP event catalog changes.\n",
+            );
+          return;
+        }
+        await delay(1000, undefined, { signal: listening });
+      }
+    })().catch(() => undefined);
   }
 
   return {
@@ -233,26 +286,59 @@ export async function connectMcpEvents(
       onNotice: (notice: McpEventNotice) => void | Promise<void>,
       subscriptionSignal: AbortSignal,
       webhook?: EventWebhookOptions,
+      options: McpEventWatchOptions = {},
     ) {
       if (watching)
         throw new Error("This MCP connection is already watching an event");
       watching = true;
+      const watchLifetime = new AbortController();
       const watchSignal = AbortSignal.any([
         connectionSignal,
         subscriptionSignal,
+        watchLifetime.signal,
       ]);
-      try {
-        watchSignal.throwIfAborted();
-        const event = (await list(watchSignal)).find(
+      let termination: number | undefined;
+      let progress: ReturnType<typeof openMcpEventState>;
+      const identity = options.agentId
+        ? [options.agentId, config, name, args, webhook?.url.href]
+        : undefined;
+      async function run() {
+        const event = (catalog ?? (await list(watchSignal))).find(
           (entry) => entry.name === name,
         );
         if (!event) throw new Error(`Unknown MCP event "${name}"`);
+        validateMcpEventArguments(event.inputSchema, args);
+        const mode =
+          options.delivery ??
+          (webhook && event.delivery.includes("webhook")
+            ? "webhook"
+            : event.delivery.includes("push")
+              ? "push"
+              : event.delivery.includes("poll")
+                ? "poll"
+                : "webhook");
+        if (!event.delivery.includes(mode)) {
+          throw new Error(
+            `MCP event "${name}" does not offer ${mode} delivery`,
+          );
+        }
+        if (mode === "webhook" && !webhook) {
+          throw new Error(
+            `MCP event "${name}" requires --webhook-url for delivery`,
+          );
+        }
         const headers =
           config.transport === "http"
             ? eventHttpHeaders(eventHeaderDeclarations(event.inputSchema), args)
             : undefined;
         const notice = async (value: McpEventNotice) => {
-          await onNotice(value);
+          if (value.type !== "event") {
+            await onNotice(value);
+            if (value.type === "terminated") termination = value.error.code;
+          } else if (!progress.seen(value.event.eventId)) {
+            await onNotice(value);
+            progress.mark(value.event.eventId);
+          }
         };
         const watch = {
           server: config.name,
@@ -261,13 +347,10 @@ export async function connectMcpEvents(
           headers,
           notice,
           signal: watchSignal,
+          progress,
+          maxAgeMs: options.maxAgeMs,
         };
-        if (webhook) {
-          if (!event.delivery.includes("webhook")) {
-            throw new Error(
-              `MCP event "${name}" does not offer webhook delivery`,
-            );
-          }
+        if (mode === "webhook" && webhook) {
           await watchEventWebhook({
             ...watch,
             client: current.client,
@@ -275,25 +358,21 @@ export async function connectMcpEvents(
           });
           return;
         }
-        if (event.delivery.includes("push")) {
+        if (mode === "push") {
           await watchEventPush({
             ...watch,
             connection: async () => {
-              if (current.disconnected.aborted)
+              if (current.disconnected.aborted) {
                 current = await open(watchSignal);
+                followCatalog(current, watchSignal);
+              }
               return current;
             },
           });
           return;
         }
-        if (!event.delivery.includes("poll")) {
-          throw new Error(
-            `MCP event "${name}" requires --webhook-url for delivery`,
-          );
-        }
-        let cursor: string | null = null;
-        const recent = recentEventIds();
         while (!watchSignal.aborted) {
+          const cursor = progress.cursor();
           const page: ReturnType<typeof pollResult.parse> =
             await current.client.request(
               {
@@ -303,34 +382,65 @@ export async function connectMcpEvents(
                   arguments: args,
                   cursor,
                   maxEvents: BATCH_SIZE,
+                  maxAgeMs: options.maxAgeMs,
                 },
               },
               pollResult,
               { signal: watchSignal, headers },
             );
           watchSignal.throwIfAborted();
-          if (page.truncated) {
-            await onNotice({ type: "gap", server: config.name, name });
+          if (page.truncated && page.cursor !== null) {
+            await notice({ type: "gap", server: config.name, name });
           }
           for (const event of page.events) {
             watchSignal.throwIfAborted();
-            if (event.name !== name || recent.has(event.eventId)) continue;
-            await onNotice({ type: "event", server: config.name, event });
-            recent.add(event.eventId);
+            if (event.name !== name) continue;
+            await notice({ type: "event", server: config.name, event });
           }
+          progress.advance(page.cursor);
           // A backlog must advance its cursor to qualify for immediate draining.
           if (!page.hasMore || page.cursor === cursor || page.cursor === null) {
             await delay(
-              Math.min(MAX_POLL_MS, Math.max(MIN_POLL_MS, page.nextPollMs)),
+              Math.min(
+                MAX_POLL_MS,
+                Math.max(options.minPollMs ?? MIN_POLL_MS, page.nextPollMs),
+              ),
               undefined,
               { signal: watchSignal },
             );
           }
-          cursor = page.cursor;
+        }
+      }
+      try {
+        watchSignal.throwIfAborted();
+        progress = openMcpEventState(identity);
+        catalog = undefined;
+        followCatalog(current, watchSignal);
+        try {
+          await run();
+        } catch (error) {
+          const code = isRecord(error) ? error.code : undefined;
+          if (code !== -32020 && code !== -32023 && code !== -32026)
+            throw error;
+          termination = code;
+        }
+        if (
+          !watchSignal.aborted &&
+          (termination === -32020 ||
+            termination === -32023 ||
+            termination === -32026)
+        ) {
+          // Fetch and validate the current descriptor before retrying once.
+          await list(watchSignal);
+          await run();
         }
       } catch (error) {
         if (!watchSignal.aborted) throw error;
       } finally {
+        watchLifetime.abort();
+        current.client.removeNotificationHandler(
+          "notifications/events/list_changed",
+        );
         watching = false;
       }
     },

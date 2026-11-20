@@ -29,6 +29,7 @@ import { isRecord } from "@/utils/type-guards";
 import { type McpConnectDependencies, runMcpConnect } from "./mcp-connect";
 import { runMcpEvents } from "./mcp-events";
 import {
+  hasMcpAuthorizationHeader,
   loadMcpToolArgs,
   McpCliError,
   type McpOutput,
@@ -320,14 +321,10 @@ async function oauthForConfig(
   config: McpServerConfig,
   interactive: boolean,
 ): Promise<McpOAuthConnection | undefined> {
-  if (config.transport !== "http" && config.transport !== "sse")
+  if (config.transport !== "http" && config.transport !== "sse") {
     return undefined;
-  if (
-    Object.keys(config.headers ?? {}).some(
-      (name) => name.toLowerCase() === "authorization",
-    )
-  )
-    return undefined;
+  }
+  if (hasMcpAuthorizationHeader(config.headers)) return undefined;
   const create = deps.createOAuthSession ?? createMcpOAuthSession;
   return create(agentId, config.name, config.url, {
     interactive,
@@ -964,6 +961,7 @@ export async function runMcpSubcommand(
           getLocalServers(deps, agentId),
           deps,
           stdout,
+          agentId,
           (config) => oauthForConfig(deps, agentId, config, false),
         );
       case "list":

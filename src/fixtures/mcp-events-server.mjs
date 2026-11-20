@@ -44,9 +44,40 @@ for await (const line of createInterface({ input: process.stdin })) {
       reply({
         supportedVersions: [version],
         capabilities:
-          capability === "absent" ? {} : { extensions: { [extension]: {} } },
+          capability === "absent"
+            ? {}
+            : {
+                extensions: {
+                  [extension]: { listChanged: capability === "changes" },
+                },
+              },
       });
       break;
+    case "subscriptions/listen": {
+      if (params.notifications?.eventsListChanged !== true) {
+        fail("Expected eventsListChanged opt-in");
+        break;
+      }
+      for (const [method, details] of [
+        [
+          "notifications/subscriptions/acknowledged",
+          { notifications: { eventsListChanged: true } },
+        ],
+        ["notifications/events/list_changed", {}],
+      ]) {
+        console.log(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            method,
+            params: {
+              ...details,
+              _meta: { "io.modelcontextprotocol/subscriptionId": id },
+            },
+          }),
+        );
+      }
+      break;
+    }
     case "events/list":
       if (params.cursor === undefined) {
         reply({ events: [], nextCursor: "page-2" });

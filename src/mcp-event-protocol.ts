@@ -22,7 +22,7 @@ export const eventList = z.object({
 export const occurrence = z.object({
   eventId: z.string(),
   name: z.string(),
-  timestamp: z.string(),
+  timestamp: z.iso.datetime({ offset: true }),
   data: jsonObject,
   cursor: eventCursor,
 });
