@@ -53,6 +53,7 @@ import {
 } from "./process_manager.js";
 import { getShellEnv } from "./shell-env.js";
 import { withStrictShellPrelude } from "./shell-launchers.js";
+import { withShellProcessGuard } from "./shell-process-guard.js";
 import { startShellProcess } from "./shell-runner.js";
 import { applyShellSandbox } from "./shell-sandbox.js";
 import { assertSafeWindowsCommand } from "./windows-command-safety.js";
@@ -419,7 +420,8 @@ function startCommandMonitor(args: MonitorSourceArgs): MonitorResult {
     throw new Error("No shell available");
   }
   noteExpectedWorktreeForLauncher(launcher, cwd);
-  const sandboxed = applyShellSandbox(launcher, cwd, env);
+  const guarded = withShellProcessGuard(launcher, env);
+  const sandboxed = applyShellSandbox(guarded.launcher, cwd, guarded.env);
   const taskId = args.taskId;
   const outputFile = createBackgroundOutputFile(taskId);
   const output = new MonitorOutputWriter(outputFile);

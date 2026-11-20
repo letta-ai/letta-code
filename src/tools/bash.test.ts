@@ -34,6 +34,20 @@ async function runBashInTemp(
 }
 
 describe("Bash tool", () => {
+  test.skipIf(process.platform === "win32")(
+    "refuses to signal its own process without sandboxing",
+    async () => {
+      const result = await bash({
+        command: `kill -CONT ${process.pid}`,
+        variableEnv: { LETTA_FS_SANDBOX: "0" },
+      });
+      expect(result.status).toBe("error");
+      expect(result.content[0]?.text).toContain(
+        `Blocked: This command would signal the Letta Code CLI running this agent (PID ${process.pid})`,
+      );
+    },
+  );
+
   test("executes simple command", async () => {
     const result = await bash({
       command:

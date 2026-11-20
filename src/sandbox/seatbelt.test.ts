@@ -1,4 +1,8 @@
 import { expect, test } from "bun:test";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
+import { text } from "node:stream/consumers";
+import { detectSandboxBackend } from "@/sandbox/availability";
 
 import { buildFsSandboxPolicy } from "@/sandbox/policy";
 import {
@@ -6,6 +10,8 @@ import {
   buildSeatbeltProfile,
   SANDBOX_EXEC_PATH,
 } from "@/sandbox/seatbelt";
+
+import { wrapLauncher } from "@/sandbox/wrap";
 
 const CROSS_AGENT = buildFsSandboxPolicy({
   deniedRoots: ["/home/u/.letta/agents"],
@@ -184,3 +190,43 @@ test("args carry the profile and -D defines for the inner launcher", () => {
   // SANDBOX_EXEC_PATH itself is added by wrapLauncher, not here.
   expect(args).not.toContain(SANDBOX_EXEC_PATH);
 });
+
+test.skipIf(
+  process.platform !== "darwin" ||
+    detectSandboxBackend().backend !== "seatbelt",
+)(
+  "Seatbelt shells can probe a process started by an earlier call",
+  async () => {
+    const wrap = (command: string, ...args: string[]) =>
+      wrapLauncher(
+        ["/bin/sh", "-c", command, "wrapped", ...args],
+        buildFsSandboxPolicy({}),
+        { backend: "seatbelt" },
+      ) ?? [];
+    const [firstBin, ...firstArgs] = wrap(
+      'printf "%s" "$$"; exec 1>&-; read -r line || :',
+    );
+    const first = spawn(firstBin ?? "", firstArgs, {
+      stdio: ["pipe", "pipe", "inherit"],
+    });
+    const exited = once(first, "exit");
+    try {
+      const pid = await text(first.stdout);
+      expect(pid).toMatch(/^[1-9][0-9]+$/);
+      // Each call starts a separate sandbox-exec instance. A same-sandbox
+      // signal rule rejects even signal 0 for a process started by another call.
+      const [secondBin, ...secondArgs] = wrap(
+        'kill -0 "$1"',
+        String(first.pid),
+      );
+      const result = spawnSync(secondBin ?? "", secondArgs, {
+        encoding: "utf8",
+        timeout: 3000,
+      });
+      expect(result.status, result.stderr).toBe(0);
+    } finally {
+      first.stdin.end();
+      await exited;
+    }
+  },
+);

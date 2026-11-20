@@ -25,12 +25,17 @@ import {
   scheduleBackgroundProcessCleanup,
   scrubCompletedBackgroundOutput,
 } from "./process_manager.js";
+import {
+  findProtectedShellProcess,
+  protectedShellProcessMessage,
+} from "./protected-shell-processes.js";
 import { getShellEnv } from "./shell-env.js";
 import {
   buildPowerShellCommand,
   buildShellLaunchers,
   selectAvailableShellLauncher,
 } from "./shell-launchers.js";
+import { withShellProcessGuard } from "./shell-process-guard.js";
 import {
   type RunningShellProcess,
   ShellExecutionError,
@@ -621,7 +626,6 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
   assertBackgroundProcessCapacity();
 
   const id = getNextExecSessionId();
-  const outputFile = createBackgroundOutputFile(`exec_${id}`);
   const cwd = resolveShellWorkdir(args.workdir);
   const env = { ...getShellEnv(), ...args.variableEnv, ...args.secretEnv };
   const redactions = captureSecretRedactions(
@@ -633,14 +637,19 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
   if (!rawLauncher) {
     throw new Error("Command must be a non-empty string");
   }
+  const protectedTarget = findProtectedShellProcess(args.cmd);
+  if (protectedTarget) {
+    throw new Error(protectedShellProcessMessage(protectedTarget));
+  }
   // Confine the session (pipe or PTY) under the cross-agent shell sandbox.
   // The spawn helpers re-note the launcher for worktree ownership, but the
   // wrapper hides the inner shell from that inspection, so note the unwrapped
   // launcher here first.
-  const sandboxed = applyShellSandbox(rawLauncher, cwd, env);
-  if (sandboxed.backend) {
-    noteExpectedWorktreeForLauncher(rawLauncher, cwd);
-  }
+  const guarded = withShellProcessGuard(rawLauncher, env);
+  const sandboxed = applyShellSandbox(guarded.launcher, cwd, guarded.env);
+  const outputFile = createBackgroundOutputFile(`exec_${id}`);
+
+  noteExpectedWorktreeForLauncher(rawLauncher, cwd);
   const launcher = sandboxed.launcher;
   const spawnEnv = sandboxed.env;
 

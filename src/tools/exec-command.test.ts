@@ -56,6 +56,17 @@ describe.skipIf(isWindows)("Codex unified exec tools", () => {
     }
   });
 
+  test("refuses to signal its own process without sandboxing", async () => {
+    await expect(
+      exec_command({
+        cmd: `kill -CONT ${process.pid}`,
+        variableEnv: { LETTA_FS_SANDBOX: "0" },
+      }),
+    ).rejects.toThrow(
+      `Blocked: This command would signal the Letta Code CLI running this agent (PID ${process.pid})`,
+    );
+  });
+
   test("formats completed command output like Codex unified exec", async () => {
     const result = await exec_command({ cmd: "printf 'hello'" });
 
