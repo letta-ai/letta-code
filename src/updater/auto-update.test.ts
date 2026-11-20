@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { startStartupAutoUpdateCheck } from "@/startup-auto-update";
 import {
   acquireUpdateLock,
   buildInstallCommand,
@@ -15,6 +16,7 @@ import {
   resolveUpdateInstallRegistryUrl,
   resolveUpdatePackageName,
   resolveUpdateRegistryBaseUrl,
+  startupAutoUpdate,
 } from "@/updater/auto-update";
 
 test("Python wheels never query npm or self-install updates", async () => {
@@ -41,6 +43,42 @@ test("Python wheels never query npm or self-install updates", async () => {
   } finally {
     if (previous === undefined) delete process.env.LETTA_CODE_DISTRIBUTION;
     else process.env.LETTA_CODE_DISTRIBUTION = previous;
+  }
+});
+
+test("Windows startup never installs in place and returns the manual command", async () => {
+  const savedArgv1 = process.argv[1];
+  const savedEnv = {
+    LETTA_CODE_AGENT_ROLE: process.env.LETTA_CODE_AGENT_ROLE,
+    LETTA_PACKAGE_MANAGER: process.env.LETTA_PACKAGE_MANAGER,
+    DISABLE_AUTOUPDATER: process.env.DISABLE_AUTOUPDATER,
+  };
+  process.argv[1] =
+    "C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@letta-ai\\letta-code\\letta.js";
+  process.env.LETTA_PACKAGE_MANAGER = "npm";
+  delete process.env.DISABLE_AUTOUPDATER;
+  delete process.env.LETTA_CODE_AGENT_ROLE;
+  try {
+    const fetchImpl = mock(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ version: "99.0.0" }), { status: 200 }),
+      ),
+    ) as unknown as typeof fetch;
+    const autoUpdate = mock(async () => undefined);
+
+    const result = await startupAutoUpdate("win32", fetchImpl, autoUpdate);
+
+    expect(autoUpdate).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      latestVersion: "99.0.0",
+      manualUpdateCommand: buildInstallCommand("npm"),
+    });
+  } finally {
+    process.argv[1] = savedArgv1 ?? "";
+    for (const [key, value] of Object.entries(savedEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
   }
 });
 
@@ -558,6 +596,28 @@ describe("checkAndAutoUpdate install guards", () => {
     expect(result).toBeUndefined();
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(runCommand).not.toHaveBeenCalled();
+  });
+
+  test("Windows subagents skip the registry check and print nothing", async () => {
+    process.env.LETTA_CODE_AGENT_ROLE = "subagent";
+    const fetchSpy = mock(fetchImpl);
+    const autoUpdate = mock(async () => undefined);
+    const logError = mock(() => {});
+
+    const result = await startStartupAutoUpdateCheck(
+      () =>
+        startupAutoUpdate(
+          "win32",
+          fetchSpy as unknown as typeof fetch,
+          autoUpdate,
+        ),
+      logError,
+    );
+
+    expect(result).toBeUndefined();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(autoUpdate).not.toHaveBeenCalled();
+    expect(logError).not.toHaveBeenCalled();
   });
 
   test("installs and releases the lock when no other update is running", async () => {
