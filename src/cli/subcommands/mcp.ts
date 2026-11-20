@@ -314,15 +314,6 @@ function resolveServer(
   return match;
 }
 
-function hasAuthorizationHeader(config: McpServerConfig): boolean {
-  return (
-    (config.transport === "http" || config.transport === "sse") &&
-    Object.keys(config.headers ?? {}).some(
-      (name) => name.toLowerCase() === "authorization",
-    )
-  );
-}
-
 async function oauthForConfig(
   deps: McpSubcommandDependencies,
   agentId: string,
@@ -331,7 +322,12 @@ async function oauthForConfig(
 ): Promise<McpOAuthConnection | undefined> {
   if (config.transport !== "http" && config.transport !== "sse")
     return undefined;
-  if (hasAuthorizationHeader(config)) return undefined;
+  if (
+    Object.keys(config.headers ?? {}).some(
+      (name) => name.toLowerCase() === "authorization",
+    )
+  )
+    return undefined;
   const create = deps.createOAuthSession ?? createMcpOAuthSession;
   return create(agentId, config.name, config.url, {
     interactive,
@@ -962,12 +958,13 @@ export async function runMcpSubcommand(
     }
     switch (parsed.action) {
       case "events":
-      case "watch-event":
+      case "watch":
         return await runMcpEvents(
           parsed,
           getLocalServers(deps, agentId),
           deps,
           stdout,
+          (config) => oauthForConfig(deps, agentId, config, false),
         );
       case "list":
         return await runList(deps, agentId, stdout);

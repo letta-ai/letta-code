@@ -172,7 +172,7 @@ describe("using-mcp-tools managed event helper", () => {
     });
   });
 
-  test("documents separate workflows for managed triggers and local MCP Events", async () => {
+  test("documents separate workflows for managed triggers and MCP Events", async () => {
     const skill = await readFile(
       new URL("./builtin/using-mcp-tools/SKILL.md", import.meta.url),
       "utf8",
@@ -181,6 +181,6 @@ describe("using-mcp-tools managed event helper", () => {
       "manage Letta Cloud provider triggers through Cloud webhooks",
     );
     expect(skill).toContain("letta mcp events <server>");
-    expect(skill).toContain("letta mcp watch-event");
+    expect(skill).toContain("letta mcp watch example issue.created");
   });
 });

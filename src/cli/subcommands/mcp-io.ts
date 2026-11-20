@@ -96,7 +96,7 @@ Usage:
   letta mcp search <query> [--mode <hybrid|vector|fts>] [--limit <n>] [--agent <id>]
   letta mcp call <tool-name> [--args '<json>' | --args-file <path|->] [--agent <id>]
   letta mcp events <server> [--agent <id>]
-  letta mcp watch-event <server> --event <name> [--args '<json>' | --args-file <path|->]
+  letta mcp watch <server> <event> [--args '<json>' | --args-file <path|->]
   letta mcp connect <service> [--server-url <url>] [--client-name <name>] [--agent <id>]
 
 Commands:
@@ -106,12 +106,14 @@ Commands:
   schema    Print one tool's complete schema
   search    Search tools available to the agent
   call      Call one exact tool name and print an MCP CallToolResult
-  events    List SEP-3415 event types on a local stdio server
-  watch-event  Poll a local stdio event and stream JSON lines until stopped
+  events    List MCP event types on a configured server
+  watch     Subscribe to an event and stream JSON lines until stopped
   connect   Authorize comfy or datadog in this computer's browser and save
             the connection to the Cloud agent
 
 Options:
+  --webhook-url <url> HTTPS callback forwarding to this watch (selects webhook delivery)
+  --webhook-port <n>  Local loopback receiver port (default: 8765)
   --agent <id>       Agent ID. Defaults to LETTA_AGENT_ID or AGENT_ID
   --agent-id <id>    Alias for --agent
   --full             Include complete schemas in tools output
@@ -174,6 +176,7 @@ function parseJsonObject(raw: string, label: string): Record<string, unknown> {
 export interface ParsedMcpArgs {
   action?: string;
   target?: string;
+  event?: string;
   values: ReturnType<typeof parseMcpArgs>["values"];
 }
 
@@ -187,7 +190,8 @@ function parseMcpArgs(argv: string[]) {
       mode: { type: "string" },
       limit: { type: "string" },
       full: { type: "boolean" },
-      event: { type: "string" },
+      "webhook-url": { type: "string" },
+      "webhook-port": { type: "string" },
       args: { type: "string" },
       "args-file": { type: "string" },
       "server-url": { type: "string" },
@@ -201,13 +205,14 @@ function parseMcpArgs(argv: string[]) {
 export function parseMcpCommandLine(argv: string[]): ParsedMcpArgs {
   const parsed = parseMcpArgs(argv);
   const [action, target, ...extra] = parsed.positionals;
+  const event = action === "watch" ? extra.shift() : undefined;
   if (extra.length > 0) {
     throw new McpCliError(
       "invalid_arguments",
       `Unexpected positional arguments: ${extra.join(" ")}`,
     );
   }
-  return { action, target, values: parsed.values };
+  return { action, target, event, values: parsed.values };
 }
 
 export function stringValue(value: unknown): string | undefined {

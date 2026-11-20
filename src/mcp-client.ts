@@ -232,17 +232,26 @@ export function connectStdioMcpServer(
   return connectMcpServer({ ...config, transport: "stdio" }, options);
 }
 
+export function createMcpHttpTransportOptions(
+  config: HttpMcpServerConfig,
+  options: ConnectMcpServerOptions,
+) {
+  return {
+    requestInit: headersRequestInit(resolveHeaderEnvironment(config.headers)),
+    authProvider: options.oauth?.authProvider,
+    fetch: abortAwareFetch(options.signal, undefined, options.fetch),
+  };
+}
+
 function createTransport(
   config: McpServerConfig,
   options: ConnectMcpServerOptions,
 ): Transport {
   if (config.transport === "http") {
-    const headers = resolveHeaderEnvironment(config.headers);
-    return new StreamableHTTPClientTransport(new URL(config.url), {
-      requestInit: headersRequestInit(headers),
-      authProvider: options.oauth?.authProvider,
-      fetch: abortAwareFetch(options.signal, undefined, options.fetch),
-    });
+    return new StreamableHTTPClientTransport(
+      new URL(config.url),
+      createMcpHttpTransportOptions(config, options),
+    );
   }
   if (config.transport === "sse") {
     const headers = resolveHeaderEnvironment(config.headers);

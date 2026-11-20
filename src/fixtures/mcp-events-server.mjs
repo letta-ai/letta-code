@@ -8,7 +8,11 @@ const [transcript, capability] = process.argv.slice(2);
 
 for await (const line of createInterface({ input: process.stdin })) {
   const { id, method, params } = JSON.parse(line);
-  if (id === undefined) continue;
+  if (id === undefined) {
+    if (method === "notifications/cancelled")
+      appendFileSync(transcript, `${line}\n`);
+    continue;
+  }
   appendFileSync(transcript, `${line}\n`);
   function reply(result) {
     console.log(
@@ -58,12 +62,49 @@ for await (const line of createInterface({ input: process.stdin })) {
               },
               payloadSchema: { type: "object" },
             },
+            {
+              name: "issue.updated",
+              delivery: ["push", "poll"],
+              inputSchema: { type: "object" },
+              payloadSchema: { type: "object" },
+            },
           ],
         });
       } else {
         fail("Unexpected list cursor");
       }
       break;
+    case "events/stream": {
+      if (params.name !== "issue.updated") {
+        fail("Unexpected stream name");
+        break;
+      }
+      const notify = (method, payload, subscriptionId = id) => {
+        console.log(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            method: `notifications/events/${method}`,
+            params: {
+              ...payload,
+              _meta: {
+                "io.modelcontextprotocol/subscriptionId": subscriptionId,
+              },
+            },
+          }),
+        );
+      };
+      notify("active", { heartbeatMs: 30000, truncated: false });
+      const event = {
+        eventId: "push-1",
+        name: "issue.updated",
+        timestamp: "2026-11-20T00:00:00Z",
+        data: { title: "Pushed update" },
+        cursor: "1",
+      };
+      notify("event", { ...event, eventId: "wrong-stream" }, id + 1);
+      notify("event", event);
+      break;
+    }
     case "events/poll": {
       if (
         params.name !== eventName ||
