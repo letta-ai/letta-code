@@ -1,5 +1,6 @@
 import type SlackApp from "@slack/bolt";
 import { formatChannelControlRequestPrompt } from "@/channels/interactive";
+import { resolveChannelErrorRepliesMode } from "@/channels/lifecycle-error";
 import { buildSlackModelPickerBlocks } from "@/channels/slack/model-picker-blocks";
 import type {
   ChannelAdapter,
@@ -184,8 +185,13 @@ export function createSlackAdapter(
     source: ChannelTurnSource,
     errorText: string,
   ): Promise<void> {
+    const mode = resolveChannelErrorRepliesMode(
+      source.errorReplies,
+      config.errorReplies,
+    );
+    if (mode === "off") return;
     const threadTs = resolveSlackSourceThreadTs(source);
-    const text = formatSlackLifecycleErrorMessage(errorText);
+    const text = formatSlackLifecycleErrorMessage(errorText, mode);
     const footnote = buildSlackChatFootnote(source);
     const blocks = footnote
       ? buildSlackReplyBlocksWithFootnote(text, footnote)

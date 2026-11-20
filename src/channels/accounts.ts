@@ -73,6 +73,7 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   thread_policy_by_channel: "threadPolicyByChannel",
   transcribe_voice: "transcribeVoice",
   download_media: "downloadMedia",
+  error_replies: "errorReplies",
   waiting_behavior: "waitingBehavior",
 };
 

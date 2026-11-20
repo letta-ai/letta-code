@@ -10,6 +10,7 @@
  */
 
 import {
+  getChannelAccount,
   getChannelAccountWithSecrets,
   hydrateChannelAccountSecrets,
   LEGACY_CHANNEL_ACCOUNT_ID,
@@ -17,6 +18,7 @@ import {
   listChannelAccountsWithSecrets,
 } from "./accounts";
 import { getChannelAccountsPath, getChannelsRoot } from "./config";
+import { resolveChannelErrorRepliesMode } from "./lifecycle-error";
 import {
   consumePairingCode,
   loadPairingStore,
@@ -309,18 +311,28 @@ export class ChannelRegistry {
     >();
 
     const sources = event.type === "queued" ? [event.source] : event.sources;
-    for (const source of sources) {
-      const adapter = this.getAdapter(
-        source.channel,
-        source.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID,
-      );
+    for (const rawSource of sources) {
+      const accountId = rawSource.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
+      const adapter = this.getAdapter(rawSource.channel, accountId);
       if (!adapter?.handleTurnLifecycleEvent) {
         continue;
       }
-      const groupKey = this.getAdapterKey(
-        source.channel,
-        source.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID,
-      );
+      const source =
+        event.type === "finished" && !rawSource.errorReplies
+          ? {
+              ...rawSource,
+              errorReplies: resolveChannelErrorRepliesMode(
+                getRouteFromStore(
+                  rawSource.channel,
+                  rawSource.chatId,
+                  accountId,
+                  rawSource.threadId,
+                )?.errorReplies,
+                getChannelAccount(rawSource.channel, accountId)?.errorReplies,
+              ),
+            }
+          : rawSource;
+      const groupKey = this.getAdapterKey(source.channel, accountId);
       const existing = groups.get(groupKey);
       if (existing) {
         existing.sources.push(source);

@@ -1,4 +1,5 @@
 import { basename } from "node:path";
+import { resolveChannelErrorRepliesMode } from "@/channels/lifecycle-error";
 import type {
   ChannelAdapter,
   ChannelTurnLifecycleEvent,
@@ -217,6 +218,11 @@ export function createDiscordAdapter(
     runId?: string | null,
   ): Promise<void> {
     if (!client) return;
+    const mode = resolveChannelErrorRepliesMode(
+      source.errorReplies,
+      config.errorReplies,
+    );
+    if (mode === "off") return;
     const key = getLifecycleReplyKey(source);
     if (!key || !rememberLifecycleErrorReply(key)) {
       return;
@@ -230,7 +236,7 @@ export function createDiscordAdapter(
     const reply = buildDiscordReplyOptions(source.messageId, targetChannelId);
     await channel.send({
       allowedMentions: { parse: [] },
-      content: formatDiscordLifecycleErrorMessage(errorText, runId),
+      content: formatDiscordLifecycleErrorMessage(errorText, runId, mode),
       ...(reply ?? {}),
     });
   }

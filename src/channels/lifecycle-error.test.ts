@@ -7,6 +7,7 @@ import {
   extractChannelLifecycleRunId,
   formatChannelLifecycleErrorMessage,
   normalizeChannelLifecycleErrorMessage,
+  resolveChannelErrorRepliesMode,
   sanitizeChannelLifecycleErrorText,
 } from "./lifecycle-error";
 
@@ -174,5 +175,28 @@ describe("sanitizeChannelLifecycleErrorText", () => {
       "Usage limit reached.",
     );
     expect(extractChannelLifecycleRunId(rawError)).toBe("run-abc");
+  });
+
+  test("generic mode suppresses raw error details and run id", () => {
+    expect(
+      formatChannelLifecycleErrorMessage(
+        '{"error":{"message":"Provider secret failure"}} (run: run-abc)',
+        { mode: "generic", runId: "run-abc" },
+      ),
+    ).toBe(`Turn failed:\n${CHANNEL_LIFECYCLE_FALLBACK_ERROR_MESSAGE}`);
+    expect(
+      formatChannelLifecycleErrorMessage(
+        '{"error":{"message":"Provider secret failure"}} (run: run-abc)',
+        { mode: "generic", runId: "run-abc", codeBlock: true },
+      ),
+    ).toBe(
+      `Turn failed:\n\`\`\`\n${CHANNEL_LIFECYCLE_FALLBACK_ERROR_MESSAGE}\n\`\`\``,
+    );
+  });
+
+  test("resolveChannelErrorRepliesMode picks first valid mode and defaults to post", () => {
+    expect(resolveChannelErrorRepliesMode(undefined, undefined)).toBe("post");
+    expect(resolveChannelErrorRepliesMode(undefined, "off")).toBe("off");
+    expect(resolveChannelErrorRepliesMode("generic", "off")).toBe("generic");
   });
 });
