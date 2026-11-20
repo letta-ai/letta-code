@@ -207,4 +207,40 @@ describe("drainStream terminal-EOF guard", () => {
     expect(controller.signal.aborted).toBe(false);
     expect(result.stopReason).toBe("end_turn");
   });
+
+  test("abandons a read that never settles after the guard aborts it", async () => {
+    process.env.LETTA_STREAM_TERMINAL_EOF_GRACE_MS = "1";
+
+    const controller = new AbortController();
+    const stream = {
+      controller,
+      async *[Symbol.asyncIterator]() {
+        yield {
+          message_type: "approval_request_message",
+          id: "message-approval-1",
+          tool_call: {
+            tool_call_id: "tc-bash",
+            name: "Bash",
+            arguments: "{}",
+          },
+        } as LettaStreamingResponse;
+        yield {
+          message_type: "stop_reason",
+          stop_reason: "requires_approval",
+        } as LettaStreamingResponse;
+        // Dead read: ignores the abort and never settles.
+        await new Promise<void>(() => {});
+      },
+    } as unknown as Stream<LettaStreamingResponse>;
+
+    const result = await drainStream(
+      stream,
+      createBuffers("agent-test"),
+      () => {},
+    );
+
+    expect(controller.signal.aborted).toBe(true);
+    expect(result.stopReason).toBe("requires_approval");
+    expect(result.approvals?.map((a) => a.toolCallId)).toEqual(["tc-bash"]);
+  }, 15_000);
 });
