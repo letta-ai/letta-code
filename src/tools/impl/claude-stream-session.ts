@@ -17,6 +17,7 @@ import {
   CLAUDE_TURN_START_TIMEOUT_MS,
 } from "./claude-steer-timeouts";
 import type {
+  ClaudeFollowupOptions,
   ClaudeMessageReceipt,
   ClaudeSession,
   ClaudeSessionDependencies,
@@ -881,12 +882,7 @@ async function queueSteerPrompt(
  * hasn't exited yet. Reserve the next process while its options are prepared.
  */
 async function deliverClaudeMessage(
-  options: {
-    sessionId: string;
-    prompt: string;
-    signal?: AbortSignal;
-    queuedReply?: () => boolean;
-  },
+  options: ClaudeFollowupOptions,
   deps: ClaudeSessionDependencies,
   launch?: () => Promise<ClaudeSession>,
 ): Promise<
@@ -962,13 +958,7 @@ function trackedReceipt(session: ClaudeSession): ClaudeMessageReceipt {
 }
 
 export async function sendClaudeMessage(
-  options: Omit<
-    ClaudeTurnOptions,
-    "resumeSessionId" | "sessionId" | "onStarted"
-  > & {
-    sessionId: string;
-    queuedReply?: () => boolean;
-  },
+  options: ClaudeFollowupOptions,
   deps: ClaudeSessionDependencies = {},
 ): Promise<ClaudeMessageReceipt> {
   options.signal?.throwIfAborted();

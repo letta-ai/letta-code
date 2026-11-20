@@ -97,6 +97,15 @@ export interface ClaudeTurnOptions
   beforeStart?: () => Promise<void>;
 }
 
+export interface ClaudeFollowupOptions
+  extends Omit<
+    ClaudeTurnOptions,
+    "resumeSessionId" | "sessionId" | "onStarted"
+  > {
+  sessionId: string;
+  queuedReply?: () => boolean;
+}
+
 export interface ClaudeMessageReceipt {
   mode: "steered" | "resumed";
   /** The steer's prompt is queued behind a turn that hasn't stopped yet. */
