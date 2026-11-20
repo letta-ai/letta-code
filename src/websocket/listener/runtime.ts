@@ -261,6 +261,31 @@ export function getConversationRuntimeKey(
   return `agent:${normalizedAgentId ?? "__unknown__"}::conversation:${normalizedConversationId}`;
 }
 
+const sidebandScopesByListener = new WeakMap<ListenerRuntime, Set<string>>();
+
+export function isSidebandOnlyScope(
+  listener: ListenerRuntime,
+  key: string,
+): boolean {
+  return sidebandScopesByListener.get(listener)?.has(key) ?? false;
+}
+
+export function markSidebandOnlyScope(
+  listener: ListenerRuntime,
+  key: string,
+): void {
+  let scopes = sidebandScopesByListener.get(listener);
+  if (!scopes) {
+    scopes = new Set();
+    sidebandScopesByListener.set(listener, scopes);
+  }
+  scopes.add(key);
+}
+
+export function markLocalTurnScope(runtime: ConversationRuntime): void {
+  sidebandScopesByListener.get(runtime.listener)?.delete(runtime.key);
+}
+
 export function createConversationRuntime(
   listener: ListenerRuntime,
   agentId?: string | null,

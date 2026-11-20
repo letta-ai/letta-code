@@ -27,6 +27,8 @@ import {
   evictConversationRuntimeIfIdle,
   getActiveRuntime,
   getConversationRuntime,
+  getConversationRuntimeKey,
+  isSidebandOnlyScope,
 } from "./runtime";
 import { clearSubagentSnapshotCache } from "./subagent-state-cache";
 import { isRuntimeTeleportPending } from "./teleport";
@@ -157,7 +159,12 @@ export function installProcessEventRouting(params: {
 
   setMessageQueueAdder((queuedMessage) => {
     if (!queuedMessage.agentId || !queuedMessage.conversationId) return;
+    const key = getConversationRuntimeKey(
+      queuedMessage.agentId,
+      queuedMessage.conversationId,
+    );
     if (
+      isSidebandOnlyScope(runtime, key) ||
       isRuntimeTeleportPending(
         runtime,
         queuedMessage.agentId,
@@ -216,7 +223,11 @@ function getMostRecentlyActiveConversation(
   let latest: ConversationRuntime | null = null;
   let latestAt = -1;
   for (const conversationRuntime of runtime.conversationRuntimes.values()) {
-    if (!conversationRuntime.agentId) continue;
+    if (
+      !conversationRuntime.agentId ||
+      isSidebandOnlyScope(runtime, conversationRuntime.key)
+    )
+      continue;
     const activeAt = conversationRuntime.isProcessing
       ? Number.POSITIVE_INFINITY
       : (conversationRuntime.contextTracker.contextTokensHistory.at(-1)

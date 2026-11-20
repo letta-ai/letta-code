@@ -10,6 +10,7 @@ import {
   startRecoveredApprovalContinuation,
 } from "./recovery";
 import { recoverApprovalStateForSync } from "./recovery-sync";
+import { isSidebandOnlyScope } from "./runtime";
 import { handleIncomingMessage } from "./turn";
 import type { ListenerRuntime, SyncReplayOptions } from "./types";
 import { scheduleListenerWarmupsAfterSync } from "./warmup";
@@ -37,7 +38,11 @@ export async function replaySyncStateForRuntime(
   );
   const recoverFn =
     opts?.recoverApprovalStateForSync ?? recoverApprovalStateForSync;
-  if (opts?.recoverApprovals ?? true) {
+  const canRecover = !isSidebandOnlyScope(
+    listenerRuntime,
+    syncScopedRuntime.key,
+  );
+  if (canRecover && (opts?.recoverApprovals ?? true)) {
     try {
       await recoverFn(syncScopedRuntime, scope, undefined, {
         resumeInterruptedTurn: opts?.resumeInterruptedTurn === true,
@@ -55,6 +60,7 @@ export async function replaySyncStateForRuntime(
   }
 
   if (
+    canRecover &&
     syncScopedRuntime.recoveredApprovalState &&
     (syncScopedRuntime.recoveredApprovalState.autoDecisions?.length ?? 0) > 0
   ) {
