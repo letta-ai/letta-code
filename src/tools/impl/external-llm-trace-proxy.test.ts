@@ -314,6 +314,8 @@ test.each(["claude_code", "codex"] as const)(
       ]) {
         const reply = await fetch(`${proxy.url}/${path}`, {
           method: "POST",
+          // Bun 1.3.14 can stall large loopback POSTs on reused sockets.
+          headers: { connection: "close" },
           body: JSON.stringify(payload),
         });
         await reply.text();

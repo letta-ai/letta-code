@@ -193,6 +193,8 @@ test("failed uploads warn once and later traces compact when their delta base is
               : "secret prompt text";
         const response = await fetch(`${trace?.url}/messages`, {
           method: "POST",
+          // Bun 1.3.14 can stall large loopback POSTs on reused sockets.
+          headers: { connection: "close" },
           body: JSON.stringify({ model: "test", messages }),
         });
         await response.text();
