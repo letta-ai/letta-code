@@ -17,6 +17,7 @@ import {
   CLAUDE_TURN_START_TIMEOUT_MS,
 } from "./claude-steer-timeouts";
 import type {
+  ClaudeFollowupOptions,
   ClaudeMessageReceipt,
   ClaudeSession,
   ClaudeSessionDependencies,
@@ -881,7 +882,7 @@ async function queueSteerPrompt(
  * hasn't exited yet. Reserve the next process while its options are prepared.
  */
 async function deliverClaudeMessage(
-  options: { sessionId: string; prompt: string; signal?: AbortSignal },
+  options: ClaudeFollowupOptions,
   deps: ClaudeSessionDependencies,
   launch?: () => Promise<ClaudeSession>,
 ): Promise<
@@ -913,10 +914,18 @@ async function deliverClaudeMessage(
         session: existing,
       };
     } catch (error) {
-      if (sessions.get(options.sessionId) === existing && !existing.settled)
+      if (
+        options.queuedReply?.() ||
+        (sessions.get(options.sessionId) === existing && !existing.settled)
+      )
         throw error;
       // Settled while acquiring the write lock; wait for its exit, then retry.
     }
+  }
+  if (options.queuedReply?.()) {
+    throw new Error(
+      "Claude Code session ended before the queued steer was delivered",
+    );
   }
   if (!launch) return undefined;
   const pending = launch().finally(() =>
@@ -949,12 +958,7 @@ function trackedReceipt(session: ClaudeSession): ClaudeMessageReceipt {
 }
 
 export async function sendClaudeMessage(
-  options: Omit<
-    ClaudeTurnOptions,
-    "resumeSessionId" | "sessionId" | "onStarted"
-  > & {
-    sessionId: string;
-  },
+  options: ClaudeFollowupOptions,
   deps: ClaudeSessionDependencies = {},
 ): Promise<ClaudeMessageReceipt> {
   options.signal?.throwIfAborted();

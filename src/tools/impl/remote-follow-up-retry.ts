@@ -1,5 +1,10 @@
+import type { SubagentResult } from "@/agent/subagents";
 import type { AppServerClient } from "@/app-server-client";
-import { REMOTE_SUBAGENT_MESSAGE_TIMEOUT_MS } from "./claude-steer-timeouts";
+import type { SubagentSnapshot } from "@/types/protocol_v2";
+import {
+  REMOTE_SUBAGENT_MESSAGE_DEDUPE_PENDING_TTL_MS,
+  REMOTE_SUBAGENT_MESSAGE_TIMEOUT_MS,
+} from "./claude-steer-timeouts";
 
 /** No answer to a follow-up in time; the listener may still deliver it. */
 export class RemoteFollowUpTimeoutError extends Error {}
@@ -46,5 +51,44 @@ export async function sendRemoteFollowUpWithReconnect(
         `${computer} didn't confirm the follow-up within ${Math.round(REMOTE_SUBAGENT_MESSAGE_TIMEOUT_MS / 1000)}s. The message may not have been delivered; check the worker's output, or send it again.`,
       );
     throw error;
+  }
+}
+
+export async function followRemoteFollowUp(
+  follower: {
+    waitForTerminal(
+      signal: AbortSignal | undefined,
+      onProgress: (snapshot: SubagentSnapshot) => void,
+    ): Promise<SubagentSnapshot>;
+  },
+  agentId: string,
+  resuming: boolean,
+): Promise<SubagentResult> {
+  const startup = new AbortController();
+  const timer = resuming
+    ? setTimeout(
+        () =>
+          startup.abort(new Error("Remote follow-up did not start in time")),
+        REMOTE_SUBAGENT_MESSAGE_DEDUPE_PENDING_TTL_MS,
+      )
+    : undefined;
+  timer?.unref();
+  try {
+    const final = await follower.waitForTerminal(startup.signal, () =>
+      clearTimeout(timer),
+    );
+    return {
+      agentId,
+      model: final.model,
+      report: final.result ?? "",
+      success: final.status === "completed",
+      ...(final.status === "error"
+        ? { error: final.error ?? "Remote follow-up failed" }
+        : {}),
+      totalTokens: final.total_tokens,
+      durationMs: final.duration_ms,
+    };
+  } finally {
+    clearTimeout(timer);
   }
 }

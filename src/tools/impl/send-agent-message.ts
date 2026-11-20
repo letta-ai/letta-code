@@ -242,7 +242,11 @@ export async function send_agent_message(
                 : receipt.delivery === "steered"
                   ? "remote/steer"
                   : "remote/resume",
-            ...(receipt.delivery === "queued" ? { note: QUEUED_NOTE } : {}),
+            ...(receipt.delivery === "queued"
+              ? {
+                  note: "The worker accepted your message for delivery. It may still be resuming or busy; don't resend it.",
+                }
+              : {}),
             ...(receipt.taskId ? { task_id: receipt.taskId } : {}),
             ...(receipt.outputFile ? { output_file: receipt.outputFile } : {}),
           }),
