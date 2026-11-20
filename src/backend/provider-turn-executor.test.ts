@@ -7,7 +7,9 @@ import { ANTHROPIC_MODELS } from "@earendil-works/pi-ai/providers/anthropic.mode
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { HeadlessTurnExecutorInput } from "@/backend/dev/headless-turn-executor";
 import {
+  buildProviderTurnInput,
   contextCompactionThreshold,
+  estimateProviderContextTokens,
   type ProviderStreamAdapter,
   ProviderTurnExecutor,
   providerLocalMessage,
@@ -72,6 +74,64 @@ function assistantMessage(usage = emptyLocalUsage()): LocalAssistantMessage {
 }
 
 describe("ProviderTurnExecutor", () => {
+  test("counts a pending memory update toward context pressure after provider usage", () => {
+    const base = buildProviderTurnInput({
+      ...input(),
+      uiMessages: [
+        assistantMessage({
+          ...emptyLocalUsage(),
+          input: 72_000,
+          totalTokens: 72_000,
+        }),
+        {
+          id: "tool-result",
+          role: "toolResult",
+          toolCallId: "c1",
+          toolName: "Bash",
+          content: [{ type: "text", text: "[main abc123] commit memory" }],
+          isError: false,
+          timestamp: Date.now(),
+        },
+      ],
+    });
+    const withoutUpdate = estimateProviderContextTokens(base);
+    const withUpdate = estimateProviderContextTokens({
+      ...base,
+      midConversationSystemPrompt: `<memory_update>\n${"x".repeat(118_000)}\n</memory_update>`,
+    });
+
+    expect(withoutUpdate).toBe(72_007);
+    expect(
+      shouldCompactForContextPressure({
+        contextTokens: withoutUpdate,
+        contextWindow: 100_000,
+      }),
+    ).toBe(false);
+    expect(withUpdate).toBeGreaterThan(100_000);
+    expect(
+      shouldCompactForContextPressure({
+        contextTokens: withUpdate,
+        contextWindow: 100_000,
+      }),
+    ).toBe(true);
+  });
+
+  test.each([
+    [undefined, 6],
+    ["", 6],
+    ["updated memory", 10],
+  ])("estimates without usage with pending prompt %p", (pending, expected) => {
+    const turn = buildProviderTurnInput({
+      ...input(),
+      systemPrompt: "base prompt",
+      uiMessages: [
+        { id: "hello", role: "user", content: "hello", timestamp: 1 },
+      ],
+      midConversationSystemPrompt: pending,
+    });
+    expect(estimateProviderContextTokens(turn)).toBe(expected);
+  });
+
   test.each([
     ["ollama", 0],
     ["lmstudio", 0],
