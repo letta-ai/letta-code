@@ -22,6 +22,7 @@ import {
   getRuntimeActingUserAttribution,
   getRuntimeContext,
 } from "@/runtime-context";
+import { reportExternalWorkerTurnFailure } from "@/telemetry/sandbox-failure-reporting";
 import {
   captureSecretRedactions,
   scrubSecretsDeep,
@@ -663,6 +664,15 @@ export async function runExternalCodingAgent(
     // The worker had the vault in its environment; keep exported values out
     // of the report that returns to the parent's context.
     const result = scrubExternalWorkerResult(rawResult, secretEnv);
+    if (!result.success && !options.signal?.aborted) {
+      reportExternalWorkerTurnFailure({
+        harness: options.type,
+        error: result.error ?? "",
+        agentId: options.parentAgentId,
+        conversationId: options.parentConversationId,
+        taskId: options.taskId,
+      });
+    }
     const sessionId = result.runtimeSessionId ?? captureSessionId;
     if (scope && sessionId) {
       try {
