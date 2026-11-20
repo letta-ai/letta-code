@@ -64,62 +64,66 @@ test.each([false, true])(
   },
 );
 
-test("resumes an external coding-agent session without the Cloud backend", async () => {
-  const f = fixture();
-  f.backend.capabilities.environmentRouting = false;
-  const launches: unknown[] = [];
-  const result = await runWithRuntimeContext(caller, () =>
-    send_agent_message(
-      {
-        agent_id: CLAUDE_AGENT_ID,
-        message: "Now fix the test.",
-      },
-      {
-        ...f,
-        sendClaudeMessage: async () => ({
-          mode: "resumed",
-          sessionId: CLAUDE_SESSION_ID,
-          completion: Promise.resolve({
-            agentId: CLAUDE_AGENT_ID,
-            report: "done",
-            success: true,
-          }),
-          interrupt: async () => undefined,
-        }),
-        trackExternalFollowup: (input) => {
-          launches.push(input);
-          return {
-            taskId: "task-followup",
-            outputFile: "/tmp/task-followup.log",
-            subagentId: "subagent-followup",
-          };
+// agent_id is the fallback for one release; conversation_id is the address.
+test.each(["conversation_id", "agent_id"])(
+  "resumes an external coding-agent session by %s without the Cloud backend",
+  async (key) => {
+    const f = fixture();
+    f.backend.capabilities.environmentRouting = false;
+    const launches: unknown[] = [];
+    const result = await runWithRuntimeContext(caller, () =>
+      send_agent_message(
+        {
+          [key]: CLAUDE_AGENT_ID,
+          message: "Now fix the test.",
         },
+        {
+          ...f,
+          sendClaudeMessage: async () => ({
+            mode: "resumed",
+            sessionId: CLAUDE_SESSION_ID,
+            completion: Promise.resolve({
+              agentId: CLAUDE_AGENT_ID,
+              report: "done",
+              success: true,
+            }),
+            interrupt: async () => undefined,
+          }),
+          trackExternalFollowup: (input) => {
+            launches.push(input);
+            return {
+              taskId: "task-followup",
+              outputFile: "/tmp/task-followup.log",
+              subagentId: "subagent-followup",
+            };
+          },
+        },
+      ),
+    );
+    expect(result.status).toBe("success");
+    expect(JSON.parse(result.content)).toEqual({
+      status: "accepted",
+      conversation_id: CLAUDE_AGENT_ID,
+      delivery: "resume/start",
+      task_id: "task-followup",
+      output_file: "/tmp/task-followup.log",
+    });
+    expect(launches).toHaveLength(1);
+    expect(launches[0]).toMatchObject({
+      type: "claude-code",
+      agentId: CLAUDE_AGENT_ID,
+      message: "Now fix the test.",
+      parentScope: {
+        agentId: "agent-caller",
+        conversationId: "conv-caller",
+        actingUserId: "user-caller",
       },
-    ),
-  );
-  expect(result.status).toBe("success");
-  expect(JSON.parse(result.content)).toEqual({
-    status: "accepted",
-    agent_id: CLAUDE_AGENT_ID,
-    delivery: "resume/start",
-    task_id: "task-followup",
-    output_file: "/tmp/task-followup.log",
-  });
-  expect(launches).toHaveLength(1);
-  expect(launches[0]).toMatchObject({
-    type: "claude-code",
-    agentId: CLAUDE_AGENT_ID,
-    message: "Now fix the test.",
-    parentScope: {
-      agentId: "agent-caller",
-      conversationId: "conv-caller",
-      actingUserId: "user-caller",
-    },
-    completion: expect.any(Promise),
-    interrupt: expect.any(Function),
-  });
-  expect(f.submissions).toHaveLength(0);
-});
+      completion: expect.any(Promise),
+      interrupt: expect.any(Function),
+    });
+    expect(f.submissions).toHaveLength(0);
+  },
+);
 
 test("routes a computer-qualified external ID remotely", async () => {
   const f = fixture();
@@ -127,7 +131,7 @@ test("routes a computer-qualified external ID remotely", async () => {
   let received: unknown;
   const result = await runWithRuntimeContext(caller, () =>
     send_agent_message(
-      { agent_id: qualified, message: "Change course" },
+      { conversation_id: qualified, message: "Change course" },
       {
         ...f,
         sendRemoteExternalMessage: async (input) => {
@@ -142,7 +146,7 @@ test("routes a computer-qualified external ID remotely", async () => {
     message: "Change course",
   });
   expect(JSON.parse(result.content)).toMatchObject({
-    agent_id: qualified,
+    conversation_id: qualified,
     delivery: "remote/steer",
   });
 });
@@ -163,7 +167,7 @@ test("tells the agent a remote steer is queued so it doesn't resend", async () =
 test("rejects an explicit computer with a qualified external ID", async () => {
   const result = await runWithRuntimeContext(caller, () =>
     send_agent_message({
-      agent_id: `${CLAUDE_AGENT_ID}@device-1`,
+      conversation_id: `${CLAUDE_AGENT_ID}@device-1`,
       computer: "device-2",
       message: "Continue",
     }),
@@ -177,7 +181,7 @@ test("aborts an external turn when background tracking cannot be created", async
   let interrupts = 0;
   const result = await runWithRuntimeContext(caller, () =>
     send_agent_message(
-      { agent_id: CLAUDE_AGENT_ID, message: "Continue" },
+      { conversation_id: CLAUDE_AGENT_ID, message: "Continue" },
       {
         ...f,
         sendClaudeMessage: async () => ({
@@ -205,7 +209,7 @@ test("steers an active Codex app-server turn without exec resume", async () => {
   const launches: unknown[] = [];
   const result = await runWithRuntimeContext(caller, () =>
     send_agent_message(
-      { agent_id: CODEX_AGENT_ID, message: "Change direction" },
+      { conversation_id: CODEX_AGENT_ID, message: "Change direction" },
       {
         ...f,
         sendCodexMessage: async (input) => {
@@ -245,7 +249,7 @@ test("tracks an idle Codex new turn through background lifecycle", async () => {
     { ...caller, suppressActingUserFallback: true },
     () =>
       send_agent_message(
-        { agent_id: CODEX_AGENT_ID, message: "Continue" },
+        { conversation_id: CODEX_AGENT_ID, message: "Continue" },
         {
           ...f,
           sendCodexMessage: async () => ({
@@ -322,7 +326,7 @@ describe("resumed Claude Code and Codex workers get the launch environment", () 
       { ...caller, executionSettings: rootSettings },
       () =>
         send_agent_message(
-          { agent_id: CLAUDE_AGENT_ID, message: "Now push it." },
+          { conversation_id: CLAUDE_AGENT_ID, message: "Now push it." },
           {
             ...f,
             workerEnv,
@@ -366,7 +370,7 @@ describe("resumed Claude Code and Codex workers get the launch environment", () 
       { ...caller, executionSettings: rootSettings },
       () =>
         send_agent_message(
-          { agent_id: CODEX_AGENT_ID, message: "Now push it." },
+          { conversation_id: CODEX_AGENT_ID, message: "Now push it." },
           {
             ...f,
             workerEnv,
@@ -633,7 +637,13 @@ test("agent-only sends create a hidden conversation; default requires its agent"
   const send = (args: Parameters<typeof send_agent_message>[0]) =>
     runWithRuntimeContext(caller, () => send_agent_message(args, f));
   expect(
-    (await send({ agent_id: "agent-target", message: "hello" })).status,
+    (
+      await send({
+        agent_id: "agent-target",
+        conversation_id: null,
+        message: "hello",
+      })
+    ).status,
   ).toBe("success");
   expect(f.created).toEqual([{ agent_id: "agent-target", hidden: true }]);
   expect(f.submissions[0]?.conversationId).toBe("conv-new");
@@ -662,8 +672,19 @@ test.each([
   async (args) => {
     const f = fixture();
     expect(
-      (await runWithRuntimeContext(caller, () => send_agent_message(args, f)))
-        .status,
+      (
+        await runWithRuntimeContext(
+          {
+            ...caller,
+            executionSettings: {
+              allowed_tools: [],
+              disallowed_tools: [],
+              disable_memory_guard: false,
+            },
+          },
+          () => send_agent_message(args, f),
+        )
+      ).status,
     ).toBe("error");
     expect(f.submissions).toHaveLength(0);
     expect(f.created).toHaveLength(0);
@@ -879,7 +900,11 @@ test("a subagent that omits the destination messages the conversation that launc
   };
   const result = await runWithRuntimeContext(
     { ...caller, executionSettings: settings },
-    () => send_agent_message({ message: "Blocked on the schema choice." }, f),
+    () =>
+      send_agent_message(
+        { message: "Blocked on the schema choice.", conversation_id: null },
+        f,
+      ),
   );
   expect(result.status).toBe("success");
   expect(f.submissions[0]).toMatchObject({
@@ -895,7 +920,11 @@ test("a subagent that omits the destination messages the conversation that launc
   };
   const root = await runWithRuntimeContext(
     { ...caller, executionSettings: rootSettings },
-    () => send_agent_message({ message: "hello" }, fixture()),
+    () =>
+      send_agent_message(
+        { message: "hello", conversation_id: null },
+        fixture(),
+      ),
   );
   expect(root.status).toBe("error");
   expect(root.content).toContain("Choose a destination");

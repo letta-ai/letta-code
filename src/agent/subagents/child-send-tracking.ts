@@ -1,6 +1,7 @@
 import {
   completeSubagent,
   generateSubagentId,
+  getSubagentHistory,
   registerSubagent,
   updateSubagent,
 } from "@/agent/subagent-state";
@@ -17,6 +18,7 @@ import {
   waitForAcceptedSuperRun,
 } from "@/headless-super-run-wait";
 import { getErrorMessage } from "@/utils/error";
+import { subagentScopeMatches } from "@/utils/subagent-scope";
 import { createRemoteIdleNotifier } from "./remote-turn-wait";
 
 export interface ChildSubagentIdentity {
@@ -33,6 +35,30 @@ function readTag(tags: unknown, prefix: string): string | undefined {
     }
   }
   return undefined;
+}
+
+/**
+ * A child this conversation launched with Agent, found by its conversation.
+ * Ephemeral children have no agent to tag-check, so this is how a send to one
+ * is recognized.
+ */
+export function findLaunchedChild(
+  conversationId: string | undefined,
+  parentScope: { agentId: string; conversationId: string },
+): ChildSubagentIdentity | null {
+  if (!conversationId || conversationId === "default") return null;
+  const match = getSubagentHistory().find(
+    ({ agent }) =>
+      agent.conversationId === conversationId &&
+      subagentScopeMatches(
+        agent.parentAgentId,
+        agent.parentConversationId,
+        parentScope,
+      ),
+  );
+  return match
+    ? { name: match.agent.description, type: match.agent.type }
+    : null;
 }
 
 /**
@@ -118,9 +144,13 @@ export function trackChildSend(input: TrackChildSendInput): string {
     agentId: receipt.agent_id ?? undefined,
     conversationId: receipt.conversation_id,
     superRunId: receipt.super_run_id,
-    agentURL: buildAgentReference(getEnqueueAgentId(receipt), {
-      conversationId: receipt.conversation_id,
-    }),
+    // An agentless conversation may report neither agent nor parent agent.
+    agentURL:
+      receipt.agent_id || receipt.parent_agent_id
+        ? buildAgentReference(getEnqueueAgentId(receipt), {
+            conversationId: receipt.conversation_id,
+          })
+        : null,
   });
 
   const onIdle = createRemoteIdleNotifier(subagentId, parentScope);

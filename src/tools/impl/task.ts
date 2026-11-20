@@ -81,6 +81,7 @@ import {
   buildTaskResultHeader,
   closeTaskProgressLog,
   externalWorkerProgressListeners,
+  formatReceiptIds,
   openTaskProgressLog,
   serveTaskEvents,
   taskEventsFileFor,
@@ -331,6 +332,10 @@ export function spawnBackgroundSubagentTask(
     actingUserId,
   };
   backgroundTasks.set(taskId, bgTask);
+  updateSubagent(subagentId, {
+    taskId,
+    ...(environment?.trim() ? { computer: environment.trim() } : {}),
+  });
   // Register the abort trigger for interruptActiveSubagents (fire-and-forget).
   registerSubagentAbortHook(
     subagentId,
@@ -955,8 +960,6 @@ export async function launchSubagent(
   } finally {
     signal?.removeEventListener("abort", abortStartup);
   }
-
-  // Extract Letta agent ID from subagent state (available after link resolves)
   const linkedAgent = getSubagentSnapshot().agents.find(
     (a) => a.id === subagentId,
   );
@@ -992,9 +995,6 @@ export async function task(
   const result = await launchSubagent(applySubagentPreset(args));
   if (!result.success)
     return { content: `Error: ${result.error}`, status: "error" };
-  const agentIdLine = result.agent_id ? `\nAgent ID: ${result.agent_id}` : "";
-  const conversationIdLine = result.conversation_id
-    ? `\nConversation ID: ${result.conversation_id}`
-    : "";
-  return `Task running in background with task ID: ${result.task_id}${agentIdLine}${conversationIdLine}\nOutput file: ${result.output_file}\nEvent log: ${taskEventsFileFor(result.output_file)}\n\nYou will be notified automatically when this task completes — a <task-notification> message will be delivered with the result. No need to poll or sleep-wait; continue with your current work. To see what it is doing meanwhile, Read the output file: one line per tool call, tool result, and message, live. For exact details (full tool arguments and outputs, such as a command's error), read the event log.${subagentResultReminder()}`;
+  const ids = formatReceiptIds(result.agent_id, result.conversation_id);
+  return `Task running in background with task ID: ${result.task_id}${ids}\nOutput file: ${result.output_file}\nEvent log: ${taskEventsFileFor(result.output_file)}\n\nYou will be notified automatically when this task completes — a <task-notification> message will be delivered with the result. No need to poll or sleep-wait; continue with your current work. To see what it is doing meanwhile, Read the output file: one line per tool call, tool result, and message, live. For exact details (full tool arguments and outputs, such as a command's error), read the event log.${subagentResultReminder()}`;
 }

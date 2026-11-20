@@ -79,6 +79,7 @@ mock.module("@/agent/subagents/manager", () => ({ spawnSubagent: spawn }));
 // External workers: keep the real module, replace only the process launch and
 // the remote hand-off so the prompt each would receive can be observed.
 const workerPrompts: string[] = [];
+const CLAUDE_WORKER_ID = "claude_11111111-1111-4111-8111-111111111111";
 const workerReminders: Array<string | undefined> = [];
 let inventoryError: Error | undefined;
 const realReminders = await import("@/reminders/engine");
@@ -89,17 +90,27 @@ mock.module("@/reminders/engine", () => ({
     return { entries: [], serverSideAvailable: true };
   },
 }));
+
 const realExternal = await import("./external-coding-agent");
 mock.module("./external-coding-agent", () => ({
   ...realExternal,
   runExternalCodingAgent: async (options: {
+    type: string;
     prompt: string;
     mcpReminder?: string;
     onStarted?: (agentId: string) => void;
   }) => {
     workerPrompts.push(options.prompt);
     workerReminders.push(options.mcpReminder);
-    options.onStarted?.("codex_00000000-0000-0000-0000-000000000000");
+    // A real worker reports its ID after it starts, never synchronously.
+    queueMicrotask(() =>
+      options.onStarted?.(
+        options.type === "claude-code"
+          ? CLAUDE_WORKER_ID
+          : "codex_00000000-0000-0000-0000-000000000000",
+      ),
+    );
+
     return new Promise<SubagentResult>(() => {});
   },
 }));
@@ -222,6 +233,22 @@ describe("fork_context for external coding workers", () => {
     expect(prompt).toContain(
       "Task:\nDo the work\n\nWhen you open a pull request",
     );
+  });
+
+  test("a Claude Code worker's receipt gives its worker ID as the Conversation ID", async () => {
+    const receipt = await runWithRuntimeContext(
+      { workingDirectory: scratchpad },
+      () =>
+        task({
+          ...brief,
+          harness: "claude-code",
+          fork_context: false,
+          mcp: { inherit: false },
+        }),
+    );
+
+    expect(receipt).toContain(`\nConversation ID: ${CLAUDE_WORKER_ID}\n`);
+    expect(receipt).not.toContain("Agent ID");
   });
 
   test("an unforked codex worker gets the prompt and the report-back line", async () => {

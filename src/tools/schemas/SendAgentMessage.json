@@ -8,18 +8,18 @@
     },
     "agent_id": {
       "type": "string",
-      "description": "The agent to start a new conversation with. An agent shares its identity and memory across conversations. Omit when targeting an existing conv-... thread; required with conversation_id: default. Claude Code and Codex sessions returned by Agent use claude_... and codex_... IDs; sending to one resumes that native session."
+      "description": "The Letta agent ID. Only needed to start a new conversation with that agent (conversation_id: null) or to reach its default conversation (conversation_id: \"default\")."
     },
     "conversation_id": {
-      "type": "string",
-      "description": "The existing message thread to send to. Each conversation has its own message history. A conv-... ID is sufficient; to use an agent's default thread, also supply agent_id. A subagent that omits both conversation_id and agent_id messages its parent."
+      "type": ["string", "null"],
+      "description": "The conversation to send to, such as the Conversation ID returned by Agent (Letta agents and external coding agents). Use null to start a new conversation with agent_id or, as a subagent, to message your parent."
     },
     "computer": {
       "type": ["string", "null"],
       "description": "Optional computer where the recipient should run: cloud, an online computer name, or its stable device ID. Omitted, null, and blank values use its active computer or saved destination (a computer or Cloud sandbox). An offline saved computer does not trigger a Cloud-sandbox fallback."
     }
   },
-  "required": ["message"],
+  "required": ["message", "conversation_id"],
   "additionalProperties": false,
   "$schema": "http://json-schema.org/draft-07/schema#"
 }
