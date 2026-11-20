@@ -321,6 +321,7 @@ test("refreshing an existing checkout does not block shell access", async () => 
 
 test("a pending first clone blocks writes into its path but not unrelated commands", async () => {
   const root = await mkdtemp(join(tmpdir(), "checkout-first-"));
+  const memory = join(root, "memory");
   const repository = join(root, "shared");
   let release!: () => void;
   const clone = startCheckout(
@@ -344,6 +345,8 @@ test("a pending first clone blocks writes into its path but not unrelated comman
       "Bash",
       { command: "echo hi > $MEMORY_DIR/../shared/notes.md" },
       tmpdir(),
+      false,
+      memory,
     ),
     waitForToolCheckouts(
       root,
@@ -378,4 +381,72 @@ test("a pending first clone blocks writes into its path but not unrelated comman
     await rm(root, { recursive: true, force: true });
   }
   expect(completed).toBe(4);
+});
+
+test("memory commands wait only for the checkouts they reference", async () => {
+  const root = await mkdtemp(join(tmpdir(), "checkout-memory-only-"));
+  const agent = crypto.randomUUID();
+  const memory = join(root, "memory");
+  const repository = join(root, "shared");
+  let releaseMemory!: () => void;
+  const memoryClone = startCheckout(
+    agent,
+    memory,
+    () =>
+      new Promise<void>((resolve) => {
+        releaseMemory = resolve;
+      }),
+  );
+  let releaseRepository!: () => void;
+  const repositoryClone = startCheckout(
+    agent,
+    repository,
+    () =>
+      new Promise<void>((resolve) => {
+        releaseRepository = resolve;
+      }),
+  );
+  try {
+    let memoryCompleted = false;
+    const memoryAccess = waitForToolCheckouts(
+      agent,
+      "Bash",
+      { command: "cat $MEMORY_DIR/MEMORY.md" },
+      tmpdir(),
+      false,
+      memory,
+    ).then(() => {
+      memoryCompleted = true;
+    });
+    await nextTick();
+    expect(memoryCompleted).toBe(false);
+
+    releaseMemory();
+    await Promise.all([memoryClone, memoryAccess]);
+    expect(memoryCompleted).toBe(true);
+    expect(isCheckoutPending(repository)).toBe(true);
+
+    let repositoryCompleted = false;
+    const repositoryAccess = waitForToolCheckouts(
+      agent,
+      "Bash",
+      { command: `cat ${repository}/README.md` },
+      tmpdir(),
+      false,
+      memory,
+    ).then(() => {
+      repositoryCompleted = true;
+    });
+    await nextTick();
+    expect(repositoryCompleted).toBe(false);
+    releaseRepository();
+    await Promise.all([repositoryClone, repositoryAccess]);
+    expect(repositoryCompleted).toBe(true);
+  } finally {
+    releaseMemory();
+    releaseRepository();
+    await Promise.all([memoryClone, repositoryClone]);
+    retainCheckouts(agent, []);
+    await rm(root, { recursive: true, force: true });
+  }
 });
