@@ -99,6 +99,7 @@ interface TaskArgs extends Partial<SubagentLaunchArgs> {
   /** The launching App Server client owns the completion notification. */
   notifyCaller?: boolean;
 }
+const BACKGROUND_SUBAGENT_STARTUP_TIMEOUT_MS = 60_000;
 
 export {
   waitForBackgroundSubagentAgentId,
@@ -635,6 +636,7 @@ export function spawnBackgroundSubagentTask(
 export async function launchSubagent(
   args: TaskArgs,
   cloudSkillRepositories?: string[],
+  timeoutMs = BACKGROUND_SUBAGENT_STARTUP_TIMEOUT_MS,
 ): Promise<SubagentLaunchResult> {
   // `custom` + identity is the App Server's prepared-conversation protocol,
   // not a named preset. The Agent adapter strips overrides before reaching here.
@@ -849,7 +851,7 @@ export async function launchSubagent(
       if (signal?.aborted) abortStartup();
       agentId = await waitForBackgroundSubagentAgentId(
         subagentId,
-        null,
+        timeoutMs,
         signal,
       );
       signal?.throwIfAborted();
@@ -950,13 +952,11 @@ export async function launchSubagent(
   signal?.addEventListener("abort", abortStartup, { once: true });
   try {
     if (signal?.aborted) abortStartup();
-    await waitForBackgroundSubagentLink(subagentId, null, signal);
+    await waitForBackgroundSubagentLink(subagentId, timeoutMs, signal);
     signal?.throwIfAborted();
   } finally {
     signal?.removeEventListener("abort", abortStartup);
   }
-
-  // Extract Letta agent ID from subagent state (available after link resolves)
   const linkedAgent = getSubagentSnapshot().agents.find(
     (a) => a.id === subagentId,
   );
