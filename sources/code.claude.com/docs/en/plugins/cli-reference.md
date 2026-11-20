@@ -27,7 +27,7 @@ Run `claude plugin <subcommand>` from your shell or a script, outside a Claude C
 Every subcommand shares these exit codes, plugin arguments, and scope values:
 
 * **Exit codes**: `0` on success and `1` on failure. `validate` adds exit `2` for an unexpected error, and `eval` adds the codes listed in [its section](#plugin-eval).
-* **Plugin arguments**: a `<plugin>` argument is a plugin `name` or `name@marketplace`. When two marketplaces offer the same name, use the qualified form. `configure` takes only the qualified form.
+* **Plugin arguments**: a `<plugin>` argument is a plugin `name` or `name@marketplace`. When two marketplaces offer the same name, use the qualified form. `configure` and `restore-set-aside` take only the qualified form.
 * **Scopes**: `--scope` takes `user`, `project`, or `local`, and names the settings file the command writes to. `update` also takes `managed`.
 
 In a terminal, success lines leave out `Successfully`, as in `Installed plugin:`. When stdout or stderr isn't a terminal, `Successfully` stays.
@@ -419,6 +419,22 @@ Pass the plugin's full `name@marketplace` id, as `claude plugin list` shows it. 
 
 For the settings of a bundled MCP server, see [`plugin install --config`](#plugin-install) or the **Configure** item in `/plugin`.
 
+### plugin restore-set-aside
+
+Restore or delete the [options and secrets](https://code.claude.com/docs/en/plugins/manifest-reference.md#user-configuration) that Claude Code set aside when your organization replaced a plugin marketplace with one of the same name. Requires Claude Code v2.1.321 or later.
+
+Restore them to let any plugin installed under that `name@marketplace` id read them, including one from the replacement marketplace. Otherwise, leave them set aside, or pass `--discard` to delete them. If the id already holds a value for an option, restoring can keep that value and drop the set-aside one.
+
+```bash theme={null}
+claude plugin restore-set-aside <plugin>@<marketplace> [options]
+```
+
+| Flag | Description |
+| :- | :- |
+| `--discard` | Delete the set-aside options and secrets instead of restoring them |
+
+Pass the plugin's full `name@marketplace` id, copied from the note that `claude plugin list` prints without `--json`. If `restore-set-aside` prints `No options or secrets are set aside for <plugin>.`, check that you passed the full id, because a bare `name` matches nothing.
+
 ### plugin prune
 
 Remove auto-installed [dependencies](https://code.claude.com/docs/en/plugins/dependencies.md) that no installed plugin needs anymore. The command never removes a plugin you installed yourself. `autoremove` is an alias for `prune`.
@@ -633,7 +649,7 @@ A few files are not read by a validation run:
 
 * **A `SKILL.md` at the plugin root**: when you run `claude plugin validate` against a plugin directory, Claude Code doesn't check a `SKILL.md` at the plugin root
 * **A `CLAUDE.md` at the plugin root**: in a plugin run, Claude Code also warns about a `CLAUDE.md` at the plugin root
-* **Plugin files in a marketplace run**: from a marketplace directory, Claude Code doesn't open the skill, agent, command, or hook files of plugins the marketplace lists in other directories, or the MCP server files they bundle. To find errors in those files, validate each plugin directory
+* **Plugin files in a marketplace run**: from a marketplace directory, Claude Code doesn't open the skill, agent, or command files of plugins the marketplace lists in other directories, or the MCP server files they bundle. To find errors in those files, validate each plugin directory
 
 #### Validate a manifest file
 
@@ -852,7 +868,7 @@ For which surfaces have `/plugin`, how to install without it, and what each pane
 
 A `<plugin>` is a plugin `name` or `name@marketplace`.
 
-The table below lists the session forms. The shell subcommands `init`, `update`, `details`, `prune`, `eval`, `eval init`, and `test` have no session form.
+The table below lists the session forms. The shell subcommands `init`, `update`, `details`, `restore-set-aside`, `prune`, `eval`, `eval init`, and `test` have no session form.
 
 | Command | Aliases | What it does |
 | :- | :- | :- |

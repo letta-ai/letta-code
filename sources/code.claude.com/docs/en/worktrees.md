@@ -101,7 +101,7 @@ When Claude enters or exits a worktree that Claude Code created with git, the tr
 
 While a session is isolated in a worktree, Claude Code blocks the tool calls the checks below define. The same rules apply whether you started the session with `--worktree`, Claude entered a worktree with `EnterWorktree`, or you resumed a worktree session.
 
-The same enforcement covers every subagent Claude spawns from the isolated session. It applies whether the session is interactive or runs in the [background](https://code.claude.com/docs/en/agent-view.md#how-file-edits-are-isolated). [Subagents that run in their own worktree](#isolate-subagents-with-worktrees) carry the same checks. Their version history is under [Write subagent files](https://code.claude.com/docs/en/sub-agents.md#write-subagent-files).
+The same enforcement covers every subagent Claude spawns from the isolated session. It applies whether the session is interactive or runs in the [background](https://code.claude.com/docs/en/agent-view.md#how-file-edits-are-isolated). [Subagents that run in their own worktree](#isolate-subagents-with-worktrees) carry the same checks.
 
 Claude Code applies four checks:
 
