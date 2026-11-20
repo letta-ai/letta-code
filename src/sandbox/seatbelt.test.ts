@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
+import { text } from "node:stream/consumers";
 import { detectSandboxBackend } from "@/sandbox/availability";
 
 import { buildFsSandboxPolicy } from "@/sandbox/policy";
@@ -192,23 +194,39 @@ test("args carry the profile and -D defines for the inner launcher", () => {
 test.skipIf(
   process.platform !== "darwin" ||
     detectSandboxBackend().backend !== "seatbelt",
-)("Seatbelt permits signaling a child but denies signaling the parent", () => {
-  const [bin, ...args] =
-    wrapLauncher(
-      [
-        "/bin/sh",
-        "-ec",
-        'sleep 10 & child=$!; trap \'kill "$child" 2>/dev/null || true\' EXIT; kill -CONT "$child"; if kill -CONT "$1" 2>/dev/null; then exit 23; fi',
-        "wrapped",
-        String(process.pid),
-      ],
-      buildFsSandboxPolicy({}),
-      { backend: "seatbelt", isolateProcesses: true },
-    ) ?? [];
-  const result = spawnSync(bin ?? "", args, {
-    encoding: "utf8",
-    timeout: 5000,
-  });
-  expect(result.stderr).toBe("");
-  expect(result.status).toBe(0);
-});
+)(
+  "Seatbelt shells can probe a process started by an earlier call",
+  async () => {
+    const wrap = (command: string, ...args: string[]) =>
+      wrapLauncher(
+        ["/bin/sh", "-c", command, "wrapped", ...args],
+        buildFsSandboxPolicy({}),
+        { backend: "seatbelt" },
+      ) ?? [];
+    const [firstBin, ...firstArgs] = wrap(
+      'printf "%s" "$$"; exec 1>&-; read -r line || :',
+    );
+    const first = spawn(firstBin ?? "", firstArgs, {
+      stdio: ["pipe", "pipe", "inherit"],
+    });
+    const exited = once(first, "exit");
+    try {
+      const pid = await text(first.stdout);
+      expect(pid).toMatch(/^[1-9][0-9]+$/);
+      // Each call starts a separate sandbox-exec instance. A same-sandbox
+      // signal rule rejects even signal 0 for a process started by another call.
+      const [secondBin, ...secondArgs] = wrap(
+        'kill -0 "$1"',
+        String(first.pid),
+      );
+      const result = spawnSync(secondBin ?? "", secondArgs, {
+        encoding: "utf8",
+        timeout: 3000,
+      });
+      expect(result.status, result.stderr).toBe(0);
+    } finally {
+      first.stdin.end();
+      await exited;
+    }
+  },
+);
