@@ -136,7 +136,7 @@ test("flush batches retain native session/task IDs and acting-user attribution",
   }
 });
 
-test("a 503 upload logs a single metadata-only warning per interval", async () => {
+test("failed uploads warn once and later traces compact when their delta base is missing", async () => {
   const previous = process.env.LETTA_CODE_TELEM;
   process.env.LETTA_CODE_TELEM = "1";
   const upstream = createServer(async (req, res) => {
@@ -153,6 +153,9 @@ test("a 503 upload logs a single metadata-only warning per interval", async () =
     throw new Error("Missing address");
   const warnings: string[] = [];
   let uploads = 0;
+  let capturedFallback: ExternalTraceRow | undefined;
+  const base = { role: "user", content: "a".repeat(1900000) };
+  const appended = { role: "assistant", content: "b".repeat(300000) };
   const trace = await createTraceSession(
     "claude_code",
     context,
@@ -164,8 +167,11 @@ test("a 503 upload logs a single metadata-only warning per interval", async () =
         baseUrl: "https://api.letta.com",
         apiKey: "upload-credential",
       }),
-      upload: async () => {
+      upload: async (rows) => {
         uploads++;
+        capturedFallback ??= rows.find(
+          (row) => row.capture_status === "size_limit",
+        );
         throw new ApiRequestError(
           "API error (503)",
           503,
@@ -179,9 +185,15 @@ test("a 503 upload logs a single metadata-only warning per interval", async () =
     // Two size-triggered batches (10 rows each), each failing all retries.
     for (let batch = 0; batch < 2; batch++) {
       for (let i = 0; i < 10; i++) {
-        const response = await fetch(`${trace?.url}/responses`, {
+        const messages =
+          batch === 0 && i === 9
+            ? [base]
+            : batch === 1 && i === 0
+              ? [base, appended]
+              : "secret prompt text";
+        const response = await fetch(`${trace?.url}/messages`, {
           method: "POST",
-          body: '{"model":"test","input":"secret prompt text"}',
+          body: JSON.stringify({ model: "test", messages }),
         });
         await response.text();
       }
@@ -189,6 +201,14 @@ test("a 503 upload logs a single metadata-only warning per interval", async () =
     }
     await trace?.close();
     expect(uploads).toBeGreaterThanOrEqual(6);
+    expect(JSON.parse(capturedFallback?.request_json ?? "{}")).toEqual({
+      model: "test",
+      messages: [{ truncated: "size_limit" }, appended],
+      truncated: "size_limit",
+    });
+    expect(JSON.parse(capturedFallback?.response_json ?? "{}")).toEqual({
+      model: "test",
+    });
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain("status=503");
     expect(warnings[0]).toContain("service unavailable");

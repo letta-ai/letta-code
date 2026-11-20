@@ -142,3 +142,87 @@ export function assembleTraceResponse(
     };
   }
 }
+
+// Allow room to parse and compact payloads without retaining unbounded traffic.
+export const MAX_TRACE_BUFFER_BYTES = 16 * 1024 * 1024;
+const MAX_ENCODED_PAYLOAD_BYTES = 3 * 1024 * 1024;
+const truncated = { truncated: "size_limit" };
+export const TRUNCATED_TRACE_JSON = JSON.stringify(truncated);
+
+function traceJsonFits(bytes: number, encodedBytes: number): boolean {
+  // The payload is a JSON string inside the upload body.
+  return (
+    bytes <= MAX_TRACE_PAYLOAD_BYTES &&
+    encodedBytes <= MAX_ENCODED_PAYLOAD_BYTES
+  );
+}
+
+export function tracePayloadFits(json: string): boolean {
+  return traceJsonFits(
+    Buffer.byteLength(json),
+    Buffer.byteLength(JSON.stringify(json)),
+  );
+}
+
+export function compactTracePayload(json: string): string {
+  const payload: unknown = JSON.parse(json);
+  if (!payload || typeof payload !== "object") return TRUNCATED_TRACE_JSON;
+  if (!Array.isArray(payload)) {
+    const object = payload as Record<string, unknown>;
+    delete object.system;
+    delete object.tools;
+  }
+  const marked = () =>
+    JSON.stringify(
+      Array.isArray(payload)
+        ? { items: payload, ...truncated }
+        : { ...payload, ...truncated },
+    );
+  const initial = marked();
+  let bytes = Buffer.byteLength(initial);
+  let encodedBytes = Buffer.byteLength(JSON.stringify(initial));
+  if (traceJsonFits(bytes, encodedBytes)) return initial;
+
+  // Measure each candidate once. Replacing a value changes the serialized size
+  // by exactly the difference between that value and its replacement.
+  const candidates: {
+    bytes: number;
+    encodedBytes: number;
+    replace: () => void;
+  }[] = [];
+  function collect(container: Record<string, unknown> | unknown[]) {
+    for (const [key, value] of Object.entries(container)) {
+      if (
+        Array.isArray(value) ||
+        (key === "response" && value && typeof value === "object")
+      ) {
+        collect(value as Record<string, unknown>);
+        continue;
+      }
+      const serialized = JSON.stringify(value);
+      const bytes =
+        Buffer.byteLength(serialized) - Buffer.byteLength(TRUNCATED_TRACE_JSON);
+      const encodedBytes =
+        Buffer.byteLength(JSON.stringify(serialized)) -
+        Buffer.byteLength(JSON.stringify(TRUNCATED_TRACE_JSON));
+      if (bytes > 0 && encodedBytes > 0) {
+        candidates.push({
+          bytes,
+          encodedBytes,
+          replace: () => {
+            (container as Record<string, unknown>)[key] = truncated;
+          },
+        });
+      }
+    }
+  }
+  collect(payload as Record<string, unknown>);
+  candidates.sort((a, b) => b.bytes - a.bytes);
+  for (const candidate of candidates) {
+    if (traceJsonFits(bytes, encodedBytes)) break;
+    candidate.replace();
+    bytes -= candidate.bytes;
+    encodedBytes -= candidate.encodedBytes;
+  }
+  return traceJsonFits(bytes, encodedBytes) ? marked() : TRUNCATED_TRACE_JSON;
+}

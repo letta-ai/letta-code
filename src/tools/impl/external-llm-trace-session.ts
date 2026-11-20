@@ -110,7 +110,12 @@ export async function createTraceSession(
     const { actingUserId: _actingUserId, secretValues = [], ...ids } = context;
     const scope = { ...ids, worker_session_id: workerSessionId };
     sessionScopes.set(workerSessionId, scope);
-    const queue: ExternalTraceRow[] = [];
+    const queue: {
+      row: ExternalTraceRow;
+      delta?: { baseId: string; fallbackJson: string };
+      size: number;
+    }[] = [];
+    let uploadedBaseId: string | undefined;
     let bytes = 0;
     let draining: Promise<void> | undefined;
     let closed = false;
@@ -128,7 +133,19 @@ export async function createTraceSession(
           }
           const batch: ExternalTraceRow[] = [];
           let size = 0;
-          for (const row of queue) {
+          let baseId = uploadedBaseId;
+          let queuedBytes = 0;
+          for (const entry of queue) {
+            // A delta is usable only if its base was uploaded or is in this batch.
+            const fallback =
+              entry.delta?.baseId !== baseId ? entry.delta : undefined;
+            const row: ExternalTraceRow = fallback
+              ? {
+                  ...entry.row,
+                  request_json: fallback.fallbackJson,
+                  capture_status: "size_limit",
+                }
+              : entry.row;
             const next = Buffer.byteLength(JSON.stringify(row));
             if (
               batch.length &&
@@ -137,6 +154,8 @@ export async function createTraceSession(
               break;
             batch.push(row);
             size += next;
+            queuedBytes += entry.size;
+            baseId = fallback ? undefined : row.id;
           }
           let success = false;
           let lastError: unknown;
@@ -162,7 +181,8 @@ export async function createTraceSession(
             );
           }
           queue.splice(0, batch.length);
-          bytes -= size;
+          bytes -= queuedBytes;
+          if (success) uploadedBaseId = baseId;
           if (!success && closed) {
             queue.length = 0;
             bytes = 0;
@@ -186,19 +206,17 @@ export async function createTraceSession(
       harness,
       scope,
       secrets,
-      emit: (row) => {
+      emit: (row, delta) => {
         if (
           closed ||
           !traceCaptureEnabled(process.env, config.baseUrl, config.apiKey)
         )
           return;
-        if (Buffer.byteLength(JSON.stringify(row)) > 7 * 1024 * 1024) {
-          row.request_json = row.response_json = '{"omitted":"size_limit"}';
-          row.capture_status = "size_limit";
-        }
-        const size = Buffer.byteLength(JSON.stringify(row));
+        const size =
+          Buffer.byteLength(JSON.stringify(row)) +
+          (delta ? Buffer.byteLength(delta.fallbackJson) : 0);
         if (bytes + size > 64 * 1024 * 1024) return;
-        queue.push(row);
+        queue.push({ row, delta, size });
         bytes += size;
         if (queue.length >= 10) void flush();
       },
