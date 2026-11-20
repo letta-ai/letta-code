@@ -4,6 +4,7 @@ import {
   FakeClient,
   makeDelivery,
   makeHooks,
+  makeSource,
   makeStreamDelta,
   makeTurnFinished,
   TEST_RUNTIME,
@@ -180,5 +181,42 @@ test("terminal requires_approval recovery event clears the active turn", async (
   expect(
     lifecycleEvents.filter((event) => event.type === "processing"),
   ).toHaveLength(2);
+  gateway.close();
+});
+
+test("submits Git attribution for the sender who started the delivery", async () => {
+  const client = new FakeClient();
+  const gateway = new ChannelGateway(client, makeHooks().hooks);
+  await gateway.submit(
+    makeDelivery({
+      sources: [
+        makeSource({
+          senderName: "Alice",
+          conversationPermalink: "https://example.com/thread",
+        }),
+        makeSource({ senderName: "Bob" }),
+      ],
+    }),
+  );
+  await gateway.submit(
+    makeDelivery({
+      clientMessageId: "another-user",
+      sources: [makeSource({ senderName: "Bob" })],
+    }),
+  );
+  expect(client.submittedInputs.map((input) => input.payload)).toEqual([
+    expect.objectContaining({
+      git_attribution: {
+        requester: "Alice",
+        conversation: "https://example.com/thread",
+      },
+    }),
+    expect.objectContaining({
+      git_attribution: {
+        requester: "Bob",
+        conversation: TEST_RUNTIME.conversation_id,
+      },
+    }),
+  ]);
   gateway.close();
 });

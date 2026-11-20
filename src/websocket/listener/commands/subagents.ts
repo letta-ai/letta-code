@@ -3,6 +3,7 @@ import {
   runWithRuntimeContext,
 } from "@/runtime-context";
 import { launchSubagent } from "@/tools/impl/task";
+import { readGitAttribution } from "@/types/git-attribution";
 import type {
   LaunchSubagentCommand,
   LaunchSubagentResponse,
@@ -63,6 +64,7 @@ export async function handleLaunchSubagentCommand(
             agentId: parent.agentId,
             conversationId: parent.conversationId,
             actingUserId: command.runtime.acting_user_id,
+            gitAttribution: readGitAttribution(command.git_attribution),
             workingDirectory: getConversationWorkingDirectory(
               parent.listener,
               parent.agentId,

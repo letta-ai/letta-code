@@ -29,6 +29,7 @@ import { peekOrgAccessToken } from "@/auth/org-credentials-session";
 import { getServerUrl } from "@/backend/api/server-url";
 import { isLocalBackendMemfsDisabledForProcess } from "@/backend/local/paths";
 import {
+  applyTurnGitAttribution,
   getCurrentWorkingDirectory,
   getRuntimeActingUserId,
   getRuntimeContext,
@@ -366,6 +367,7 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   }
 
   env.USER_CWD = getCurrentWorkingDirectory();
+  applyTurnGitAttribution(env);
 
   // Commands started by a listener turn must inherit that listener's registered
   // device identity, not a stale installation id from the child CLI settings.

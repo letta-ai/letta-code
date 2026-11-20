@@ -1,4 +1,5 @@
 import { readMcpOriginatorDelivery } from "@/agent/mcp-originator-tokens";
+import { readGitAttribution } from "@/types/git-attribution";
 import type { InputCreateMessagePayload } from "@/types/protocol_v2";
 import type { ConversationRuntimeScope } from "@/types/runtime-scope";
 import { debugLog, isDebugEnabled } from "@/utils/debug";
@@ -76,6 +77,7 @@ export function createIncomingMessage(
     excludeInteractiveTools: payload.exclude_interactive_tools,
     responseFormat: payload.response_format,
     imageFailureMode: payload.image_failure_mode,
+    gitAttribution: readGitAttribution(payload.git_attribution),
     ...(terminalConsumerId
       ? { terminalConsumerIds: [terminalConsumerId] }
       : {}),

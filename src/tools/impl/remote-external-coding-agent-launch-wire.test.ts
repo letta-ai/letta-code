@@ -7,6 +7,7 @@ import {
   type EnvironmentConnection,
   resolveEnvironmentConnectionId,
 } from "@/backend/api/environments";
+import { runWithRuntimeContext } from "@/runtime-context";
 import { telemetry } from "@/telemetry";
 import type {
   LaunchSubagentCommand,
@@ -445,4 +446,14 @@ test("an offline computer reports its resolution code without its name or error 
     agent_id: "agent-parent",
     conversation_id: "conv-parent",
   });
+});
+
+test("sends the launching turn's attribution to the remote computer", async () => {
+  captureTelemetry();
+  const { client, launches } = refusingComputer();
+  const attribution = { requester: "Alice", conversation: "conv-parent" };
+  await runWithRuntimeContext({ gitAttribution: attribution }, () =>
+    launch(client),
+  );
+  expect(launches[0]?.git_attribution).toEqual(attribution);
 });

@@ -27,6 +27,7 @@ import {
 import { getApiRequestConfig } from "@/backend/api/request";
 import { isCloudEnvironmentSelector } from "@/headless-environment-response";
 import { listenerControlUrl } from "@/headless-listener-launch";
+import { getRuntimeContext } from "@/runtime-context";
 import {
   type ExternalWorkerFailureStage,
   reportExternalWorkerLaunchFailure,
@@ -59,6 +60,14 @@ import { followRemoteSubagentEvents } from "./remote-subagent-events";
 export const REMOTE_EXTERNAL_WORKER_STOPPED = Symbol(
   "remote external worker stopped",
 );
+
+function toRuntimeScope(scope: ParentScope) {
+  return {
+    agent_id: scope.agentId,
+    conversation_id: scope.conversationId,
+    ...(scope.actingUserId ? { acting_user_id: scope.actingUserId } : {}),
+  };
+}
 
 interface ParentScope {
   agentId: string;
@@ -542,13 +551,8 @@ export async function launchRemoteExternalCodingAgent(
   const launch = () =>
     client.launchSubagent({
       request_id: `launch-subagent-${randomUUID()}`,
-      runtime: {
-        agent_id: parentScope.agentId,
-        conversation_id: parentScope.conversationId,
-        ...(parentScope.actingUserId
-          ? { acting_user_id: parentScope.actingUserId }
-          : {}),
-      },
+      runtime: toRuntimeScope(parentScope),
+      git_attribution: getRuntimeContext()?.gitAttribution,
       args: {
         // Listeners since 0.34.40 accept `harness` and `fork_context`, even
         // before advertising `external_fork_context`. Send the choice explicitly
@@ -776,13 +780,7 @@ export async function stopRemoteExternalCodingAgent(
   try {
     const response = await client.stopSubagent({
       request_id: requestId,
-      runtime: {
-        agent_id: params.parentScope.agentId,
-        conversation_id: params.parentScope.conversationId,
-        ...(params.parentScope.actingUserId
-          ? { acting_user_id: params.parentScope.actingUserId }
-          : {}),
-      },
+      runtime: toRuntimeScope(params.parentScope),
       agent_id: formatExternalCodingAgentId(target.type, target.sessionId),
     });
     if (!response.success) throw new Error(response.error ?? "Stop failed");
@@ -867,13 +865,8 @@ async function deliverRemoteExternalCodingAgentMessage(
       client,
       {
         request_id: requestId,
-        runtime: {
-          agent_id: params.parentScope.agentId,
-          conversation_id: params.parentScope.conversationId,
-          ...(params.parentScope.actingUserId
-            ? { acting_user_id: params.parentScope.actingUserId }
-            : {}),
-        },
+        runtime: toRuntimeScope(params.parentScope),
+        git_attribution: getRuntimeContext()?.gitAttribution,
         agent_id: bareAgentId,
         message: params.message,
         tool_call_id: toolCallId,
