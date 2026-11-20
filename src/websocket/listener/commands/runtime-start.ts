@@ -33,6 +33,7 @@ import {
   persistPermissionModeMapForRuntime,
 } from "@/websocket/listener/permission-mode";
 import { scheduleQueuePump } from "@/websocket/listener/queue";
+import { markLocalTurnScope } from "@/websocket/listener/runtime";
 import { isRuntimeStartCommand } from "@/websocket/listener/runtime-start-validation";
 import { assertRuntimeWorkspaceSandboxChangeAllowed } from "@/websocket/listener/runtime-workspace-sandbox";
 import { expectInboundTeleport } from "@/websocket/listener/teleport";
@@ -538,6 +539,7 @@ export async function handleRuntimeStartCommand(
       expectInboundTeleport(scopedRuntime, parsed.teleport_id);
     }
     assertConnectionOpen();
+    markLocalTurnScope(scopedRuntime);
     subscribeListenerConnection(context.runtime, connectionId, runtimeScope);
     registerRuntimeExternalTools(
       context.runtime,
