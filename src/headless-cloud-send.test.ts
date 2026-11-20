@@ -598,19 +598,21 @@ test.each(["text", "json", "stream-json"])(
   },
 );
 
-test("the CLI reply fallback uses a command the CLI accepts", () => {
+test("reply reminders do not recommend an unattributed CLI fallback", () => {
   const conv = buildAgentSendReminder(
     { agentId: "agent-a", conversationId: "conv-a" },
     true,
   );
-  expect(conv).toContain("letta -p --conversation conv-a --no-wait");
-  expect(conv).not.toContain("--agent agent-a --conversation conv-a");
+  expect(conv).not.toContain("letta -p");
+  expect(
+    buildAgentSendReminder({ conversationId: "conv-a" }, true),
+  ).not.toContain("letta -p");
   expect(
     buildAgentSendReminder(
       { agentId: "agent-a", conversationId: "default" },
       true,
     ),
   ).toContain(
-    "SendAgentMessage with agent_id agent-a and conversation_id default. Only if that tool is unavailable, run letta -p --agent agent-a --conversation default --no-wait",
+    "SendAgentMessage with agent_id agent-a and conversation_id default.",
   );
 });
