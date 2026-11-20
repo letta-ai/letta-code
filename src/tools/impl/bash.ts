@@ -58,6 +58,13 @@ import { assertSafeWindowsCommand } from "./windows-command-safety.js";
 // Cache the working shell launcher after first successful spawn
 let cachedWorkingLauncher: string[] | null = null;
 
+/**
+ * Timeout for a foreground command that cannot yield to a background task.
+ * Without it, a command that never exits blocks the turn forever.
+ */
+const NON_YIELDING_DEFAULT_TIMEOUT_MS = 120_000;
+const MAX_FOREGROUND_TIMEOUT_MS = 600_000;
+
 type ShellProcessStarter = typeof startShellProcess;
 let shellProcessStarter: ShellProcessStarter = startShellProcess;
 
@@ -450,13 +457,23 @@ export async function bash(args: BashArgs): Promise<BashResult> {
   let bgProcess: BackgroundProcess;
   let outputWriteFailed = false;
   const foregroundOutput = { stdout: "", stderr: "" };
+  // A yielded command reports back only through a task notification. One-shot
+  // headless runs, including every subagent, have no queue consumer, and they
+  // are already background work that nobody waits on interactively, so there
+  // the command blocks until it exits or times out. Decide once, at launch,
+  // because the timeout must be set before the command starts.
+  const canYield = !run_in_background && isQueueBridgeConnected();
+  // A command that can yield may become a background task, which runs until
+  // it exits, so it gets no default timeout. One that blocks the turn does.
   const effectiveTimeout = run_in_background
     ? timeout !== undefined && timeout > 0
       ? timeout
       : 0
-    : timeout === undefined
-      ? 0
-      : Math.min(Math.max(timeout, 1), 600000);
+    : timeout !== undefined
+      ? Math.min(Math.max(timeout, 1), MAX_FOREGROUND_TIMEOUT_MS)
+      : canYield
+        ? 0
+        : NON_YIELDING_DEFAULT_TIMEOUT_MS;
   const runningProcess = shellProcessStarter(sandboxed.launcher, {
     cwd: userCwd,
     env: sandboxed.env,
@@ -603,11 +620,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       type: "settled" as const,
       result,
     }));
-    // A yielded command reports back only through a task notification. One-shot
-    // headless runs, including every subagent, have no queue consumer, and they
-    // are already background work that nobody waits on interactively, so there
-    // the command simply blocks until it exits or times out.
-    const outcome = isQueueBridgeConnected()
+    const outcome = canYield
       ? await Promise.race([
           settledOutcome,
           new Promise<{ type: "yield" }>((resolve) => {
