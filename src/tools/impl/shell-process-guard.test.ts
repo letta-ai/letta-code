@@ -21,6 +21,58 @@ function refusal(tool: string, pid: number, suggestion: string) {
 }
 
 test.skipIf(process.platform === "win32")(
+  "shell commands survive guard file cleanup and restore the guard",
+  () => {
+    const dir = mkdtempSync(join(tmpdir(), "letta-guard-cleanup-"));
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [
+          "-e",
+          `
+            import { spawnSync } from "node:child_process";
+            import { readdirSync, rmSync } from "node:fs";
+            import { join } from "node:path";
+            import { withShellProcessGuard } from ${JSON.stringify(join(import.meta.dir, "shell-process-guard.ts"))};
+
+            for (const shell of ["/bin/sh", "/bin/bash"]) {
+              const prepared = withShellProcessGuard(
+                [shell, "-c", "printf ready"], process.env,
+              );
+              for (const entry of readdirSync(process.env.TMPDIR)) {
+                rmSync(join(process.env.TMPDIR, entry), { recursive: true });
+              }
+              const afterCleanup = spawnSync(shell, prepared.launcher.slice(1), {
+                env: prepared.env, encoding: "utf8",
+              });
+              if (afterCleanup.status !== 0 || afterCleanup.stdout !== "ready" || afterCleanup.stderr) {
+                throw new Error(shell + ": " + afterCleanup.stderr);
+              }
+
+              const next = withShellProcessGuard(
+                [shell, "-c", "type __letta_has_ignore_ancestors >/dev/null"], process.env,
+              );
+              const restored = spawnSync(shell, next.launcher.slice(1), {
+                env: next.env, encoding: "utf8",
+              });
+              if (restored.status !== 0) throw new Error(shell + ": guard was not restored");
+            }
+          `,
+        ],
+        {
+          env: { ...process.env, TMPDIR: dir },
+          encoding: "utf8",
+          timeout: 5000,
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+test.skipIf(process.platform === "win32")(
   "pkill and killall guard a non-ancestor process without blocking signal zero",
   async () => {
     const darwin = process.platform === "darwin";

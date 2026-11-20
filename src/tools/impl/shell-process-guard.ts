@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { constants, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { getProtectedShellPids } from "./protected-shell-processes.js";
@@ -201,7 +201,7 @@ killall() {
 }
 `;
 
-let guardPrefix: string | undefined;
+let guardDir: string | undefined;
 
 function removeGuardDir(dir: string): void {
   try {
@@ -212,20 +212,29 @@ function removeGuardDir(dir: string): void {
 }
 
 function getGuardPrefix(): string {
-  if (guardPrefix !== undefined) return guardPrefix;
-  let dir: string | undefined;
-  try {
-    dir = mkdtempSync(join(tmpdir(), "letta-shell-"));
-    const file = join(dir, "guard");
-    writeFileSync(file, shim, { mode: 0o600 });
-    const cleanupDir = dir;
-    process.once("exit", () => removeGuardDir(cleanupDir));
-    guardPrefix = `. '${file.replaceAll("'", "'\\''")}'\n`;
-  } catch {
-    if (dir) removeGuardDir(dir);
-    guardPrefix = shim;
+  let file = guardDir && join(guardDir, "guard");
+  if (!file || !existsSync(file)) {
+    let dir: string | undefined;
+    try {
+      dir = mkdtempSync(join(tmpdir(), "letta-shell-"));
+      file = join(dir, "guard");
+      writeFileSync(file, shim, { mode: 0o600 });
+      if (guardDir) {
+        removeGuardDir(guardDir);
+      } else {
+        process.once("exit", () => {
+          if (guardDir) removeGuardDir(guardDir);
+        });
+      }
+      guardDir = dir;
+    } catch {
+      if (dir) removeGuardDir(dir);
+      return shim;
+    }
   }
-  return guardPrefix;
+
+  const quotedFile = `'${file.replaceAll("'", "'\\''")}'`;
+  return `if [ -r ${quotedFile} ]; then . ${quotedFile}; fi\n`;
 }
 
 export function withShellProcessGuard(
