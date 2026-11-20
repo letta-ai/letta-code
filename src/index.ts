@@ -71,7 +71,7 @@ import {
   validateConversationDefaultRequiresAgent,
   validatePrimaryStartupFlagConflicts,
 } from "./cli/startup-flag-validation";
-import { isHeadlessStartup } from "./cli/startup-mode";
+import { hideHeadlessPrompt, isHeadlessStartup } from "./cli/startup-mode";
 import * as startupReflection from "./cli/startup-reflection-settings";
 import {
   runSubcommand,
@@ -682,7 +682,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Check for subcommands
+  hideHeadlessPrompt(values, process.stdin.isTTY, positionals);
   const command = positionals[2]; // First positional after node and script
 
   // Handle help flag first
