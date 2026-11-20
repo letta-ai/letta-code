@@ -19,13 +19,19 @@ export async function stageClaudeRepositorySkills(
             return undefined;
           throw error;
         });
-        if (!info?.isDirectory()) continue;
+        // The checkout can arrive after Claude starts. A dangling link becomes
+        // usable as soon as the checkout creates the skills directory.
+        if (info && !info.isDirectory()) continue;
         stagingRoot ??= await mkdtemp(join(tmpdir(), "letta-claude-skills-"));
         // Load only the skill directories and keep the checkout untouched.
         const directory = join(stagingRoot, source, basename(repo));
         const claudeDir = join(directory, ".claude");
         await mkdir(claudeDir, { recursive: true });
-        await symlink(skills, join(claudeDir, "skills"), "dir");
+        await symlink(
+          skills,
+          join(claudeDir, "skills"),
+          process.platform === "win32" ? "junction" : "dir",
+        );
         directories.push(directory);
       }
     }
