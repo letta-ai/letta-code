@@ -24,6 +24,7 @@ test.each(computers)("HTTP send: computer %j", async (computer) => {
   await settingsManager.initialize();
   const requests: Array<{
     user: string | null;
+    caller: string | null;
     body: Record<string, unknown>;
     path: string;
   }> = [];
@@ -37,6 +38,7 @@ test.each(computers)("HTTP send: computer %j", async (computer) => {
     async fetch(request) {
       const body = (await request.json()) as Record<string, unknown>;
       requests.push({
+        caller: request.headers.get("X-Letta-Caller-Conversation-Id"),
         user: request.headers.get("X-Letta-Acting-User-Id"),
         body,
         path: new URL(request.url).pathname,
@@ -94,13 +96,17 @@ test.each(computers)("HTTP send: computer %j", async (computer) => {
   process.env.LETTA_API_KEY = "test-only";
   process.env.AGENT_ID = "agent-wrong-global";
   process.env.CONVERSATION_ID = "conv-wrong-global";
+  const callerConversations: Record<string, string> = {
+    ...CONV,
+    ...(computer === "desktop" && { second: "default" }),
+  };
   try {
     const contexts = await Promise.all(
       ["first", "second"].map((id) =>
         prepareToolExecutionContextForSpecificTools(["SendAgentMessage"], {
           runtimeContext: {
             agentId: `agent-${id}`,
-            conversationId: CONV[id],
+            conversationId: callerConversations[id],
             actingUserId: `user-${id}`,
           },
         }),
@@ -162,6 +168,10 @@ test.each(computers)("HTTP send: computer %j", async (computer) => {
       expect(request?.path).toBe(
         `/v1/conversations/${CONV.recipient}/messages/enqueue`,
       );
+      const callerConversation = callerConversations[id];
+      expect(request?.caller).toBe(
+        callerConversation === "default" ? null : callerConversation,
+      );
       // The server derives the agent from the conversation ID.
       expect(request?.body).not.toHaveProperty("agent_id");
       if (computer?.trim()) {
@@ -177,7 +187,7 @@ test.each(computers)("HTTP send: computer %j", async (computer) => {
             {
               type: "text",
               text: expect.stringContaining(
-                `agent-${id}, conversation ${CONV[id]}`,
+                `agent-${id}, conversation ${callerConversation}`,
               ),
             },
             { type: "text", text: `Message ${id === "first" ? 0 : 1}` },
@@ -185,7 +195,7 @@ test.each(computers)("HTTP send: computer %j", async (computer) => {
         },
       ]);
       expect(JSON.stringify(request?.body.messages)).toContain(
-        `agent-${id}, conversation ${CONV[id]}`,
+        `agent-${id}, conversation ${callerConversation}`,
       );
       expect(JSON.stringify(request?.body.messages)).not.toContain(
         "wrong-global",
