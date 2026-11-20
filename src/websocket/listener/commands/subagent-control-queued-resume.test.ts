@@ -145,7 +145,7 @@ test.each(["environment setup", "thread/resume", "turn/start"])(
     rememberNativeSession(
       "codex",
       threadId,
-      { agentId: runtime.agent_id, conversationId: runtime.conversation_id },
+      { ...parentScope, cloudSkillRepositories: ["api"] },
       "http://localhost:8283",
     );
     // The original task can still be marked running when its native turn is gone.
@@ -193,10 +193,12 @@ test.each(["environment setup", "thread/resume", "turn/start"])(
           return undefined;
         },
       },
-      sendCodex: (options) =>
-        sendCodexMessage(options, {
+      sendCodex: (options) => {
+        expect(options.cloudSkillRepositories).toEqual(["api"]);
+        return sendCodexMessage(options, {
           createTransport: () => ({ stdin, stdout }),
-        }),
+        });
+      },
       reserveCapture: async () => ({ capture: async () => {} }),
       track: jest.fn(({ completion, publishResult, toolCallId }) => {
         if (publishResult) {
