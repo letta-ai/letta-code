@@ -154,11 +154,12 @@ test("failed uploads warn once and later traces compact when their delta base is
   const warnings: string[] = [];
   let uploads = 0;
   let capturedFallback: ExternalTraceRow | undefined;
-  const base = { role: "user", content: "a".repeat(1900000) };
+  // Expand the captured request with redaction without a large loopback POST.
+  const base = { role: "user", content: "x".repeat(190000) };
   const appended = { role: "assistant", content: "b".repeat(300000) };
   const trace = await createTraceSession(
     "claude_code",
-    context,
+    { ...context, secretValues: [...context.secretValues, "x"] },
     {},
     `http://127.0.0.1:${address.port}`,
     "session-503",
@@ -193,8 +194,6 @@ test("failed uploads warn once and later traces compact when their delta base is
               : "secret prompt text";
         const response = await fetch(`${trace?.url}/messages`, {
           method: "POST",
-          // Bun 1.3.14 can stall large loopback POSTs on reused sockets.
-          headers: { connection: "close" },
           body: JSON.stringify({ model: "test", messages }),
         });
         await response.text();

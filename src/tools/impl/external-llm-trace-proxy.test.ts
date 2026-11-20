@@ -292,12 +292,14 @@ test.each(["claude_code", "codex"] as const)(
         task_id: "t",
         worker_session_id: "s",
       },
-      secrets: [],
+      secrets: ["x"],
       emit: (row) => rows.push(row),
     });
     const historyKey = harness === "claude_code" ? "messages" : "input";
     const path = harness === "claude_code" ? "messages" : "responses";
-    const original = { role: "user", content: "a".repeat(1900000) };
+    // Redaction expands the captured payload beyond 2 MiB while keeping
+    // the loopback requests small enough for older Bun HTTP implementations.
+    const original = { role: "user", content: "x".repeat(190000) };
     const appended = { role: "assistant", content: "é".repeat(120000) };
     const latest = { role: "user", content: "keep this" };
     try {
@@ -306,16 +308,14 @@ test.each(["claude_code", "codex"] as const)(
         { [historyKey]: [original, appended] },
         { [historyKey]: [original, appended, latest] },
         {
-          system: "s".repeat(300000),
+          system: "x".repeat(30000),
           tools: [{ name: "search" }],
           [historyKey]: [{ ...original, role: "assistant" }, appended, latest],
         },
-        { system: "s".repeat(2200000), tools: [], [historyKey]: [latest] },
+        { system: "x".repeat(220000), tools: [], [historyKey]: [latest] },
       ]) {
         const reply = await fetch(`${proxy.url}/${path}`, {
           method: "POST",
-          // Bun 1.3.14 can stall large loopback POSTs on reused sockets.
-          headers: { connection: "close" },
           body: JSON.stringify(payload),
         });
         await reply.text();
