@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { buildClaudeStreamArgs } from "./claude-stream-args";
 import {
   __resetClaudeSessionsForTests,
-  buildClaudeStreamArgs,
   runClaudeTurn,
   sendClaudeMessage,
   stopClaudeSession,

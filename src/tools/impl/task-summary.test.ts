@@ -5,7 +5,7 @@ import {
   updateSubagent,
 } from "@/agent/subagent-state";
 import { waitForBackgroundSubagentLink } from "@/agent/subagents/background-link";
-import { buildClaudeStreamArgs } from "./claude-stream-session";
+import { buildClaudeStreamArgs } from "./claude-stream-args";
 import { recordTaskSummary, resolveTaskInput } from "./task-summary";
 
 describe("task description as the scoped task", () => {
