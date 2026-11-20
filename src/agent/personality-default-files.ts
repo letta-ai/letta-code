@@ -96,7 +96,7 @@ async function hasMemoryFileHistory(
     const { stdout } = await execFile(
       "git",
       ["log", "-1", "--format=%H", "--all", "--", relativePath],
-      { cwd: memoryDir, timeout: 10_000 },
+      { cwd: memoryDir, timeout: 10_000, windowsHide: true },
     );
     return stdout.trim().length > 0;
   } catch {
@@ -118,6 +118,7 @@ async function discardUncommittedFile(
     await execFile("git", ["reset", "--quiet", "--", relativePath], {
       cwd: memoryDir,
       timeout: 10_000,
+      windowsHide: true,
     });
   } catch {
     // A new file is not always staged when the write fails.

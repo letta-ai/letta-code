@@ -118,12 +118,13 @@ export interface GenerateMemoryViewerOptions {
 // Git helpers
 // ---------------------------------------------------------------------------
 
-async function runGitSafe(cwd: string, args: string[]): Promise<string> {
+export async function runGitSafe(cwd: string, args: string[]): Promise<string> {
   try {
     const { stdout } = await execFile("git", args, {
       cwd,
       maxBuffer: 10 * 1024 * 1024,
       timeout: 60_000,
+      windowsHide: true,
     });
     return stdout?.toString() ?? "";
   } catch {

@@ -23,6 +23,7 @@ function memoryLayoutPolicy(memoryDir: string): MemoryLayoutPolicy {
     const commonDir = execFileSync("git", ["rev-parse", "--git-common-dir"], {
       cwd: memoryDir,
       encoding: "utf8",
+      windowsHide: true,
     }).trim();
     const policy = readFileSync(
       resolve(memoryDir, commonDir, "letta-memory-layout-policy"),
@@ -33,7 +34,7 @@ function memoryLayoutPolicy(memoryDir: string): MemoryLayoutPolicy {
       const v2Started = execFileSync(
         "git",
         ["rev-list", "-n", "1", "HEAD", "--", "MEMORY.md"],
-        { cwd: memoryDir, encoding: "utf8" },
+        { cwd: memoryDir, encoding: "utf8", windowsHide: true },
       ).trim();
       return v2Started ? "root-marker" : "legacy-only";
     }
@@ -43,6 +44,7 @@ function memoryLayoutPolicy(memoryDir: string): MemoryLayoutPolicy {
   return spawnSync("git", ["cat-file", "-e", "HEAD:MEMORY.md"], {
     cwd: memoryDir,
     stdio: "ignore",
+    windowsHide: true,
   }).status === 0
     ? "root-marker"
     : "legacy-only";
@@ -62,6 +64,7 @@ export function validateMemoryConstraintsHead(
       cwd: memoryDir,
       env,
       stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
     });
     const layoutPolicy = memoryLayoutPolicy(memoryDir);
     writeFileSync(validatorPath, MEMORY_CONSTRAINTS_VALIDATOR_SCRIPT, "utf8");
@@ -74,6 +77,7 @@ export function validateMemoryConstraintsHead(
       {
         cwd: memoryDir,
         encoding: "utf8",
+        windowsHide: true,
         env: process.versions.electron
           ? { ...env, ELECTRON_RUN_AS_NODE: "1" }
           : env,

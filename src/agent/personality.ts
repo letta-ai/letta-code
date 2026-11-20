@@ -439,7 +439,7 @@ async function undoPersonalityFiles(
     await execFile(
       "git",
       ["reset", "-q", "--", ...undoLog.map((entry) => entry.absolutePath)],
-      { cwd: repoDir, timeout: 10_000 },
+      { cwd: repoDir, timeout: 10_000, windowsHide: true },
     );
   } catch {
     // Best-effort only.
@@ -464,6 +464,7 @@ export async function applyPersonalityToMemory(
   const statusResult = await execFile("git", ["status", "--porcelain"], {
     cwd: repoDir,
     timeout: 10_000,
+    windowsHide: true,
   });
   if (statusResult.stdout?.toString().trim()) {
     throw new Error(

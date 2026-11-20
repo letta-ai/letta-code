@@ -69,6 +69,7 @@ async function removeRefusedCheckout(
         encoding: "utf8",
         timeout: 5000,
         stdio: ["ignore", "pipe", "ignore"],
+        windowsHide: true,
       },
     ).trim();
     if (!isMemfsRemoteUrlForAgent(origin, agentId)) return;

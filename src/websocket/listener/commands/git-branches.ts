@@ -38,6 +38,7 @@ export function handleGitBranchCommand(
             cwd,
             encoding: "utf-8",
             timeout: 5000,
+            windowsHide: true,
           },
         );
 
@@ -107,6 +108,7 @@ export function handleGitBranchCommand(
           cwd,
           encoding: "utf-8",
           timeout: 10000,
+          windowsHide: true,
         });
 
         const gitCtx = await deviceGitContextCache.refresh(cwd, {
