@@ -163,6 +163,7 @@
     "@letta-ai/letta-agent-sdk": "0.8.38",
     "@letta-ai/letta-client": "^1.10.2",
     "@letta-ai/trajectory": "0.2.0",
+    "@modelcontextprotocol/client": "2.4.0",
     "@modelcontextprotocol/sdk": "1.32.2",
     "@pierre/diffs": "1.2.2",
     "@scarf/scarf": "^1.4.0",
@@ -178,7 +179,8 @@
     "sharp": "^0.35.5",
     "shiki": "^4.0.2",
     "strip-ansi": "^7.2.0",
-    "ws": "^8.19.0"
+    "ws": "^8.19.0",
+    "zod": "4.4.3"
   },
   "optionalDependencies": {
     "@vscode/ripgrep": "^1.17.0"
@@ -287,7 +289,7 @@
   },
   "lettaLifecycleProtocol": 1,
   "lettaRuntimeGraphProtocol": 1,
-  "lettaRuntimeGraphSha512": "sha512-+DtHUaY2xHV6Ob9xjgAXTnerc8RSQIHn+PKLaEEKhAu1IlKQl0M4rgD/vVKjPHdYxbXyZSrdzEx3UAQZbRbHWw==",
+  "lettaRuntimeGraphSha512": "sha512-dAy5+n/BzB5Uau9Ra6uJbEFp6S71pJ9yzlKOoiVTX8Q65h+F4bG+8zUfbHRAg3zDCqsZmxMTh1ZoCgJCp5BdPg==",
   "patchedDependencies": {
     "@earendil-works/pi-ai@1.5.2": "patches/@earendil-works%2Fpi-ai@1.5.2.patch"
   }
