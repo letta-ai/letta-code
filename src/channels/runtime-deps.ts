@@ -119,13 +119,34 @@ export function getChannelInstallCommand(
   return `letta channels install ${channelId}`;
 }
 
+export class MissingChannelRuntimeError extends Error {
+  constructor(
+    public readonly channelId: SupportedChannelId,
+    message: string,
+  ) {
+    super(message);
+    this.name = "MissingChannelRuntimeError";
+  }
+}
+
 export function buildMissingChannelRuntimeError(
   channelId: SupportedChannelId,
-): Error {
+): MissingChannelRuntimeError {
   const spec = getChannelPluginMetadata(channelId);
-  return new Error(
+  return new MissingChannelRuntimeError(
+    channelId,
     `${spec.displayName} support is not installed. Run: ${getChannelInstallCommand(channelId)} or start the listener with --install-channel-runtimes.`,
   );
+}
+
+/**
+ * Whether an error was raised because a channel runtime is not installed.
+ *
+ * Startup failures that are not caused by a missing runtime must not be
+ * reported as "install the runtime" problems.
+ */
+export function isMissingChannelRuntimeError(error: unknown): boolean {
+  return error instanceof MissingChannelRuntimeError;
 }
 
 export function isChannelRuntimeInstalled(

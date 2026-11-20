@@ -322,14 +322,27 @@ export function isFirstPartyChannelPlugin(channelId: string): boolean {
   return Object.hasOwn(FIRST_PARTY_CHANNEL_PLUGIN_REGISTRATIONS, channelId);
 }
 
+let loadChannelPluginOverride:
+  | ((channelId: string) => Promise<ChannelPlugin>)
+  | null = null;
+
 export async function loadChannelPlugin(
   channelId: string,
 ): Promise<ChannelPlugin> {
+  if (loadChannelPluginOverride) {
+    return loadChannelPluginOverride(channelId);
+  }
   const registration = getChannelPluginRegistration(channelId);
   if (!registration) {
     throw new Error(`Unsupported channel: ${channelId}`);
   }
   return registration.load();
+}
+
+export function __testOverrideLoadChannelPlugin(
+  loader: ((channelId: string) => Promise<ChannelPlugin>) | null,
+): void {
+  loadChannelPluginOverride = loader;
 }
 
 export function __testClearUserChannelPluginCache(): void {
