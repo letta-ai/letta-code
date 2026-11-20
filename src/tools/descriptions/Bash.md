@@ -3,7 +3,7 @@ Executes a shell command and returns its output.
 - Each Bash call starts from the conversation's current working directory. A `cd` affects only that command and does not change the directory used by later tool calls. To change the working directory for later tool calls, use `SetWorkingDirectory`. For a one-off command elsewhere, use an absolute path or an option such as `git -C /path/to/repo status`.
 - IMPORTANT: Avoid using this tool to run `cat`, `head`, `tail`, `sed`, `awk`, or `echo` commands, unless explicitly instructed. Use Read, Edit and Write for file operations instead. Quote paths that contain spaces.
 - Command output is displayed to you, not reliably to the user.
-- `timeout` is in milliseconds. Without it, commands run until they exit; foreground timeouts max out at 600000.
+- `timeout` is in milliseconds; foreground timeouts max out at 600000. Without it, a command that can't continue in the background times out after 120000; others run until they exit.
 - If the output exceeds 30000 characters, you receive only the first 2000 characters plus the path of a file containing the full output. A failed command whose output exceeds 10000 characters returns a head-and-tail excerpt plus that file path. Read or search that file when you need the rest instead of re-running the command.
 - Commands still running after a brief wait continue in the background automatically: you receive a task ID and one completion notification. Do not predict command duration, set `run_in_background` merely because a command may be slow, or poll for completion. Set `run_in_background` only when you want the task ID immediately; no `&` needed.
 - Foreground `sleep` is blocked. To wait for a condition, use Monitor.
