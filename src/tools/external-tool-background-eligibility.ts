@@ -4,7 +4,10 @@ type ListenerBackgroundRegistration = {
   createNotificationGuard: () =>
     | ListenerExternalToolNotificationGuard
     | undefined;
-  /** Optional foreground wait override; listener registrations use 10 seconds. */
+  /**
+   * Foreground wait registered with the tool. Unset falls back to the
+   * conversation's tool policy, then the 10 second default.
+   */
   yieldMs?: number;
 };
 
