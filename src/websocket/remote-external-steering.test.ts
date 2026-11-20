@@ -300,6 +300,26 @@ test.skipIf(process.platform === "win32")(
       tool_call_id: "resume-call",
     });
     expect(resumed).toMatchObject({ success: true, delivery: "resumed" });
+    const activeResume = await waitFor(
+      () =>
+        snapshots.find(
+          (entry) =>
+            entry.tool_call_id === "resume-call" && (entry.event_seq ?? 0) > 0,
+        ),
+      "resumed worker progress snapshot",
+    );
+    expect(
+      await client.readSubagentEvents({
+        runtime,
+        subagent_id: activeResume.subagent_id,
+        after_seq: 0,
+      }),
+    ).toMatchObject({
+      success: true,
+      events: expect.arrayContaining([
+        expect.objectContaining({ type: "text", text: "working" }),
+      ]),
+    });
     expect(
       await client.sendSubagentMessage({
         runtime: handoffRuntime,

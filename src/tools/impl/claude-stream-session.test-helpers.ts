@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import type { ClaudeSessionTransport } from "./claude-stream-session";
 
@@ -27,8 +28,9 @@ export function transportFixture(options: { exitOnStdinEnd?: boolean } = {}) {
   }) as typeof stdin.end;
   if (options.exitOnStdinEnd !== false)
     stdin.on("finish", () => finish({ exitCode: 0, exitSignal: null }));
+  const process = Object.assign(new EventEmitter(), { stdin, stdout, stderr });
   const transport: ClaudeSessionTransport = {
-    process: { stdin, stdout, stderr } as ClaudeSessionTransport["process"],
+    process,
     completion,
     wasAborted: () => false,
   };
@@ -44,6 +46,7 @@ export function transportFixture(options: { exitOnStdinEnd?: boolean } = {}) {
     writes,
     stdout,
     stderr,
+    process,
     finish,
     stdin,
     emit,

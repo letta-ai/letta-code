@@ -16,6 +16,7 @@ import {
   CLAUDE_TURN_START_TIMEOUT_ERROR,
   CLAUDE_TURN_START_TIMEOUT_MS,
 } from "./claude-steer-timeouts";
+import { buildClaudeStreamArgs } from "./claude-stream-args";
 import type {
   ClaudeMessageReceipt,
   ClaudeSession,
@@ -53,39 +54,6 @@ export const SETTLED_EXIT_GRACE_MS = 10_000;
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-export function buildClaudeStreamArgs(options: {
-  model?: string;
-  mcpReminder?: string;
-  resumeSessionId?: string;
-  sessionId?: string;
-  skillDirectories?: string[];
-}): string[] {
-  const args = [
-    "--print",
-    "--verbose",
-    "--input-format",
-    "stream-json",
-    "--output-format",
-    "stream-json",
-    "--include-partial-messages",
-    // Echo each input back once Claude picks it up, so results can be matched
-    // to the input they answer.
-    "--replay-user-messages",
-    // Subagents run unattended and nothing relays Claude Code permission
-    // prompts back to the parent, so a gated tool call can only stall.
-    "--permission-mode",
-    "bypassPermissions",
-  ];
-  if (options.model) args.push("--model", options.model);
-  if (options.resumeSessionId) args.push("--resume", options.resumeSessionId);
-  else if (options.sessionId) args.push("--session-id", options.sessionId);
-  if (options.mcpReminder)
-    args.push("--append-system-prompt", options.mcpReminder);
-  if (options.skillDirectories?.length)
-    args.push("--add-dir", ...options.skillDirectories);
-  return args;
 }
 
 function createTransport(options: {
@@ -224,6 +192,7 @@ function writeRaw(stdin: Writable, data: string): Promise<void> {
 /** Writes a user turn and records it as the input the next result must answer. */
 function writeInput(session: ClaudeSession, prompt: string): Promise<void> {
   const uuid = randomUUID();
+  session.provisionalResult = undefined;
   session.latestInputUuid = uuid;
   session.latestInputStarted = false;
   return writeRaw(
@@ -423,7 +392,6 @@ function holdResult(
     const note = `[Claude Code background tasks were still running ${minutes} minute(s) after its last result; reporting that result.]`;
     const text =
       typeof value.result === "string" ? value.result : session.report;
-    // Same settle path as a final result, so an errored turn reports as failed.
     settleResult(session, {
       ...value,
       result: text ? `${text}\n\n${note}` : note,
@@ -440,8 +408,9 @@ function finishResult(
   session: ClaudeSession,
   value: Record<string, unknown>,
 ): void {
-  if (session.backgroundTasks.length > 0) holdResult(session, value);
-  else settleResult(session, value);
+  if (value.is_error === true || session.backgroundTasks.length === 0)
+    settleResult(session, value);
+  else holdResult(session, value);
 }
 
 function handleResult(
@@ -617,31 +586,42 @@ async function launchSession(
   void transport.completion
     .finally(() => Promise.allSettled([trace?.close(), skills?.cleanup()]))
     .catch(() => undefined);
+  const finishTransport = (status: string, oom = false) => {
+    if (session.settled) return;
+    if (session.provisionalResult && !transport.wasAborted()) {
+      settleResult(session, session.provisionalResult);
+      return;
+    }
+    const detail = session.stderr.trim();
+    const protocolDetail = session.protocolError
+      ? `; protocol error: ${session.protocolError}`
+      : "";
+    const oomDetail = oom ? "; possibly out of memory" : "";
+    const error = transport.wasAborted()
+      ? (abortController.signal.reason ?? "Claude Code turn cancelled")
+      : `Claude Code ${status}${oomDetail}${detail ? `: ${detail}` : ""}${protocolDetail}`;
+    rejectControls(session, new Error(errorMessage(error)));
+    settle(session, failResult(session, error));
+  };
+  const processExited = (
+    exitCode: number | null,
+    exitSignal: NodeJS.Signals | null,
+  ) =>
+    finishTransport(
+      `exited before a final result with ${exitCode ?? exitSignal ?? "unknown status"}`,
+      exitCode === 143 || exitSignal === "SIGTERM" || exitSignal === "SIGKILL",
+    );
+  const stdoutClosed = () => {
+    if (session.settled) return;
+    finishTransport("stdout closed before a final result");
+    if (!session.provisionalResult) abortController.abort();
+  };
+  stdout.once("close", stdoutClosed);
+  stdout.once("error", stdoutClosed);
+  transport.process.stdout.once("close", stdoutClosed);
+  transport.process.once("exit", processExited);
   transport.completion
-    .then(({ exitCode, exitSignal }) => {
-      if (session.settled) return;
-      if (
-        session.provisionalResult &&
-        exitCode === 0 &&
-        !transport.wasAborted()
-      ) {
-        settleResult(session, session.provisionalResult);
-        return;
-      }
-      const detail = session.stderr.trim();
-      const protocolDetail = session.protocolError
-        ? `; protocol error: ${session.protocolError}`
-        : "";
-      const oomDetail =
-        exitCode === 143 || exitSignal === "SIGTERM" || exitSignal === "SIGKILL"
-          ? "; possibly out of memory"
-          : "";
-      const error = transport.wasAborted()
-        ? (abortController.signal.reason ?? "Claude Code turn cancelled")
-        : `Claude Code exited before a final result with ${exitCode ?? exitSignal ?? "unknown status"}${oomDetail}${detail ? `: ${detail}` : ""}${protocolDetail}`;
-      rejectControls(session, new Error(errorMessage(error)));
-      settle(session, failResult(session, error));
-    })
+    .then(({ exitCode, exitSignal }) => processExited(exitCode, exitSignal))
     .catch((error) => {
       rejectControls(session, new Error(errorMessage(error)));
       settle(session, failResult(session, error));

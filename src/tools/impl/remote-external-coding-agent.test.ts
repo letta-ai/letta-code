@@ -7,7 +7,9 @@ import {
   spyOn,
   test,
 } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { clearAllSubagents } from "@/agent/subagent-state";
 import type { SubagentResult } from "@/agent/subagents";
 import type {
@@ -36,6 +38,7 @@ import {
 } from "./remote-external-coding-agent";
 import { spawnBackgroundSubagentTask } from "./task";
 import { task_stop } from "./task-stop";
+import { closeTaskProgressLog, openTaskProgressLog } from "./task-transcript";
 
 const scope = { agentId: "agent-parent", conversationId: "conv-parent" };
 const originalApiKey = process.env.LETTA_API_KEY;
@@ -52,6 +55,7 @@ class FakeComputer {
   readonly acks: number[] = [];
   syncs = 0;
   closed = false;
+  delivery: "steered" | "resumed" = "steered";
   private readonly messageHandlers = new Set<AppServerMessageHandler>();
   private readonly disconnectHandlers = new Set<AppServerDisconnectHandler>();
 
@@ -102,7 +106,7 @@ class FakeComputer {
       request_id: command.request_id,
       runtime,
       success: true as const,
-      delivery: "steered" as const,
+      delivery: this.delivery,
     };
   }
 
@@ -909,69 +913,62 @@ describe("remote external coding agent control", () => {
     });
   });
 
-  test("a resumed reply follows the caller tool call ID", async () => {
+  test("a resumed reply logs progress before its terminal snapshot", async () => {
     const computer = new FakeComputer(() => accepted);
-    computer.sendSubagentMessage = async (command) => {
-      computer.messages.push(command);
-      return {
-        type: "subagent_message_response",
-        request_id: command.request_id,
-        runtime,
-        success: true,
-        delivery: "resumed",
-      };
-    };
+    computer.delivery = "resumed";
     let completion: Promise<SubagentResult> | undefined;
-    const result = await sendRemoteExternalCodingAgentMessage(
-      {
-        agentId: qualified,
-        message: "Continue",
-        toolCallId: "follow-call",
-        parentScope: scope,
-      },
-      {
-        ...controlDeps(computer),
-        track: ((input: { completion: Promise<SubagentResult> }) => {
-          completion = input.completion;
-          return {
-            taskId: "task-follow",
-            outputFile: "/tmp/follow",
-            subagentId: "subagent-follow",
-          };
-        }) as never,
-      },
-    );
-    expect(result).toMatchObject({
-      delivery: "resumed",
-      taskId: "task-follow",
-    });
-    expect(computer.messages[0]?.tool_call_id).toBe("follow-call");
-    computer.snapshot(
-      {
+    const dir = mkdtempSync(join(tmpdir(), "letta-follow-"));
+    const outputFile = join(dir, "task.log");
+    const subagentId = "subagent-follow";
+    try {
+      await sendRemoteExternalCodingAgentMessage(
+        {
+          agentId: qualified,
+          message: "Continue",
+          toolCallId: "follow-call",
+          parentScope: scope,
+        },
+        {
+          ...controlDeps(computer),
+          track: (input) => {
+            completion = input.completion;
+            openTaskProgressLog(subagentId, outputFile);
+            return { taskId: "task-follow", outputFile, subagentId };
+          },
+        },
+      );
+      expect(computer.messages[0]?.tool_call_id).toBe("follow-call");
+      const progress = {
+        id: "p1",
+        text: "Resumed worker is active",
+        at: "2026-01-01T00:00:00Z",
+      };
+      computer.snapshot({
         tool_call_id: "follow-call",
-        status: "completed",
-        result: "Followed up",
-      },
-      2,
-    );
-    expect(await completion).toMatchObject({
-      success: true,
-      report: "Followed up",
-    });
+        progress_texts: [progress],
+      });
+      await Bun.sleep(0);
+      expect(readFileSync(outputFile, "utf8")).toContain(
+        "text: Resumed worker is active",
+      );
+      computer.snapshot(
+        {
+          tool_call_id: "follow-call",
+          status: "completed",
+          result: "Followed up",
+        },
+        2,
+      );
+      expect((await completion)?.report).toBe("Followed up");
+    } finally {
+      closeTaskProgressLog(subagentId);
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("a tracking failure stops the resumed worker and releases the client", async () => {
     const computer = new FakeComputer(() => accepted);
-    computer.sendSubagentMessage = async (command) => {
-      computer.messages.push(command);
-      return {
-        type: "subagent_message_response",
-        request_id: command.request_id,
-        runtime,
-        success: true,
-        delivery: "resumed",
-      };
-    };
+    computer.delivery = "resumed";
 
     await expect(
       sendRemoteExternalCodingAgentMessage(

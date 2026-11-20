@@ -22,6 +22,7 @@ import {
   parseExternalCodingAgentId,
   resolveExternalCodingAgentSecretEnv,
   scrubExternalWorkerResult,
+  scrubWorkerListeners,
 } from "@/tools/impl/external-coding-agent";
 import { trackExternalFollowupCompletion } from "@/tools/impl/external-coding-agent-task";
 import {
@@ -32,6 +33,7 @@ import {
 } from "@/tools/impl/native-session-capture";
 import { backgroundTasks, getNextTaskId } from "@/tools/impl/process_manager";
 import { task_stop } from "@/tools/impl/task-stop";
+import { bufferExternalWorkerProgress } from "@/tools/impl/task-transcript";
 import type {
   SubagentMessageCommand,
   SubagentMessageResponse,
@@ -199,6 +201,7 @@ export async function handleSubagentMessageCommand(
           : {};
       // A resumed worker process needs the same environment as a launch.
       let worker: ExternalWorkerLaunchEnv | undefined;
+      const progress = bufferExternalWorkerProgress();
       const receipt = await runOutsideRuntimeContext(() =>
         runWithRuntimeContext(runtimeContext(parent, command), async () => {
           if (target.type !== "cursor")
@@ -209,6 +212,10 @@ export async function handleSubagentMessageCommand(
               },
               deps.workerEnv,
             );
+          const listeners = scrubWorkerListeners(
+            progress.listeners,
+            worker?.secretEnv ?? secrets,
+          );
           return target.type === "cursor"
             ? sendCursorMessage(
                 {
@@ -216,6 +223,7 @@ export async function handleSubagentMessageCommand(
                   prompt: command.message,
                   parentAgentId: command.runtime.agent_id,
                   cwd: getCurrentWorkingDirectory(),
+                  ...listeners,
                 },
                 { ...process.env, ...secrets },
                 secrets,
@@ -233,6 +241,7 @@ export async function handleSubagentMessageCommand(
                     cwd: getCurrentWorkingDirectory(),
                     mcpReminder: worker?.mcpReminder,
                     cloudSkillRepositories,
+                    ...listeners,
                     beforeStart: async () => {
                       captureReservation = await (
                         deps.reserveCapture ?? reserveNativeSessionCapture
@@ -257,6 +266,7 @@ export async function handleSubagentMessageCommand(
                     cwd: getCurrentWorkingDirectory(),
                     mcpReminder: worker?.mcpReminder,
                     cloudSkillRepositories,
+                    ...listeners,
                     beforeStart: async () => {
                       captureReservation = await (
                         deps.reserveCapture ?? reserveNativeSessionCapture
@@ -287,7 +297,7 @@ export async function handleSubagentMessageCommand(
           )
         : receipt.completion;
       try {
-        (deps.track ?? trackExternalFollowupCompletion)({
+        const task = (deps.track ?? trackExternalFollowupCompletion)({
           taskId: traceContext.task_id,
           type: target.type,
           agentId: command.agent_id,
@@ -312,6 +322,7 @@ export async function handleSubagentMessageCommand(
           emitCompletionNotification: false,
           claimsParentRuntime: false,
         });
+        progress.attach(task.subagentId);
       } catch (error) {
         await receipt.interrupt().catch(() => undefined);
         finishUntrackedNativeCapture(

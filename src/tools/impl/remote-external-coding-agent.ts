@@ -366,8 +366,23 @@ class RemoteSubagentFollower {
     });
   }
 
+  async followProgress(subagentId: string, signal?: AbortSignal) {
+    const progress = followRemoteSubagentEvents(subagentId, (seq) =>
+      this.readEvents(seq),
+    );
+    const final = await this.waitForTerminal(signal, (snapshot) => {
+      updateSubagent(subagentId, {
+        toolCalls: snapshot.tool_calls,
+        totalTokens: snapshot.total_tokens,
+      });
+      progress.recordSnapshot(snapshot);
+    });
+    await progress.finish(final);
+    return final;
+  }
+
   /** Resolves with the terminal snapshot, or throws once the computer is unreachable. */
-  async waitForTerminal(
+  private async waitForTerminal(
     signal: AbortSignal | undefined,
     onProgress: (snapshot: SubagentSnapshot) => void,
   ): Promise<SubagentSnapshot> {
@@ -652,19 +667,8 @@ export async function launchRemoteExternalCodingAgent(
       spawnSubagentImpl: async (_type, _prompt, model, subagentId, signal) => {
         const startedAt = Date.now();
         updateSubagent(subagentId, { status: "running" });
-        const progress = followRemoteSubagentEvents(subagentId, (afterSeq) =>
-          follower.readEvents(afterSeq),
-        );
         try {
-          const final = await follower.waitForTerminal(signal, (snapshot) => {
-            updateSubagent(subagentId, {
-              toolCalls: snapshot.tool_calls,
-              totalTokens: snapshot.total_tokens,
-            });
-            progress.recordSnapshot(snapshot);
-          });
-          // The terminal snapshot can carry progress no earlier update showed.
-          await progress.finish(final);
+          const final = await follower.followProgress(subagentId, signal);
           return {
             agentId: workerAgentId(),
             model: final.model ?? model,
@@ -903,21 +907,21 @@ async function deliverRemoteExternalCodingAgentMessage(
     return { delivery: response.delivery };
   }
   follower.markLaunched();
-  const completion = follower
-    .waitForTerminal(undefined, () => undefined)
-    .then(
-      (final): SubagentResult => ({
+  const task = Promise.withResolvers<string>();
+  const completion = task.promise
+    .then(async (subagentId): Promise<SubagentResult> => {
+      const final = await follower.followProgress(subagentId);
+      const failed = final.status === "error";
+      return {
         agentId: bareAgentId,
         model: final.model,
         report: final.result ?? "",
         success: final.status === "completed",
-        ...(final.status === "error"
-          ? { error: final.error ?? "Remote follow-up failed" }
-          : {}),
+        ...(failed ? { error: final.error ?? "Remote follow-up failed" } : {}),
         totalTokens: final.total_tokens,
         durationMs: final.duration_ms,
-      }),
-    )
+      };
+    })
     .finally(() => follower.close());
   const interrupt = async () => {
     const resolved = await (deps.resolveComputer ?? resolveQualifiedComputer)(
@@ -940,14 +944,10 @@ async function deliverRemoteExternalCodingAgentMessage(
       stopClient.close();
     }
   };
-  const track = deps.track;
-  if (!track) {
-    follower.close();
-    throw new Error("Remote follow-up tracking is unavailable");
-  }
-  let tracked: ReturnType<NonNullable<typeof deps.track>>;
   try {
-    tracked = track({
+    if (!deps.track)
+      throw new Error("Remote follow-up tracking is unavailable");
+    const tracked = deps.track({
       type: target.type,
       agentId: params.agentId,
       message: params.message,
@@ -955,17 +955,16 @@ async function deliverRemoteExternalCodingAgentMessage(
       completion,
       interrupt,
     });
+    task.resolve(tracked.subagentId);
+    return {
+      delivery: "resumed",
+      taskId: tracked.taskId,
+      outputFile: tracked.outputFile,
+    };
   } catch (error) {
-    try {
-      await interrupt();
-    } catch {}
-    follower.close();
     void completion.catch(() => undefined);
+    task.reject(error);
+    await interrupt().catch(() => undefined);
     throw error;
   }
-  return {
-    delivery: "resumed",
-    taskId: tracked.taskId,
-    outputFile: tracked.outputFile,
-  };
 }

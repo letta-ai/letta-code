@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stageClaudeRepositorySkills } from "./claude-repository-skills";
-import { buildClaudeStreamArgs } from "./claude-stream-session";
+import { buildClaudeStreamArgs } from "./claude-stream-args";
 
 test("Claude adds scoped skill overlays for native and .agents repositories", async () => {
   const scratch = await mkdtemp(join(tmpdir(), "claude-repo-skills-test-"));
