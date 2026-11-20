@@ -171,6 +171,7 @@ export function compactTracePayload(json: string): string {
     const object = payload as Record<string, unknown>;
     delete object.system;
     delete object.tools;
+    delete object.truncated;
   }
   const marked = () =>
     JSON.stringify(

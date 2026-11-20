@@ -223,3 +223,74 @@ test("failed uploads warn once and later traces compact when their delta base is
     upstream.close();
   }
 }, 15000);
+
+test("splits batches when the encoded upload would exceed 8 MiB", async () => {
+  const previous = process.env.LETTA_CODE_TELEM;
+  process.env.LETTA_CODE_TELEM = "1";
+  // Quotes require escaping again when the captured JSON is embedded in a row.
+  const payload = JSON.stringify({ text: '"'.repeat(700000) });
+  const upstream = createServer(async (req, res) => {
+    for await (const _chunk of req) {
+      /* consume the request */
+    }
+    res.end(payload);
+  }).listen(0, "127.0.0.1");
+  await once(upstream, "listening");
+  const address = upstream.address();
+  if (!address || typeof address === "string")
+    throw new Error("Missing address");
+  const batches: ExternalTraceRow[][] = [];
+  const trace = await createTraceSession(
+    "codex",
+    context,
+    {},
+    `http://127.0.0.1:${address.port}`,
+    "session-test",
+    {
+      getConfig: async () => ({
+        baseUrl: "https://api.letta.com",
+        apiKey: "upload-credential",
+      }),
+      upload: async (rows) => {
+        batches.push(rows);
+      },
+    },
+  );
+  if (!trace) throw new Error("Missing trace session");
+  try {
+    for (let i = 0; i < 2; i++) {
+      const response = await fetch(`${trace.url}/responses`, {
+        method: "POST",
+        body: payload,
+      });
+      await response.text();
+    }
+    await trace.close();
+    const batchLimit = 8 * 1024 * 1024;
+    const payloadLimit = 2 * 1024 * 1024;
+    expect(batches.map((rows) => rows.length)).toEqual([1, 1]);
+    expect(
+      Buffer.byteLength(JSON.stringify({ rows: batches.flat() })),
+    ).toBeGreaterThan(batchLimit);
+    for (const rows of batches) {
+      expect(Buffer.byteLength(JSON.stringify({ rows }))).toBeLessThanOrEqual(
+        batchLimit,
+      );
+      const row = rows[0];
+      expect(row?.capture_status).toBe("complete");
+      expect(row?.request_json.length).toBe(payload.length);
+      expect(row?.response_json.length).toBe(payload.length);
+      expect(Buffer.byteLength(row?.request_json ?? "")).toBeLessThanOrEqual(
+        payloadLimit,
+      );
+      expect(Buffer.byteLength(row?.response_json ?? "")).toBeLessThanOrEqual(
+        payloadLimit,
+      );
+    }
+  } finally {
+    await trace.close();
+    if (previous === undefined) delete process.env.LETTA_CODE_TELEM;
+    else process.env.LETTA_CODE_TELEM = previous;
+    upstream.close();
+  }
+});

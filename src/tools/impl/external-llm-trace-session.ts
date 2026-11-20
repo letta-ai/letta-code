@@ -44,6 +44,8 @@ interface TraceSessionDependencies {
 }
 
 const WARN_INTERVAL_MS = 60_000;
+const MAX_TRACE_BATCH_BYTES = 8 * 1024 * 1024;
+const TRACE_BATCH_ENVELOPE_BYTES = Buffer.byteLength('{"rows":[]}');
 
 /** Status (or error name) plus a short server message; never request bodies or headers. */
 function describeUploadError(error: unknown, secrets: string[]): string {
@@ -132,7 +134,7 @@ export async function createTraceSession(
             break;
           }
           const batch: ExternalTraceRow[] = [];
-          let size = 0;
+          let batchBytes = TRACE_BATCH_ENVELOPE_BYTES;
           let baseId = uploadedBaseId;
           let queuedBytes = 0;
           for (const entry of queue) {
@@ -146,14 +148,15 @@ export async function createTraceSession(
                   capture_status: "size_limit",
                 }
               : entry.row;
-            const next = Buffer.byteLength(JSON.stringify(row));
+            const nextBytes =
+              Buffer.byteLength(JSON.stringify(row)) + (batch.length ? 1 : 0);
             if (
-              batch.length &&
-              (size + next > 7 * 1024 * 1024 || batch.length === 20)
+              batchBytes + nextBytes > MAX_TRACE_BATCH_BYTES ||
+              batch.length === 20
             )
               break;
             batch.push(row);
-            size += next;
+            batchBytes += nextBytes;
             queuedBytes += entry.size;
             baseId = fallback ? undefined : row.id;
           }
@@ -212,9 +215,23 @@ export async function createTraceSession(
           !traceCaptureEnabled(process.env, config.baseUrl, config.apiKey)
         )
           return;
+        const rowBytes = Buffer.byteLength(JSON.stringify(row));
+        const fallbackBytes = delta
+          ? Buffer.byteLength(
+              JSON.stringify({
+                ...row,
+                request_json: delta.fallbackJson,
+                capture_status: "size_limit",
+              }),
+            )
+          : 0;
+        if (
+          Math.max(rowBytes, fallbackBytes) + TRACE_BATCH_ENVELOPE_BYTES >
+          MAX_TRACE_BATCH_BYTES
+        )
+          return;
         const size =
-          Buffer.byteLength(JSON.stringify(row)) +
-          (delta ? Buffer.byteLength(delta.fallbackJson) : 0);
+          rowBytes + (delta ? Buffer.byteLength(delta.fallbackJson) : 0);
         if (bytes + size > 64 * 1024 * 1024) return;
         queue.push({ row, delta, size });
         bytes += size;

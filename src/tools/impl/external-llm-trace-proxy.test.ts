@@ -344,6 +344,14 @@ test.each(["claude_code", "codex"] as const)(
         [historyKey]: [latest],
         truncated: "size_limit",
       });
+      for (const row of rows) {
+        expect(Buffer.byteLength(row.request_json)).toBeLessThanOrEqual(
+          2 * 1024 * 1024,
+        );
+        expect(Buffer.byteLength(row.response_json)).toBeLessThanOrEqual(
+          2 * 1024 * 1024,
+        );
+      }
       expect(rows.map((row) => JSON.parse(row.response_json))).toEqual(
         Array.from({ length: 5 }, () => ({ id: "reply" })),
       );
