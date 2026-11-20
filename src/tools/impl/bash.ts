@@ -46,6 +46,7 @@ import {
   withStrictShellPrelude,
 } from "./shell-launchers.js";
 import {
+  FORCE_KILL_GRACE_MS,
   type ShellExecutionError,
   spawnWithLauncher,
   startShellProcess,
@@ -496,6 +497,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     process: runningProcess.process,
     completion: runningProcess.completion,
     terminate: runningProcess.terminate,
+    foregroundBash: !run_in_background,
     command,
     stdout: [],
     stderr: [],
@@ -675,7 +677,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       };
     }
 
-    backgroundProcesses.set(bashId, bgProcess);
+    bgProcess.foregroundBash = false;
     notifyWhenSettled();
     return {
       content: [
@@ -698,4 +700,24 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     ],
     status: "success",
   };
+}
+
+/** Keep one-shot shutdown alive through the runner's TERM-to-KILL escalation. */
+export async function waitForForegroundBashCleanup(): Promise<void> {
+  const active = [...backgroundProcesses.values()].filter(
+    (entry) => entry.foregroundBash,
+  );
+  if (active.length === 0) return;
+  for (const entry of active) entry.terminate?.();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      Promise.allSettled(active.map((entry) => entry.completion)),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, FORCE_KILL_GRACE_MS + 250);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }

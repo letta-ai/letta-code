@@ -15,6 +15,7 @@ import { createSubagentConversation } from "@/agent/subagents/subagent-conversat
 import { shouldLaunchThroughListener } from "@/agent/subagents/subagent-launcher";
 import { disableLocalBackendMemfsForProcess } from "@/backend/local/paths";
 import { INTERRUPTED_BY_USER } from "@/constants";
+import { exitInterruptedHeadless } from "@/headless-interrupt";
 import { buildHeadlessSenderReminder } from "@/headless-message-sender";
 import { createHeadlessResponseState } from "@/headless-response-state";
 import { createStartupBackend } from "@/headless-startup-backend";
@@ -31,7 +32,7 @@ import {
   setMessageQueueAdder,
 } from "@/utils/message-queue-bridge";
 import { detectShellContext } from "@/utils/shell-context";
-import { createSigintAbortSignal } from "@/utils/sigint-abort";
+import { createProcessAbortSignal } from "@/utils/sigint-abort";
 import {
   consumeSubagentLaunch,
   LISTENER_CONNECTION_ENV,
@@ -2087,27 +2088,21 @@ export async function handleHeadlessCommand(
     }
   };
 
-  // One-shot mode has no input loop, so wire SIGINT directly into the turn.
-  const sigintSignal = createSigintAbortSignal();
-  const exitInterrupted = async (): Promise<never> => {
-    if (outputFormat === "stream-json") {
-      const errorMsg: ErrorMessage = {
-        type: "error",
-        message: "Interrupted by SIGINT",
-        stop_reason: "cancelled",
-        session_id: sessionId,
-        uuid: `error-interrupted-${randomUUID()}`,
-      };
-      await writeWireMessageAsync(errorMsg);
-    } else {
-      console.error("Interrupted by SIGINT");
-    }
-    return exitHeadless(130, "headless_sigint_interrupted");
-  };
+  const { signal: interruptSignal, dispose } = createProcessAbortSignal([
+    "SIGINT",
+    "SIGTERM",
+  ]);
+  const exitInterrupted = () =>
+    exitInterruptedHeadless(
+      interruptSignal,
+      outputFormat,
+      sessionId,
+      exitHeadless,
+    );
 
   try {
     while (true) {
-      if (sigintSignal.aborted) {
+      if (interruptSignal.aborted) {
         await exitInterrupted();
       }
 
@@ -2171,12 +2166,12 @@ export async function handleHeadlessCommand(
             preparedToolContext:
               turnToolContext.preparedToolContext.preparedToolContext,
           },
-          { maxRetries: 0, signal: sigintSignal },
+          { maxRetries: 0, signal: interruptSignal },
         );
         turnToolContextId = getStreamToolContextId(stream);
         busyDeadline = null;
       } catch (preStreamError) {
-        if (sigintSignal.aborted) {
+        if (interruptSignal.aborted) {
           await exitInterrupted();
         }
 
@@ -2225,7 +2220,7 @@ export async function handleHeadlessCommand(
             conversationId,
             agent?.id,
             currentInput,
-            sigintSignal,
+            interruptSignal,
           );
           if (resumeStream) {
             stream = resumeStream as typeof stream;
@@ -2236,7 +2231,7 @@ export async function handleHeadlessCommand(
               busyDeadline ??= Date.now() + BUSY_WAIT_MS;
               const settled = await waitForBusyRun(
                 blockingRunId,
-                sigintSignal,
+                interruptSignal,
                 busyDeadline,
               );
               if (settled) continue;
@@ -2410,7 +2405,7 @@ export async function handleHeadlessCommand(
         stream,
         buffers,
         () => {},
-        sigintSignal,
+        interruptSignal,
         undefined,
         streamJsonHook,
         reminderContextTracker,
@@ -2427,7 +2422,7 @@ export async function handleHeadlessCommand(
       sessionStats.endTurn(apiDurationMs);
 
       // Exit before dispatching tool calls produced after an interrupt.
-      if (stopReason === "cancelled" || sigintSignal.aborted) {
+      if (stopReason === "cancelled" || interruptSignal.aborted) {
         await exitInterrupted();
       }
 
@@ -2569,13 +2564,13 @@ export async function handleHeadlessCommand(
           decisions,
           undefined,
           {
-            abortSignal: sigintSignal,
+            abortSignal: interruptSignal,
             toolContextId: turnToolContextId ?? undefined,
           },
         );
 
         // Don't send interrupted tool results back for another provider round.
-        if (sigintSignal.aborted) {
+        if (interruptSignal.aborted) {
           await exitInterrupted();
         }
 
@@ -2615,7 +2610,7 @@ export async function handleHeadlessCommand(
           currentHandle: null,
           error: result.errorInfo ?? runErrorInfo ?? latestErrorText,
           exhaustedProviders: chatgptExhaustedProviders,
-          signal: sigintSignal,
+          signal: interruptSignal,
         });
         if (rotation) {
           chatgptPlanSwaps += 1;
@@ -2989,8 +2984,7 @@ export async function handleHeadlessCommand(
       await exitHeadless(1, "headless_stop_reason_error");
     }
   } catch (error) {
-    // Grace-expiry straggler abort: classify as SIGINT, not an error.
-    if (sigintSignal.aborted) {
+    if (interruptSignal.aborted) {
       await exitInterrupted();
     }
     // Mark incomplete tool calls as cancelled
@@ -3018,7 +3012,10 @@ export async function handleHeadlessCommand(
       console.error(`Error: ${errorDetails}`);
     }
     await exitHeadless(1, "headless_runtime_exception");
+  } finally {
+    dispose();
   }
+  if (interruptSignal.aborted) await exitInterrupted();
 
   await runPostTurnMemorySync({
     conversationId,
