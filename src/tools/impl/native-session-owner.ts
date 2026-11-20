@@ -10,6 +10,8 @@ export interface NativeSessionOwner {
   conversationId: string;
   actingUserId?: string | null;
   cloudSkillRepositories?: string[];
+  /** The Agent task description the session was launched for. */
+  description?: string;
 }
 
 function ownerPath(source: NativeSessionSource, sessionId: string): string {

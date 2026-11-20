@@ -1,6 +1,7 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { autoBackgroundClientTool } from "@/tools/client-tool-background";
 import {
+  clearPendingMessages,
   type QueuedMessage,
   setMessageQueueAdder,
 } from "@/utils/message-queue-bridge";
@@ -13,6 +14,10 @@ import { stopConversationBackground } from "./stop-conversation-background";
 
 const child = { agentId: "agent-test", conversationId: "conv-child" };
 const parent = { agentId: "agent-test", conversationId: "conv-parent" };
+
+// Earlier files in the same worker can leave notifications buffered while no
+// adder is set; installing ours would flush them into these assertions.
+beforeEach(() => clearPendingMessages());
 
 afterEach(async () => {
   setMessageQueueAdder(null);
