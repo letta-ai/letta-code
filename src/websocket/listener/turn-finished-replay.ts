@@ -373,11 +373,22 @@ export function createTurnFinishedStore(
     else write(record);
     return retained.length === 0 ? null : record;
   };
+  const hasExpiredTerminals = (
+    record: PersistedTurnFinishedRecord,
+  ): boolean => {
+    const now = Date.now();
+    return record.terminals.some(
+      (terminal) => now - terminal.createdAt >= TURN_FINISHED_REPLAY_TTL_MS,
+    );
+  };
   const read = (
     agentId: string | null,
     conversationId: string,
   ): PersistedTurnFinishedRecord | null => {
     try {
+      const record = readRecord(agentId, conversationId);
+      if (!record) return null;
+      if (!hasExpiredTerminals(record)) return record;
       return withRecordLock(agentId, conversationId, () =>
         readPrunedRecord(agentId, conversationId),
       );
@@ -399,6 +410,8 @@ export function createTurnFinishedStore(
       const scope = decodeTurnFinishedScope(entry.name.slice(0, -5));
       if (!scope) continue; // Unknown/corrupt names are never deleted.
       try {
+        const record = readRecord(scope[0], scope[1]);
+        if (!record || !hasExpiredTerminals(record)) continue;
         withRecordLock(scope[0], scope[1], () => {
           readPrunedRecord(scope[0], scope[1]);
         });
