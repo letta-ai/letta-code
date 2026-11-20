@@ -12,6 +12,7 @@ function conversation(input: {
   summary?: string;
   updatedAt: string;
   hidden?: boolean;
+  archived?: boolean;
 }): Conversation & { hidden?: boolean } {
   return {
     id: input.id,
@@ -21,6 +22,7 @@ function conversation(input: {
     updated_at: input.updatedAt,
     last_message_at: input.updatedAt,
     ...(input.hidden ? { hidden: true } : {}),
+    ...(input.archived !== undefined ? { archived: input.archived } : {}),
   } as Conversation & { hidden?: boolean };
 }
 
@@ -101,5 +103,86 @@ describe("listLocalConversations", () => {
     );
 
     expect(result.map((item) => item.id)).toEqual(["local-conv-2"]);
+  });
+
+  describe("archive_status", () => {
+    const source = () => [
+      conversation({
+        id: "local-conv-active",
+        updatedAt: "2026-07-18T12:00:00.000Z",
+        archived: false,
+      }),
+      conversation({
+        id: "local-conv-archived",
+        updatedAt: "2026-07-17T12:00:00.000Z",
+        archived: true,
+      }),
+      // Records written before archiving existed carry no flag.
+      conversation({
+        id: "local-conv-legacy",
+        updatedAt: "2026-07-16T12:00:00.000Z",
+      }),
+    ];
+    const ids = (body: Record<string, unknown>) =>
+      listLocalConversations(source(), body as never).map((item) => item.id);
+
+    test("hides archived conversations by default", () => {
+      expect(ids({})).toEqual(["local-conv-active", "local-conv-legacy"]);
+    });
+
+    test("unarchived returns only unarchived conversations", () => {
+      expect(ids({ archive_status: "unarchived" })).toEqual([
+        "local-conv-active",
+        "local-conv-legacy",
+      ]);
+    });
+
+    test("archived returns only archived conversations", () => {
+      expect(ids({ archive_status: "archived" })).toEqual([
+        "local-conv-archived",
+      ]);
+    });
+
+    test("all returns both", () => {
+      expect(ids({ archive_status: "all" })).toEqual([
+        "local-conv-active",
+        "local-conv-archived",
+        "local-conv-legacy",
+      ]);
+    });
+
+    test("applies to conversations archived through the local backend", async () => {
+      const storageDir = await mkdtemp(join(tmpdir(), "archive-status-"));
+      try {
+        const backend = new LocalBackend({ storageDir, memfsEnabled: false });
+        const agent = await backend.createAgent({ name: "Local" } as never);
+        const kept = await backend.createConversation({
+          agent_id: agent.id,
+        } as never);
+        const archived = await backend.createConversation({
+          agent_id: agent.id,
+        } as never);
+        await backend.updateConversation(archived.id, {
+          archived: true,
+        } as never);
+        const list = async (body: Record<string, unknown>) =>
+          (
+            (await backend.listConversations({
+              agent_id: agent.id,
+              ...body,
+            } as never)) as Conversation[]
+          ).map((item) => item.id);
+
+        expect(await list({})).toEqual([kept.id]);
+        expect(await list({ archive_status: "archived" })).toEqual([
+          archived.id,
+        ]);
+        expect((await list({ archive_status: "all" })).sort()).toEqual(
+          [kept.id, archived.id].sort(),
+        );
+      } finally {
+        await rm(storageDir, { recursive: true, force: true });
+      }
+    });
   });
 });
