@@ -125,7 +125,7 @@ For how to structure and organize CLAUDE.md content, see [Manage Claude's memory
 
 Skills are markdown files that give your agent specialized knowledge and invocable workflows. Unlike `CLAUDE.md` (which loads every session), skills load on demand. The agent receives skill descriptions at startup and loads the full content when relevant.
 
-Skills are discovered from the filesystem through `settingSources`. When the `skills` option on `query()` is omitted, discovered user and project skills are enabled and the Skill tool is available, matching CLI behavior. To control which skills are enabled, pass `skills` as `"all"`, a list of skill names, or `[]` to disable all. When `skills` is set, the SDK adds the Skill tool to `allowedTools` automatically. If you also pass an explicit `tools` list, include `"Skill"` in that list so Claude can invoke skills.
+Skills are discovered from the filesystem through `settingSources`. When the `skills` option on `query()` is omitted, discovered user and project skills are enabled and the Skill tool is available, matching CLI behavior. To control which skills the main agent can invoke, pass `skills` as `"all"`, a list of skill names, or `[]` to disable all. If you also pass a `tools` list, include `"Skill"` so Claude can invoke skills.
 
 ```python Python theme={null}
 from claude_agent_sdk import query, ClaudeAgentOptions, ResultMessage
@@ -180,7 +180,7 @@ The SDK supports two ways to define hooks, and they run side by side:
 * **Filesystem hooks:** shell commands defined in `settings.json`, loaded when `settingSources` includes the relevant source. These are the same hooks you'd configure for [interactive Claude Code sessions](https://code.claude.com/docs/en/hooks-guide.md).
 * **Programmatic hooks:** callback functions passed directly to `query()`. These run in your application process and can return structured decisions. See [Control execution with hooks](https://code.claude.com/docs/en/agent-sdk/hooks.md).
 
-Hook callbacks receive the tool input and return a decision dict. Returning `{}` means allow the tool to proceed. To block execution, return a `hookSpecificOutput` object with `permissionDecision: "deny"` and a `permissionDecisionReason`. The reason is sent to Claude as the tool result. See the [hooks guide](https://code.claude.com/docs/en/agent-sdk/hooks.md) for the full callback signature and return types.
+Hook callbacks receive the tool input and return a decision dict. For `PreToolUse`, return `{}` to make no decision, so the normal [permission flow](https://code.claude.com/docs/en/agent-sdk/permissions.md#how-permissions-are-evaluated) applies. To block execution, return a `hookSpecificOutput` object with `permissionDecision: "deny"` and a `permissionDecisionReason`. The reason is sent to Claude as the tool result. See the [hooks guide](https://code.claude.com/docs/en/agent-sdk/hooks.md) for the full callback signature and return types.
 
 ```python Python theme={null}
 from claude_agent_sdk import query, ClaudeAgentOptions, HookMatcher, ResultMessage
@@ -201,7 +201,7 @@ async def audit_bash(input_data, tool_use_id, context):
                 "permissionDecisionReason": "Destructive command blocked",
             }
         }
-    return {}  # Empty dict: allow the tool to proceed
+    return {}  # Empty dict: no decision, normal permissions apply
 
 
 # Filesystem hooks from .claude/settings.json run automatically
@@ -243,7 +243,7 @@ const auditBash = async (input: HookInput): Promise<HookJSONOutput> => {
       },
     };
   }
-  return {}; // Empty object: allow the tool to proceed
+  return {}; // Empty object: no decision, normal permissions apply
 };
 
 // Filesystem hooks from .claude/settings.json run automatically

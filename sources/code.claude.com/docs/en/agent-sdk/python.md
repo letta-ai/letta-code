@@ -912,7 +912,7 @@ class ClaudeAgentOptions:
 | `plugins` | `list[SdkPluginConfig]` | `[]` | Load custom plugins from local paths. See [Plugins](https://code.claude.com/docs/en/agent-sdk/plugins.md) for details |
 | `sandbox` | [`SandboxSettings`](#sandboxsettings) ` \| None` | `None` | Configure sandbox behavior programmatically. See [Sandbox settings](#sandboxsettings) for details |
 | `setting_sources` | `list[SettingSource] \| None` | `None` (CLI defaults: all sources) | Control which filesystem settings to load. Pass `[]` to disable user, project, and local settings. With `skills` set and this field unset, only user and project sources load. Set `setting_sources` explicitly to keep local settings. Endpoint-managed policy loads regardless; server-managed settings are fetched when the session authenticates with an organization credential on an [eligible configuration](https://code.claude.com/docs/en/server-managed-settings.md#platform-availability). For inputs read regardless of this option, see [What settingSources does not control](https://code.claude.com/docs/en/agent-sdk/claude-code-features.md#what-settingsources-does-not-control) |
-| `skills` | `list[str] \| Literal["all"] \| None` | `None` | Skills available to the session. Pass `"all"` to enable every discovered skill, or a list of skill names. Pass exact names only. The SDK rejects malformed and wildcard-form names with a `ValueError` before starting the Claude Code process; this check requires Python Agent SDK 0.2.129 or later. When set, the SDK adds the Skill tool to `allowed_tools` automatically. If you also pass `tools`, include `"Skill"` in that list. See [Skills](https://code.claude.com/docs/en/agent-sdk/skills.md) |
+| `skills` | `list[str] \| Literal["all"] \| None` | `None` | Limits the main agent's skills. Pass `"all"` to enable every discovered skill, or a list of skill names. Pass exact names only. The SDK rejects malformed and wildcard-form names with a `ValueError` before starting the Claude Code process; this check requires Python Agent SDK 0.2.129 or later. If you also pass `tools`, include `"Skill"` in that list. See [Skills](https://code.claude.com/docs/en/agent-sdk/skills.md) |
 | `max_thinking_tokens` | `int \| None` | `None` | *Deprecated* - Maximum tokens for thinking blocks. Use `thinking` instead |
 | `thinking` | [`ThinkingConfig`](#thinkingconfig) ` \| None` | `None` | Controls extended thinking behavior. Takes precedence over `max_thinking_tokens` |
 | `effort` | [`EffortLevel`](#effortlevel) ` \| None` | `None` | Effort level for thinking depth. See [adjust the effort level](https://code.claude.com/docs/en/model-config.md#adjust-effort-level) |
@@ -1123,7 +1123,7 @@ When multiple sources are loaded, settings are merged with this precedence (high
 2. Project settings (`.claude/settings.json`)
 3. User settings (`~/.claude/settings.json`)
 
-Programmatic options such as `agents`, `allowed_tools`, and `settings` override user, project, and local filesystem settings. Managed policy settings take precedence over programmatic options.
+Permission rules you pass in `allowed_tools` or `settings` [add to](https://code.claude.com/docs/en/settings.md#lists-merge-instead-of-overriding) these files' rules. For most single values, Claude Code takes the one in `settings` over these files. Managed policy settings take precedence over most programmatic options.
 
 ### `AgentDefinition`
 
@@ -1176,7 +1176,7 @@ PermissionMode = Literal[
     "default",  # Standard permission behavior
     "acceptEdits",  # Auto-accept file edits
     "plan",  # Planning mode - Claude explores and plans
-    "dontAsk",  # Deny anything not pre-approved instead of prompting
+    "dontAsk",  # Deny calls that would otherwise prompt
     "bypassPermissions",  # Bypass permission checks; explicit ask rules still prompt (use with caution)
     "auto",  # A model classifier reviews actions such as shell commands and network requests
 ]
@@ -2628,7 +2628,7 @@ Before Python SDK v0.2.169, agents that your subagents started also ran in the b
     ],
     "resolvedModel": str | None,  # Model the subagent started on
     "modelsUsed": list[str] | None,  # Models used in order, with consecutive repeats collapsed
-    "totalToolUseCount": int,  # Number of tool calls the agent made
+    "totalToolUseCount": int,  # Number of tool calls the agent made, excluding SubagentHandback calls
     "totalDurationMs": int,  # Execution duration in milliseconds
     "totalTokens": int,  # Token count from the final API request, not the whole run
     "usage": {  # Token usage statistics

@@ -56,7 +56,7 @@ Installing Claude Code doesn't create any settings file. If your machine or proj
 
 * **Managed**: your organization deploys it. You don't create or edit it.
 * **Shared project**: a project that already uses Claude Code may have one committed. If not, create it at `.claude/settings.json` in the project folder.
-* **User** and **Project local**: create them yourself, or let Claude Code create them. It writes `~/.claude/settings.json` the first time you change an option in the `/config` menu that it stores in user settings, such as the theme, and `.claude/settings.local.json` the first time you give a standing approval on a permission prompt, such as "Yes, and don't ask again" for a Bash command. A few `/config` options, including **Show tips**, save to `.claude/settings.local.json` instead of the user file.
+* **User** and **Project local**: create them yourself, or let Claude Code create them. It writes `~/.claude/settings.json` when you save a user setting, such as the theme. It writes `.claude/settings.local.json` when you give a standing approval on a permission prompt, such as "Yes, and don't ask again" for a Bash command.
 
 > [!NOTE]
 >
@@ -118,7 +118,7 @@ Claude Code's system prompt isn't published. To give Claude standing instruction
 Run `/config` inside Claude Code and open the **Config** tab. It lists a short set of personal options such as theme, editor mode, and verbose output, not every settings key. Select an option to change it; Claude Code saves it for you:
 
 * **Most options**: `~/.claude/settings.json`
-* **A few options, such as Show tips**: `.claude/settings.local.json`
+* **Output style**: `.claude/settings.local.json`
 * **The [global config options](https://code.claude.com/docs/en/settings-reference.md#global-config-settings)**: `~/.claude.json`
 
 To set one option without the menu, pass `key=value`, such as `/config verbose=true`.

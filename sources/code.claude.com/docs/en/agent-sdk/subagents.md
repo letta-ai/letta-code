@@ -48,7 +48,7 @@ async def main():
         prompt="Review the authentication module for security issues",
         options=ClaudeAgentOptions(
             # Auto-approve these tools
-            allowed_tools=["Read", "Grep", "Glob", "Agent"],
+            allowed_tools=["Read", "Grep", "Glob", "Agent", "Bash(npm test *)"],
             agents={
                 "code-reviewer": AgentDefinition(
                     # description tells Claude when to use this subagent
@@ -97,7 +97,7 @@ for await (const message of query({
   prompt: "Review the authentication module for security issues",
   options: {
     // Auto-approve these tools
-    allowedTools: ["Read", "Grep", "Glob", "Agent"],
+    allowedTools: ["Read", "Grep", "Glob", "Agent", "Bash(npm test *)"],
     agents: {
       "code-reviewer": {
         // description tells Claude when to use this subagent
@@ -144,7 +144,7 @@ Focus on:
 | :- | :- | :- | :- |
 | `description` | `string` | Yes | Natural language description of when to use this agent |
 | `prompt` | `string` | Yes | The agent's system prompt defining its role and behavior |
-| `tools` | `string[]` | No | Array of allowed tool names. If omitted, inherits every [tool available to subagents](https://code.claude.com/docs/en/sub-agents.md#available-tools) |
+| `tools` | `string[]` | No | Array of allowed tool names; listing one doesn't [pre-approve](https://code.claude.com/docs/en/agent-sdk/permissions.md#allow-and-deny-rules) it. If omitted, inherits every [tool available to subagents](https://code.claude.com/docs/en/sub-agents.md#available-tools) |
 | `disallowedTools` | `string[]` | No | Array of tool names to remove from the agent's tool set. MCP server-level patterns are also accepted: `mcp__server` or `mcp__server__*` removes every tool from that server, and `mcp__*` removes every MCP tool from any server |
 | `model` | `string` | No | Model override for this agent. Accepts an alias such as `'fable'`, `'opus'`, `'sonnet'`, `'haiku'`, `'inherit'`, or a full model ID. `'inherit'` uses the model of the agent that spawned this one. When you omit `model`, Claude Code picks the model in the [subagent model order](https://code.claude.com/docs/en/sub-agents.md#choose-a-model) |
 | `skills` | `string[]` | No | List of skill names to preload into the agent's context at startup. At most the [first 32 distinct names](https://code.claude.com/docs/en/sub-agents.md#preload-skills-into-subagents) in the list are preloaded. Unlisted skills remain invocable through the Skill tool |
@@ -419,7 +419,9 @@ You can resume a subagent to continue where it left off rather than starting fre
 
 When a subagent stops at its [`maxTurns`](#agentdefinition-configuration) limit, Claude Code marks the output in the Agent tool result as partial, so Claude knows the run is unfinished.
 
-When a subagent completes, the Agent tool result includes a text block containing `agentId: <id>`. The built-in [`Explore` and `Plan` agents](https://code.claude.com/docs/en/sub-agents#built-in-subagents) are one-shot and don't return an `agentId`, so use a custom agent or `general-purpose` when you need to resume. To resume a subagent programmatically:
+### Resume a subagent from your code
+
+When a subagent completes, the Agent tool result includes a text block containing `agentId: <id>`. The built-in [`Explore` and `Plan` agents](https://code.claude.com/docs/en/sub-agents#built-in-subagents) can leave the ID out of that text, so use a custom agent or `general-purpose` when you need to resume. To resume a subagent programmatically:
 
 1. **Capture the session ID**: extract `session_id` from messages during the first query
 2. **Extract the agent ID**: parse `agentId` from the Agent tool result text
@@ -558,9 +560,7 @@ Subagent transcripts are stored in separate files and persist independently of t
 Use the `tools` field to limit what a subagent can do:
 
 * **Omit `tools`**: the subagent gets every [tool available to subagents](https://code.claude.com/docs/en/sub-agents.md#available-tools)
-* **List tools**: the subagent gets only those. A code reviewer that should never edit files, for example, gets `["Read", "Grep", "Glob"]`
-
-A tool you leave out isn't in the subagent's session at all: Claude works without it, with no permission prompt or error.
+* **List tools**: the subagent gets those. With [`memory`](https://code.claude.com/docs/en/sub-agents#enable-persistent-memory) enabled, it also gets Read, Write, and Edit. A code reviewer that shouldn't edit files, for example, gets `["Read", "Grep", "Glob"]`
 
 This example creates a read-only analysis agent that can examine code but can't modify files or run commands.
 

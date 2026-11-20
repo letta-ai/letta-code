@@ -812,7 +812,7 @@ What your hook prints to stdout can change the outcome. For example, when a `Pre
 | :- | :- | :- | :- |
 | JSON object that passes [schema validation](#json-output) | Success. The fields apply | Blocking error. Claude Code still reads the fields, but a `PreToolUse` call stays blocked even if you return `"allow"` or `continue: false`. For other events, see [Exit code 2](#exit-code-2) | Success. Claude Code ignores the exit code, and the fields alone decide. For hooks [whose failure blocks the action](#block-the-action-when-a-hook-fails), the run counts as a failure instead |
 | JSON that [can't be parsed](#exit-code-0) or fails schema validation | Non-blocking error. The notice carries the parse or validation message | Blocking error. Your stderr is the reason | Non-blocking error. The notice carries the parse or validation message |
-| [Plain text](#exit-code-0), or nothing | Success | Blocking error. Your stderr is the reason | Non-blocking error. The notice carries the first line of your stderr |
+| [Plain text](#exit-code-0), or nothing | Success | Blocking error. Your stderr is the reason | Non-blocking error |
 
 Some events have their own rules:
 
@@ -1035,7 +1035,7 @@ If your hook exits 2 and also sets `continue: false`, check [Exit code 2](#exit-
 | :- | :- | :- |
 | `PreToolUse` | Yes | Blocks the tool call |
 | `PermissionRequest` | No | Exit code 2 isn't honored for this event and the permission flow proceeds unchanged. Deny through the [`decision` object](#permissionrequest-decision-control) instead |
-| `UserPromptSubmit` | Yes | Blocks the prompt, so it never reaches Claude. See [What a blocked prompt leaves behind](#what-a-blocked-prompt-leaves-behind) |
+| `UserPromptSubmit` | Yes | Blocks the prompt. See [What a blocked prompt leaves behind](#what-a-blocked-prompt-leaves-behind) |
 | `UserPromptExpansion` | Yes | Blocks the expansion |
 | `Stop` | Yes | Prevents Claude from stopping, continues the conversation |
 | `SubagentStop` | Yes | Prevents the subagent from stopping |
@@ -1577,7 +1577,7 @@ To block a prompt, return a JSON object with `decision` set to `"block"`:
 
 | Field | Description |
 | :- | :- |
-| `decision` | `"block"` stops the prompt before it reaches Claude. Omit to allow the prompt to proceed |
+| `decision` | `"block"` rejects the prompt. Omit to allow the prompt to proceed |
 | `reason` | Shown to the user when `decision` is `"block"`. Not added to context, except when the hook blocks [Code Mode output](https://code.claude.com/docs/en/code-mode.md#code-output-withheld-by-a-hook) before v2.1.328 |
 | `additionalContext` | String added to Claude's context alongside the submitted prompt. See [Add context for Claude](#add-context-for-claude) |
 | `sessionTitle` | Sets the session title. Use to name sessions automatically based on the prompt content |
@@ -1600,9 +1600,9 @@ If your hook blocks by exiting 2, its stderr text is treated the same way as `re
 
 #### What a blocked prompt leaves behind
 
-A blocked prompt never reaches Claude, but its text isn't removed everywhere. By default the block message shown to the user ends with `Original prompt:` followed by the submitted text, and Claude Code writes that message to the session's transcript file on disk. To leave the text out of the message, print JSON with `"suppressOriginalPrompt": true` inside `hookSpecificOutput`. This works whether the hook blocks with `decision: "block"` or by exiting 2.
+By default the block message shown to the user ends with `Original prompt:` and the submitted prompt. To leave the prompt out of the message, print JSON with `"suppressOriginalPrompt": true` inside `hookSpecificOutput`, whether the hook blocks with `decision: "block"` or by exiting 2.
 
-`suppressOriginalPrompt` changes only the block message. The submitted text can still appear in local files such as the session transcript and your prompt history, so a blocking hook isn't a way to keep a secret off disk. To limit or remove those files, see [Plaintext storage](https://code.claude.com/docs/en/claude-directory.md#plaintext-storage) and [Clear local data](https://code.claude.com/docs/en/claude-directory.md#clear-local-data).
+Either way, the prompt can still appear in local files such as the session transcript and your prompt history. A blocking hook isn't a way to keep a secret off disk. To limit or remove those files, see [Plaintext storage](https://code.claude.com/docs/en/claude-directory.md#plaintext-storage) and [Clear local data](https://code.claude.com/docs/en/claude-directory.md#clear-local-data).
 
 ### UserPromptExpansion
 
@@ -1976,7 +1976,7 @@ When a foreground Agent call completes, your [PostToolUse hook](#posttooluse) re
 | `modelsUsed` | array | `["claude-sonnet-4-5", "claude-haiku-4-5"]` | Models used in order, with consecutive repeats collapsed; set only when the model was swapped mid-run |
 | `totalTokens` | number | `12450` | Token count from the subagent's final API request: input, output, and cache tokens combined. This isn't a total across the whole run |
 | `totalDurationMs` | number | `48211` | Wall-clock duration of the subagent run |
-| `totalToolUseCount` | number | `7` | Count of tool calls the subagent made |
+| `totalToolUseCount` | number | `7` | Count of tool calls the subagent made, excluding `SubagentHandback` |
 | `usage` | object | `{"input_tokens": 8320, ...}` | Per-type token breakdown of the final API request: `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens` |
 
 On Claude Code v2.1.271 or later, a subagent that runs with the [`SubagentHandback`](https://code.claude.com/docs/en/tools-reference) tool, which Claude Code provides in [auto mode](https://code.claude.com/docs/en/permission-modes.md#eliminate-prompts-with-auto-mode), delivers its report through that tool rather than returning it as text. The `content` field of its `completed` result then carries a short note about that hand-back rather than the report itself. To read the report, match a `PreToolUse` or `PostToolUse` hook on `SubagentHandback` and read `tool_input.message`.
@@ -2868,7 +2868,7 @@ Each entry in `background_tasks` describes one in-flight task and uses these fie
 | `type` | Friendly task-type label such as `shell`, `subagent`, `monitor`, `workflow`, `teammate`, `cloud session`, or `MCP task`. Each label identifies which Claude Code feature created the task. Falls back to the raw discriminant for unrecognized types |
 | `status` | Current task status |
 | `description` | Free-text description, capped at 1000 characters with an in-string `… [+N chars]` marker when clipped |
-| `command` | Shell command line, capped at 1000 characters. Present only for `shell` tasks |
+| `command` | Shell command line, capped at 1000 characters. Present only for `shell` tasks and `monitor` tasks that run a command |
 | `agent_type` | Subagent type name. Present only for `subagent` tasks |
 | `server` | MCP server name. Present only for `monitor` and `MCP task` tasks |
 | `tool` | MCP tool name. Present only for `monitor` and `MCP task` tasks |
@@ -3339,7 +3339,7 @@ Runs when Claude Code cleans up a worktree that your [`WorktreeCreate`](#worktre
 
 When a subagent or a workflow agent finishes, Claude Code keeps the worktree your WorktreeCreate hook made for it and doesn't run your WorktreeRemove hook. Remove those worktrees yourself when the work is done.
 
-For a `claude remote-control` cleanup, Claude Code runs your hook without prompting you. `ExitWorktree` refuses to remove a hook-created worktree unless the call passes [`discard_changes: true`](https://code.claude.com/docs/en/agent-sdk/typescript#exitworktree).
+When `claude remote-control` cleans up a worktree, expect your hook to run without a prompt. If you ask Claude to remove a hook-created worktree, expect `ExitWorktree` to refuse unless Claude passes [`discard_changes: true`](https://code.claude.com/docs/en/agent-sdk/typescript#exitworktree).
 
 Claude Code uses git to look for changed or untracked files, so it finds none in a worktree that isn't a git checkout or inside one, even when the directory holds uncommitted work. Check for that work in your WorktreeRemove hook before it deletes anything.
 
@@ -3941,7 +3941,7 @@ An ElicitationResult hook can let the user's response through, change its values
 | Let the response through | No output, with exit code 0 | The user's response, unchanged |
 | Change the submitted values | `"action": "accept"`, with the new values in `content` | `accept` with your `content` in place of the user's values |
 | Block the response | `"action": "decline"` | `decline`, without the user's values |
-| Cancel the request | `"action": "cancel"` | `cancel`, along with the values the user submitted. To withhold them, return `"decline"` |
+| Cancel the request | `"action": "cancel"` | `cancel`. To withhold the values the user submitted, return `"decline"` |
 
 This output changes the response shown under [ElicitationResult input](#elicitationresult-input), so the server receives `alice@example.com` where the user submitted `alice`:
 

@@ -30,6 +30,8 @@ Every subcommand shares these exit codes, plugin arguments, and scope values:
 * **Plugin arguments**: a `<plugin>` argument is a plugin `name` or `name@marketplace`. When two marketplaces offer the same name, use the qualified form. `configure` takes only the qualified form.
 * **Scopes**: `--scope` takes `user`, `project`, or `local`, and names the settings file the command writes to. `update` also takes `managed`.
 
+In a terminal, success lines leave out `Successfully`, as in `Installed plugin:`. When stdout or stderr isn't a terminal, `Successfully` stays.
+
 ### plugin init
 
 Scaffold a new plugin at `~/.claude/skills/<name>/`. Unless your administrator has [blocked skills-directory plugins](https://code.claude.com/docs/en/plugins/loading.md#skills-directory-plugins-blocked-by-managed-settings), it loads in your next session as `<name>@skills-dir` with no install step.
@@ -850,12 +852,11 @@ For which surfaces have `/plugin`, how to install without it, and what each pane
 
 A `<plugin>` is a plugin `name` or `name@marketplace`.
 
-The table below lists every session form. The shell subcommands `init`, `update`, `details`, `prune`, `eval`, `eval init`, and `test` have no session form.
+The table below lists the session forms. The shell subcommands `init`, `update`, `details`, `prune`, `eval`, `eval init`, and `test` have no session form.
 
 | Command | Aliases | What it does |
 | :- | :- | :- |
-| `/plugin` | | Opens the panel on the **Discover** tab. Any unrecognized first word after `/plugin` does the same |
-| `/plugin help` | `/plugin --help`, `/plugin -h` | Shows the usage list of `/plugin` subcommands |
+| `/plugin` | | Opens the panel on the **Discover** tab |
 | `/plugin list [--enabled\|--disabled]` | `ls` | Prints your marketplace-installed plugins inline, with version, scope, and status. A filter flag shows only that state. A plugin whose enable state hasn't been applied yet is marked `run /reload-plugins to apply` |
 | `/plugin install` | `i` | Opens the **Discover** tab |
 | `/plugin install <plugin>` | `i` | Opens the plugin's details in the **Discover** tab. With `name@marketplace`, opens them in that marketplace's list |

@@ -1146,7 +1146,7 @@ Set the default [permission mode](https://code.claude.com/docs/en/permission-mod
 
 * **Scope**: [`Any file`](#scopes). `auto` and `bypassPermissions` don't take effect from project or local settings, so set them in `~/.claude/settings.json` instead. Before v2.1.257, `bypassPermissions` took effect from any file. For conversations the VS Code extension starts, Claude Code reads only user, managed, and `--settings` values.
 * **Type**: string, one of:
-  * `"default"`: Claude Code runs only reads without asking
+  * `"default"`: Claude Code runs file reads inside your working directories and [some other actions](https://code.claude.com/docs/en/permission-modes.md#available-modes) without asking
   * `"acceptEdits"`: Claude Code also runs file edits and common filesystem commands such as `mkdir` and `mv` without asking
   * `"plan"`: Claude Code reads and plans but blocks edits until you approve a plan
   * `"auto"`: Claude Code runs without routine prompts; before actions such as shell commands and network requests run, a background classifier checks that they align with your request
@@ -1948,7 +1948,7 @@ A `mask` entry accepts these optional fields. Without `extract` or `decode`, Cla
 | `onExtractNoMatch` | `"warn"`, `"deny"`, or `"error"`; default `"warn"`. On an entry with `decode`, only `"warn"` is accepted | What happens when `extract` matches nothing. `warn` passes the variable through unmasked, `deny` unsets it inside the sandbox, and `error` stops sandbox setup until you fix the configuration. Requires v2.1.224 or later |
 | `decode` | the string `"jwt"` | Verify the whole value is a JWT and replace it with a structurally valid fake token, so code inside the sandbox that decodes the token keeps working; the proxy substitutes the whole real token on egress. A value that doesn't verify passes through unmasked with a warning. Requires v2.1.224 or later |
 | `maskClaims` | array of strings, at least one claim name; requires `decode` | Mask only the named top-level payload claims inside the decoded JWT and rebuild the token around the modified payload, so the other claims stay readable. When no named claim matches, the variable passes through unmasked with a warning. Requires v2.1.224 or later |
-| `injectHosts` | array of strings, each a host that [`sandbox.network.allowedDomains`](#sandbox-network-alloweddomains) also admits | Narrow the hosts where the sandbox proxy substitutes the real value. When unset, the proxy substitutes it on requests to every host in `sandbox.network.allowedDomains`. Write an IPv6 destination as the bare compressed address, such as `"::1"`, not the bracketed form; see [IPv6 destinations in `injectHosts`](https://code.claude.com/docs/en/sandboxing#ipv6-destinations-in-injecthosts) |
+| `injectHosts` | array of strings, each a host that [`sandbox.network.allowedDomains`](#sandbox-network-alloweddomains) also admits | List the hosts where the sandbox proxy substitutes the real value. For most variables with no `injectHosts`, the proxy substitutes the real value on requests to every host in `sandbox.network.allowedDomains`. Write an IPv6 destination as the bare compressed address, such as `"::1"`, not the bracketed form; see [IPv6 destinations in `injectHosts`](https://code.claude.com/docs/en/sandboxing#ipv6-destinations-in-injecthosts) |
 
 This masks only the password inside `DATABASE_URL`, unsets the variable if the pattern matches nothing, and masks a JWT in `SERVICE_JWT` while leaving every claim except `api_key` readable:
 
@@ -2023,7 +2023,7 @@ This links three custom-named variables into one AWS credential for re-signing:
 
 Each named variable must be a whole-value `mask` entry in [`sandbox.credentials.envVars`](#sandbox-credentials-envvars), without `extract` or `decode`, and can fill only one slot across all pairs. These rules also apply:
 
-* The proxy re-signs requests on the hosts listed in the access key ID entry's `injectHosts`
+* The proxy can re-sign requests on the hosts listed in the access key ID entry's `injectHosts`
 * When `sessionTokenVar` is set, the proxy sends the real token as `x-amz-security-token` on re-signed requests
 * Naming any of the conventional variables in a pair replaces the automatic pairing
 
@@ -3568,11 +3568,11 @@ Set the attribution text Claude Code adds to pull request descriptions. Set it t
 
 ### `attribution.sessionUrl`
 
-Choose whether Claude Code appends the claude.ai session link when it commits or opens a pull request from a [cloud](https://code.claude.com/docs/en/claude-code-on-the-web.md) or [Remote Control](https://code.claude.com/docs/en/remote-control.md) session. Claude Code adds the link as a `Claude-Session` trailer on commits and as a link in pull request descriptions. Set it to `false` to omit the link.
+Choose whether Claude Code tells Claude to add the claude.ai session link to commits and pull requests from a [cloud](https://code.claude.com/docs/en/claude-code-on-the-web.md) or [Remote Control](https://code.claude.com/docs/en/remote-control.md) session. The setting covers a `Claude-Session` trailer on commits and a URL in pull request descriptions. Set it to `false` to omit the link.
 
 * **Scope**: [`Any file`](#scopes)
 * **Type**: Boolean
-  * `true`: Claude Code appends the claude.ai session link when it commits or opens a pull request from a cloud or Remote Control session
+  * `true`: Claude Code tells Claude to add the link
   * `false`: Claude Code omits the link
 * **Default**: `true`
 
@@ -3924,7 +3924,7 @@ This example turns channels on and allows only the Telegram plugin from the offi
 }
 ```
 
-An empty array blocks every channel plugin.
+An empty array blocks every channel plugin unless a user loads it with [`--dangerously-load-development-channels`](https://code.claude.com/docs/en/channels#restrict-which-channel-plugins-can-run).
 
 This key takes effect once channels pass the [`channelsEnabled`](#channelsenabled) gate for the account: on Team and Enterprise plans, and on Console accounts with managed settings, that means `channelsEnabled: true`. See [Restrict which channel plugins can run](https://code.claude.com/docs/en/channels.md#restrict-which-channel-plugins-can-run).
 
@@ -4484,9 +4484,9 @@ Built-in servers such as Claude in Chrome, the `ide` server Claude Code connects
 
 Servers your organization delivers are also exempt from the allowlist, and the denylist still applies to them. The exemption covers every [`managedMcpServers`](#managedmcpservers) entry, and any [`managed-mcp.json`](https://code.claude.com/docs/en/managed-mcp#exclusive-control-with-managed-mcp-json) entry whose values use [no `${VAR}` expansion outside `env`](https://code.claude.com/docs/en/managed-mcp#how-allowlists-and-denylists-apply-to-the-managed-set). See [How a server is evaluated](https://code.claude.com/docs/en/managed-mcp.md#how-a-server-is-evaluated) for the full check order. Before v2.1.259, servers from `managed-mcp.json` had to match too.
 
-* **Scope**: [`Any file`](#scopes). Entries from every file merge into one allowlist unless [`allowManagedMcpServersOnly`](#allowmanagedmcpserversonly) is set. Deploy it in managed settings to enforce it.
+* **Scope**: [`Any file`](#scopes). For servers users add, entries from every file merge into one allowlist unless [`allowManagedMcpServersOnly`](#allowmanagedmcpserversonly) is set. To keep users from adding entries, deploy both keys in managed settings.
 * **Type**: array of objects, each with exactly one key. Use `serverName`, a string limited to letters, numbers, hyphens, and underscores; `serverCommand`, an array of the command and its arguments matched exactly; or `serverUrl`, a URL pattern with `*` wildcards
-* **Default**: unset, so every server is allowed; an empty array blocks every server users add
+* **Default**: unset, so every server is allowed; an empty merged list blocks every server users add
 
 This example allows only the stdio server that the listed `npx` command starts:
 
@@ -4583,8 +4583,8 @@ Approve every MCP server defined in project `.mcp.json` files without a prompt. 
 * **Scope**: [`Any file`](#scopes). In a folder whose trust dialog you haven't accepted, Claude Code honors it from user settings, managed settings, and `--settings` and ignores it in the shared project file, both in the session and for `claude mcp list` and `claude mcp get`; [Project server approvals and workspace trust](https://code.claude.com/docs/en/mcp.md#project-server-approvals-and-workspace-trust) says when an untracked `.claude/settings.local.json` counts too.
 * **Type**: Boolean
   * `true`: Claude Code approves every MCP server defined in project `.mcp.json` files without a prompt
-  * `false`: Claude Code asks you to approve each server. In a trusted folder, a `false` in a higher-precedence file overrides a `true` in a lower one; in a folder you haven't trusted, a `true` in any honored file is enough
-* **Default**: unset, so Claude Code asks you to approve each server
+  * `false`: interactive terminal sessions ask you to approve each [pending](https://code.claude.com/docs/en/mcp.md#server-status) server. See [Project scope](https://code.claude.com/docs/en/mcp.md#project-scope) for some sessions that connect it without asking and how to keep it out. In a trusted folder, a `false` in a higher-precedence file overrides a `true` in a lower one; in a folder you haven't trusted, a `true` in any honored file is enough
+* **Default**: unset, so interactive terminal sessions ask the same way
 
 ```json settings.json theme={null}
 {
@@ -4879,7 +4879,7 @@ Allow Claude to send a push notification to your phone when it decides one is wo
 * **Type**: Boolean
   * `true`: Claude can send a push notification to your phone when it decides one is worth sending
   * `false`: Claude doesn't send those notifications
-* **Default**: `false`
+* **Default**: unset, so Claude Code uses the value saved to your account, or `false` if none is saved
 
 ```json settings.json theme={null}
 {
@@ -5038,7 +5038,7 @@ Get a push notification on your phone when a permission prompt or question is wa
 
 * **Scope**: [`Any file`](#scopes). Claude Code also reads a value left in `~/.claude.json` by older versions.
 * **Type**: Boolean
-* **Default**: `false`
+* **Default**: unset, so Claude Code uses the value saved to your account
 
 ```json settings.json theme={null}
 {
@@ -5728,12 +5728,12 @@ To confirm which sources combined on a machine, run `/status` and [read the `Set
 
 ### `parentSettingsBehavior`
 
-Choose whether Claude Code applies managed settings supplied by an embedding host process, such as the Agent SDK or an IDE extension, when an admin-deployed managed tier is also present. With `"first-wins"`, Claude Code drops the host-supplied settings; with `"merge"`, it applies them under the admin tier through a restrictive-only filter. Set `"merge"` when a host needs to pass its own restrictions to the sessions it launches, for example Claude Desktop delivering a gateway's egress allowlist.
+Choose whether Claude Code applies managed settings supplied by an embedding host process, such as the Agent SDK or an IDE extension, when an admin-deployed managed tier is also present. Set `"merge"` when a host needs to pass its own restrictions to the sessions it launches, for example Claude Desktop delivering a gateway's egress allowlist.
 
 * **Scope**: [`Managed`](#scopes). Claude Code reads it from the highest-priority admin-controlled managed source.
 * **Type**: string, one of:
   * `"first-wins"`: Claude Code drops the host-supplied settings when an admin-deployed managed tier is present
-  * `"merge"`: Claude Code applies the host-supplied settings under the admin tier through a restrictive-only filter
+  * `"merge"`: Claude Code applies the host-supplied settings under the admin tier through a filter that keeps restrictive keys. Unless you [set the `allowManaged*Only` locks](https://code.claude.com/docs/en/claude-apps-gateway#restrict-parent-settings), permission allow rules and sandbox allowlists pass too
 * **Default**: `"first-wins"`
 
 ```json managed-settings.json theme={null}
@@ -5742,7 +5742,7 @@ Choose whether Claude Code applies managed settings supplied by an embedding hos
 }
 ```
 
-This key has no effect when no admin-deployed managed tier exists: the host's settings then apply as the only managed tier, still filtered to restrictive values. For the filter's limits and how the managed sources interact, see [Parent settings from embedding hosts](https://code.claude.com/docs/en/managed-settings.md#parent-settings-from-embedding-hosts) and [Restrict parent settings](https://code.claude.com/docs/en/claude-apps-gateway#restrict-parent-settings).
+This key has no effect when no admin-deployed managed tier exists: the host's settings then apply as the only managed tier, still filtered. For the filter's limits and how the managed sources interact, see [Parent settings from embedding hosts](https://code.claude.com/docs/en/managed-settings.md#parent-settings-from-embedding-hosts) and [Restrict parent settings](https://code.claude.com/docs/en/claude-apps-gateway#restrict-parent-settings).
 
 ### `policyHelper`
 

@@ -65,7 +65,7 @@ async def protect_env_files(input_data, tool_use_id, context):
             }
         }
 
-    # Return empty object to allow the operation
+    # Empty object: no decision, normal permissions apply
     return {}
 
 
@@ -113,7 +113,7 @@ const protectEnvFiles: HookCallback = async (input, toolUseID, { signal }) => {
     };
   }
 
-  // Return empty object to allow the operation
+  // Empty object: no decision, normal permissions apply
   return {};
 };
 
@@ -134,7 +134,7 @@ for await (const message of query({
 }
 ```
 
-The hook denies a Write or Edit call whose `file_path` ends in `/.env`, in any letter case. On Windows, `file_path` uses backslashes, such as `C:\project\.env`, and this hook allows a Write or Edit call to `C:\project\.env`.
+The hook denies a Write or Edit call whose `file_path` ends in `/.env`, in any letter case. On Windows, `file_path` uses backslashes, such as `C:\project\.env`, and this hook doesn't block a Write or Edit call to `C:\project\.env`.
 
 > [!WARNING]
 >
@@ -250,7 +250,7 @@ Your callback returns an object with two categories of fields:
   * For `PostToolUse` hooks, you can set `additionalContext` to append information to the tool result. To replace the tool's output before Claude sees it, set `updatedToolOutput`, which works for built-in and MCP tools in both SDKs. The older `updatedMCPToolOutput` field replaces MCP tool output only.
   * In the TypeScript SDK, a `PostToolUse` callback can also return `classifierContext`, a short note about the tool call's result for the [auto mode](https://code.claude.com/docs/en/permission-modes.md#eliminate-prompts-with-auto-mode) permission classifier. Because your callback runs in your application's own process, the classifier may weigh a user statement you relay in the note as user intent. The field requires TypeScript Agent SDK v0.3.236 or later. [Annotate a result for the auto mode classifier](https://code.claude.com/docs/en/hooks.md#annotate-a-result-for-the-auto-mode-classifier) covers the length cap, the synchronous-only rule, and what not to put in the note.
 
-Return `{}` to allow the operation without changes. SDK callback hooks use the same JSON output format as [Claude Code shell command hooks](https://code.claude.com/docs/en/hooks.md#json-output), which documents every field and event-specific option. For the SDK type definitions, see the [TypeScript](https://code.claude.com/docs/en/agent-sdk/typescript.md#synchookjsonoutput) and [Python](https://code.claude.com/docs/en/agent-sdk/python.md#synchookjsonoutput) SDK references.
+For `PreToolUse`, return `{}` to make no decision, so the normal [permission flow](https://code.claude.com/docs/en/agent-sdk/permissions.md#how-permissions-are-evaluated) applies. SDK callback hooks use the same JSON output format as [Claude Code shell command hooks](https://code.claude.com/docs/en/hooks.md#json-output), which documents every field and event-specific option. For the SDK type definitions, see the [TypeScript](https://code.claude.com/docs/en/agent-sdk/typescript.md#synchookjsonoutput) and [Python](https://code.claude.com/docs/en/agent-sdk/python.md#synchookjsonoutput) SDK references.
 
 > [!NOTE]
 >

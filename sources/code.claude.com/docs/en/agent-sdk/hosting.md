@@ -18,7 +18,7 @@ Every hosting decision on this page follows from how the SDK runs the agent. Whe
 
 ![Request flow: client to your app, which spawns a claude CLI subprocess over stdio inside the container; the subprocess writes to local disk and calls api.anthropic.com over HTTPS](https://mintcdn.com/claude-code/ikqp3_70mqIahteV/images/agent-sdk/hosting-subprocess.svg?fit=max\&auto=format\&n=ikqp3_70mqIahteV\&q=85\&s=9dac857ca9d3b1410c3734900c386004)
 
-One agent session maps to one subprocess. Running N concurrent sessions means N subprocesses, each with its own process tree and transcript file. By default they all inherit your application's working directory. When sessions need separate filesystems, pass a distinct `cwd` in the options of each session's `query()` call:
+One agent session maps to one subprocess. Running N concurrent sessions takes N subprocesses, each with its own process tree and transcript file. By default they all inherit your application's working directory. When sessions need separate working directories, pass a distinct `cwd` in the options of each session's `query()` call:
 
 ```typescript TypeScript theme={null}
 import { query } from "@anthropic-ai/claude-agent-sdk";

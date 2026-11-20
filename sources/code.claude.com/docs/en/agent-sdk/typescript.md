@@ -597,7 +597,7 @@ Configuration object for the `query()` function.
 | `sessionStoreFlush` | `'batched' \| 'eager'` | `'batched'` | *Alpha.* Flush mode for `sessionStore`. Ignored when `sessionStore` is not set |
 | `settings` | `string \| Settings` | `undefined` | Inline [settings](https://code.claude.com/docs/en/settings.md) object, a settings file path, or an inline JSON string. Populates the flag-settings layer in the [precedence order](https://code.claude.com/docs/en/settings.md#settings-precedence). Change at runtime with [`applyFlagSettings()`](#applyflagsettings) |
 | `settingSources` | [`SettingSource`](#settingsource)`[]` | CLI defaults (all sources) | Control which filesystem settings to load. Pass `[]` to disable user, project, and local settings. [Endpoint-managed policy](https://code.claude.com/docs/en/managed-settings.md#delivery-mechanisms) loads regardless; server-managed settings are fetched when the session authenticates with an organization credential on an [eligible configuration](https://code.claude.com/docs/en/server-managed-settings.md#platform-availability). See [Use Claude Code features](https://code.claude.com/docs/en/agent-sdk/claude-code-features.md#what-settingsources-does-not-control) |
-| `skills` | `string[] \| 'all'` | `undefined` | Skills available to the session. Pass `'all'` to enable every discovered skill, or a list of skill names. Pass exact names only. On Agent SDK v0.3.221 or later, the SDK rejects malformed and wildcard-form names with an error before starting the Claude Code process. When set, the SDK adds the Skill tool to `allowedTools` automatically. If you also pass `tools`, include `'Skill'` in that list. See [Skills](https://code.claude.com/docs/en/agent-sdk/skills.md) |
+| `skills` | `string[] \| 'all'` | `undefined` | Limits the main agent's skills. Pass `'all'` to enable every discovered skill, or a list of skill names. Pass exact names only. On Agent SDK v0.3.221 or later, the SDK rejects malformed and wildcard-form names with an error before starting the Claude Code process. If you also pass `tools`, include `'Skill'` in that list. See [Skills](https://code.claude.com/docs/en/agent-sdk/skills.md) |
 | `spawnClaudeCodeProcess` | `(options: SpawnOptions) => SpawnedProcess` | `undefined` | Custom function to spawn the Claude Code process. Use to run Claude Code in VMs, containers, or remote environments |
 | `stderr` | `(data: string) => void` | `undefined` | Callback for stderr output |
 | `strictMcpConfig` | `boolean` | `false` | Use the servers passed in `mcpServers` and ignore project `.mcp.json`, user settings, plugin-provided MCP servers, and [claude.ai connectors](https://code.claude.com/docs/en/mcp.md#use-mcp-servers-from-claude-ai) |
@@ -1375,7 +1375,7 @@ When multiple sources are loaded, settings are merged with this precedence (high
 2. Project settings (`.claude/settings.json`)
 3. User settings (`~/.claude/settings.json`)
 
-Programmatic options such as `agents`, `allowedTools`, and `settings` override user, project, and local filesystem settings. If a managed policy setting and a programmatic option set the same key, the managed value applies, with exceptions such as an `effortLevel` passed to [`applyFlagSettings()`](#applyflagsettings).
+Permission rules you pass in `allowedTools` or `settings` [add to](https://code.claude.com/docs/en/settings.md#lists-merge-instead-of-overriding) these files' rules. For most single values, Claude Code takes the one in `settings` over these files. If a managed policy setting and a programmatic option set the same key, the managed value applies, with exceptions such as an `effortLevel` passed to [`applyFlagSettings()`](#applyflagsettings).
 
 ### `PermissionMode`
 
@@ -1385,7 +1385,7 @@ type PermissionMode =
   | "acceptEdits" // Auto-accept file edits
   | "bypassPermissions" // Bypass permission checks; explicit ask rules still prompt
   | "plan" // Planning mode - Claude explores and plans
-  | "dontAsk" // Don't prompt for permissions, deny if not pre-approved
+  | "dontAsk" // Deny calls that would otherwise prompt
   | "auto"; // A model classifier reviews actions such as shell commands and network requests
 ```
 
@@ -1902,6 +1902,7 @@ type SDKResultMessage =
       deferred_tool_use?: { id: string; name: string; input: Record<string, unknown> };
       terminal_reason?: TerminalReason;
       result_index?: number;
+      credential_expires_at?: string;
       fast_mode_state?: FastModeState;
       fast_mode_disabled_reason?: FastModeDisabledReason;
       origin?: SDKMessageOrigin;
@@ -1932,6 +1933,7 @@ type SDKResultMessage =
       resume_reason?: string;
       terminal_reason?: TerminalReason;
       result_index?: number;
+      credential_expires_at?: string;
       fast_mode_state?: FastModeState;
       fast_mode_disabled_reason?: FastModeDisabledReason;
       origin?: SDKMessageOrigin;
@@ -1956,6 +1958,7 @@ Several fields on the result carry diagnostic detail beyond `subtype`:
 * `total_cost_usd`: cumulative estimated cost in USD, covering the same calls as `modelUsage` and reset at the same points. A call that resumes a session also counts the [totals restored from the session's earlier calls](https://code.claude.com/docs/en/agent-sdk/cost-tracking.md#accumulate-costs-across-multiple-calls). It is an estimate, not a billing statement. See [Track cost and usage](https://code.claude.com/docs/en/agent-sdk/cost-tracking.md) for accuracy caveats.
 * `queued_turn_count`: the number of messages you sent with `origin: { kind: "human" }` that are still waiting when Claude Code produced the result. See [`queued_turn_count`](#queued_turn_count) for what `0` and an absent field tell you.
 * `result_index`: where this result falls in the run's delivery order, counting from 0 across every result the process writes. Present on both arms. A result whose write fails still consumes its number, so a gap in the sequence means a result was lost. Requires Agent SDK v0.3.268 or later.
+* `credential_expires_at`: the stored claude.ai login's latest expected end, as an ISO 8601 timestamp. The login can end up to three days earlier. Absent for other credentials or when no date is known. Requires Agent SDK v0.3.318 or later.
 * `startup_failure_reason`: why Claude Code refused to start, on the `error_during_execution` result it writes before exiting on a known startup failure. See [`startup_failure_reason`](#startup_failure_reason) for the values and which failures carry it. Requires Agent SDK v0.3.274 or later.
 * `terminal_reason`: why the loop ended. One of `"completed"`, `"max_turns"`, `"tool_deferred"`, `"aborted_streaming"`, `"aborted_tools"`, `"hook_stopped"`, `"stop_hook_prevented"`, `"background_requested"`, `"blocking_limit"`, `"rapid_refill_breaker"`, `"prompt_too_long"`, `"image_error"`, `"model_error"`, `"api_error"`, `"malformed_tool_use_exhausted"`, `"budget_exhausted"`, `"structured_output_retry_exhausted"`, `"tool_deferred_unavailable"`, or `"turn_setup_failed"`.
 * `fast_mode_state`: one of `"on"`, `"off"`, or `"cooldown"`.
@@ -3805,7 +3808,7 @@ type CronCreateInput = {
 };
 ```
 
-Schedules a prompt to run on a 5-field cron schedule in local time. Set `recurring` to `false` to fire once at the next match. Jobs are session-scoped by default, and resuming with `--resume` or `--continue` restores jobs that haven't expired. See [Session-scoped scheduled tasks](https://code.claude.com/docs/en/scheduled-tasks.md).
+Schedules a prompt to run on a 5-field cron schedule in local time. Set `recurring` to `false` to fire once at the next match. Jobs are session-scoped by default. See [Session-scoped scheduled tasks](https://code.claude.com/docs/en/scheduled-tasks.md).
 
 Setting `durable` to `true` requests persistence to `.claude/scheduled_tasks.json` so the job survives restarts. Durable scheduling isn't available in every session: when it isn't, Claude Code accepts `durable: true` but creates the job session-only. Read the output's `durable` field to see whether the job persisted.
 
