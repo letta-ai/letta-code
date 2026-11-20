@@ -40,7 +40,7 @@ type McpBrokerScope = {
 };
 
 type ParsedMcpRequest = {
-  agentId: string;
+  agentId: string | null;
   path: string;
 };
 
@@ -107,6 +107,13 @@ function parseMcpRequest(
   requestPath: string,
 ): ParsedMcpRequest | null {
   if (requestPath.includes("?") || requestPath.includes("#")) return null;
+  if (
+    method === "POST" &&
+    (requestPath === "/v1/subagent-tools/list" ||
+      requestPath === "/v1/subagent-tools/call")
+  ) {
+    return { agentId: null, path: requestPath };
+  }
   const parts = requestPath.split("/");
   if (
     parts[0] !== "" ||
@@ -265,7 +272,7 @@ export function createMcpSubprocessBroker(options: {
           !parsed ||
           !initialScope ||
           initialScope.agentId !== options.agentId ||
-          !allowedAgents.has(parsed.agentId)
+          (parsed.agentId !== null && !allowedAgents.has(parsed.agentId))
         ) {
           sendJson(response, 403, { ok: false, error: "Forbidden" });
           return;

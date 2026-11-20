@@ -162,3 +162,7 @@ export function capacityResult(result: SubagentResult): SubagentResult {
     error: `${CODEX_CAPACITY_ERROR}. Last error: ${result.error ?? "unknown"}`,
   };
 }
+
+export function textInput(text: string): Array<{ type: "text"; text: string }> {
+  return [{ type: "text", text }];
+}

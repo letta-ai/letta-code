@@ -1,3 +1,4 @@
+import { getMcpRelayEnv } from "@/utils/mcp-relay-env";
 // Runs only in a child process. Keep the SDK and its native helpers out of the
 // listener/TUI process and preserve the installed package's lazy module loads.
 
@@ -24,6 +25,7 @@ export interface CursorWorkerStart {
   cwd: string;
   model?: string;
   reminder?: string;
+  mcpServers?: AgentOptions["mcpServers"];
   prompt: string;
 }
 
@@ -68,6 +70,12 @@ async function start(command: CursorWorkerStart): Promise<void> {
     });
   }
   const options: AgentOptions = {
+    mcpServers: Object.fromEntries(
+      Object.entries(command.mcpServers ?? {}).map(([name, config]) => [
+        name,
+        { ...config, env: getMcpRelayEnv(process.env) },
+      ]),
+    ),
     apiKey: process.env.CURSOR_API_KEY,
     model: { id: command.model ?? config.model },
     // Noninteractive coding worker: shell and edits run without Letta approval.

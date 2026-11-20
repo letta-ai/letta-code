@@ -1,4 +1,11 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { getClient } from "@/backend/api/client";
+import { resolveMcpOriginatorToken } from "@/backend/api/mcp-originator-resolver";
+import {
+  createMcpSubprocessBroker,
+  MCP_SUBPROCESS_BROKER_SOCKET_ENV,
+} from "@/backend/api/mcp-subprocess-broker";
+import { getRuntimeContext } from "@/runtime-context";
 import { getCommandProcessFactory } from "@/utils/package-manager-spawn";
 import { wrapManagedWorkloadLauncher } from "@/utils/systemd-workload-scope";
 
@@ -122,13 +129,45 @@ export function spawnSubagentProcess(
   args: string[],
   options: SpawnSubagentProcessOptions,
 ): RunningSubagentProcess {
+  const context = getRuntimeContext();
+  const brokerAgentId = context?.agentId;
+  const broker =
+    brokerAgentId && !options.env[MCP_SUBPROCESS_BROKER_SOCKET_ENV]
+      ? createMcpSubprocessBroker({
+          agentId: brokerAgentId,
+          getAllowedAgentIds: async () =>
+            new Set(
+              [brokerAgentId, options.env.LETTA_PARENT_AGENT_ID].filter(
+                (id): id is string => !!id,
+              ),
+            ),
+          getScope: () => {
+            const runId =
+              context.resolveMcpOriginatorSuperRunId?.() ??
+              context.mcpOriginatorSuperRunId;
+            return {
+              agentId: brokerAgentId,
+              ...(runId
+                ? { originatorToken: resolveMcpOriginatorToken(runId) }
+                : {}),
+            };
+          },
+          getClient: async () => await getClient(),
+        })
+      : null;
   // Default stdio is "pipe", so all three streams exist.
-  const childProcess = getCommandProcessFactory()(command, args, {
-    cwd: options.cwd,
-    env: options.env,
-    detached: process.platform !== "win32",
-    windowsHide: true,
-  }) as ChildProcessWithoutNullStreams;
+  let childProcess: ChildProcessWithoutNullStreams;
+  try {
+    childProcess = getCommandProcessFactory()(command, args, {
+      cwd: options.cwd,
+      env: { ...options.env, ...broker?.env },
+      detached: process.platform !== "win32",
+      windowsHide: true,
+    }) as ChildProcessWithoutNullStreams;
+  } catch (error) {
+    broker?.close();
+    throw error;
+  }
   let aborted = false;
   let termination: Promise<void> = Promise.resolve();
 
@@ -160,6 +199,7 @@ export function spawnSubagentProcess(
   });
 
   const completion = processExit.then(async (result) => {
+    broker?.close();
     if (aborted) await termination;
     options.signal?.removeEventListener("abort", abortHandler);
     return result;

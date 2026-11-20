@@ -7,7 +7,12 @@ import type { SubagentResult } from "@/agent/subagents";
 import { spawnManagedWorkloadProcess } from "@/agent/subagents/subagent-process";
 import { cloudRepositoryRoots } from "@/utils/cloud-repository-roots";
 import { confirmProcessExit } from "@/utils/confirm-process-exit";
+import { getErrorMessage as errorMessage } from "@/utils/error";
 import { withNativeCliPath } from "@/utils/native-cli-env";
+import {
+  cloudToolsConfigArgs,
+  discoverCloudToolsConfig,
+} from "./cloud-tools-config";
 import {
   asRecord,
   CAPACITY_RETRY_DELAYS_MS,
@@ -18,6 +23,7 @@ import {
   isCapacityError,
   readString,
   TOOL_ITEM_TYPES,
+  textInput,
   turnFailureMessage,
   turnReport,
 } from "./codex-app-server-payloads";
@@ -223,13 +229,6 @@ export async function listCodexModels(
   }
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function textInput(text: string): Array<{ type: "text"; text: string }> {
-  return [{ type: "text", text }];
-}
 function spawnTransport(options: {
   configArgs?: string[];
   cwd: string;
@@ -606,7 +605,11 @@ async function createSession(
     AGENT_ID: options.parentAgentId,
     LETTA_AGENT_ID: options.parentAgentId,
   });
+  const cloudConfigArgs = deps.createTransport
+    ? []
+    : cloudToolsConfigArgs(await discoverCloudToolsConfig(env));
   let transport = (deps.createTransport ?? spawnTransport)({
+    configArgs: cloudConfigArgs,
     cwd: options.cwd,
     env,
   });
@@ -642,7 +645,7 @@ async function createSession(
       transport = spawnTransport({
         cwd: options.cwd,
         env,
-        configArgs: trace.args,
+        configArgs: [...cloudConfigArgs, ...trace.args],
       });
       client = makeClient();
       await client.initialize();

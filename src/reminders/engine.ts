@@ -1,5 +1,6 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { SkillSource } from "@/agent/skills";
+import { getCloudToolsClient, listCloudTools } from "@/backend/api/cloud-tools";
 import { buildAgentInfo } from "@/cli/helpers/agent-info";
 import { buildConversationBootstrapReminder } from "@/cli/helpers/conversation-bootstrap";
 import {
@@ -257,6 +258,18 @@ export async function listMcpServersForAgent(
     name,
     toolCount: null,
   }));
+  if (!deps.getLocalServerNames) {
+    try {
+      const catalog = await listCloudTools(await getCloudToolsClient());
+      if (catalog.tools.length)
+        entries.push({
+          name: catalog.serverName,
+          toolCount: catalog.tools.length,
+        });
+    } catch {
+      /* Unsupported hosts and unproven callers have no catalog. */
+    }
+  }
   const serverSideEntries = await (
     deps.listServerSideServers ?? defaultListServerSideServers
   )(agentId, timeoutMs);
