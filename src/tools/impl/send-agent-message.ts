@@ -565,6 +565,7 @@ export async function send_agent_message(
       {
         ...destination,
         clientMessageId,
+        callerConversationId: sender.conversationId,
         content: buildAgentSendContent(sender, true, args.message),
         computer,
         actingUserId,
