@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import type { PiAiWatchAnalysis } from "./release-analysis.ts";
 import {
   getPendingPrForCursor,
+  getRetryableReviewForCursor,
+  getUnresolvedReviewForCursor,
   hasCompletedRange,
   hasRecordedOutcome,
   initialTrackerState,
@@ -72,13 +74,15 @@ describe("pi-ai watch tracker", () => {
     expect(retried.processed[0]?.outcome).toBe("no_upgrade");
   });
 
-  test("advances cumulative reviews but not replays behind the cursor", () => {
+  test("blocks cumulative reviews needing a decision but not replays behind the cursor", () => {
     const human = recordAnalysis(initialTrackerState("0.82.1"), {
       analysis: analysis("0.82.1", "0.84.0"),
       outcome: "needs_human_review",
       notes: "product decision",
     });
-    expect(human.audit_cursor_version).toBe("0.84.0");
+    expect(human.audit_cursor_version).toBe("0.82.1");
+    expect(getUnresolvedReviewForCursor(human)?.version).toBe("0.84.0");
+    expect(getRetryableReviewForCursor(human)).toBeNull();
 
     const replay = recordAnalysis(initialTrackerState("0.82.1"), {
       analysis: analysis("0.82.1", "0.83.0", false),
@@ -86,6 +90,41 @@ describe("pi-ai watch tracker", () => {
       notes: "explicit replay",
     });
     expect(replay.audit_cursor_version).toBe("0.82.1");
+  });
+
+  test("retries a legacy human-review result once under the current policy", () => {
+    const legacy = parseTrackerState(`<!-- pi-ai-watch-state
+{"audit_cursor_version":"0.84.0","last_checked_version":"0.84.0","last_checked_at":"2026-08-21T00:00:00Z","processed":[{"version":"0.84.0","previous_version":"0.82.1","installed_version":"0.82.1","outcome":"needs_human_review","pr_url":null,"notes":"policy conflict","processed_at":"2026-08-21T00:00:00Z","compare_url":"https://example.test/compare","workflow_run_url":"https://example.test/run"}]}
+-->`);
+    const retry = getRetryableReviewForCursor(legacy);
+    expect(retry?.previous_version).toBe("0.82.1");
+    expect(retry?.review_policy_version).toBe(0);
+
+    const failedRetry = recordAnalysis(legacy, {
+      analysis: analysis("0.82.1", "0.84.0"),
+      outcome: "error",
+      notes: "transient retry failure",
+    });
+    expect(getRetryableReviewForCursor(failedRetry)?.outcome).toBe("error");
+
+    const reviewedAgain = recordAnalysis(legacy, {
+      analysis: analysis("0.82.1", "0.84.0"),
+      outcome: "needs_human_review",
+      notes: "still needs a product decision",
+    });
+    expect(getRetryableReviewForCursor(reviewedAgain)).toBeNull();
+    expect(getUnresolvedReviewForCursor(reviewedAgain)?.version).toBe("0.84.0");
+
+    const published = recordAnalysis(legacy, {
+      analysis: analysis("0.82.1", "0.84.0"),
+      outcome: "pr_created",
+      notes: "ready for review",
+      prUrl: "https://github.com/letta-ai/letta-code/pull/123",
+    });
+    expect(getUnresolvedReviewForCursor(published)).toBeNull();
+    expect(getPendingPrForCursor(published)?.pr_url).toBe(
+      "https://github.com/letta-ai/letta-code/pull/123",
+    );
   });
 
   test("rejects malformed hidden state", () => {

@@ -4,6 +4,7 @@ const STATE_START = "<!-- pi-ai-watch-state";
 const STATE_END = "-->";
 const HISTORY_LIMIT = 50;
 const VISIBLE_LIMIT = 20;
+export const CURRENT_REVIEW_POLICY_VERSION = 1;
 
 export type TrackerOutcome =
   | "no_upgrade"
@@ -21,6 +22,7 @@ export interface TrackerEntry {
   processed_at: string;
   compare_url: string;
   workflow_run_url: string;
+  review_policy_version: number;
 }
 
 export interface TrackerState {
@@ -76,6 +78,7 @@ export function recordAnalysis(
     processed_at: options.processedAt ?? new Date().toISOString(),
     compare_url: options.analysis.compare_url,
     workflow_run_url: options.analysis.workflow_run_url,
+    review_policy_version: CURRENT_REVIEW_POLICY_VERSION,
   };
   const processed = [
     entry,
@@ -89,7 +92,7 @@ export function recordAnalysis(
   const advancesCursor =
     options.analysis.is_latest_release &&
     entry.previous_version === state.audit_cursor_version &&
-    entry.outcome !== "error";
+    (entry.outcome === "no_upgrade" || entry.outcome === "pr_created");
 
   return {
     audit_cursor_version: advancesCursor
@@ -138,6 +141,30 @@ export function getPendingPrForCursor(
         entry.pr_url,
     ) ?? null
   );
+}
+
+export function getRetryableReviewForCursor(
+  state: TrackerState,
+): TrackerEntry | null {
+  const entry = getUnresolvedReviewForCursor(state);
+  return entry &&
+    (entry.outcome === "error" ||
+      entry.review_policy_version < CURRENT_REVIEW_POLICY_VERSION)
+    ? entry
+    : null;
+}
+
+export function getUnresolvedReviewForCursor(
+  state: TrackerState,
+): TrackerEntry | null {
+  const entry = state.processed.find(
+    (entry) =>
+      entry.version === state.audit_cursor_version ||
+      entry.previous_version === state.audit_cursor_version,
+  );
+  return entry?.outcome === "error" || entry?.outcome === "needs_human_review"
+    ? entry
+    : null;
 }
 
 export function renderTrackerBody(state: TrackerState): string {
@@ -213,10 +240,20 @@ function normalizeState(value: unknown): TrackerState {
     throw new TypeError("tracker audit cursor is invalid");
   }
   assertStableVersion(value.audit_cursor_version);
-  if (
-    !Array.isArray(value.processed) ||
-    !value.processed.every(isTrackerEntry)
-  ) {
+  if (!Array.isArray(value.processed)) {
+    throw new TypeError("tracker processed entries are invalid");
+  }
+  const processed = value.processed.map((entry) => {
+    if (!isRecord(entry)) return entry;
+    return {
+      ...entry,
+      review_policy_version:
+        entry.review_policy_version === undefined
+          ? 0
+          : entry.review_policy_version,
+    };
+  });
+  if (!processed.every(isTrackerEntry)) {
     throw new TypeError("tracker processed entries are invalid");
   }
   if (
@@ -232,11 +269,11 @@ function normalizeState(value: unknown): TrackerState {
     throw new TypeError("tracker last checked time is invalid");
   }
 
-  const processed = value.processed.slice(0, HISTORY_LIMIT) as TrackerEntry[];
+  const boundedProcessed = processed.slice(0, HISTORY_LIMIT) as TrackerEntry[];
   const lastCheckedVersion = value.last_checked_version as string | null;
   if (
     lastCheckedVersion !== null &&
-    !processed.some((entry) => entry.version === lastCheckedVersion)
+    !boundedProcessed.some((entry) => entry.version === lastCheckedVersion)
   ) {
     throw new TypeError("tracker last checked version is inconsistent");
   }
@@ -245,7 +282,7 @@ function normalizeState(value: unknown): TrackerState {
     audit_cursor_version: value.audit_cursor_version,
     last_checked_version: lastCheckedVersion,
     last_checked_at: value.last_checked_at as string | null,
-    processed,
+    processed: boundedProcessed,
   };
 }
 
@@ -263,7 +300,9 @@ function isTrackerEntry(value: unknown): value is TrackerEntry {
     typeof value.notes === "string" &&
     typeof value.processed_at === "string" &&
     typeof value.compare_url === "string" &&
-    typeof value.workflow_run_url === "string"
+    typeof value.workflow_run_url === "string" &&
+    Number.isInteger(value.review_policy_version) &&
+    (value.review_policy_version as number) >= 0
   );
 }
 
