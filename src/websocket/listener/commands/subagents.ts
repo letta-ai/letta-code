@@ -74,16 +74,19 @@ export async function handleLaunchSubagentCommand(
             executionSettings: parent.executionSettings,
           },
           () =>
-            launch({
-              ...toSubagentLaunchArgs(command.args),
-              signal,
-              toolCallId: command.tool_call_id,
-              notifyCaller: command.notify === "caller",
-              parentScope: {
-                agentId: command.runtime.agent_id,
-                conversationId: command.runtime.conversation_id,
+            launch(
+              {
+                ...toSubagentLaunchArgs(command.args),
+                signal,
+                toolCallId: command.tool_call_id,
+                notifyCaller: command.notify === "caller",
+                parentScope: {
+                  agentId: command.runtime.agent_id,
+                  conversationId: command.runtime.conversation_id,
+                },
               },
-            }),
+              command.args.cloud_skill_repositories,
+            ),
         ),
       ),
     ]);

@@ -6,6 +6,7 @@ import type {
   SubagentMessageCommand,
   SubagentStopCommand,
 } from "@/types/subagent-protocol";
+import { isCloudRepositoryNames } from "@/utils/cloud-repository-roots";
 import { isAgentRuntimeScope } from "./protocol-validation";
 
 const ARGUMENTS = new Set([
@@ -19,6 +20,7 @@ const ARGUMENTS = new Set([
   "conversation_id",
   "client_message_id",
   "computer",
+  "cloud_skill_repositories",
   "max_turns",
   "mcp",
 ]);
@@ -71,6 +73,11 @@ export function isLaunchSubagentCommand(
     )
       return false;
   }
+  if (
+    args.cloud_skill_repositories !== undefined &&
+    !isCloudRepositoryNames(args.cloud_skill_repositories)
+  )
+    return false;
   // launchSubagent validates the MCP selection's contents.
   if (
     args.mcp !== undefined &&

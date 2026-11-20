@@ -1,8 +1,11 @@
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 import { setTimeout as sleep } from "node:timers/promises";
+import { PROJECT_SKILLS_DIR } from "@/agent/skills";
 import type { SubagentResult } from "@/agent/subagents";
 import { spawnManagedWorkloadProcess } from "@/agent/subagents/subagent-process";
+import { cloudRepositoryRoots } from "@/utils/cloud-repository-roots";
 import { confirmProcessExit } from "@/utils/confirm-process-exit";
 import { withNativeCliPath } from "@/utils/native-cli-env";
 import {
@@ -55,14 +58,12 @@ interface PendingRequest {
   resolve: (value: Record<string, unknown>) => void;
   reject: (error: Error) => void;
 }
-
 interface TurnOutcome {
   result: SubagentResult;
   capacityFailure: boolean;
   ranTool: boolean;
   steered: boolean;
 }
-
 interface TurnWaiter {
   turnId: string;
   resolve: (value: TurnOutcome) => void;
@@ -74,23 +75,14 @@ interface TurnWaiter {
   onText?: ExternalTextListener;
   onToolResult?: ExternalWorkerListeners["onToolResult"];
   onReasoning?: ExternalWorkerListeners["onReasoning"];
-  /** Text already reported to `onText`, shared across capacity retries. */
   reportedText: ReportedText;
-  /** Texts reported by earlier attempts of this prompt; not re-reported. */
   textFromEarlierAttempts: ReadonlySet<string>;
-  /** A tool-like item started, so replaying the prompt could repeat side effects. */
   ranTool: boolean;
-  /** Steered input went into this turn and would be lost by a replay. */
   steered: boolean;
-  /** Final (non-retrying) `error` notifications for this turn. */
   errors: Array<Record<string, unknown>>;
 }
 
-/**
- * A capacity retry replays the prompt as a new turn with new item IDs, so
- * text is also deduplicated by content to keep `onText` from repeating
- * a message an earlier attempt already reported.
- */
+/** Deduplicates item IDs and text across capacity retries. */
 interface ReportedText {
   itemIds: Set<string>;
   texts: Set<string>;
@@ -117,6 +109,7 @@ export interface CodexTurnOptions
   prompt: string;
   parentAgentId: string;
   cwd: string;
+  cloudSkillRepositories?: string[];
   model?: string;
   mcpReminder?: string;
   signal?: AbortSignal;
@@ -658,6 +651,13 @@ async function createSession(
       void transport.exited
         ?.finally(() => trace?.close())
         .catch(() => undefined);
+    if (options.cloudSkillRepositories?.length) {
+      await client.request("skills/extraRoots/set", {
+        extraRoots: cloudRepositoryRoots(options.cloudSkillRepositories).map(
+          (root) => join(root, PROJECT_SKILLS_DIR),
+        ),
+      });
+    }
     const method = options.resumeThreadId ? "thread/resume" : "thread/start";
     const params = options.resumeThreadId
       ? {

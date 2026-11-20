@@ -418,6 +418,8 @@ export async function prepareListenerTurn(params: {
       skillsDirectory: listenerOptions?.skillsDirectory,
       skillSources: runtime.skillSources,
       bundledSkills: runtime.bundledSkills,
+      cloudSkillRepositories:
+        runtime.executionSettings?.cloud_skill_repositories,
     })
   ).availableSkills;
   if (isInterrupted()) {
@@ -437,6 +439,8 @@ export async function prepareListenerTurn(params: {
       skillsDirectory: listenerOptions?.skillsDirectory,
       skillSources: runtime.skillSources,
       bundledSkills: runtime.bundledSkills,
+      cloudSkillRepositories:
+        runtime.executionSettings?.cloud_skill_repositories,
     },
   );
   if (isInterrupted()) return { kind: "interrupted" };

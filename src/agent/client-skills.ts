@@ -1,8 +1,10 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
+import { getRuntimeContext } from "@/runtime-context";
 import type { AvailableSkillSummary } from "@/types/protocol_v2";
 import { getCheckoutGeneration } from "@/utils/checkout-readiness";
+import { cloudRepositoryRoots } from "@/utils/cloud-repository-roots";
 import type { AttachedAgentRepository } from "./attached-repositories";
 import { ClientSkillsWatcher } from "./client-skills-watcher";
 import {
@@ -122,6 +124,7 @@ function computeCacheKey(components: {
   configuredSkillsDirectory: string | null;
   legacySkillsDirectory: string;
   primaryProjectSkillsDirectory: string;
+  extraProjectSkillsDirectories: string[];
   memorySkillsDirs: string[];
   sharedMemorySkillsDirs: string[];
   sharedMemoryErrors: SkillDiscoveryError[];
@@ -136,6 +139,7 @@ function computeCacheKey(components: {
     components.configuredSkillsDirectory ?? "",
     components.legacySkillsDirectory,
     components.primaryProjectSkillsDirectory,
+    JSON.stringify(components.extraProjectSkillsDirectories),
     [...components.memorySkillsDirs].sort().join(","),
     [...components.sharedMemorySkillsDirs].sort().join(","),
     components.sharedMemoryErrors
@@ -151,6 +155,7 @@ function getSkillRoots(components: {
   configuredSkillsDirectory: string | null;
   legacySkillsDirectory: string;
   primaryProjectSkillsDirectory: string;
+  extraProjectSkillsDirectories: string[];
   memorySkillsDirs: string[];
   sharedMemorySkillsDirs: string[];
 }): string[] {
@@ -161,6 +166,8 @@ function getSkillRoots(components: {
     if (components.configuredSkillsDirectory) {
       roots.add(components.configuredSkillsDirectory);
     }
+    for (const root of components.extraProjectSkillsDirectories)
+      roots.add(root);
     roots.add(components.legacySkillsDirectory);
     roots.add(components.primaryProjectSkillsDirectory);
   }
@@ -389,6 +396,7 @@ export interface BuildClientSkillsPayloadOptions {
   /** Bundled skill IDs to expose when skillSources omits "bundled". */
   bundledSkills?: string[];
   attachedRepositories?: readonly AttachedAgentRepository[];
+  cloudSkillRepositories?: readonly string[];
   discoverSkillsFn?: typeof discoverSkills;
   logger?: (message: string) => void;
 }
@@ -412,6 +420,17 @@ function toClientSkill(skill: Skill): ClientSkill {
   };
 }
 
+export function getCloudProjectSkillDirectories(
+  repositories: readonly string[] | undefined = getRuntimeContext()
+    ?.executionSettings?.cloud_skill_repositories,
+): string[] {
+  const roots = cloudRepositoryRoots(repositories);
+  return roots.flatMap((root) => [
+    join(root, SKILLS_DIR),
+    join(root, PROJECT_SKILLS_DIR),
+  ]);
+}
+
 function resolveSkillDiscoveryContext(
   options: BuildClientSkillsPayloadOptions,
 ): {
@@ -419,6 +438,7 @@ function resolveSkillDiscoveryContext(
   configuredSkillsDirectory: string | null;
   legacySkillsDirectory: string;
   primaryProjectSkillsDirectory: string;
+  extraProjectSkillsDirectories: string[];
   skillSources: SkillSource[];
   bundledSkills: string[] | undefined;
 } {
@@ -440,6 +460,9 @@ function resolveSkillDiscoveryContext(
     configuredSkillsDirectory,
     legacySkillsDirectory,
     primaryProjectSkillsDirectory,
+    extraProjectSkillsDirectories: getCloudProjectSkillDirectories(
+      options.cloudSkillRepositories,
+    ),
     skillSources,
     bundledSkills,
   };
@@ -453,6 +476,7 @@ export interface DiscoverClientSideSkillsOptions {
   /** Bundled skill IDs to expose when skillSources omits "bundled". */
   bundledSkills?: string[];
   attachedRepositories?: readonly AttachedAgentRepository[];
+  cloudSkillRepositories?: readonly string[];
   discoverSkillsFn?: typeof discoverSkills;
 }
 
@@ -461,6 +485,7 @@ interface CollectClientSideSkillsOptions
   configuredSkillsDirectory: string | null;
   legacySkillsDirectory: string;
   primaryProjectSkillsDirectory: string;
+  extraProjectSkillsDirectories: string[];
   sharedMemorySkillsDirs: string[];
   sharedMemoryErrors: SkillDiscoveryError[];
 }
@@ -525,6 +550,11 @@ async function collectClientSideSkills(
 
   const includeProjectSource =
     options.skillSources?.includes("project") ?? false;
+
+  if (includeProjectSource) {
+    for (const path of options.extraProjectSkillsDirectories)
+      addDiscoveryRun({ path, sources: ["project"] });
+  }
 
   if (
     includeProjectSource &&
@@ -623,6 +653,7 @@ export async function discoverClientSideSkills(
     configuredSkillsDirectory,
     legacySkillsDirectory,
     primaryProjectSkillsDirectory,
+    extraProjectSkillsDirectories,
     skillSources,
     bundledSkills,
   } = resolveSkillDiscoveryContext(options);
@@ -638,6 +669,7 @@ export async function discoverClientSideSkills(
     skillSources,
     bundledSkills,
     primaryProjectSkillsDirectory,
+    extraProjectSkillsDirectories,
     sharedMemorySkillsDirs: sharedMemoryContext.skillsDirs,
     sharedMemoryErrors: sharedMemoryContext.errors,
   });
@@ -666,6 +698,7 @@ export async function buildClientSkillsPayload(
     configuredSkillsDirectory,
     legacySkillsDirectory,
     primaryProjectSkillsDirectory,
+    extraProjectSkillsDirectories,
     skillSources,
     bundledSkills,
   } = resolveSkillDiscoveryContext(options);
@@ -687,6 +720,7 @@ export async function buildClientSkillsPayload(
     configuredSkillsDirectory,
     legacySkillsDirectory,
     primaryProjectSkillsDirectory,
+    extraProjectSkillsDirectories,
     memorySkillsDirs,
     sharedMemorySkillsDirs: sharedMemoryContext.skillsDirs,
   });
@@ -701,6 +735,7 @@ export async function buildClientSkillsPayload(
     configuredSkillsDirectory,
     legacySkillsDirectory,
     primaryProjectSkillsDirectory,
+    extraProjectSkillsDirectories,
     memorySkillsDirs,
     sharedMemorySkillsDirs: sharedMemoryContext.skillsDirs,
     sharedMemoryErrors: sharedMemoryContext.errors,
@@ -724,6 +759,7 @@ export async function buildClientSkillsPayload(
     skillSources,
     bundledSkills,
     primaryProjectSkillsDirectory,
+    extraProjectSkillsDirectories,
     sharedMemorySkillsDirs: sharedMemoryContext.skillsDirs,
     sharedMemoryErrors: sharedMemoryContext.errors,
     discoverSkillsFn,

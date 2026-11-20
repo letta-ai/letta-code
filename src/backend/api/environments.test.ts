@@ -188,6 +188,26 @@ describe("Cloud sandbox environment resolution", () => {
     ]);
   });
 
+  test("sends GitHub repositories and machine size alongside the conversation", async () => {
+    const githubRepositories = [
+      { owner: "octocat", repo: "hello", commit: "a".repeat(40) },
+    ];
+    const options = {
+      conversationId: "conv-1",
+      githubRepositories,
+      sandboxSize: "large",
+    } as const;
+    const request = (async (_method, _path, body) => {
+      expect(body).toEqual(options);
+      return {
+        sandboxId: "sandbox-1",
+        deviceId: "device-1",
+        connectionName: "Cloud",
+      };
+    }) as typeof apiRequest;
+    await createAgentSandbox("agent-1", options, request);
+  });
+
   test("keeps the virtual default conversation agent-scoped", async () => {
     const bodies: Array<Record<string, unknown> | undefined> = [];
     const request = (async (

@@ -15,8 +15,8 @@ import {
   type AppServerClient,
   createAppServerClient,
 } from "@/app-server-client";
-import { getClient } from "@/backend/api/client";
 import {
+  type AgentSandboxOptions,
   ComputerResolutionError,
   type EnvironmentConnection,
   getEnvironmentConnection,
@@ -49,6 +49,7 @@ import {
   parseExternalCodingAgentId,
 } from "./external-coding-agent";
 import { connectRemoteWorkerWithRetry } from "./remote-connect-retry";
+import { resolveExternalWorkerComputer } from "./remote-external-worker-computer";
 import {
   RemoteFollowUpSocketClosedError,
   RemoteFollowUpTimeoutError,
@@ -80,6 +81,7 @@ export type SpawnRemoteFollowTask = (args: {
 export interface RemoteExternalCodingAgentLaunch {
   type: ExternalCodingAgentType;
   computer: string;
+  cloudOptions?: AgentSandboxOptions;
   prompt: string;
   /** The destination reads the parent history and writes its own transcript file. */
   forkContext?: boolean;
@@ -96,6 +98,7 @@ export interface RemoteExternalCodingAgentDeps {
   resolveComputer?: (
     computer: string,
     parentScope: ParentScope,
+    cloudOptions?: AgentSandboxOptions,
   ) => Promise<{ connectionId: string; environment: EnvironmentConnection }>;
   connect?: (
     connectionId: string,
@@ -132,43 +135,6 @@ export function formatOutdatedComputerError(
 
 function formatOutdatedSteeringError(computer: string): string {
   return `${computer} is running an older Letta Code that can't steer Claude Code subagents remotely. Update Letta Code on ${computer}.`;
-}
-
-async function defaultResolveComputer(computer: string, scope: ParentScope) {
-  if (!isCloudEnvironmentSelector(computer))
-    return resolveEnvironmentConnectionId(computer);
-
-  const client = await getClient();
-  const parentConversationId =
-    scope.conversationId && scope.conversationId !== "default"
-      ? scope.conversationId
-      : undefined;
-  // The SDK forwards extra request fields until its types include ancestry.
-  const createParams = {
-    agent_id: scope.agentId,
-    hidden: true,
-    ...(parentConversationId
-      ? { parent_conversation_id: parentConversationId }
-      : {}),
-  };
-  const conversation = await client.conversations
-    .create(createParams)
-    .catch((error: unknown) => {
-      if (
-        !parentConversationId ||
-        !error ||
-        typeof error !== "object" ||
-        !("status" in error) ||
-        error.status !== 403
-      ) {
-        throw error;
-      }
-      const fallbackParams = { agent_id: scope.agentId, hidden: true };
-      return client.conversations.create(fallbackParams);
-    });
-  return resolveAgentSandboxConnectionId(scope.agentId, {
-    conversationId: conversation.id,
-  });
 }
 
 async function defaultConnect(connectionId: string, scope: ParentScope) {
@@ -517,7 +483,7 @@ export async function launchRemoteExternalCodingAgent(
   let deviceId = "";
   let supportsSteering = false;
   let sendsForkContext = false;
-  const resolveComputer = deps.resolveComputer ?? defaultResolveComputer;
+  const resolveComputer = deps.resolveComputer ?? resolveExternalWorkerComputer;
   function configureComputer(resolved: {
     connectionId: string;
     environment: EnvironmentConnection;
@@ -540,7 +506,7 @@ export async function launchRemoteExternalCodingAgent(
   }
   try {
     const outdated = configureComputer(
-      await resolveComputer(computer, parentScope),
+      await resolveComputer(computer, parentScope, params.cloudOptions),
     );
     if (outdated) return fail("outdated_computer", outdated);
   } catch (error) {
@@ -595,6 +561,11 @@ export async function launchRemoteExternalCodingAgent(
         description: params.description,
         ...(params.model ? { model: params.model } : {}),
         ...(params.mcp ? { mcp: params.mcp } : {}),
+        ...((type === "claude-code" || type === "codex") &&
+          params.cloudOptions?.githubRepositories?.length && {
+            cloud_skill_repositories:
+              params.cloudOptions.githubRepositories.map(({ repo }) => repo),
+          }),
       },
       tool_call_id: toolCallId,
       notify: "caller",
