@@ -19,6 +19,7 @@ import {
 } from "@/cli/helpers/init-command";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import { parseReflectCommandArgs } from "@/cli/helpers/reflect-command";
+import { getReflectionLaunchSkippedMessage } from "@/cli/helpers/reflection-launch-messages";
 import { launchReflectionSubagent } from "@/cli/helpers/reflection-launcher";
 import { buildModCommandPrompt } from "@/cli/mods/command-runtime";
 import { runPreCompactHooks } from "@/hooks";
@@ -812,15 +813,11 @@ async function handleReflectCommand(
   ); // Ownership was resolved with the acting user above.
   if (result.launched)
     return "Started a reflection pass for this conversation.";
-  if (result.reason === "memfs_disabled") {
-    return "Reflection needs the memory filesystem to be enabled for this agent.";
-  }
-  if (result.reason === "already_active") {
-    return "A reflection agent is already running for this conversation.";
-  }
-  if (result.reason === "no_payload") {
-    return "No new transcript content to reflect on for this conversation.";
-  }
+  const skippedMessage = getReflectionLaunchSkippedMessage(
+    result.reason,
+    "listener",
+  );
+  if (skippedMessage) return skippedMessage;
   return `Failed to start reflection: ${
     result.error instanceof Error
       ? result.error.message
