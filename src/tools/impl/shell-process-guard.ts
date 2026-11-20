@@ -8,6 +8,10 @@ const signals = Object.keys(constants.signals)
   .flatMap((name) => [`-${name}`, `-${name.toLowerCase()}`])
   .join("|");
 
+// getopt may accept abbreviated long options for a nonzero signal.
+const signalOptionAbbreviations =
+  "--s|--si|--sig|--sign|--signa|--s=*|--si=*|--sig=*|--sign=*|--signa=*";
+
 /**
  * Best-effort workflow guard for direct shell calls. Shell functions don't
  * apply to xargs, sudo, or separately launched scripts. This is not a
@@ -54,7 +58,7 @@ LEttaMatches
 }
 
 __letta_pkill_probe() {
-  local remaining=$# arg first
+  local remaining=$# arg first zero_signal=no other_signal=no
   while [ "$remaining" -gt 0 ]; do
     arg=$1; shift; remaining=$((remaining - 1))
     case "$arg" in
@@ -65,17 +69,28 @@ __letta_pkill_probe() {
           arg=$1; shift; set -- "$@" "$arg"; remaining=$((remaining - 1))
         done
         ;;
-      --signal|-q|--queue)
+      -0|--signal=0) zero_signal=yes ;;
+      --signal)
+        [ "$remaining" -gt 0 ] || return 2
+        if [ "$1" = 0 ]; then zero_signal=yes; else other_signal=yes; fi
+        shift; remaining=$((remaining - 1))
+        ;;
+      -q|--queue)
         [ "$remaining" -gt 0 ] || return 2
         shift; remaining=$((remaining - 1))
         ;;
-      --signal=*|--queue=*|-[0-9]*|${signals}|-e|--echo|-c|--count) ;;
+      --signal=*|-[0-9]*|${signals}) other_signal=yes ;;
+      ${signalOptionAbbreviations})
+        other_signal=yes; set -- "$@" "$arg"
+        ;;
+      --queue=*|-e|--echo|-c|--count) ;;
       -[gGOPsTtuUFdr]|--pgroup|--group|--older|--parent|--session|--terminal|--euid|--uid|--pidfile|--runstates|--ns|--nslist|--cgroup|--env)
         [ "$remaining" -gt 0 ] || return 2
         set -- "$@" "$arg" "$1"; shift; remaining=$((remaining - 1))
         ;;
       -[efinvxocAnLw]?*)
         # Peel off one clustered flag, leaving attached option values intact.
+        if [ "${"$"}{arg#??}" = 0 ]; then other_signal=yes; fi
         first=${"$"}{arg%"${"$"}{arg#??}"}
         set -- "-${"$"}{arg#??}" "$@"; remaining=$((remaining + 1))
         case "$first" in
@@ -86,6 +101,8 @@ __letta_pkill_probe() {
       *) set -- "$@" "$arg" ;;
     esac
   done
+  # Require every explicit signal to be zero before skipping the match check.
+  if [ "$zero_signal" = yes ] && [ "$other_signal" = no ]; then return 1; fi
   command pgrep "$@"
 }
 
@@ -103,17 +120,27 @@ pkill() {
 }
 
 __letta_killall_matches_protected() {
-  local remaining=$# arg regexp=no matches pattern
+  local remaining=$# arg regexp=no matches pattern zero_signal=no other_signal=no
   while [ "$remaining" -gt 0 ]; do
     arg=$1; shift; remaining=$((remaining - 1))
     case "$arg" in
       --) break ;;
       -r|--regexp${process.platform === "darwin" ? "|-m" : ""}) regexp=yes ;;
       -[egIiqrvw${process.platform === "darwin" ? "m" : ""}]?*)
+        if [ "${"$"}{arg#??}" = 0 ]; then other_signal=yes; fi
         set -- "${"$"}{arg%"${"$"}{arg#??}"}" "-${"$"}{arg#??}" "$@"
         remaining=$((remaining + 2))
         ;;
-      -s|--signal|-u|--user|-o|-y|--older-than|--younger-than|-n|--ns)
+      -0|--signal=0) zero_signal=yes ;;
+      -s|--signal)
+        [ "$remaining" -gt 0 ] || return 1
+        if [ "$1" = 0 ]; then zero_signal=yes; else other_signal=yes; fi
+        shift; remaining=$((remaining - 1))
+        ;;
+      -s?*|--signal=*|-[0-9]*|${signals}|${signalOptionAbbreviations})
+        other_signal=yes
+        ;;
+      -u|--user|-o|-y|--older-than|--younger-than|-n|--ns)
         [ "$remaining" -gt 0 ] || return 1
         shift; remaining=$((remaining - 1))
         ;;
@@ -121,6 +148,7 @@ __letta_killall_matches_protected() {
       *) set -- "$@" "$arg" ;;
     esac
   done
+  if [ "$zero_signal" = yes ] && [ "$other_signal" = no ]; then return 1; fi
   for arg do
     if [ "$regexp" = yes ]; then
       matches=$(command pgrep -- "$arg" 2>/dev/null) || continue

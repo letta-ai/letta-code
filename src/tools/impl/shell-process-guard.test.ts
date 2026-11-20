@@ -25,7 +25,7 @@ test.skipIf(process.platform !== "linux")(
         `
           import { bash } from ${JSON.stringify(join(import.meta.dir, "bash.ts"))};
           const result = await bash({
-            command: 'pattern="$MARKER"; pkill -0 -ef "$pattern"',
+            command: 'pattern="$MARKER"; pkill -CONT -ef "$pattern"',
             variableEnv: { ...${JSON.stringify(strictEnv)}, MARKER: process.argv.at(-1) },
           });
           console.log(JSON.stringify({ result, pid: process.pid }));
@@ -47,7 +47,7 @@ test.skipIf(process.platform !== "linux")(
   async () => {
     const result = await bash({
       command:
-        'IFS= read -r name < "/proc/$LETTA_CLI_PID/comm"; killall -s 0 "$name"',
+        'IFS= read -r name < "/proc/$LETTA_CLI_PID/comm"; killall -s CONT "$name"',
       variableEnv: strictEnv,
     });
     const name = (await Bun.file("/proc/self/comm").text()).trimEnd();
@@ -91,6 +91,80 @@ const supportsIgnoreAncestors =
     spawnSync("pgrep", ["--ignore-ancestors", "-x", "__letta_probe__"])
       .status ?? -1,
   );
+
+test.skipIf(process.platform !== "linux")(
+  "pkill signal-zero probes return the real command status for a CLI match",
+  () => {
+    const marker = `letta-guard-${randomUUID()}`;
+    const ctl = spawnSync(
+      process.execPath,
+      [
+        "-e",
+        `
+          import { spawnSync } from "node:child_process";
+          import { withShellProcessGuard } from ${JSON.stringify(join(import.meta.dir, "shell-process-guard.ts"))};
+          const { launcher: [shell, ...args], env } = withShellProcessGuard(
+            ["/bin/sh", "-c", ${JSON.stringify(`
+              command pgrep -f "$PATTERN" | grep -Fxq "$LETTA_CLI_PID" || exit 3
+              for form in shorthand separate attached; do
+                case "$form" in
+                  shorthand) set -- -0 ;;
+                  separate) set -- --signal 0 ;;
+                  attached) set -- --signal=0 ;;
+                esac
+                actual=0 expected=0
+                pkill "$@" -f "$PATTERN" || actual=$?
+                command pkill ${supportsIgnoreAncestors ? "--ignore-ancestors" : ""} "$@" -f "$PATTERN" || expected=$?
+                printf '%s %s\n' "$actual" "$expected"
+              done
+            `)}],
+            { ...process.env, PATTERN: process.argv.at(-1) },
+          );
+          const result = spawnSync(shell, args, { env, encoding: "utf8" });
+          process.stdout.write(result.stdout);
+          process.stderr.write(result.stderr);
+          process.exitCode = result.status ?? 4;
+        `,
+        marker,
+      ],
+      { encoding: "utf8", timeout: 5000 },
+    );
+    expect(ctl.status, ctl.stderr).toBe(0);
+    expect(ctl.stderr).not.toContain("refusing to run");
+    const status = supportsIgnoreAncestors ? 1 : 0;
+    expect(ctl.stdout.trim().split("\n")).toEqual(
+      Array(3).fill(`${status} ${status}`),
+    );
+  },
+);
+
+test.skipIf(process.platform !== "linux")(
+  "killall signal-zero probes succeed for the CLI process name",
+  () => {
+    const {
+      launcher: [shell, ...args],
+      env,
+    } = withShellProcessGuard(
+      [
+        "/bin/sh",
+        "-c",
+        `
+          set -e
+          IFS= read -r name < "/proc/$LETTA_CLI_PID/comm"
+          killall -0 "$name"
+          killall -s 0 "$name"
+          killall --signal 0 "$name"
+          killall --signal=0 "$name"
+        `,
+      ],
+      process.env,
+    );
+    if (!shell) throw new Error("Missing shell launcher");
+    const result = spawnSync(shell, args, { env, encoding: "utf8" });
+    expect(result.stderr).not.toContain("refusing to run");
+    expect(result.status, result.stderr).toBe(0);
+  },
+);
 
 test.skipIf(!supportsIgnoreAncestors)(
   "Bash pgrep excludes the tool shell even when its argv matches",
