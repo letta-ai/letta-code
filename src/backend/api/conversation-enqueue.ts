@@ -81,6 +81,7 @@ export interface EnqueueConversationInput {
   /** Required only for `default`; other conversation IDs identify their agent. */
   agentId?: string;
   conversationId: string;
+  callerConversationId?: string;
   clientMessageId: string;
   content: MessageCreate["content"];
   computer?: string;
@@ -105,6 +106,19 @@ export async function enqueueConversationMessage(
       },
     ],
   };
+  const requestOptions = actingUserRequestOptions(input.actingUserId);
+  const callerConversationId = input.callerConversationId;
+  const options =
+    callerConversationId && callerConversationId !== "default"
+      ? {
+          ...requestOptions,
+          signal,
+          headers: {
+            ...requestOptions?.headers,
+            "X-Letta-Caller-Conversation-Id": callerConversationId,
+          },
+        }
+      : { ...requestOptions, signal };
   let accepted: Pick<
     EnqueueReceipt,
     "client_message_id" | "workflow_id" | "super_run_id"
@@ -116,7 +130,7 @@ export async function enqueueConversationMessage(
         "POST",
         `/v1/conversations/${encodeURIComponent(input.conversationId)}/messages/enqueue`,
         body,
-        { signal, ...actingUserRequestOptions(input.actingUserId) },
+        options,
       );
       break;
     } catch (error) {
