@@ -77,6 +77,7 @@ import {
   shouldForkTaskContext,
 } from "./task-agent-selection";
 import { parseTaskCloudOptions } from "./task-cloud-options";
+import { recordTaskSummary, resolveTaskInput } from "./task-summary";
 import {
   buildTaskResultHeader,
   closeTaskProgressLog,
@@ -88,7 +89,6 @@ import {
   writeTaskTranscriptStart,
 } from "./task-transcript";
 import { LIMITS, truncateByChars } from "./truncation.js";
-import { validateRequiredParams } from "./validation";
 
 interface TaskArgs extends Partial<SubagentLaunchArgs> {
   command?: "run" | "refresh";
@@ -689,10 +689,9 @@ export async function launchSubagent(
   const mcpValidationError = validateExternalCodingAgentMcpOptions(args.mcp);
   if (mcpValidationError) return { success: false, error: mcpValidationError };
 
-  validateRequiredParams(args, ["prompt", "description"], "Task");
-
-  const inputPrompt = args.prompt as string;
-  const description = args.description as string;
+  const input = resolveTaskInput(args, shouldForkTaskContext(args));
+  if ("error" in input) return { success: false, error: input.error };
+  const { description, prompt: inputPrompt } = input;
   const allConfigs =
     prepared || isExternalCodingAgent
       ? {}
@@ -827,6 +826,7 @@ export async function launchSubagent(
               ([, task]) => task.subagentId === workerSubagentId,
             )?.[0],
             prompt,
+            description,
             model,
             parentAgentId,
             parentConversationId: resolvedParentScope?.conversationId,
@@ -924,13 +924,12 @@ export async function launchSubagent(
     }
   }
 
-  const prompt = inputPrompt;
   signal?.throwIfAborted();
 
   const { taskId, outputFile, subagentId } = spawnBackgroundSubagentTask({
     subagentType: configName,
     config,
-    prompt,
+    prompt: inputPrompt,
     description,
     model,
     toolCallId,
@@ -956,7 +955,6 @@ export async function launchSubagent(
     signal?.removeEventListener("abort", abortStartup);
   }
 
-  // Extract Letta agent ID from subagent state (available after link resolves)
   const linkedAgent = getSubagentSnapshot().agents.find(
     (a) => a.id === subagentId,
   );
@@ -966,13 +964,15 @@ export async function launchSubagent(
       error: backgroundTasks.get(taskId)?.error ?? "Subagent launch failed",
     };
   }
+  const conversationId =
+    linkedAgent?.conversationId ?? effectiveConversationId ?? null;
+  if (!isDeployingExisting) void recordTaskSummary(conversationId, description);
   return {
     success: true,
     task_id: taskId,
     output_file: outputFile,
     agent_id: linkedAgent?.agentId ?? effectiveAgentId ?? null,
-    conversation_id:
-      linkedAgent?.conversationId ?? effectiveConversationId ?? null,
+    conversation_id: conversationId,
   };
 }
 /** Agent's text adapter; App Server callers consume launchSubagent directly. */

@@ -25,6 +25,8 @@ export interface CursorWorkerStart {
   model?: string;
   reminder?: string;
   prompt: string;
+  /** Display name for a new agent (the Agent task description). */
+  name?: string;
 }
 
 export type CursorWorkerEvent =
@@ -90,7 +92,11 @@ async function start(command: CursorWorkerStart): Promise<void> {
   };
   await using agent = command.resume
     ? await Agent.resume(`agent-${command.sessionId}`, options)
-    : await Agent.create({ ...options, agentId: `agent-${command.sessionId}` });
+    : await Agent.create({
+        ...options,
+        agentId: `agent-${command.sessionId}`,
+        ...(command.name ? { name: command.name } : {}),
+      });
   if (cancelled) throw new Error("Cursor startup cancelled");
   const seen = new Set<string>();
   let notified = false;
