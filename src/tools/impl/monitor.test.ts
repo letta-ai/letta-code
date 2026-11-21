@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import {
   resolveBackendMode,
@@ -502,6 +503,110 @@ describe("Monitor", () => {
       queuedMessages.some((message) => message.text.includes("<event>")),
     ).toBe(false);
   });
+
+  test("delivers a local MCP event to the conversation and resumes polling after TaskStop", async () => {
+    const transcript = join(scratchpad, "mcp-wire.jsonl");
+    const argsFile = join(scratchpad, "mcp-event-args.json");
+    const agentId = "agent-mcp-events";
+    const conversationId = "conv-mcp-events";
+    const cli = fileURLToPath(new URL("../../index.ts", import.meta.url));
+    const fixture = fileURLToPath(
+      new URL("../../fixtures/mcp-events-server.mjs", import.meta.url),
+    );
+    writeFileSync(
+      join(scratchpad, "settings.json"),
+      JSON.stringify({
+        agents: [
+          {
+            agentId,
+            mcpServers: [
+              {
+                name: "example",
+                command: process.execPath,
+                args: [fixture, transcript],
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    writeFileSync(argsFile, JSON.stringify({ project: "example" }));
+
+    const startWatch = () =>
+      monitor({
+        description: "Watch fixture issue events",
+        command: [
+          process.execPath,
+          cli,
+          "mcp",
+          "watch",
+          "example",
+          "issue.created",
+          "--args-file",
+          argsFile,
+          "--agent",
+          agentId,
+        ]
+          .map(quoteCommandArgument)
+          .join(" "),
+        variableEnv: {
+          LETTA_CONFIG_DIR: scratchpad,
+          LETTA_BASE_URL: "https://api.letta.com",
+          LETTA_LOCAL_BACKEND_EXPERIMENTAL: "0",
+        },
+        persistent: true,
+        parentScope: { agentId, conversationId },
+      });
+
+    const run = await startWatch();
+    await waitFor(
+      () =>
+        queuedMessages.some((message) => message.text.includes("issue-1")) ||
+        backgroundProcesses.get(run.taskId)?.status !== "running",
+      8000,
+    );
+    expect(readFileSync(outputFileOf(run), "utf8")).toContain("issue-1");
+    const notification = queuedMessages.find((message) =>
+      message.text.includes("issue-1"),
+    );
+    expect(notification).toMatchObject({
+      kind: "task_notification",
+      agentId,
+      conversationId,
+    });
+    expect(notification?.text).toContain("&lt;system-reminder&gt;");
+    expect(notification?.text).toContain('"trust":"untrusted"');
+    const requests = readFileSync(transcript, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(
+      requests
+        .filter(({ method }) => method === "events/poll")
+        .slice(0, 2)
+        .map(({ params }) => params.cursor),
+    ).toEqual([null, "1"]);
+    expect(await task_stop({ task_id: run.taskId })).toEqual({ killed: true });
+    const stoppedTranscript = readFileSync(transcript, "utf8");
+    await Bun.sleep(1_100);
+    expect(readFileSync(transcript, "utf8")).toBe(stoppedTranscript);
+    const resumed = await startWatch();
+    await waitFor(() =>
+      readFileSync(transcript, "utf8")
+        .slice(stoppedTranscript.length)
+        .includes("events/poll"),
+    );
+    const nextPoll = readFileSync(transcript, "utf8")
+      .slice(stoppedTranscript.length)
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+      .find(({ method }) => method === "events/poll");
+    expect(nextPoll?.params.cursor).toBe("2");
+    expect(await task_stop({ task_id: resumed.taskId })).toEqual({
+      killed: true,
+    });
+  }, 14_000);
 
   test("reports whether a finished command monitor printed anything to stdout", async () => {
     const quiet = await monitor({

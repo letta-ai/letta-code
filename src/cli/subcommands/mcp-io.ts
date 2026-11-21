@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { parseArgs } from "node:util";
 import { readStdin } from "@/utils/stdin";
 import { isRecord } from "@/utils/type-guards";
 
@@ -94,6 +95,8 @@ Usage:
   letta mcp schema <tool-name> [--agent <id>]
   letta mcp search <query> [--mode <hybrid|vector|fts>] [--limit <n>] [--agent <id>]
   letta mcp call <tool-name> [--args '<json>' | --args-file <path|->] [--agent <id>]
+  letta mcp events <server> [--agent <id>]
+  letta mcp watch <server> <event> [--args '<json>' | --args-file <path|->]
   letta mcp connect <service> [--server-url <url>] [--client-name <name>] [--agent <id>]
 
 Commands:
@@ -103,10 +106,17 @@ Commands:
   schema    Print one tool's complete schema
   search    Search tools available to the agent
   call      Call one exact tool name and print an MCP CallToolResult
+  events    List MCP event types on a configured server
+  watch     Subscribe to an event and stream JSON lines until stopped
   connect   Authorize comfy or datadog in this computer's browser and save
             the connection to the Cloud agent
 
 Options:
+  --delivery <mode>   Override delivery mode (webhook, push, or poll)
+  --max-age-ms <n>    Bound replay to this many milliseconds
+  --min-poll-ms <n>   Poll interval floor (default: 1000)
+  --webhook-url <url> HTTPS callback forwarding to this watch (enables webhook delivery)
+  --webhook-port <n>  Local loopback receiver port (default: 8765)
   --agent <id>       Agent ID. Defaults to LETTA_AGENT_ID or AGENT_ID
   --agent-id <id>    Alias for --agent
   --full             Include complete schemas in tools output
@@ -164,4 +174,61 @@ function parseJsonObject(raw: string, label: string): Record<string, unknown> {
   }
   if (!isRecord(parsed)) throw new Error(`${label}: expected a JSON object`);
   return parsed;
+}
+
+export interface ParsedMcpArgs {
+  action?: string;
+  target?: string;
+  event?: string;
+  values: ReturnType<typeof parseMcpArgs>["values"];
+}
+
+function parseMcpArgs(argv: string[]) {
+  return parseArgs({
+    args: argv,
+    options: {
+      help: { type: "boolean", short: "h" },
+      agent: { type: "string" },
+      "agent-id": { type: "string" },
+      mode: { type: "string" },
+      limit: { type: "string" },
+      full: { type: "boolean" },
+      delivery: { type: "string" },
+      "max-age-ms": { type: "string" },
+      "min-poll-ms": { type: "string" },
+      "webhook-url": { type: "string" },
+      "webhook-port": { type: "string" },
+      args: { type: "string" },
+      "args-file": { type: "string" },
+      "server-url": { type: "string" },
+      "client-name": { type: "string" },
+    },
+    strict: true,
+    allowPositionals: true,
+  });
+}
+
+export function parseMcpCommandLine(argv: string[]): ParsedMcpArgs {
+  const parsed = parseMcpArgs(argv);
+  const [action, target, ...extra] = parsed.positionals;
+  const event = action === "watch" ? extra.shift() : undefined;
+  if (extra.length > 0) {
+    throw new McpCliError(
+      "invalid_arguments",
+      `Unexpected positional arguments: ${extra.join(" ")}`,
+    );
+  }
+  return { action, target, event, values: parsed.values };
+}
+
+export function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+export function hasMcpAuthorizationHeader(
+  headers?: Record<string, string>,
+): boolean {
+  return Object.keys(headers ?? {}).some(
+    (name) => name.toLowerCase() === "authorization",
+  );
 }
