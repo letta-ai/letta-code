@@ -435,6 +435,7 @@ export async function watch_pr(
         let freshnessNoticeSent = false;
         let nextPollMs = WATCH_POLL_MS;
         let failedPolls = 0;
+        let pollDiagnosticWritten = false;
         while (processState.status === "running") {
           try {
             await wait(controller.signal, nextPollMs);
@@ -448,6 +449,19 @@ export async function watch_pr(
             if (freshnessNoticeSent) {
               emit(["WatchPR is receiving PR updates again."]);
               freshnessNoticeSent = false;
+            }
+            if (pollDiagnosticWritten) {
+              if (
+                !output.append(
+                  `${new Date(lastFreshSnapshotAt).toISOString()} [poll ok] Fresh PR data received\n`,
+                )
+              ) {
+                processState.completionNotificationSuppressed = true;
+                markMonitorFinished(taskId, processState, "failed", null);
+                controller.abort();
+                return;
+              }
+              pollDiagnosticWritten = false;
             }
             nextPollMs = WATCH_POLL_MS;
             failedPolls = 0;
@@ -501,6 +515,7 @@ export async function watch_pr(
               ]);
               freshnessNoticeSent = true;
             }
+            pollDiagnosticWritten = true;
             if (error instanceof GitHubPullRequestSnapshotPending) {
               nextPollMs = WATCH_POLL_MS;
               if (
