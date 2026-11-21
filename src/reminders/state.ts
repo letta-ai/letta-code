@@ -25,6 +25,8 @@ export type SessionContextReason =
   | "post_compaction";
 
 export interface SharedReminderState {
+  /** First non-system context message observed by the listener. */
+  lastContextMessageId?: string;
   hasSentAgentInfo: boolean;
   hasSentSessionContext: boolean;
   hasSentConversationBootstrap: boolean;
@@ -49,6 +51,7 @@ export interface SharedReminderState {
 
 export function createSharedReminderState(): SharedReminderState {
   return {
+    lastContextMessageId: undefined,
     hasSentAgentInfo: false,
     hasSentSessionContext: false,
     hasSentConversationBootstrap: false,
@@ -129,4 +132,20 @@ export function markSecretsInfoReminderPending(
   state.hasSentVariablesInfo = false;
   state.hasSentSecretsInfo = false;
   state.pendingSecretsInfoRefresh = true;
+}
+
+/** Track the context boundary, excluding the system message retained by compaction. */
+export function syncReminderStateFromContextMessages(
+  state: SharedReminderState,
+  messageIds: readonly string[] | null | undefined,
+): void {
+  if (!messageIds) return;
+  const firstMessageId = messageIds[1];
+  if (
+    state.lastContextMessageId &&
+    state.lastContextMessageId !== firstMessageId
+  ) {
+    markPostCompactionContextRemindersPending(state);
+  }
+  state.lastContextMessageId = firstMessageId;
 }

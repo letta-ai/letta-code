@@ -9,6 +9,7 @@ import {
   markPostCompactionContextRemindersPending,
   resetSharedReminderState,
   type SharedReminderState,
+  syncReminderStateFromContextMessages,
 } from "@/reminders/state";
 
 /**
@@ -148,6 +149,45 @@ describe("listen-mode session context", () => {
       expect(result.appliedReminderIds).toContain("session-context");
       expect(result.appliedReminderIds).toContain("agent-info");
       expect(state.pendingSessionContextReason).toBeUndefined();
+    }),
+  );
+
+  test(
+    "out-of-band compaction re-sends context reminders on the next turn",
+    withStubbedProviders(async () => {
+      const state = createSharedReminderState();
+      const ctx = listenContext(state);
+      syncReminderStateFromContextMessages(state, ["system", "first-user"]);
+      await buildSharedReminderParts(ctx);
+
+      syncReminderStateFromContextMessages(state, [
+        "system",
+        "first-user",
+        "reply",
+      ]);
+      const unchanged = await buildSharedReminderParts(ctx);
+      expect(unchanged.appliedReminderIds).not.toContain("agent-info");
+      expect(unchanged.appliedReminderIds).not.toContain("session-context");
+
+      syncReminderStateFromContextMessages(state, [
+        "system",
+        "summary",
+        "reply",
+      ]);
+      expect(state.pendingSessionContextReason).toBe("post_compaction");
+      const compacted = await buildSharedReminderParts(ctx);
+      expect(compacted.appliedReminderIds).toContain("agent-info");
+      expect(compacted.appliedReminderIds).toContain("session-context");
+
+      syncReminderStateFromContextMessages(state, [
+        "system",
+        "summary",
+        "reply",
+        "next-user",
+      ]);
+      const next = await buildSharedReminderParts(ctx);
+      expect(next.appliedReminderIds).not.toContain("agent-info");
+      expect(next.appliedReminderIds).not.toContain("session-context");
     }),
   );
 
