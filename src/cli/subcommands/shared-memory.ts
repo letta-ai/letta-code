@@ -135,15 +135,72 @@ async function listOrgRepositories(
   return repositories;
 }
 
+const AGENT_REPOSITORIES_PAGE_SIZE = 50;
+const MAX_AGENT_REPOSITORY_PAGES = 100;
+
+function parseAgentRepositoryPage(response: unknown): {
+  repositories: AgentRepositorySummary[];
+  hasNextPage: boolean | undefined;
+} {
+  if (
+    typeof response !== "object" ||
+    response === null ||
+    !("repositories" in response) ||
+    !Array.isArray(response.repositories)
+  ) {
+    throw new Error("Invalid agent repositories response");
+  }
+  const repositories = response.repositories;
+  if (
+    !repositories.every(
+      (repository): repository is AgentRepositorySummary =>
+        typeof repository === "object" &&
+        repository !== null &&
+        "id" in repository &&
+        typeof repository.id === "string" &&
+        "name" in repository &&
+        typeof repository.name === "string" &&
+        "is_primary" in repository &&
+        typeof repository.is_primary === "boolean",
+    )
+  ) {
+    throw new Error("Invalid agent repositories response");
+  }
+  const hasNextPage =
+    "has_next_page" in response ? response.has_next_page : undefined;
+  if (hasNextPage !== undefined && typeof hasNextPage !== "boolean") {
+    throw new Error("Invalid agent repositories response");
+  }
+  return { repositories, hasNextPage };
+}
+
 async function listAgentRepositories(
   request: typeof apiRequest,
   agentId: string,
 ): Promise<AgentRepositorySummary[]> {
-  const response = await request<{
-    repositories: AgentRepositorySummary[];
-  }>("GET", `/v1/agents/${encodeURIComponent(agentId)}/repositories`);
-  return response.repositories.filter(
-    (repository) => !repository.is_primary && repository.name !== "memory",
+  const repositories: AgentRepositorySummary[] = [];
+  for (
+    let pageIndex = 0;
+    pageIndex < MAX_AGENT_REPOSITORY_PAGES;
+    pageIndex += 1
+  ) {
+    const offset = pageIndex * AGENT_REPOSITORIES_PAGE_SIZE;
+    const response = await request<unknown>(
+      "GET",
+      `/v1/agents/${encodeURIComponent(agentId)}/repositories?limit=${AGENT_REPOSITORIES_PAGE_SIZE}&offset=${offset}`,
+    );
+    const page = parseAgentRepositoryPage(response);
+    repositories.push(...page.repositories);
+    // Legacy Cloud ignores limit/offset and omits has_next_page. Only an
+    // explicit true proves pagination is supported and another page exists.
+    if (page.hasNextPage !== true) {
+      return repositories.filter(
+        (repository) => !repository.is_primary && repository.name !== "memory",
+      );
+    }
+  }
+  throw new Error(
+    `Agent repositories pagination exceeded ${MAX_AGENT_REPOSITORY_PAGES} pages`,
   );
 }
 
@@ -197,17 +254,56 @@ async function resolveRepositoryReferenceFromApi(
 
 const DEFAULT_ATTACH_POLL = { intervalMs: 1_000, attempts: 15 };
 
+function parseRepositoryAttachmentStatus(response: unknown): boolean {
+  if (
+    typeof response !== "object" ||
+    response === null ||
+    !("attached" in response) ||
+    typeof response.attached !== "boolean"
+  ) {
+    throw new Error("Invalid repository attachment status response");
+  }
+  return response.attached;
+}
+
+function isAttachmentStatusEndpointUnavailable(error: unknown): boolean {
+  return (
+    error instanceof ApiRequestError &&
+    (error.status === 404 || error.status === 405)
+  );
+}
+
 async function waitForAttachedRepository(
   request: typeof apiRequest,
   agentId: string,
   repositoryId: string,
   poll: { intervalMs: number; attempts: number },
 ): Promise<boolean> {
+  let useLegacyList = false;
   for (let attempt = 0; attempt < poll.attempts; attempt += 1) {
-    const attached = await listAgentRepositories(request, agentId);
-    if (attached.some((repository) => repository.id === repositoryId)) {
-      return true;
+    let attached: boolean;
+    if (useLegacyList) {
+      const repositories = await listAgentRepositories(request, agentId);
+      attached = repositories.some(
+        (repository) => repository.id === repositoryId,
+      );
+    } else {
+      try {
+        const response = await request<unknown>(
+          "GET",
+          `/v1/agents/${encodeURIComponent(agentId)}/repositories/${encodeURIComponent(repositoryId)}`,
+        );
+        attached = parseRepositoryAttachmentStatus(response);
+      } catch (error) {
+        if (!isAttachmentStatusEndpointUnavailable(error)) throw error;
+        useLegacyList = true;
+        const repositories = await listAgentRepositories(request, agentId);
+        attached = repositories.some(
+          (repository) => repository.id === repositoryId,
+        );
+      }
     }
+    if (attached) return true;
     await new Promise((resolvePoll) =>
       setTimeout(resolvePoll, poll.intervalMs),
     );
