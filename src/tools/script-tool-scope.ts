@@ -31,6 +31,7 @@ const SCRIPT_EXCLUDED_TOOLS = new Set([
   "AskUserQuestion",
   "Workflow",
   "CodeMode",
+  "Repl",
   // A script cannot hold a background watch's lifetime or approval.
   "Monitor",
 ]);
