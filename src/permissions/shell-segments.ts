@@ -122,13 +122,15 @@ export function splitShellSegmentsAllowUnsafeRedirects(
 }
 
 /**
- * Find the end of a `$(...)` or backtick substitution starting at `start`.
+ * Find the end of a `$(...)`, `<(...)`, `>(...)` or backtick substitution
+ * starting at `start`.
  * Returns the index just past it and its body. Unterminated substitutions
  * run to the end of the input.
  */
 function readSubstitution(
   input: string,
   start: number,
+  allowProcessSubstitution: boolean,
 ): { end: number; body: string } | null {
   if (input[start] === "`") {
     let i = start + 1;
@@ -139,7 +141,11 @@ function readSubstitution(
     return { end, body: input.slice(start + 1, Math.min(i, input.length)) };
   }
 
-  if (!input.startsWith("$(", start)) return null;
+  // `<(...)` and `>(...)` run their body too, but only outside quotes.
+  const isProcessSubstitution =
+    allowProcessSubstitution &&
+    (input.startsWith("<(", start) || input.startsWith(">(", start));
+  if (!input.startsWith("$(", start) && !isProcessSubstitution) return null;
 
   let depth = 1;
   let quote: "single" | "double" | null = null;
@@ -172,8 +178,8 @@ function readSubstitution(
 /**
  * Split a command into every segment that may run, for deny-rule matching.
  * Unlike the read-only splitters this never bails out: redirects stay in
- * their segment, and the bodies of `$(...)` and backtick substitutions
- * (outside single quotes) are split and returned as extra segments.
+ * their segment, and the bodies of `$(...)`, backtick and `<(...)` / `>(...)`
+ * process substitutions are split and returned as extra segments.
  */
 export function splitShellSegmentsForDenyMatching(input: string): string[] {
   const segments: string[] = [];
@@ -204,7 +210,7 @@ export function splitShellSegmentsForDenyMatching(input: string): string[] {
       continue;
     }
 
-    const substitution = readSubstitution(input, i);
+    const substitution = readSubstitution(input, i, quote === null);
     if (substitution) {
       nested.push(...splitShellSegmentsForDenyMatching(substitution.body));
       current += input.slice(i, substitution.end);
