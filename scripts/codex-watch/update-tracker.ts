@@ -152,11 +152,11 @@ function verifyParityPr(
   ]);
   if (
     pullRequest.author.login !== expectedGithubLogin ||
-    !pullRequest.isDraft ||
+    pullRequest.isDraft ||
     pullRequest.state !== "OPEN"
   ) {
     throw new Error(
-      `Codex PR must be an open draft authored by ${expectedGithubLogin} (got author=${pullRequest.author.login}, draft=${pullRequest.isDraft}, state=${pullRequest.state})`,
+      `Codex PR must be open, ready for review, and authored by ${expectedGithubLogin} (got author=${pullRequest.author.login}, draft=${pullRequest.isDraft}, state=${pullRequest.state})`,
     );
   }
   const marker = `Codex-watch: openai/codex ${currentTag}`;
