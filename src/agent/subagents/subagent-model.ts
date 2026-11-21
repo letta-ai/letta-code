@@ -51,8 +51,12 @@ export async function getPrimaryAgentModelHandle(
     const conversationId = scope.conversationId;
     if (conversationId && conversationId !== "default") {
       try {
-        const conversation =
-          await getBackend().retrieveConversation(conversationId);
+        const conversation = await getBackend().retrieveConversation(
+          conversationId,
+          {
+            query: { include_context_message_ids: false },
+          },
+        );
         const conversationHandle = getModelHandleFromAgent(conversation);
         if (conversationHandle) {
           return { handle: conversationHandle, agent };
