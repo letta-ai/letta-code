@@ -135,9 +135,18 @@ export function reportExternalWorkerLaunchFailure(options: {
       value && pattern.test(value) ? value : undefined;
     const safeId = (id: string | undefined) =>
       safe(id, /^[a-zA-Z0-9_-]{1,128}$/);
-    const httpStatus = extractHttpStatus(
-      formatTelemetryErrorMessage(options.error),
-    );
+    const { error } = options;
+    const status =
+      typeof error === "object" && error !== null && "status" in error
+        ? error.status
+        : undefined;
+    const httpStatus =
+      typeof status === "number" &&
+      Number.isInteger(status) &&
+      status >= 400 &&
+      status <= 599
+        ? status
+        : extractHttpStatus(formatTelemetryErrorMessage(error));
     telemetry.trackError(
       "external_worker_launch_failed",
       "External worker launch failed",
