@@ -196,6 +196,16 @@ export async function runMessagesSubcommand(
     return 0;
   }
 
+  if (
+    action !== "transcript" &&
+    (parsed.values.out !== undefined || parsed.values.output !== undefined)
+  ) {
+    console.error(
+      `Error: --out is only supported by "letta messages transcript"; redirect output instead: letta messages ${action} ... > file`,
+    );
+    return 1;
+  }
+
   try {
     await (deps.initializeSettings ?? (() => settingsManager.initialize()))();
     const backend = (deps.getBackend ?? getBackend)();
