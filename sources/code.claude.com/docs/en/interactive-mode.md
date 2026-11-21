@@ -748,7 +748,7 @@ Usage limit reached · limit resets 3:45pm
 Continuing automatically at 3:45pm · Esc to cancel
 ```
 
-Either line can carry more after these words, such as a help link on the first or `/usage-credits to continue now` on the second. When the wait starts on its own, the conversation also records it with a line that reads `Usage limit reached · continuing automatically at 3:45pm · esc to cancel`.
+Either line can carry more after these words, such as a help link on the first or `/usage-credits to continue now` on the second.
 
 Keep the session open. What happens next depends on how the wait ends:
 

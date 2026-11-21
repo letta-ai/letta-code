@@ -768,7 +768,7 @@ The tabs below show a few more matchers on different event types.
 
 #### Filter by tool name and arguments with the `if` field
 
-The `if` field uses [permission rule syntax](https://code.claude.com/docs/en/permissions.md) to filter hooks by tool name and arguments together, so the hook process only spawns when the tool call matches. This goes beyond `matcher`, which filters at the group level by tool name only.
+The `if` field uses [permission rule syntax](https://code.claude.com/docs/en/permissions.md) to filter hooks by tool name and arguments together.
 
 For example, this configuration runs a hook only when Claude uses `git` commands rather than all Bash commands:
 
@@ -818,7 +818,7 @@ Where you add a hook determines its scope:
 | `.claude/settings.local.json` | Single project | No, gitignored when Claude Code saves a setting to it |
 | Managed policy settings | Organization-wide | Yes, admin-controlled |
 | [Plugin](https://code.claude.com/docs/en/plugins/overview.md) `hooks/hooks.json` | When plugin is enabled | Yes, bundled with the plugin |
-| [Skill](https://code.claude.com/docs/en/skills.md) frontmatter | The rest of the session once the skill is invoked. See [Hooks in skills and agents](https://code.claude.com/docs/en/hooks.md#hooks-in-skills-and-agents) | Yes, defined in the skill file |
+| [Skill](https://code.claude.com/docs/en/skills.md) frontmatter | See [Hooks in skills and agents](https://code.claude.com/docs/en/hooks.md#hooks-in-skills-and-agents) | Yes, defined in the skill file |
 | [Subagent](https://code.claude.com/docs/en/sub-agents.md) frontmatter | While that subagent is running | Yes, defined in the subagent file |
 
 Run [`/hooks`](https://code.claude.com/docs/en/hooks#the-%2Fhooks-menu) in Claude Code to browse all configured hooks grouped by event.

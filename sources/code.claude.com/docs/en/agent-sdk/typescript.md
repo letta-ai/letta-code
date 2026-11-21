@@ -2250,6 +2250,8 @@ type SDKInformationalMessage = {
 };
 ```
 
+A warning whose `tag` is `settings_not_in_effect` means some settings from your app, or from a user, project, or local file, didn't load or were skipped. Follow the steps in `content`. You won't see this warning for every invalid value. Requires TypeScript Agent SDK v0.3.330 or later.
+
 ### `SDKWorkerShuttingDownMessage`
 
 Emitted on graceful worker teardown so remote clients can show why the worker exited instead of waiting for heartbeat timeout. The `reason` is a short snake\_case string set by the host CLI, such as `"host_exit"` or `"remote_control_disabled"`. Act on this only when streaming live. A resumed session replays past instances of this message, so ignore them in that case.
@@ -2506,7 +2508,7 @@ type SDKMessageOrigin =
     }
   | {
       kind: "task-notification";
-      subkind?: "scheduled-trigger" | "peer-send-message";
+      subkind?: "scheduled-trigger" | "peer-send-message" | "external-event";
       fireReason?: string;
       runId?: string;
     }
@@ -2536,12 +2538,13 @@ To send text the user didn't write, such as a fetched page or another agent's ou
 
 ### Task-notification subkinds
 
-When Claude Code delivers a task notification into a session, it sets `subkind` on the notification's `origin` if Anthropic servers verified where that notification came from. It also sets `subkind` when your application [declares the message as a scheduled run](#declare-a-scheduled-run) itself, which requires TypeScript Agent SDK v0.3.280 or later. `subkind` requires Claude Code v2.1.213 or later, and it takes one of two values:
+When Claude Code delivers a task notification into a session, it sets `subkind` on the notification's `origin` if Anthropic servers verified where that notification came from. It also sets `subkind` when your application [declares the message as a scheduled run](#declare-a-scheduled-run) itself, which requires TypeScript Agent SDK v0.3.280 or later. `subkind` requires Claude Code v2.1.213 or later. Values include:
 
 * `scheduled-trigger`: the notification is a [cloud scheduled task](https://code.claude.com/docs/en/routines.md)'s stored prompt, delivered because one of the task's triggers fired: its schedule, its [API trigger](https://code.claude.com/docs/en/routines.md#add-an-api-trigger), its [GitHub trigger](https://code.claude.com/docs/en/routines.md#add-a-github-trigger), or **Run now**. A prompt your application [declares as a scheduled run](#declare-a-scheduled-run) carries this value too. Claude Code frames these to the model as the session's assigned task, with a different notice from the [notice that other task notifications carry](#sdktasknotificationmessage).
 * `peer-send-message`: the notification is a message that another of your sessions sent with the server-side `send_message` tool that [cloud sessions](https://code.claude.com/docs/en/claude-code-on-the-web.md) use to message each other, not the [cross-session `SendMessage` tool](https://code.claude.com/docs/en/cross-session-messaging), and Anthropic servers verified that both sessions belong to the same private group of sessions. Requires Claude Code v2.1.224 or later. A `send_message` delivery the servers didn't verify that way gets no subkind.
+* `external-event`: the notification reports an event outside the session and can quote a third party. [PR activity](https://code.claude.com/docs/en/claude-code-on-the-web.md#how-claude-responds-to-pr-activity) can arrive with this value or no `subkind`. Requires Claude Code v2.1.330 or later.
 
-Every other task notification has no `subkind`. That includes [PR activity](https://code.claude.com/docs/en/claude-code-on-the-web.md#how-claude-responds-to-pr-activity) delivered into a session and background events such as a finished task. Messages from the [cross-session `SendMessage` tool](https://code.claude.com/docs/en/cross-session-messaging) aren't task notifications at all: whether they come from a session on the same machine or through Anthropic servers from another machine, Claude Code gives them `kind: "peer"` and the [peer origin fields](#peer-origin-fields).
+Background events such as a finished task have no `subkind`. Messages from the [cross-session `SendMessage` tool](https://code.claude.com/docs/en/cross-session-messaging) aren't task notifications and carry `kind: "peer"` with the [peer origin fields](#peer-origin-fields).
 
 `fireReason` says why a `scheduled-trigger` notification fired, as a short lowercase token such as `scheduled`, `manual`, `retry`, `catch_up`, or `api`. Anthropic servers set it on a [cloud scheduled task](https://code.claude.com/docs/en/routines.md)'s deliveries, and your application sets it when it declares a scheduled run. It's absent when neither sent one. Requires TypeScript Agent SDK v0.3.280 or later.
 
@@ -4793,10 +4796,11 @@ type CronCreateOutput = {
   recurring: boolean;
   durable?: boolean; // true when persisted to .claude/scheduled_tasks.json; false when session-only
   nextFireAt?: number;
+  maxAgeMs?: number; // age at which a recurring job ends; requires Claude Code v2.1.330 or later
 };
 ```
 
-Returns the job ID, a human-readable schedule, and the next run time. `nextFireAt` gives it in epoch milliseconds, with [jitter](https://code.claude.com/docs/en/scheduled-tasks.md#jitter) already applied, so it's when the job is set to run. The field requires TypeScript Agent SDK v0.3.299 or later and Claude Code v2.1.299 or later.
+Returns the job ID, a human-readable schedule, and the next run time. `nextFireAt` gives it in epoch milliseconds, with [jitter](https://code.claude.com/docs/en/scheduled-tasks.md#jitter) already applied, so it's when the job is set to run. `nextFireAt` requires TypeScript Agent SDK v0.3.299 or later and Claude Code v2.1.299 or later.
 
 ### CronDelete
 

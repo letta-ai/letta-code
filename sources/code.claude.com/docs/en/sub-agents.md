@@ -173,7 +173,9 @@ When you add a directory with `--add-dir` or `/add-dir`, Claude Code also loads 
 
 Claude Code scans `.claude/agents/` and `~/.claude/agents/` recursively, so you can organize definitions into subfolders such as `agents/review/` or `agents/research/`. The subdirectory path doesn't affect how a subagent is identified or invoked, because identity comes only from the `name` frontmatter field.
 
-Keep `name` values unique across the whole tree: if two files under the same `.claude/agents/` directory, including its subfolders, declare the same name, Claude Code loads only one of them, chosen by filesystem read order rather than a documented precedence. Across nested project directories, the definition closest to the working directory wins, as described above. The [`/doctor`](https://code.claude.com/docs/en/commands#all-commands) setup checkup reports files in the same directory that share a name and proposes renaming or removing all but one.
+> [!NOTE]
+>
+> Keep `name` values unique across subfolders. If two files under the same `.claude/agents/` directory declare the same name, Claude Code loads only one of them. The [`/doctor`](https://code.claude.com/docs/en/commands#all-commands) setup checkup reports files in the same directory that share a name and proposes renaming or removing all but one.
 
 Plugin `agents/` directories are also scanned recursively. Unlike project and user scopes, a subfolder inside a plugin's `agents/` directory becomes part of the [scoped identifier](#invoke-subagents-explicitly): a file at `agents/review/security.md` in plugin `my-plugin` registers as `my-plugin:review:security`.
 
@@ -371,8 +373,6 @@ For example, suppose your main conversation runs on Opus and starts a reviewer s
 * A subagent with `model: inherit` or no `model` field
 * The built-in Explore, Plan, and general-purpose subagents
 * A [fork](#fork-the-current-conversation)
-
-In plan mode, these subagents run on Opus if you set your session's model to [`opusplan`](https://code.claude.com/docs/en/model-config#opusplan-model-setting), or on Sonnet if you set it to `haiku`.
 
 #### Check a subagent's model
 

@@ -98,6 +98,7 @@ Every key below links to its entry. Scope lists the [files](https://code.claude.
 | [`enabledMcpjsonServers`](#enabledmcpjsonservers) | Approve specific servers from a project's [`.mcp.json`](https://code.claude.com/docs/en/mcp#project-server-approvals-and-workspace-trust) | MCP | Any file |
 | [`enabledPlugins`](#enabledplugins) | Turn individual [plugins](https://code.claude.com/docs/en/plugins/overview.md) on or off per scope | Plugins and skills | Any file |
 | [`enableWorkflows`](#enableworkflows) | Turn [dynamic workflows](https://code.claude.com/docs/en/workflows.md) on or off against your plan's default | Hooks and automation | Any file |
+| [`enforceAnthropicSignIn`](#enforceanthropicsignin) | Require a claude.ai login on Anthropic's API, or an Enterprise Admin Console sign-in | Authentication and providers | Managed |
 | [`enforceAvailableModels`](#enforceavailablemodels) | Keep the [`/model` Default choice](https://code.claude.com/docs/en/model-config#enforce-the-allowlist-for-the-default-model) inside your `availableModels` allowlist | Model and responses | Any file |
 | [`env`](#env) | Set [environment variables](https://code.claude.com/docs/en/env-vars.md#in-settings-files) for every session and its subprocesses | Memory and context | Any file |
 | [`externalEditorContext`](#externaleditorcontext) | Show Claude's last response as comments when you press [Ctrl+G](https://code.claude.com/docs/en/interactive-mode.md#general-controls) to edit | Global config settings | Global config |
@@ -5286,6 +5287,23 @@ Run your own command that prints AWS credentials as JSON, so Claude Code can cal
 
 Unlike [`awsAuthRefresh`](#awsauthrefresh), Claude Code always runs this command when it's set, without checking the ambient credentials first. See [advanced credential configuration](https://code.claude.com/docs/en/amazon-bedrock.md#advanced-credential-configuration).
 
+### `enforceAnthropicSignIn`
+
+Require a claude.ai login on Anthropic's API, or an [Enterprise Admin Console](https://claude.com/docs/third-party/claude-desktop/admin-console-claude-code) sign-in. An Enterprise Admin Console sign-in counts only when [`forceLoginOrgUUID`](#forceloginorguuid) names your organization and you set no [`policyHelper`](#policyhelper). Requires Claude Code v2.1.329 or later.
+
+The key also stops Claude Desktop sessions that run on a cloud provider or gateway, so read [Require the sign-in with managed settings](https://claude.com/docs/third-party/claude-desktop/admin-console-claude-code#require-the-sign-in-with-managed-settings) first.
+
+* **Scope**: [`Managed`](#scopes). Set it in a managed settings file, where it applies even beneath server-managed settings. If the machine also has an MDM policy, set it there. Claude Code ignores the key in server-managed settings, HKCU, and policy helper output.
+* **Type**: Boolean
+* **Default**: unset
+
+```json managed-settings.json theme={null}
+{
+  "forceLoginOrgUUID": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "enforceAnthropicSignIn": true
+}
+```
+
 ### `forceLoginMethod`
 
 Restrict which kind of account people can log in with: `"claudeai"` for claude.ai sign-in or `"console"` for Claude Console sign-in. Set `"gateway"` to send people to a [cloud gateway](https://code.claude.com/docs/en/claude-apps-gateway) instead of a first-party login. Administrators set it in managed settings and pair it with [`forceLoginOrgUUID`](#forceloginorguuid) to keep developers' claude.ai logins inside one organization.
@@ -5305,7 +5323,7 @@ If you set it to `"claudeai"` in any settings file, Claude Code also stops offer
 }
 ```
 
-Every first-party login path applies the restriction, including the [VS Code extension](https://code.claude.com/docs/en/vs-code.md), the Agent SDK, `claude setup-token`, and `/install-github-app`, except the terminal's interactive login screen, reached by `/login` or first-run onboarding, which pre-selects the method without enforcing it. Before v2.1.212, only terminal logins applied it. See [Restrict login to your organization](https://code.claude.com/docs/en/authentication.md#restrict-login-to-your-organization) for how each login path, environment credentials, and third-party providers are handled.
+Every first-party login path applies the restriction, including the [VS Code extension](https://code.claude.com/docs/en/vs-code.md), the Agent SDK, `claude setup-token`, and `/install-github-app`, except the terminal's interactive login screen, reached by `/login` or first-run onboarding, which can pre-select the method without enforcing it. Before v2.1.212, only terminal logins applied the restriction. See [Restrict login to your organization](https://code.claude.com/docs/en/authentication.md#restrict-login-to-your-organization) for how each login path, environment credentials, and third-party providers are handled.
 
 When a managed source on the machine sets `"gateway"`, Claude Code doesn't use a leftover login, API key, or `apiKeyHelper` credential. See [Administrator policy requires a Cloud gateway sign-in](https://code.claude.com/docs/en/errors.md#administrator-policy-requires-a-cloud-gateway-sign-in) for the message each one produces. If you select a cloud provider through `CLAUDE_CODE_USE_BEDROCK` or a similar environment variable, the session doesn't need the gateway sign-in. Before v2.1.261, Claude Code used a leftover login on these machines.
 
@@ -5329,7 +5347,9 @@ If the value isn't a valid URL, the sign-in screen reports it, and the rest of t
 
 ### `forceLoginOrgUUID`
 
-From a managed source, require claude.ai account logins to belong to one Anthropic organization, given as a single UUID, or to any of several organizations, given as an array. From any settings file, Claude Code also uses a single UUID to pre-select that organization during a claude.ai or Claude Console login, and pre-selects nothing for an array. If you set the key in any settings file, Claude Code also stops offering the [keyless Console sign-in](https://code.claude.com/docs/en/authentication.md#sign-in-without-an-api-key) in the sessions that file applies to and creates an API key instead.
+From a managed source, require claude.ai account logins to belong to one Anthropic organization, given as a single UUID, or to any of several organizations, given as an array. From any settings file, Claude Code also uses a single UUID to pre-select that organization during a claude.ai or Claude Console login, and pre-selects nothing for an array.
+
+If you set the key in any settings file, Claude Code stops offering the [keyless Console sign-in](https://code.claude.com/docs/en/authentication.md#sign-in-without-an-api-key) in the sessions that file applies to.
 
 * **Scope**: [`Any file`](#scopes). In a settings file that isn't a managed source, Claude Code doesn't check which organization a login belongs to, and a single UUID pre-selects the organization during login.
 * **Type**: string, one UUID, or array of strings, several UUIDs
@@ -5722,6 +5742,7 @@ A few keys add a condition that the table doesn't show:
 * **[`modelOverrides`](#modeloverrides)**: pairs with `availableModels`. Claude Code takes `modelOverrides` from the highest source that sets it, unless a higher source sets `availableModels` without `modelOverrides`. In that case it ignores `modelOverrides` from every source.
 * **[`forceLoginGatewayUrl`](#forcelogingatewayurl), [`gatewayInternalNetworks`](#gatewayinternalnetworks), and the `"gateway"` value of [`forceLoginMethod`](#forceloginmethod)**: Claude Code never reads any of them from server-managed settings, so a value there neither applies nor hides one set in an MDM policy or managed settings file. Among the admin sources on the machine, only the highest-ranked one that carries a policy key supplies them, whether or not server-managed settings are also present.
 * **[`forceLoginOrgUUID`](#forceloginorguuid) and the `"claudeai"` and `"console"` values of [`forceLoginMethod`](#forceloginmethod)**: look up which value applies in [Which managed source supplies login keys](https://code.claude.com/docs/en/managed-settings.md#which-managed-source-supplies-login-keys) rather than in the table.
+* **[`enforceAnthropicSignIn`](#enforceanthropicsignin)**: its entry's Scope note says which sources supply it.
 * **[`allowedProviders`](#allowedproviders)**: after the table's rule, the machine's own list still limits the result, as its entry's Scope note states.
 
 To confirm which sources combined on a machine, run `/status` and [read the `Setting sources` line](https://code.claude.com/docs/en/managed-settings#read-the-source-in-/status).
@@ -5782,9 +5803,12 @@ Put the settings under a `managedSettings` key. A bare settings object with no `
 }
 ```
 
-When the helper emits `managedSettings`, that object becomes the only managed settings source for the run: Claude Code ignores the MDM, file, and HKCU sources, reads the [cross-source keys](https://code.claude.com/docs/en/managed-settings.md#keys-read-from-every-admin-source) from the helper's output alone, and never merges [parent settings](https://code.claude.com/docs/en/managed-settings.md#parent-settings-from-embedding-hosts).
+When the helper emits `managedSettings`, that object becomes the managed settings source for the run. Claude Code reads the [cross-source keys](https://code.claude.com/docs/en/managed-settings.md#keys-read-from-every-admin-source) from it and doesn't merge [parent settings](https://code.claude.com/docs/en/managed-settings.md#parent-settings-from-embedding-hosts). It ignores the MDM, file, and HKCU sources, apart from keys such as these:
 
-The startup `forceRemoteSettingsRefresh` check runs before the helper and reads any admin source. A helper that exits `0` with an envelope that omits `managedSettings` contributes no managed settings, and the other sources apply as usual.
+* **[`forceRemoteSettingsRefresh`](#forceremotesettingsrefresh)**: the startup check runs before the helper and reads any admin source
+* **[`enforceAnthropicSignIn`](#enforceanthropicsignin)**: Claude Code reads it from the MDM policy or managed settings file
+
+A helper that exits `0` with an envelope that omits `managedSettings` contributes no managed settings, and the other sources apply as usual.
 
 #### Helper failures
 

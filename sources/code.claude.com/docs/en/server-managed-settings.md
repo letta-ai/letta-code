@@ -11,6 +11,8 @@ Server-managed settings let organization Owners centrally configure Claude Code 
 > [!NOTE]
 >
 > Server-managed settings are available for [Claude for Teams](https://claude.com/pricing?utm_source=claude_code\&utm_medium=docs\&utm_content=server_settings_teams#team-&-enterprise) and [Claude for Enterprise](https://anthropic.com/contact-sales?utm_source=claude_code\&utm_medium=docs\&utm_content=server_settings_enterprise) customers.
+>
+> If you set your provider or gateway at claude.ai under **Organization settings > Desktop 3P**, follow the [Enterprise Admin Console guide](https://claude.com/docs/third-party/claude-desktop/admin-console-claude-code) instead.
 
 ## Requirements
 
@@ -178,7 +180,9 @@ Server-managed settings and [endpoint-managed settings](https://code.claude.com/
 
 Within the managed tier, Claude Code by default uses the first source that delivers at least one policy key, checking server-managed settings first and then endpoint-managed settings, apart from the [exception keys covered next](#per-key-exceptions-across-managed-sources). [How Claude Code combines managed sources](https://code.claude.com/docs/en/managed-settings.md#precedence-within-the-managed-tier) has the full ranking, the carve-out for the control keys, and the opt-in that applies every source.
 
-If the selected source is an MDM policy or managed settings file whose [`policyHelper`](https://code.claude.com/docs/en/settings-reference#policyhelper) supplies managed settings, the helper's output replaces that source as the only managed configuration for the run. Claude Code doesn't consult a `policyHelper` configured in MDM or file-based settings while server-managed settings deliver a policy key.
+#### When endpoint-managed settings take over
+
+If the selected source is an MDM policy or managed settings file whose `policyHelper` supplies managed settings, see [what the helper's output replaces](https://code.claude.com/docs/en/settings-reference.md#write-the-helper-output). Claude Code doesn't consult a `policyHelper` configured in MDM or file-based settings while server-managed settings deliver a policy key.
 
 If a later fetch finds the server-managed settings removed, Claude Code runs that helper right away instead of at the next launch. The [`policyHelper`](https://code.claude.com/docs/en/settings-reference#policyhelper) entry covers what happens when that run fails.
 
@@ -196,6 +200,7 @@ These keys are exceptions to the no-merge rule:
   * **Credential-paired routing**: a source that pairs routing variables with a selected-source-only credential key, such as `apiKeyHelper` or `otelHeadersHelper`, contributes those routing variables only when it wins the slot.
 * **`allowedProviders`**: a list set on the machine and a server-managed list combine as [its entry's Scope note](https://code.claude.com/docs/en/settings-reference.md#allowedproviders) states. Requires Claude Code v2.1.285 or later
 * **First-party sign-in keys**: [`forceLoginOrgUUID`](https://code.claude.com/docs/en/settings-reference#forceloginorguuid) and the `"claudeai"` and `"console"` values of [`forceLoginMethod`](https://code.claude.com/docs/en/settings-reference#forceloginmethod). If you also deploy an MDM policy or managed settings file, set them there and in server-managed settings from claude.ai until every client runs v2.1.299 or later. For where to set the keys afterward, and which source's value applies, see [Which managed source supplies login keys](https://code.claude.com/docs/en/managed-settings.md#which-managed-source-supplies-login-keys).
+* **`enforceAnthropicSignIn`**: [its entry's Scope note](https://code.claude.com/docs/en/settings-reference.md#enforceanthropicsignin) says which sources supply it
 * **Gateway sign-in keys**: Claude Code never reads [`forceLoginGatewayUrl`](https://code.claude.com/docs/en/settings-reference#forcelogingatewayurl), [`gatewayInternalNetworks`](https://code.claude.com/docs/en/settings-reference#gatewayinternalnetworks), or the `"gateway"` value of [`forceLoginMethod`](https://code.claude.com/docs/en/settings-reference#forceloginmethod) from server-managed settings, so a value there neither applies nor hides one set in an MDM policy or managed settings file. The [`managedSourcesBehavior` entry](https://code.claude.com/docs/en/settings-reference#managedsourcesbehavior) says which admin source on the machine supplies them.
 
 #### When a machine's `apiKeyHelper` isn't in effect
@@ -310,8 +315,6 @@ You can also set this key in an [endpoint-managed](https://code.claude.com/docs/
 
 On later startups, Claude Code reads a server-delivered value from the cached settings, so the setting is active before the new session's first fetch. To keep the setting active without relying on the cached copy, also set the key in an endpoint-managed source.
 
-When a [`policyHelper`](https://code.claude.com/docs/en/settings-reference#policyhelper) supplies managed settings, its output replaces every other managed source for the keys Claude Code reads after startup. For the sources Claude Code reads this key from, see [its settings entry](https://code.claude.com/docs/en/settings-reference.md#forceremotesettingsrefresh). The `policyHelper` entry says which sources Claude Code reads the helper from and when it runs.
-
 The settings fetch also sends a `Cache-Control: no-cache` header so intermediate HTTP proxies don't serve a stale response.
 
 Before enabling this setting, ensure your network policies allow connectivity to `api.anthropic.com`. If that endpoint is unreachable, the CLI exits at startup and users cannot start Claude Code.
@@ -398,7 +401,7 @@ Server-managed settings require a direct connection to `api.anthropic.com`. Deli
 * A directly configured API key
 * A `user_oauth` [Anthropic profile](https://code.claude.com/docs/en/authentication.md#anthropic-profiles-and-federation-credentials), unless the profile sets a `base_url` other than the Anthropic API. Requires Claude Code v2.1.257 or later.
 
-Neither keys returned by an [`apiKeyHelper`](https://code.claude.com/docs/en/settings-reference#apikeyhelper) script nor [Workload Identity Federation](https://platform.claude.com/docs/en/manage-claude/workload-identity-federation) credentials trigger the settings fetch.
+Neither keys returned by an [`apiKeyHelper`](https://code.claude.com/docs/en/settings-reference#apikeyhelper) script nor [Workload Identity Federation](https://platform.claude.com/docs/en/manage-claude/workload-identity-federation) credentials trigger the settings fetch. If you set your provider or gateway in the Enterprise Admin Console, see [when console settings apply](https://claude.com/docs/third-party/claude-desktop/admin-console-claude-code#which-settings-take-priority).
 
 A session receives the managed settings of the organization that owns the credential it authenticates with. An API key from the [Claude Console](https://platform.claude.com) belongs to the Console organization it was created in, which is a separate organization from your claude.ai Team or Enterprise organization. Settings you configure in claude.ai Admin Settings therefore don't reach a session that authenticates with that key, such as a CI job that uses your company's Console API key. To apply them to that job, use one of these options. The OAuth token option doesn't apply to a job that runs with [`--bare`](https://code.claude.com/docs/en/headless#start-faster-with-bare-mode), because bare mode doesn't read `CLAUDE_CODE_OAUTH_TOKEN`.
 
