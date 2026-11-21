@@ -13,6 +13,8 @@ import type {
   WorkflowToolResult,
 } from "@/tools/workflow/types";
 
+import { debugLog } from "@/utils/debug";
+
 interface ScriptScopeArgs {
   parentScope?: { agentId: string; conversationId: string };
   signal?: AbortSignal;
@@ -248,6 +250,7 @@ export async function createScriptToolScope(
         );
       }
       if (builtins.has(toolName)) {
+        debugLog("script-tools", "Calling %s", toolName);
         const result = await manager.executeTool(toolName, toolArgs, {
           toolCallId,
           ...(toolContextId ? { toolContextId } : {}),
