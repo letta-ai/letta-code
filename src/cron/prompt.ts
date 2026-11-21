@@ -1,4 +1,5 @@
 import type { CronTask } from "./cron-file";
+import { getPreviousCronOccurrence } from "./parse-interval";
 import { formatScheduledTaskPrompt } from "./scheduled-task-prompt";
 
 export {
@@ -18,7 +19,7 @@ export interface CronPromptTiming {
 }
 
 export function getIntendedCronOccurrence(
-  task: Pick<CronTask, "recurring" | "scheduled_for">,
+  task: Pick<CronTask, "recurring" | "scheduled_for" | "cron" | "timezone">,
   matchedAt: Date,
 ): Date {
   if (!task.recurring && task.scheduled_for) {
@@ -28,9 +29,7 @@ export function getIntendedCronOccurrence(
     }
   }
 
-  const occurrence = new Date(matchedAt);
-  occurrence.setSeconds(0, 0);
-  return occurrence;
+  return getPreviousCronOccurrence(task.cron, matchedAt, task.timezone);
 }
 
 export function formatCronPrompt(

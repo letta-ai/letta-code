@@ -408,6 +408,35 @@ export function cronMatchesTime(
   }
 }
 
+/** Most recent real scheduled minute, inclusive of now, in the task's timezone. */
+export function getPreviousCronOccurrence(
+  expr: string,
+  now: Date,
+  timezone?: string | null,
+): Date {
+  const fallback = new Date(
+    Math.floor(now.getTime() / MS_PER_MINUTE) * MS_PER_MINUTE,
+  );
+  const parserExpression = normalizeCronExpressionForParser(expr);
+  if (parserExpression === null) return fallback;
+  let tz = timezone || undefined;
+  try {
+    if (tz) new Intl.DateTimeFormat("en-US", { timeZone: tz });
+  } catch {
+    tz = undefined;
+  }
+  const iterator = CronExpressionParser.parse(parserExpression, {
+    currentDate: new Date(now.getTime() + 1),
+    tz,
+  });
+  // cron-parser shifts nonexistent spring-forward times; classic cron skips them.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const occurrence = iterator.prev().toDate();
+    if (cronMatchesTime(expr, occurrence, timezone)) return occurrence;
+  }
+  return fallback;
+}
+
 function toWallClockMinute(date: Date, timezone?: string | null): Date {
   if (timezone) {
     try {
