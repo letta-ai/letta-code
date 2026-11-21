@@ -13,7 +13,6 @@ import { resolveBackendMode } from "@/backend/backend-mode";
 import { listTasks } from "@/cron";
 
 export interface ResolvedTaskRef {
-  /** The task/schedule id the reference resolved to. */
   id: string;
   /** Where the match was found (informs which store to act on first). */
   store: "local" | "cloud";

@@ -100,9 +100,7 @@ export function LettaLoginView({
               // Silently ignore - user can manually visit the URL shown above
             });
           })
-          .catch(() => {
-            // Silently ignore any failures
-          });
+          .catch(() => {});
 
         const deviceId = settingsManager.getOrCreateDeviceId();
         const deviceName = hostname();

@@ -1,9 +1,3 @@
-/**
- * Shell environment utilities
- * Provides enhanced environment variables for shell execution,
- * including bundled tools like ripgrep in PATH and Letta context for skill scripts.
- */
-
 import { mkdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -48,7 +42,6 @@ function getPackageNodeModulesDir(): string | undefined {
   try {
     const __filename = fileURLToPath(import.meta.url);
     const require = createRequire(__filename);
-    // Find where letta-client is installed
     const clientPath = require.resolve("@letta-ai/letta-client");
     // Extract node_modules path: /a/b/node_modules/@letta-ai/letta-client/... -> /a/b/node_modules
     const match = clientPath.match(/^(.+[/\\]node_modules)[/\\]/);
@@ -352,7 +345,6 @@ export function getShellEnv(): NodeJS.ProcessEnv {
     }
   }
 
-  // Add ripgrep bin directory to PATH if available
   const rgBinDir = getRipgrepBinDir();
   if (rgBinDir) {
     pathPrefixes.push(rgBinDir);
@@ -504,7 +496,6 @@ export function getShellEnv(): NodeJS.ProcessEnv {
       // Settings may not be initialized in tests/startup; preserve inherited values.
     }
   }
-  // Inject conversation ID if available
   let convId: string | undefined;
   try {
     const resolved = getConversationId();
@@ -523,7 +514,6 @@ export function getShellEnv(): NodeJS.ProcessEnv {
     env.CONVERSATION_ID = convId;
   }
 
-  // Inject API key and base URL from settings if not already in env
   if (!env.LETTA_API_KEY || !env.LETTA_BASE_URL) {
     try {
       const settings = settingsManager.getSettings();
@@ -538,7 +528,6 @@ export function getShellEnv(): NodeJS.ProcessEnv {
     }
   }
 
-  // Add NODE_PATH for skill scripts to resolve @letta-ai/letta-client
   // ES modules don't respect NODE_PATH, but createRequire does
   const nodeModulesDir = getPackageNodeModulesDir();
   if (nodeModulesDir) {

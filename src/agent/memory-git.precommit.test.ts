@@ -1,11 +1,3 @@
-/**
- * Tests for the git pre-commit hook that validates frontmatter
- * in memory .md files.
- *
- * Each test creates a temp git repo, installs the hook, stages
- * a file, and verifies the commit succeeds or fails as expected.
- */
-
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { execFileSync, execSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -55,7 +47,6 @@ function tryCommit(): { success: boolean; output: string } {
   }
 }
 
-/** Valid frontmatter for convenience */
 const VALID_FM = "---\ndescription: Test block\n---\n\n";
 
 beforeEach(() => {
@@ -155,7 +146,6 @@ describe("pre-commit hook: read_only protection", () => {
     tryCommit();
     writeFileSync(hookPath, PRE_COMMIT_HOOK_SCRIPT, { mode: 0o755 });
 
-    // Second commit: try to modify it
     writeAndStage(
       "memory/system/skills.md",
       "---\ndescription: Skills\nread_only: true\n---\n\nModified.\n",
@@ -176,7 +166,6 @@ describe("pre-commit hook: read_only protection", () => {
   });
 
   test("rejects agent changing read_only value", () => {
-    // First commit: create with read_only: false (from server pull)
     // Bypass the hook for initial setup
     const hookPath = join(tempDir, ".git", "hooks", "pre-commit");
     rmSync(hookPath);
@@ -185,10 +174,8 @@ describe("pre-commit hook: read_only protection", () => {
       "---\ndescription: A block\nread_only: false\n---\n\nContent.\n",
     );
     tryCommit();
-    // Re-install hook
     writeFileSync(hookPath, PRE_COMMIT_HOOK_SCRIPT, { mode: 0o755 });
 
-    // Now try to change read_only
     writeAndStage(
       "memory/system/block.md",
       "---\ndescription: A block\nread_only: true\n---\n\nContent.\n",
@@ -199,7 +186,6 @@ describe("pre-commit hook: read_only protection", () => {
   });
 
   test("allows modifying content of non-read_only file (with read_only preserved)", () => {
-    // First commit: file with read_only: false (from server)
     const hookPath = join(tempDir, ".git", "hooks", "pre-commit");
     rmSync(hookPath);
     writeAndStage(
@@ -209,7 +195,6 @@ describe("pre-commit hook: read_only protection", () => {
     tryCommit();
     writeFileSync(hookPath, PRE_COMMIT_HOOK_SCRIPT, { mode: 0o755 });
 
-    // Modify content but keep read_only the same
     writeAndStage(
       "memory/system/block.md",
       "---\ndescription: A block\nread_only: false\n---\n\nUpdated.\n",
@@ -219,7 +204,6 @@ describe("pre-commit hook: read_only protection", () => {
   });
 
   test("rejects agent removing read_only field", () => {
-    // First commit: file with read_only (from server)
     const hookPath = join(tempDir, ".git", "hooks", "pre-commit");
     rmSync(hookPath);
     writeAndStage(
@@ -229,7 +213,6 @@ describe("pre-commit hook: read_only protection", () => {
     tryCommit();
     writeFileSync(hookPath, PRE_COMMIT_HOOK_SCRIPT, { mode: 0o755 });
 
-    // Remove read_only from frontmatter
     writeAndStage(
       "memory/system/block.md",
       "---\ndescription: A block\n---\n\nContent.\n",

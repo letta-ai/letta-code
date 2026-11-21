@@ -157,10 +157,6 @@ export function pruneConversationPermissionModeStateIfDefault(
   return true;
 }
 
-/**
- * Load the persisted permission mode map from remote-settings.json.
- * Converts PersistedPermissionModeState → ConversationPermissionModeState.
- */
 export function loadPersistedPermissionModeMap(): Map<
   string,
   ConversationPermissionModeState
@@ -186,26 +182,18 @@ export function loadPersistedPermissionModeMap(): Map<
   }
 }
 
-/**
- * Persist permission mode map to remote-settings.json.
- */
 export function persistPermissionModeMapForRuntime(
   runtime: ListenerRuntime,
 ): void {
   persistPermissionModeMap(runtime.permissionModeByConversation);
 }
 
-/**
- * Serialize the permission mode map and persist to remote-settings.json.
- * Skips entries that match the current global default mode (lean map).
- */
 function persistPermissionModeMap(
   map: Map<string, ConversationPermissionModeState>,
 ): void {
   const permissionModeMap: Record<string, PersistedPermissionModeState> = {};
 
   for (const [key, state] of map) {
-    // Skip entries that are just the default starting mode with no context — lean map.
     if (!state.explicit && state.mode === DEFAULT_PERMISSION_MODE) {
       continue;
     }

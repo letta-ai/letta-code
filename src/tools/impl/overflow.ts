@@ -1,40 +1,20 @@
-/**
- * Utilities for writing tool output overflow to files.
- * When tool outputs exceed truncation limits, the full output is written to disk
- * and a pointer is provided in the truncated output.
- */
-
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { scrubSecretsFromString } from "@/tools/secret-substitution";
 import { resolveGlobalConfigDir } from "@/utils/settings-path";
 
-/**
- * Configuration options for tool output overflow behavior.
- * Can be controlled via environment variables.
- */
 export const OVERFLOW_CONFIG = {
-  /** Whether to write overflow to files (default: true) */
   ENABLED: process.env.LETTA_TOOL_OVERFLOW_TO_FILE?.toLowerCase() !== "false",
-  /** Whether to use middle-truncation instead of post-truncation (default: true) */
   MIDDLE_TRUNCATE:
     process.env.LETTA_TOOL_MIDDLE_TRUNCATE?.toLowerCase() !== "false",
 } as const;
 
-/**
- * Get the overflow directory for the current project.
- * Pattern: <product-config>/projects/<project-path>/agent-tools/
- *
- * @param workingDirectory - Current working directory (project root)
- * @returns Absolute path to the overflow directory
- */
 export function getOverflowDirectory(workingDirectory: string): string {
   const configDir = resolveGlobalConfigDir();
 
   // Normalize and sanitize the working directory path for use in the file system
   const normalizedPath = path.normalize(workingDirectory);
-  // Remove leading slash and replace path separators with underscores
   const sanitizedPath = normalizedPath
     .replace(/^[/\\]/, "") // Remove leading slash
     .replace(/[/\\:]/g, "_") // Replace slashes and colons
@@ -50,12 +30,6 @@ export function getOverflowDirectory(workingDirectory: string): string {
   return overflowDir;
 }
 
-/**
- * Ensure the overflow directory exists, creating it if necessary.
- *
- * @param workingDirectory - Current working directory (project root)
- * @returns Absolute path to the overflow directory
- */
 export function ensureOverflowDirectory(workingDirectory: string): string {
   const overflowDir = getOverflowDirectory(workingDirectory);
 
@@ -86,7 +60,6 @@ export function writeOverflowFile(
 ): string {
   const overflowDir = ensureOverflowDirectory(workingDirectory);
 
-  // Generate a unique filename
   const uuid = randomUUID();
   const filename = toolName
     ? `${toolName.toLowerCase()}-${uuid}.txt`
@@ -150,12 +123,6 @@ export function cleanupOldOverflowFiles(
   return deletedCount;
 }
 
-/**
- * Get overflow file statistics for debugging/monitoring.
- *
- * @param workingDirectory - Current working directory (project root)
- * @returns Statistics object
- */
 export function getOverflowStats(workingDirectory: string): {
   directory: string;
   exists: boolean;

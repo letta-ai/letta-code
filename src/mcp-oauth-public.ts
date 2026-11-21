@@ -2,7 +2,6 @@ import { connectMcpServer } from "@/mcp-client";
 import { createMcpOAuthSessionWithStorage } from "@/mcp-oauth";
 import { mcpOAuthCredentialKey } from "@/mcp-oauth-identity";
 
-/** Credentials produced by a completed MCP OAuth flow. */
 export interface McpOAuthCredentialSnapshot {
   access_token: string;
   refresh_token?: string;
@@ -35,7 +34,6 @@ export type McpOAuthFetch = (
   init?: RequestInit,
 ) => Promise<Response>;
 
-/** Options for one complete, single-flight MCP OAuth authorization. */
 export interface AuthorizeMcpServerWithStorageOptions {
   /** Owning agent used to namespace the credential key. */
   agentId: string;

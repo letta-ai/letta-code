@@ -1,6 +1,3 @@
-// src/permissions/matcher.ts
-// Pattern matching logic for permission rules
-
 import { resolve, win32 } from "node:path";
 import { minimatch } from "minimatch";
 import { canonicalToolName } from "./canonical";
@@ -131,8 +128,6 @@ export function matchesFilePattern(
   workingDirectory: string,
   options?: MatcherOptions,
 ): boolean {
-  // Extract tool name and file path from query
-  // Format: "ToolName(filePath)"
   const queryMatch = query.match(/^([^(]+)\(([\s\S]+)\)$/);
   if (!queryMatch || !queryMatch[1] || !queryMatch[2]) {
     return false;
@@ -141,8 +136,6 @@ export function matchesFilePattern(
   // Normalize path separators for cross-platform compatibility
   const filePath = normalizePath(queryMatch[2]);
 
-  // Extract tool name and glob pattern from permission rule
-  // Format: "ToolName(pattern)"
   const patternMatch = pattern.match(/^([^(]+)\(([\s\S]+)\)$/);
   if (!patternMatch || !patternMatch[1] || !patternMatch[2]) {
     // Legacy fallback: allow bare tool names (for rules saved before param suffixes were added)
@@ -163,12 +156,10 @@ export function matchesFilePattern(
     return false;
   }
 
-  // Normalize ./ prefix
   if (globPattern.startsWith("./")) {
     globPattern = globPattern.slice(2);
   }
 
-  // Handle tilde expansion
   if (globPattern.startsWith("~/")) {
     const homedir = process.env.HOME ?? require("node:os").homedir();
     globPattern = globPattern.replace(/^~/, homedir);
@@ -176,7 +167,6 @@ export function matchesFilePattern(
 
   globPattern = normalizeAbsolutePattern(globPattern, workingDirectory);
 
-  // Resolve file path to absolute and normalize separators
   const windowsContext = isWindowsContext(workingDirectory);
   const absoluteFilePath = resolveFilePathForMatching(
     filePath,
@@ -184,7 +174,6 @@ export function matchesFilePattern(
     windowsContext,
   );
 
-  // If pattern is absolute, compare directly
   if (globPattern.startsWith("/") || isWindowsAbsolutePath(globPattern)) {
     const patternToMatch = windowsContext
       ? canonicalizeWindowsAbsolutePath(globPattern)
@@ -194,9 +183,6 @@ export function matchesFilePattern(
     });
   }
 
-  // If pattern is relative, compare against both:
-  // 1. Relative path from working directory
-  // 2. Absolute path (for patterns that might match absolute paths)
   const normalizedWorkingDir = normalizePath(workingDirectory);
   const windowsWorkingDir =
     process.platform === "win32"
@@ -235,8 +221,6 @@ export function matchesBashPattern(
   pattern: string,
   options?: MatcherOptions,
 ): boolean {
-  // Extract the command from query
-  // Format: "Tool(actual command)" or "Tool()"
   const queryMatch = query.match(/^([^(]+)\(([\s\S]*)\)$/);
   if (
     !queryMatch ||
@@ -255,8 +239,6 @@ export function matchesBashPattern(
   const legacyRawCommand = unwrapShellLauncherCommand(rawCommand).trim();
   const legacyCommand = unwrapShellLauncherCommand(command).trim();
 
-  // Extract the command pattern from permission rule
-  // Format: "Tool(command pattern)" or "Tool()"
   const patternMatch = pattern.match(/^([^(]+)\(([\s\S]*)\)$/);
   if (
     !patternMatch ||
@@ -319,7 +301,6 @@ export function matchesToolPattern(
   options?: MatcherOptions,
 ): boolean {
   const canonicalTool = toolForMatch(toolName, options);
-  // Wildcard matches everything
   if (pattern === "*") {
     return true;
   }
@@ -328,12 +309,10 @@ export function matchesToolPattern(
     return true;
   }
 
-  // Check for tool name match (with or without parens)
   if (pattern === canonicalTool || pattern === `${canonicalTool}()`) {
     return true;
   }
 
-  // Check for tool name prefix (e.g., "WebFetch(...)")
   const patternToolMatch = pattern.match(/^([^(]+)\(/);
   if (patternToolMatch?.[1]) {
     return toolForMatch(patternToolMatch[1], options) === canonicalTool;

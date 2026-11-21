@@ -51,7 +51,6 @@ export function InputAssist({
   const showCommandAutocomplete =
     !showFileAutocomplete && currentInput.startsWith("/");
 
-  // Reset active state when no autocomplete is being shown
   useEffect(() => {
     if (!showFileAutocomplete && !showCommandAutocomplete) {
       onAutocompleteActiveChange(false);
@@ -75,7 +74,6 @@ export function InputAssist({
     );
   }
 
-  // Show slash command autocomplete when input starts with /
   if (showCommandAutocomplete) {
     return (
       <Box flexDirection="column">
@@ -101,6 +99,5 @@ export function InputAssist({
     );
   }
 
-  // No assistance needed
   return null;
 }

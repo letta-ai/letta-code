@@ -647,7 +647,6 @@ describe("listener message router ownership handoff", () => {
       ],
       removed: [],
     });
-    // Local queue state is untouched.
     expect(runtime.queueRuntime.length).toBe(1);
   });
 
@@ -730,7 +729,6 @@ describe("listener message router ownership handoff", () => {
       )
       .filter((payload) => payload.type === "update_queue");
     expect(updates.length).toBeGreaterThanOrEqual(1);
-    // Every broadcast snapshot reflects the post-removal queue.
     for (const update of updates) {
       expect(update.queue).toEqual([]);
     }

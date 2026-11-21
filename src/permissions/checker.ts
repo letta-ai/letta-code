@@ -1,6 +1,3 @@
-// src/permissions/checker.ts
-// Main permission checking logic
-
 import { posix, resolve, win32 } from "node:path";
 import { getCurrentAgentId } from "@/agent/context";
 import { runPermissionRequestHooks } from "@/hooks";
@@ -637,10 +634,6 @@ export function isPathWithin(
   );
 }
 
-/**
- * Check if file path is within allowed directories
- * (working directory + additionalDirectories)
- */
 function isWithinAllowedDirectories(
   filePath: string,
   permissions: PermissionRules,
@@ -648,12 +641,10 @@ function isWithinAllowedDirectories(
 ): boolean {
   const absolutePath = resolve(workingDirectory, filePath);
 
-  // Check if within working directory
   if (isPathWithin(absolutePath, resolve(workingDirectory))) {
     return true;
   }
 
-  // Check additionalDirectories
   if (permissions.additionalDirectories) {
     for (const dir of permissions.additionalDirectories) {
       const resolvedDir = resolve(workingDirectory, dir);
@@ -681,12 +672,8 @@ function getAllowedShellPathRoots(
   return roots;
 }
 
-/**
- * Build permission query string for a tool execution
- */
 function buildPermissionQuery(toolName: string, toolArgs: ToolArgs): string {
   switch (toolName) {
-    // File tools: "ToolName(path/to/file)"
     case "Read":
     case "Write":
     case "Edit":
@@ -699,7 +686,6 @@ function buildPermissionQuery(toolName: string, toolArgs: ToolArgs): string {
 
     case "Bash":
     case "exec_command": {
-      // Both shell tools: "Bash(command with args)"
       const command =
         typeof toolArgs.cmd === "string"
           ? toolArgs.cmd
@@ -714,7 +700,6 @@ function buildPermissionQuery(toolName: string, toolArgs: ToolArgs): string {
       return "Bash(write_stdin)";
 
     default:
-      // Other tools: just the tool name
       return toolName;
   }
 }
@@ -731,9 +716,6 @@ function extractShellCommand(toolArgs: ToolArgs): string | string[] | null {
   return null;
 }
 
-/**
- * Check if query matches a permission pattern
- */
 function matchesPattern(
   toolName: string,
   query: string,
@@ -746,18 +728,15 @@ function matchesPattern(
       ? { canonicalizeToolNames: true, allowBareToolFallback: true }
       : { canonicalizeToolNames: false, allowBareToolFallback: false };
   const toolForMatch = engine === "v2" ? canonicalToolName(toolName) : toolName;
-  // File tools use glob matching
   if (FILE_TOOLS.includes(toolForMatch)) {
     return matchesFilePattern(query, pattern, workingDirectory, matcherOptions);
   }
 
-  // Bash uses prefix matching
   const v2ShellTool = engine === "v2" && isShellToolName(toolName);
   if (toolForMatch === "Bash" || v2ShellTool) {
     return matchesBashPattern(query, pattern, matcherOptions);
   }
 
-  // Other tools use simple name matching
   return matchesToolPattern(toolForMatch, pattern, matcherOptions);
 }
 
@@ -774,9 +753,6 @@ const SAFE_AUTO_APPROVE_SUBAGENT_TYPES = new Set([
   "memory", // Memory repair worker - repairs its memory checkout under the same sandbox
 ]);
 
-/**
- * Get default decision for a tool (when no rules match)
- */
 function getDefaultDecision(
   toolName: string,
   toolArgs?: ToolArgs,
@@ -824,18 +800,15 @@ function getDefaultDecision(
     return "allow";
   }
 
-  // Task tool: auto-approve safe subagent types
   if (canonicalToolName(toolName) === "Task") {
     const subagentType =
       typeof toolArgs?.subagent_type === "string" ? toolArgs.subagent_type : "";
     if (SAFE_AUTO_APPROVE_SUBAGENT_TYPES.has(subagentType)) {
       return "allow";
     }
-    // Other subagent types require approval
     return "ask";
   }
 
-  // Everything else defaults to ask
   return "ask";
 }
 
@@ -864,7 +837,6 @@ export async function checkPermissionWithHooks(
   modPermissionOptions: ModPermissionCheckOptions = {},
 ): Promise<PermissionCheckResult> {
   toolArgs = expandPathArgs(toolName, toolArgs, workingDirectory);
-  // First, check permission using normal rules
   let result = checkPermission(
     toolName,
     toolArgs,
@@ -902,7 +874,6 @@ export async function checkPermissionWithHooks(
     }
   }
 
-  // If decision is "ask", run PermissionRequest hooks to see if they auto-allow/deny
   if (result.decision === "ask") {
     const hookResult = await runPermissionRequestHooks(
       toolName,
@@ -913,7 +884,6 @@ export async function checkPermissionWithHooks(
       agentId,
     );
 
-    // If hook blocked (exit code 2), deny the permission
     if (hookResult.blocked) {
       const feedback = hookResult.feedback.join("\n") || "Denied by hook";
       return {
@@ -923,8 +893,6 @@ export async function checkPermissionWithHooks(
       };
     }
 
-    // If hook succeeded (exit code 0 from any hook), allow the permission
-    // Check if any hook ran and returned success
     const anyHookAllowed = hookResult.results.some(
       (r) => r.exitCode === 0 && !r.timedOut && !r.error,
     );

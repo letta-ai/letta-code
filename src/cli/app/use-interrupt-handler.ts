@@ -1,5 +1,3 @@
-// src/cli/app/useInterruptHandler.ts
-
 import {
   type Dispatch,
   type MutableRefObject,
@@ -200,7 +198,6 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: refs are stable objects; .current is read dynamically when interrupt fires.
   const handleInterrupt = useCallback(async () => {
-    // If we're executing client-side tools, abort them AND the main stream
     const hasTrackedTools =
       executingToolCallIdsRef.current.length > 0 ||
       autoAllowedExecutionRef.current?.results;
@@ -278,7 +275,6 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
         conversationIdRef.current,
       );
 
-      // Show interrupt feedback (yellow message if no tools were cancelled)
       if (!toolsCancelled) {
         appendError(INTERRUPT_MESSAGE, true);
       }
@@ -357,13 +353,11 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       return;
     }
 
-    // If we're in the middle of queue cancel, set flag to restore instead of auto-send
     if (waitingForQueueCancelRef.current) {
       setRestoreQueueOnCancel(true);
       // Don't reset flags - let the cancel complete naturally
     }
 
-    // If EAGER_CANCEL is enabled, immediately stop everything client-side first
     if (EAGER_CANCEL) {
       latchInterruptTarget();
       // Prevent multiple handleInterrupt calls while state updates are pending
@@ -450,7 +444,6 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
         queueApprovalResults(queuedResults);
       }
 
-      // Clear local approval state
       setPendingApprovals([]);
       setApprovalContexts([]);
       setApprovalResults([]);

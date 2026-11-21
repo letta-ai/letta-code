@@ -32,9 +32,6 @@ function isLegacyStringArray(
   return Array.isArray(allowedChannels);
 }
 
-/**
- * Returns true when `allowedChannels` looks like the mode map format.
- */
 function isModeMap(
   allowedChannels: unknown,
 ): allowedChannels is Record<string, DiscordChannelMode> {
@@ -46,13 +43,10 @@ function isModeMap(
 }
 
 export interface DiscordChannelGateParams {
-  /** ID of the channel the message arrived in. For thread messages this is the thread's channel ID. */
   channelId: string;
   /** Parent channel ID when the message is in a thread; null otherwise. */
   parentChannelId: string | null;
-  /** Whether the message is in a thread. */
   isThread: boolean;
-  /** The configured allowlist or mode map (may be empty/undefined to mean "no gate"). */
   allowedChannels?: string[] | Record<string, DiscordChannelMode>;
 }
 

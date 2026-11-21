@@ -397,8 +397,6 @@ export function createChannelTurnProgressBuilder(
         const toolReturns = extractToolReturns(record);
         const updates: ChannelTurnProgressUpdate[] = [];
         for (const { summary, status, errorDetails } of toolReturns) {
-          // Resolve details from the accumulated arguments for this call,
-          // then drop the per-call caches.
           const accumulatedArgs = summary.id
             ? argumentsByToolCallId.get(summary.id)
             : undefined;

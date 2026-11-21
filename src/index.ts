@@ -262,9 +262,6 @@ EXAMPLES
   console.log(usage);
 }
 
-/**
- * Print info about current directory, skills, and pinned agents
- */
 async function printInfo() {
   const { join } = await import("node:path");
   const { getVersion } = await import("@/version");
@@ -275,15 +272,12 @@ async function printInfo() {
   const skillsDir = join(cwd, SKILLS_DIR);
   const skillsExist = exists(skillsDir);
 
-  // Load local project settings first
   await settingsManager.loadLocalProjectSettings(cwd);
 
-  // Get pinned agents
   const pinned = settingsManager.getPinnedAgents();
   const localSettings = settingsManager.getLocalProjectSettings(cwd);
   const lastAgent = localSettings.lastAgent;
 
-  // Try to fetch agent names from API (if authenticated)
   const agentNames: Record<string, string> = {};
   const allAgentIds = [
     ...new Set([...pinned, ...(lastAgent ? [lastAgent] : [])]),
@@ -321,7 +315,6 @@ async function printInfo() {
 
   console.log("");
 
-  // Show which agent will be resumed
   if (lastAgent) {
     console.log(`Will resume: ${formatAgent(lastAgent)}`);
   } else if (pinned.length > 0) {
@@ -332,7 +325,6 @@ async function printInfo() {
 
   console.log("");
 
-  // Pinned agents
   if (pinned.length > 0) {
     console.log("Pinned agents:");
     for (const id of pinned) {
@@ -400,7 +392,6 @@ async function resolveAgentByName(
     if (matches.length === 0) continue;
     if (matches.length === 1) return matches[0] ?? null;
 
-    // Multiple matches within this backend - pick most recently used.
     const localMatch = matches.find(
       (match) => match.id === settingsManager.getLocalLastAgentId(),
     );
@@ -418,9 +409,6 @@ async function resolveAgentByName(
   return null;
 }
 
-/**
- * Get all pinned agent names for error messages
- */
 async function getPinnedAgentNames(
   backendLookupOrder: BackendMode[],
 ): Promise<{ id: string; name: string }[]> {
@@ -633,7 +621,6 @@ async function main(): Promise<void> {
   const settings = await settingsManager.getSettingsWithSecureTokens();
   markMilestone("SETTINGS_LOADED");
 
-  // Initialize LSP infrastructure for type checking
   if (process.env.LETTA_ENABLE_LSP) {
     try {
       const { lspManager } = await import("@/lsp/manager.js");
@@ -644,7 +631,6 @@ async function main(): Promise<void> {
     }
   }
 
-  // Check for updates on startup (non-blocking)
   const { checkAndAutoUpdate } = await import("@/updater/auto-update");
   const autoUpdatePromise = startStartupAutoUpdateCheck(checkAndAutoUpdate);
 
@@ -669,7 +655,6 @@ async function main(): Promise<void> {
       "tui_startup_parse_args",
     );
     const errorMsg = error instanceof Error ? error.message : String(error);
-    // Improve error message for common mistakes
     if (errorMsg.includes("Unknown option")) {
       console.error(`Error: ${errorMsg}`);
       console.error(
@@ -685,7 +670,6 @@ async function main(): Promise<void> {
   hideHeadlessPrompt(values, process.stdin.isTTY, positionals);
   const command = positionals[2]; // First positional after node and script
 
-  // Handle help flag first
   if (values.help) {
     printHelp();
 
@@ -704,13 +688,11 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  // Handle info flag
   if (values.info) {
     await printInfo();
     process.exit(0);
   }
 
-  // --resume: Open agent selector UI after loading
   const shouldResume = values.resume ?? false;
   let specifiedConversationId = values.conversation ?? null; // Specific conversation to resume
   const forceNew = values["new-agent"] ?? false;
@@ -739,7 +721,6 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Validate --conv default requires --agent (unless --new-agent will create one)
   try {
     validateConversationDefaultRequiresAgent({
       specifiedConversationId,
@@ -943,7 +924,6 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Validate system prompt options (--system and --system-custom are mutually exclusive)
   if (systemPromptPreset && systemCustom) {
     console.error(
       "Error: --system and --system-custom are mutually exclusive. Use one or the other.",
@@ -951,7 +931,6 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Validate system prompt preset if provided.
   // Known preset IDs are always accepted. Subagent names are only accepted
   // for internal subagent launches (LETTA_CODE_AGENT_ROLE=subagent).
   if (systemPromptPreset) {
@@ -976,7 +955,6 @@ async function main(): Promise<void> {
     }
   }
 
-  // Validate shared mutual-exclusion rules for startup flags.
   try {
     validatePrimaryStartupFlagConflicts({
       specifiedConversationId,
@@ -997,7 +975,6 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Validate --name flag
   let nameResolvedAgent: AgentState | null = null;
   if (specifiedAgentName) {
     if (specifiedAgentId) {
@@ -1040,7 +1017,6 @@ async function main(): Promise<void> {
       !settings.refreshToken &&
       !apiKey
     ) {
-      // For interactive mode, show setup flow
       await ensureTerminalPreflightComplete();
       const { runSetup } = await import("@/auth/setup");
       const setupResult = await runSetup({
@@ -1050,7 +1026,6 @@ async function main(): Promise<void> {
       if (setupResult.kind === "cancelled") {
         process.exit(0);
       }
-      // After setup, restart main flow
       return main().catch((err: unknown) => {
         // Handle top-level errors gracefully without raw stack traces
         trackCliBoundaryError("setup_restart_failed", err, "tui_setup_restart");
@@ -1065,7 +1040,6 @@ async function main(): Promise<void> {
     }
 
     if (!apiKey && baseURL === LETTA_CLOUD_API_URL) {
-      // For interactive mode, show setup flow
       console.log("No credentials found. Let's get you set up!\n");
       await ensureTerminalPreflightComplete();
       const { runSetup } = await import("@/auth/setup");
@@ -1076,7 +1050,6 @@ async function main(): Promise<void> {
       if (setupResult.kind === "cancelled") {
         process.exit(0);
       }
-      // After setup, restart main flow
       return main();
     }
 
@@ -1188,7 +1161,6 @@ async function main(): Promise<void> {
         if (setupResult.kind === "cancelled") {
           process.exit(0);
         }
-        // After setup, restart main flow
         return main();
       }
     } else {
@@ -1198,7 +1170,6 @@ async function main(): Promise<void> {
     markMilestone("CREDENTIALS_VALIDATED");
   }
 
-  // Resolve --name to agent ID if provided
   if (specifiedAgentName) {
     // Load local settings for LRU priority
     await settingsManager.loadLocalProjectSettings();
@@ -1230,13 +1201,11 @@ async function main(): Promise<void> {
     nameResolvedAgent = resolved.agent;
   }
   await (await import("@/agent/remote-model-catalog")).initializeModelCatalog();
-  // Set tool filter if provided (controls which tools are loaded)
   if (values.tools !== undefined) {
     const { toolFilter } = await import("@/tools/filter");
     toolFilter.setEnabledTools(values.tools);
   }
 
-  // Set CLI permission overrides if provided
   if (
     values.allowedTools ||
     values.disallowedTools ||
@@ -1256,7 +1225,6 @@ async function main(): Promise<void> {
     }
   }
 
-  // Set permission mode if provided (or via --yolo alias)
   const permissionModeValue =
     typeof values["permission-mode"] === "string"
       ? values["permission-mode"]
@@ -1273,7 +1241,6 @@ async function main(): Promise<void> {
 
   if (isHeadless) {
     markMilestone("HEADLESS_MODE_START");
-    // For headless mode, load tools synchronously (respecting model/toolset when provided)
     await loadStartupTools({
       modelIdentifier: specifiedModel,
       toolset: specifiedToolset as ToolsetPreference | undefined,
@@ -1301,7 +1268,6 @@ async function main(): Promise<void> {
 
   markMilestone("TUI_MODE_START");
 
-  // Interactive: lazy-load React/Ink + App
   markMilestone("REACT_IMPORT_START");
   const [React, { render }, AppModule] = await Promise.all([
     import("react"),
@@ -1369,7 +1335,6 @@ async function main(): Promise<void> {
     const [validatedAgent, setValidatedAgent] = useState<AgentState | null>(
       preResolvedAgent ?? null,
     );
-    // Track agent and conversation for conversation selector (--resume flag)
     const [resumeAgentId, setResumeAgentId] = useState<string | null>(null);
     const [resumeAgentName, setResumeAgentName] = useState<string | null>(null);
     const [selectedConversationId, setSelectedConversationId] = useState<
@@ -1377,11 +1342,9 @@ async function main(): Promise<void> {
     >(null);
     // Track when user explicitly requested new agent from selector (not via --new flag)
     const [userRequestedNewAgent, setUserRequestedNewAgent] = useState(false);
-    // Message to show when LRU/selected agent failed to load
     const [failedAgentMessage, setFailedAgentMessage] = useState<string | null>(
       null,
     );
-    // For custom API backends: available model handles from server and user's selection
     const [availableServerModels, setAvailableServerModels] = useState<
       string[]
     >([]);
@@ -1399,10 +1362,8 @@ async function main(): Promise<void> {
       null,
     );
 
-    // Release notes to display (checked once on mount)
     const [releaseNotes, setReleaseNotes] = useState<string | null>(null);
 
-    // Update notification: set when auto-update applied a significant new version
     const [updateNotification, setUpdateNotification] = useState<string | null>(
       null,
     );
@@ -1416,7 +1377,6 @@ async function main(): Promise<void> {
         .catch(() => {});
     }, []);
 
-    // Auto-install Shift+Enter keybinding for VS Code/Cursor/Windsurf (silent, no prompt)
     useEffect(() => {
       async function autoInstallKeybinding() {
         const {
@@ -1436,7 +1396,6 @@ async function main(): Promise<void> {
         const settings = await loadSettings();
         const keybindingsPath = getKeybindingsPath(terminal);
 
-        // Skip if already installed or no valid path
         if (!keybindingsPath || settings.shiftEnterKeybindingInstalled) {
           setShowKeybindingSetup(false);
           return;
@@ -1478,7 +1437,6 @@ async function main(): Promise<void> {
           return;
         }
 
-        // Silently install the fix
         const result = installWezTermDeleteFix();
         if (result.success) {
           await updateSettings({ wezTermDeleteFixInstalled: true });
@@ -1489,7 +1447,6 @@ async function main(): Promise<void> {
       autoInstallWezTermFix();
     }, []);
 
-    // Check for release notes to display (runs once on mount)
     useEffect(() => {
       async function checkNotes() {
         const { checkReleaseNotes } = await import("@/release-notes");
@@ -1499,11 +1456,9 @@ async function main(): Promise<void> {
       checkNotes();
     }, []);
 
-    // Initialize on mount - check if we should show global agent selector
     useEffect(() => {
       async function checkAndStart() {
         markMilestone("TUI_CHECK_AND_START");
-        // Load settings
         await settingsManager.loadLocalProjectSettings();
         const backend = getBackend();
         const startupBackendMode = isExperimentalLocalBackendEnabled()
@@ -1606,7 +1561,6 @@ async function main(): Promise<void> {
             process.exit(1);
           }
           configureBackendMode(resolved.backendMode);
-          // Use the agent that owns this conversation
           setSelectedGlobalAgentId(resolved.conversation.agent_id);
           setSelectedConversationId(specifiedConversationId);
           setLoadingState("assembling");
@@ -1653,16 +1607,10 @@ async function main(): Promise<void> {
             }
           }
 
-          // No valid agent found anywhere
           console.error("No recent session found in .letta/ or ~/.letta.");
           console.error("Run 'letta' to get started.");
           process.exit(1);
         }
-
-        // =====================================================================
-        // DEFAULT PATH: No special flags
-        // Check local LRU → global LRU → selector → create default
-        // =====================================================================
 
         // Short-circuit: flags handled by init() skip resolution entirely
         if (forceNew || agentIdArg) {
@@ -1735,7 +1683,6 @@ async function main(): Promise<void> {
           }
         }
 
-        // A single existing pin resumes directly; multiple pins open selection.
         const existingPinnedIds = pinnedAgentIds.filter((id) =>
           cachedAgents.has(id),
         );
@@ -1825,7 +1772,6 @@ async function main(): Promise<void> {
       checkAndStart();
     }, [forceNew, agentIdArg, shouldResume, specifiedConversationId]);
 
-    // Main initialization effect - runs after profile selection
     const initStartedRef = React.useRef(false);
 
     useEffect(() => {
@@ -1853,7 +1799,6 @@ async function main(): Promise<void> {
           ? "local"
           : "api";
 
-        // Determine which agent we'll be using (before loading tools)
         let resumingAgentId: string | null = null;
         // Track agent fetched during ID resolution so we can reuse it later
         // (validatedAgent React state may not be committed yet).
@@ -1868,9 +1813,7 @@ async function main(): Promise<void> {
           startupCreatedAgentRef.current = null;
         }
 
-        // Priority 1: --agent flag
         if (!resumingAgentId && agentIdArg) {
-          // Use cached agent from name resolution if available
           if (validatedAgent && validatedAgent.id === agentIdArg) {
             resumingAgentId = agentIdArg;
           } else {
@@ -1887,16 +1830,13 @@ async function main(): Promise<void> {
           }
         }
 
-        // Priority 1.5: Use agent from conversation selector (--resume flag)
         if (!resumingAgentId && resumeAgentId) {
           resumingAgentId = resumeAgentId;
         }
 
-        // Priority 2: Use agent selected from global selector (user just picked one)
         // This takes precedence over stale LRU since user explicitly chose it
         const shouldCreateNew = forceNew || userRequestedNewAgent;
         if (!resumingAgentId && !shouldCreateNew && selectedGlobalAgentId) {
-          // Use cached agent from Phase 1 validation if available
           if (validatedAgent && validatedAgent.id === selectedGlobalAgentId) {
             resumingAgentId = selectedGlobalAgentId;
           } else {
@@ -1915,7 +1855,6 @@ async function main(): Promise<void> {
           }
         }
 
-        // Priority 3: LRU from the active backend (if not --new or user explicitly requested new from selector)
         if (!resumingAgentId && !shouldCreateNew) {
           const recentAgentId =
             startupBackendMode === "local"
@@ -1947,7 +1886,6 @@ async function main(): Promise<void> {
         let agent: AgentState | null = null;
         let autoEnableMemfsForFreshAgent = false;
 
-        // Priority 2: Try to use --agent specified ID
         if (!agent && agentIdArg) {
           try {
             agent = await backend.retrieveAgent(agentIdArg, {
@@ -1965,9 +1903,7 @@ async function main(): Promise<void> {
           }
         }
 
-        // Priority 3: Check if --new flag was passed or user requested new from selector
         if (!agent && shouldCreateNew) {
-          // For custom API backends: if default model unavailable and no model selected yet, show picker
           if (availableServerModels.length > 0 && !selectedServerModel) {
             setLoadingState("selecting_global");
             return;
@@ -1983,7 +1919,6 @@ async function main(): Promise<void> {
             !customApiBaseUrl &&
             !backend.capabilities.localModelCatalog
           ) {
-            // On Letta API without explicit model - check billing tier for appropriate default
             const { getDefaultModelForTier } = await import("@/agent/model");
             const billingTier = await getBillingTier();
             effectiveModel = getDefaultModelForTier(billingTier);
@@ -2028,7 +1963,6 @@ async function main(): Promise<void> {
           autoEnableMemfsForFreshAgent = willAutoEnableMemfs;
         }
 
-        // Priority 4: Try to resume from project settings LRU (.letta/settings.local.json)
         // Note: If LRU retrieval failed in early validation, we already showed selector and returned
         // Use cached agent from Phase 1 validation when available to avoid redundant API call
         if (!agent && resumingAgentId) {
@@ -2145,11 +2079,6 @@ async function main(): Promise<void> {
             );
           });
 
-        // Check if we're resuming an existing agent
-        // We're resuming if:
-        // 1. We specified an agent ID via --agent flag (agentIdArg)
-        // 2. We're reusing a project agent (detected early as resumingAgentId)
-        // 3. We retrieved an agent from LRU (detected by checking if agent already existed)
         const isResumingProject = !shouldCreateNew && !!resumingAgentId;
         const isReusingExistingAgent = !shouldCreateNew && agent && agent.id;
         const resuming = !!(
@@ -2248,7 +2177,6 @@ async function main(): Promise<void> {
             setResumeData(data);
             setResumedExistingConversation(true);
           } catch (error) {
-            // Only treat 404/422 as "not found", rethrow other errors
             if (isBackendNotFoundError(error)) {
               console.error(
                 `Conversation ${specifiedConversationId} not found`,
@@ -2258,7 +2186,6 @@ async function main(): Promise<void> {
             throw error;
           }
         } else if (selectedConversationId) {
-          // Conversation selected from --resume selector or auto-restored from local project settings
           try {
             setLoadingState("checking");
             const data = await getResumeDataFromBackend(
@@ -2290,7 +2217,6 @@ async function main(): Promise<void> {
           });
           conversationIdToUse = conversation.id;
         } else {
-          // Default (including --new-agent): use the agent's "default" conversation
           conversationIdToUse = "default";
 
           // Load message history without waiting on memfs sync.
@@ -2314,10 +2240,8 @@ async function main(): Promise<void> {
         const fdPath = await ensureFdPath();
         setFileAutocompleteFdPath(fdPath);
 
-        // Ensure secrets cache is populated (non-fatal).
         await secretsInitPromise;
 
-        // Save the session (agent + conversation) to settings
         // Skip for subagents - they shouldn't pollute the LRU settings
         if (shouldPersistSessionState()) {
           settingsManager.persistSession(agent.id, conversationIdToUse);
@@ -2408,7 +2332,6 @@ async function main(): Promise<void> {
         onExit: () => process.exit(0),
       });
     }
-    // Show conversation selector for --resume flag
     if (loadingState === "selecting_conversation" && resumeAgentId) {
       return React.createElement(ConversationSelector, {
         agentId: resumeAgentId,
@@ -2419,7 +2342,6 @@ async function main(): Promise<void> {
           setLoadingState("assembling");
         },
         onNewConversation: () => {
-          // Start with a new conversation for this agent
           setLoadingState("assembling");
         },
         onCancel: () => {
@@ -2427,14 +2349,12 @@ async function main(): Promise<void> {
         },
       });
     }
-    // Show global agent selector in fresh repos with global pinned agents
     if (loadingState === "selecting_global") {
       return React.createElement(ProfileSelectionInline, {
         lruAgentId: null, // No LRU in fresh repo
         loading: false,
         freshRepoMode: true, // Hides "(global)" labels and simplifies context message
         failedAgentMessage: failedAgentMessage ?? undefined,
-        // For custom API backends: pass available models so user can pick one when creating new agent
         serverModelsForNewAgent:
           availableServerModels.length > 0 ? availableServerModels : undefined,
         defaultModelHandle: customApiDefaultModel ?? undefined,

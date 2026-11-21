@@ -23,9 +23,6 @@ import { debugWarn } from "@/utils/debug";
 import { getErrorMessage } from "@/utils/error";
 import type { SubagentResult } from ".";
 
-/**
- * State tracked during subagent execution
- */
 export interface ExecutionState {
   agentId: string | null;
   conversationId: string | null;
@@ -52,9 +49,6 @@ export interface ExecutionState {
   pendingText?: { id: string; kind: "text" | "reasoning"; text: string };
 }
 
-/**
- * Record a tool call to the state store and the task's progress log
- */
 function recordToolCall(
   subagentId: string,
   toolCallId: string,
@@ -129,9 +123,6 @@ function handleTextChunk(
   };
 }
 
-/**
- * Handle an init event from the subagent stream
- */
 function handleInitEvent(
   event: { agent_id?: string; conversation_id?: string },
   state: ExecutionState,
@@ -209,7 +200,6 @@ type ToolReturnEvent = ToolReturnFields & {
   tool_returns?: ToolReturnFields[] | null;
 };
 
-/** Write each tool return of a `tool_return_message`, in full, to the task's logs. */
 export function recordToolReturnProgress(
   event: ToolReturnEvent,
   subagentId: string,
@@ -257,9 +247,6 @@ function handleToolReturnEvent(
   recordToolReturnProgress(event, subagentId);
 }
 
-/**
- * Handle a result event
- */
 function isEnqueueReceipt(event: {
   status?: unknown;
   agent_id?: unknown;
@@ -297,9 +284,6 @@ export function getResultEnvelopeError(event: {
   return event.error || event.result || "Unknown error";
 }
 
-/**
- * Handle a result event
- */
 function handleResultEvent(
   event: {
     subtype?: string;
@@ -361,16 +345,12 @@ function handleResultEvent(
     state.finalError = getResultEnvelopeError(event);
   }
 
-  // Update state store with final stats
   updateSubagent(subagentId, {
     totalTokens: state.resultStats.totalTokens,
     durationMs: state.resultStats.durationMs,
   });
 }
 
-/**
- * Process a single JSON event from the subagent stream
- */
 export function processStreamEvent(
   line: string,
   state: ExecutionState,
@@ -424,7 +404,6 @@ export function processStreamEvent(
   }
 }
 
-/** Whether at least one identified tool call reached a successful terminal state. */
 export function hasSuccessfulToolCall(state: ExecutionState): boolean {
   for (const toolCallId of state.displayedToolCalls) {
     if (state.toolCallStatuses.get(toolCallId) === "success") {

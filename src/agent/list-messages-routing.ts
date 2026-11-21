@@ -35,8 +35,6 @@ export function resolveListMessagesRoute(
     return { kind: "conversations", conversationId: targetConvId };
   }
 
-  // Default conversation: keep conversation_id as "default" and
-  // pass the agent ID as a query parameter.
   const agentId = listReq.agent_id ?? sessionAgentId;
   return { kind: "conversations", conversationId: "default", agentId };
 }

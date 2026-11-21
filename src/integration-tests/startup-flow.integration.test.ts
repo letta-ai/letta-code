@@ -217,10 +217,6 @@ async function runCliJson(
   }
 }
 
-// ============================================================================
-// Invalid Input Tests (require API calls but fail fast)
-// ============================================================================
-
 describe("Startup Flow - Invalid Inputs", () => {
   test(
     "--agent with nonexistent ID shows error",
@@ -251,10 +247,6 @@ describe("Startup Flow - Invalid Inputs", () => {
     { timeout: 70000 },
   );
 });
-
-// ============================================================================
-// Integration Tests (require API access, create real agents)
-// ============================================================================
 
 describe("Startup Flow - Integration", () => {
   let testAgentId: string | null = null;

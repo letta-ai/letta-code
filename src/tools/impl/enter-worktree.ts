@@ -141,11 +141,6 @@ async function resolveWorktreeSourceRoot(params: {
   }
 }
 
-/**
- * Resolves the common prelude shared by the create and enter flows: the current
- * cwd, the repo root for `repo_path`/cwd, the primary checkout root, and the
- * managed `.letta/worktrees/` directory under it.
- */
 async function resolveWorktreeContext(params: {
   args: EnterWorktreeArgs;
   runtimeContext: ReturnType<typeof getRuntimeContext>;
@@ -298,8 +293,6 @@ function isUnsafeRelativePath(relPath: string): boolean {
   const normalized = path.normalize(relPath);
   return normalized === ".." || normalized.startsWith(`..${path.sep}`);
 }
-
-/** True when `child` is `parent` or nested under it (path-based, no realpath). */
 
 /**
  * Symlinks `relDir` from the primary checkout into the worktree so large,
@@ -848,7 +841,6 @@ export async function enter_worktree(
   try {
     const runtimeContext = getRuntimeContext();
 
-    // Enter mode: switch into an existing worktree rather than creating one.
     if (requestedPath) {
       if (
         getStringArg(args, "name") ||
@@ -866,7 +858,6 @@ export async function enter_worktree(
       });
     }
 
-    // Create mode.
     const name = getStringArg(args, "name");
     if (!name) {
       return {

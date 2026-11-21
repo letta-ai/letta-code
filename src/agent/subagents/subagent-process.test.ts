@@ -113,7 +113,6 @@ describe.skipIf(process.platform !== "linux")(
       return { binDir, argsFile };
     }
 
-    // Reports its own PID, then echoes one stream-json line from stdin.
     const echoScript = [
       'process.stdout.write(JSON.stringify({ pid: process.pid }) + "\\n");',
       'process.stdin.once("data", (d) => { process.stdout.write(d); process.exit(0); });',

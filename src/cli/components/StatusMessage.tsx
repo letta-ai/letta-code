@@ -16,7 +16,6 @@ type StatusLine = {
  * Text wrapped in ** will be rendered with the accent color.
  */
 function renderColoredText(text: string): React.ReactNode {
-  // Split on **...** pattern, keeping the delimiters
   const parts = text.split(/(\*\*[^*]+\*\*)/g);
 
   return parts.map((part, i) => {
@@ -30,7 +29,6 @@ function renderColoredText(text: string): React.ReactNode {
         </Text>
       );
     }
-    // Regular dimmed text
     return (
       // biome-ignore lint/suspicious/noArrayIndexKey: Static text parts never reorder
       <Text key={i} dimColor>

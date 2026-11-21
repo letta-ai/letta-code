@@ -20,8 +20,6 @@ import {
 } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-// Simple zip implementation using Node.js built-in zlib
-// For a proper zip file, we'll create the structure manually
 import { deflateRawSync } from "node:zlib";
 import { validateSkill } from "./validate-skill";
 
@@ -32,9 +30,6 @@ interface ZipEntry {
 }
 
 function createZip(entries: ZipEntry[]): Buffer {
-  // Use archiver-like approach with raw buffer manipulation
-  // For simplicity, we'll use a basic ZIP format
-
   const localHeaders: Buffer[] = [];
   const centralHeaders: Buffer[] = [];
   let offset = 0;
@@ -47,10 +42,8 @@ function createZip(entries: ZipEntry[]): Buffer {
     const uncompressedSize = entry.isDirectory ? 0 : entry.data.length;
     const compressedSize = compressedData.length;
 
-    // CRC32 calculation
     const crc = entry.isDirectory ? 0 : crc32(entry.data);
 
-    // Local file header
     const localHeader = Buffer.alloc(30 + pathBuffer.length);
     localHeader.writeUInt32LE(0x04034b50, 0); // Local file header signature
     localHeader.writeUInt16LE(20, 4); // Version needed to extract
@@ -68,7 +61,6 @@ function createZip(entries: ZipEntry[]): Buffer {
     localHeaders.push(localHeader);
     localHeaders.push(compressedData);
 
-    // Central directory header
     const centralHeader = Buffer.alloc(46 + pathBuffer.length);
     centralHeader.writeUInt32LE(0x02014b50, 0); // Central directory signature
     centralHeader.writeUInt16LE(0x0314, 4); // Version 2.0, made by Unix
@@ -100,7 +92,6 @@ function createZip(entries: ZipEntry[]): Buffer {
   const centralDirOffset = offset;
   const centralDirSize = centralHeaders.reduce((sum, h) => sum + h.length, 0);
 
-  // End of central directory record
   const endRecord = Buffer.alloc(22);
   endRecord.writeUInt32LE(0x06054b50, 0); // End of central directory signature
   endRecord.writeUInt16LE(0, 4); // Number of this disk
@@ -114,7 +105,6 @@ function createZip(entries: ZipEntry[]): Buffer {
   return Buffer.concat([...localHeaders, ...centralHeaders, endRecord]);
 }
 
-// CRC32 implementation
 function crc32(data: Buffer): number {
   let crc = 0xffffffff;
   const table = getCrc32Table();
@@ -179,7 +169,6 @@ export function normalizeZipEntryPath(
 function packageSkill(skillPath: string, outputDir?: string): string | null {
   const resolvedPath = resolve(skillPath);
 
-  // Validate skill folder exists
   if (!existsSync(resolvedPath)) {
     console.error(`Error: Skill folder not found: ${resolvedPath}`);
     return null;
@@ -190,14 +179,12 @@ function packageSkill(skillPath: string, outputDir?: string): string | null {
     return null;
   }
 
-  // Validate SKILL.md exists
   const skillMdPath = join(resolvedPath, "SKILL.md");
   if (!existsSync(skillMdPath)) {
     console.error(`Error: SKILL.md not found in ${resolvedPath}`);
     return null;
   }
 
-  // Run validation before packaging
   console.log("Validating skill...");
   const { valid, message } = validateSkill(resolvedPath);
   if (!valid) {
@@ -207,7 +194,6 @@ function packageSkill(skillPath: string, outputDir?: string): string | null {
   }
   console.log(`${message}\n`);
 
-  // Determine output location
   const skillName = basename(resolvedPath);
   const outputPath = outputDir ? resolve(outputDir) : process.cwd();
 
@@ -217,13 +203,11 @@ function packageSkill(skillPath: string, outputDir?: string): string | null {
 
   const skillFilename = join(outputPath, `${skillName}.skill`);
 
-  // Create the .skill file (zip format)
   try {
     // Get all files, using parent directory as base so skill folder is included
     const parentDir = dirname(resolvedPath);
     const entries = getAllFiles(resolvedPath, parentDir);
 
-    // Add the skill directory itself
     entries.unshift({
       path: `${skillName}/`,
       data: Buffer.alloc(0),
@@ -256,7 +240,6 @@ function isMainModule(): boolean {
     : false;
 }
 
-// CLI entry point
 if (isMainModule()) {
   const args = process.argv.slice(2);
 

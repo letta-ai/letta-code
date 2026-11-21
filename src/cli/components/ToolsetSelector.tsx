@@ -29,7 +29,6 @@ export function ToolsetSelector({
   const [selectedIndex, setSelectedIndex] = useState(0);
 
   useInput((input, key) => {
-    // CTRL-C: immediately cancel
     if (key.ctrl && input === "c") {
       onCancel();
       return;
@@ -53,13 +52,11 @@ export function ToolsetSelector({
 
   return (
     <Box flexDirection="column">
-      {/* Command header */}
       <Text dimColor>{"> /toolset"}</Text>
       <Text dimColor>{solidLine}</Text>
 
       <Box height={1} />
 
-      {/* Title */}
       <Box marginBottom={1}>
         <Text bold color={colors.selector.title}>
           Swap your agent's toolset
@@ -105,7 +102,6 @@ export function ToolsetSelector({
         })}
       </Box>
 
-      {/* Footer */}
       <Box marginTop={1}>
         <Text dimColor>{"  Enter select · ↑↓ navigate · Esc cancel"}</Text>
       </Box>

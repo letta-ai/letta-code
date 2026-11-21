@@ -21,7 +21,6 @@ export function ExitStats({
 
   return (
     <Box flexDirection="column" marginTop={1}>
-      {/* Alien + Stats (3 lines) */}
       <Box>
         <Text color={colors.footer.agentName}>{" ▗▖▗▖   "}</Text>
         <Text dimColor>
@@ -42,7 +41,6 @@ export function ExitStats({
           {formatCompact(stats.usage.completionTokens)} output
         </Text>
       </Box>
-      {/* Resume commands (no alien) */}
       <Box height={1} />
       <Text dimColor>Resume this agent with:</Text>
       <Text color={colors.link.url}>

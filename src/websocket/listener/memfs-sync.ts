@@ -78,9 +78,6 @@ async function removeRefusedCheckout(
   }
 }
 
-/**
- * Core sync logic — fetches agent, checks tag, clones/pulls repo.
- */
 async function syncMemfsForAgent(agentId: string): Promise<void> {
   const { settingsManager } = await import("@/settings-manager");
   if (settingsManager.isMemfsExplicitlyDisabled(agentId)) {

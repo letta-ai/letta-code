@@ -75,7 +75,6 @@ export async function handleNavigationCommand(
     openOverlay,
   } = ctx;
 
-  // Special handling for /agents command - show agent browser
   if (
     trimmed === "/agents" ||
     trimmed === "/pinned" ||
@@ -90,7 +89,6 @@ export async function handleNavigationCommand(
     return { submitted: true };
   }
 
-  // Special handling for /resume command - show conversation selector or switch directly
   if (trimmed.startsWith("/resume")) {
     const parts = trimmed.split(/\s+/);
     const targetConvId = parts[1];
@@ -234,7 +232,6 @@ export async function handleNavigationCommand(
     return { submitted: true };
   }
 
-  // Special handling for /search command - show message search
   if (trimmed.startsWith("/search")) {
     const [, ...rest] = trimmed.split(/\s+/);
     const query = rest.join(" ").trim();

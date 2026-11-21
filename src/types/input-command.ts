@@ -1,10 +1,3 @@
-/**
- * Input commands and their payloads (Controller -> execution environment).
- *
- * Split from protocol_v2.ts: the run-input frame, the approval-response
- * body it can carry, and the payload union. `InputCommand` is the declared
- * home of the USER_SCOPED_MCP_CONNECTIONS top-level delivery fields.
- */
 import type { InputCreateMessagePayload } from "./input-create-message";
 import type { ConversationRuntimeScope } from "./runtime-scope";
 import type * as TeleportProtocol from "./teleport-protocol";

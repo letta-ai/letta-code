@@ -123,7 +123,6 @@ async function fetchFromNetwork(): Promise<CacheEntry> {
   const handles = new Set(
     modelsList.map((m) => m.handle).filter((h): h is string => !!h),
   );
-  // Build context window map from API response
   const contextWindows = new Map<string, number>();
   const providerTypes = new Map<string, string>();
   const reasoningCapabilities = new Map<string, ReasoningCapabilities>();

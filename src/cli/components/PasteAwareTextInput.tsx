@@ -55,29 +55,23 @@ function countLines(text: string): number {
   return (text.match(/\r\n|\r|\n/g) || []).length + 1;
 }
 
-/** Replace newlines with visual indicator for display */
 function sanitizeForDisplay(text: string): string {
   return text.replace(/\r\n|\r|\n/g, "↵");
 }
 
-/** Find the boundary of the previous word for option+left navigation */
 function findPreviousWordBoundary(text: string, cursorPos: number): number {
   if (cursorPos === 0) return 0;
 
-  // Move back one position if we're at the end of a word
   let pos = cursorPos - 1;
 
-  // Skip whitespace backwards
   while (pos > 0 && /\s/.test(text.charAt(pos))) {
     pos--;
   }
 
-  // Skip word characters backwards
   while (pos > 0 && /\S/.test(text.charAt(pos))) {
     pos--;
   }
 
-  // If we stopped at whitespace, move forward one
   if (pos > 0 && /\s/.test(text.charAt(pos))) {
     pos++;
   }
@@ -85,18 +79,15 @@ function findPreviousWordBoundary(text: string, cursorPos: number): number {
   return Math.max(0, pos);
 }
 
-/** Find the boundary of the next word for option+right navigation */
 function findNextWordBoundary(text: string, cursorPos: number): number {
   if (cursorPos >= text.length) return text.length;
 
   let pos = cursorPos;
 
-  // Skip current word forward
   while (pos < text.length && /\S/.test(text.charAt(pos))) {
     pos++;
   }
 
-  // Skip whitespace forward
   while (pos < text.length && /\s/.test(text.charAt(pos))) {
     pos++;
   }
@@ -155,7 +146,6 @@ export function PasteAwareTextInput({
     focusRef.current = focus;
   }, [focus]);
 
-  // Apply cursor position from parent
   useEffect(() => {
     if (typeof cursorPosition === "number") {
       setNudgeCursorOffset(cursorPosition);
@@ -173,7 +163,6 @@ export function PasteAwareTextInput({
     onCursorOffsetChange?: (n: number) => void;
   }>;
 
-  // Sync external value changes (treat incoming value as DISPLAY value)
   useEffect(() => {
     // Only a parent-driven change needs syncing. When this render already
     // displays the incoming value, it is the echo of our own onChange and the
@@ -205,14 +194,12 @@ export function PasteAwareTextInput({
   // Intercept paste events and macOS fallback for image clipboard imports
   useInput(
     (input, key) => {
-      // Handle Shift/Option/Ctrl + Enter to insert newline
       if (key.return && (key.shift || key.meta || key.ctrl)) {
         const at = Math.max(
           0,
           Math.min(caretOffsetRef.current, displayValueRef.current.length),
         );
 
-        // Insert actual \n for visual newline (cursor moves to new line)
         const newValue =
           displayValueRef.current.slice(0, at) +
           "\n" +
@@ -237,11 +224,9 @@ export function PasteAwareTextInput({
           const result = await tryImportClipboardImageMac();
           if (result) {
             if ("error" in result) {
-              // Report the error via callback
               onPasteErrorRef.current?.(result.error);
               return;
             }
-            // Success - insert the placeholder
             const clip = result.placeholder;
             const at = Math.max(
               0,
@@ -263,16 +248,13 @@ export function PasteAwareTextInput({
         return;
       }
 
-      // Handle bracketed paste events emitted by vendored Ink
       const isPasted = (key as unknown as { isPasted?: boolean })?.isPasted;
       if (isPasted) {
         lastPasteDetectedAtRef.current = Date.now();
 
         const payload = typeof input === "string" ? input : "";
-        // Translate any image payloads in the paste (OSC 1337, data URLs, file paths)
         const translated = translatePasteForImages(payload);
 
-        // Helper to insert translated content
         const insertTranslated = (text: string) => {
           const at = Math.max(
             0,
@@ -309,7 +291,6 @@ export function PasteAwareTextInput({
 
         // If paste event carried no text (common for image-only clipboard), try macOS import
         if ((!translated || translated.length === 0) && payload.length === 0) {
-          // Fire async handler
           (async () => {
             const clipResult = await tryImportClipboardImageMac();
             if (clipResult) {
@@ -327,14 +308,12 @@ export function PasteAwareTextInput({
           insertTranslated(translated);
           return;
         }
-        // If nothing to insert, fall through
       }
 
       if (
         (key.meta && (input === "v" || input === "V")) ||
         (key.ctrl && key.shift && (input === "v" || input === "V"))
       ) {
-        // Fire async handler
         (async () => {
           const result = await tryImportClipboardImageMac();
           if (result) {
@@ -433,7 +412,6 @@ export function PasteAwareTextInput({
       caretOffsetRef.current = wordStart;
     };
 
-    // Forward delete: delete character AFTER cursor
     const forwardDeleteAtCursor = (cursorPos: number) => {
       if (cursorPos >= displayValueRef.current.length) return;
 
@@ -449,7 +427,6 @@ export function PasteAwareTextInput({
       setDisplayValue(newDisplay);
       setActualValue(resolvedActual);
       onChangeRef.current(newDisplay);
-      // Cursor stays in place, sync it
       setNudgeCursorOffset(cursorPos);
     };
 
@@ -473,13 +450,11 @@ export function PasteAwareTextInput({
       caretOffsetRef.current = nextCaret;
     };
 
-    // Move cursor to beginning of input (Home key)
     const moveCursorToStart = () => {
       setNudgeCursorOffset(0);
       caretOffsetRef.current = 0;
     };
 
-    // Move cursor to end of input (End key)
     const moveCursorToEnd = () => {
       const endPos = displayValueRef.current.length;
       setNudgeCursorOffset(endPos);
@@ -489,7 +464,6 @@ export function PasteAwareTextInput({
     const handleRawInput = (payload: unknown) => {
       if (!focusRef.current) return;
 
-      // Extract sequence from payload (may be string or object with sequence property)
       let sequence: string | null = null;
       if (typeof payload === "string") {
         sequence = payload;
@@ -502,7 +476,6 @@ export function PasteAwareTextInput({
       }
       if (!sequence) return;
 
-      // Optional debug logging for raw input bytes
       if (process.env.LETTA_DEBUG_INPUT === "1") {
         const debugHex = [...sequence]
           .map((c) => `0x${c.charCodeAt(0).toString(16).padStart(2, "0")}`)
@@ -536,9 +509,7 @@ export function PasteAwareTextInput({
       // Note: Arrow keys with modifiers are now handled natively by parseKeypress
       // since we use kitty protocol flag 1 only (no event types).
       // With flag 1, arrows come as ESC[1;modifierD which parseKeypress recognizes.
-      // Previously we handled ESC[1;modifier:eventD format (with flag 7) here.
 
-      // Home key: ESC[H (standard) or ESC[1~ (VT100/xterm) or ESCOH (xterm)
       if (
         sequence === "\x1b[H" ||
         sequence === "\x1b[1~" ||
@@ -548,7 +519,6 @@ export function PasteAwareTextInput({
         return;
       }
 
-      // End key: ESC[F (standard) or ESC[4~ (VT100/xterm) or ESCOF (xterm)
       if (
         sequence === "\x1b[F" ||
         sequence === "\x1b[4~" ||
@@ -584,7 +554,6 @@ export function PasteAwareTextInput({
         return;
       }
 
-      // Option+Arrow navigation (only process escape sequences)
       if (sequence.length <= 32 && sequence.includes("\u001b")) {
         const parts = sequence.split("\u001b");
         for (let i = 1; i < parts.length; i++) {
@@ -622,23 +591,19 @@ export function PasteAwareTextInput({
     // mutate the input value.
     const sanitizedValue = newValue.replaceAll("\u001b", "");
     if (sanitizedValue !== newValue) {
-      // Keep caret in bounds after stripping control chars
       const nextCaret = Math.min(caretOffsetRef.current, sanitizedValue.length);
       setNudgeCursorOffset(nextCaret);
       caretOffsetRef.current = nextCaret;
       newValue = sanitizedValue;
-      // If nothing actually changed after stripping, bail out early
       if (sanitizedValue === displayValue) {
         return;
       }
     }
 
-    // Heuristic: detect large additions that look like pastes
     const addedLen = newValue.length - displayValue.length;
     const lineDelta = countLines(newValue) - countLines(displayValue);
     const sincePasteMs = Date.now() - lastPasteDetectedAtRef.current;
 
-    // If we see a large addition (and it's not too soon after the last paste), treat it as a paste
     if (
       sincePasteMs > 1000 &&
       addedLen > 0 &&
@@ -646,7 +611,6 @@ export function PasteAwareTextInput({
     ) {
       lastPasteDetectedAtRef.current = Date.now();
 
-      // Compute inserted segment via longest common prefix/suffix
       const a = displayValue;
       const b = newValue;
       let lcp = 0;
@@ -665,7 +629,6 @@ export function PasteAwareTextInput({
       const translatedLines = countLines(translated);
       const translatedChars = translated.length;
 
-      // If translated text is still large, create a placeholder
       if (translatedLines > 5 || translatedChars > 500) {
         const pasteId = allocatePaste(translated);
         const placeholder = `[Pasted text #${pasteId} +${translatedLines} lines]`;
@@ -704,7 +667,6 @@ export function PasteAwareTextInput({
       return;
     }
 
-    // Normal typing/edits - update display and compute actual by substituting placeholders
     // Update displayValueRef synchronously for raw input handlers
     displayValueRef.current = newValue;
     setDisplayValue(newValue);
@@ -722,7 +684,6 @@ export function PasteAwareTextInput({
     }
   };
 
-  // Clear one-shot cursor nudge after it applies
   useEffect(() => {
     if (typeof nudgeCursorOffset === "number") {
       const t = setTimeout(() => setNudgeCursorOffset(undefined), 0);

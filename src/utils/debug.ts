@@ -1,6 +1,3 @@
-// src/utils/debug.ts
-// Debug logging utility.
-//
 // Screen output: controlled by LETTA_DEBUG=1 (or DEBUG=1 for legacy compatibility),
 // or LETTA_DEBUG_FILE for a custom path.
 // File output:   always written to ~/.letta/logs/debug/{agent-id}/{session-id}.log
@@ -18,10 +15,6 @@ import {
 import { join } from "node:path";
 import { format } from "node:util";
 import { resolveGlobalConfigDir } from "@/utils/settings-path";
-
-// ---------------------------------------------------------------------------
-// Screen-output helpers (unchanged behaviour)
-// ---------------------------------------------------------------------------
 
 /**
  * Check if debug mode is enabled via LETTA_DEBUG env var.
@@ -60,10 +53,6 @@ function printDebugLine(line: string, level: "log" | "warn" = "log"): void {
       : `\x1b[38;5;179m${line.trimEnd()}\x1b[0m`; // muted golden yellow
   console.error(colored);
 }
-
-// ---------------------------------------------------------------------------
-// Always-on debug log file
-// ---------------------------------------------------------------------------
 
 const DEBUG_LOG_DIR = join(resolveGlobalConfigDir(), "logs", "debug");
 const MAX_SESSION_FILES = 5;
@@ -136,7 +125,6 @@ class DebugLogFile {
     }
   }
 
-  /** Read the last N lines from the current log file. */
   getTail(maxLines = DEFAULT_TAIL_LINES): string | undefined {
     if (!this.logPath) return undefined;
     try {
@@ -187,10 +175,6 @@ class DebugLogFile {
 /** Singleton — import and call init() once per session. */
 export const debugLogFile = new DebugLogFile();
 
-// ---------------------------------------------------------------------------
-// Core write function
-// ---------------------------------------------------------------------------
-
 function writeDebugLine(
   prefix: string,
   message: string,
@@ -201,7 +185,6 @@ function writeDebugLine(
   const body = format(`[${prefix}] ${message}`, ...args);
   const line = `${ts} ${body}\n`;
 
-  // Always persist to the session log file
   debugLogFile.appendLine(line);
 
   // Screen output only when LETTA_DEBUG is on
@@ -209,10 +192,6 @@ function writeDebugLine(
     printDebugLine(line, level);
   }
 }
-
-// ---------------------------------------------------------------------------
-// Public API (unchanged signatures)
-// ---------------------------------------------------------------------------
 
 /**
  * Log a debug message. Always written to the session log file.

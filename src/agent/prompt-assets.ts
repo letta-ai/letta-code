@@ -54,7 +54,6 @@ export const MEMORY_PROMPTS: Record<string, string> = {
   "style.mdx": stylePrompt,
 };
 
-// System prompt options for /system command
 export interface SystemPromptOption {
   id: string;
   label: string;
@@ -126,9 +125,6 @@ export function getSystemPromptVariantContents(
   ].filter((content): content is string => typeof content === "string");
 }
 
-/**
- * Check if a preset ID exists in SYSTEM_PROMPTS.
- */
 export function isKnownPreset(id: string): boolean {
   return SYSTEM_PROMPTS.some((p) => p.id === id);
 }
@@ -168,10 +164,6 @@ export function buildSystemPrompt(
   return preset.content.trim();
 }
 
-/**
- * Returns true if the agent is not on the current default preset
- * and would benefit from switching to `/system default`.
- */
 export function shouldRecommendDefaultPrompt(
   currentPrompt: string,
   memoryMode: MemoryPromptMode,

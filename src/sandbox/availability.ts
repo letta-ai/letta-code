@@ -5,11 +5,9 @@ import type { SandboxBackend } from "./policy.js";
 import { SANDBOX_EXEC_PATH } from "./seatbelt.js";
 
 export interface SandboxAvailability {
-  /** The usable backend, or null when none is available on this host. */
   backend: SandboxBackend | null;
   /** Resolved bwrap binary path, when `backend === "bwrap"`. */
   bwrapPath?: string;
-  /** Human-readable explanation, primarily for the null case. */
   reason: string;
 }
 

@@ -56,7 +56,6 @@ export function newExecutionId(): string {
   return `wf-${suffix}`;
 }
 
-/** Create the run directory and persist the script (and args) it will run. */
 const DIR_MODE = 0o700;
 const FILE_MODE = 0o600;
 

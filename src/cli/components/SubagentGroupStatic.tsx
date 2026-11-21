@@ -25,10 +25,6 @@ import { useTerminalWidth } from "@/cli/hooks/use-terminal-width.js";
 import { colors } from "./colors.js";
 import { Text } from "./Text";
 
-// ============================================================================
-// Types
-// ============================================================================
-
 export interface StaticSubagent {
   id: string;
   type: string;
@@ -45,10 +41,6 @@ export interface StaticSubagent {
 interface SubagentGroupStaticProps {
   agents: StaticSubagent[];
 }
-
-// ============================================================================
-// Subcomponents
-// ============================================================================
 
 interface AgentRowProps {
   agent: StaticSubagent;
@@ -74,7 +66,6 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
 
   return (
     <Box flexDirection="column">
-      {/* Main row: tree char + description + type + model + stats */}
       <Box flexDirection="row">
         <Text wrap="truncate-end">
           <Text color={colors.subagent.treeChar}>
@@ -111,7 +102,6 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
         </Text>
       </Box>
 
-      {/* Subagent URL */}
       {agent.agentURL && (
         <Box flexDirection="row">
           <Text color={colors.subagent.treeChar}>
@@ -123,7 +113,6 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
         </Box>
       )}
 
-      {/* Status line */}
       {!hideBackgroundStatusLine && (
         <Box flexDirection="row">
           {agent.status === "error" ? (
@@ -165,10 +154,6 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
 
 AgentRow.displayName = "AgentRow";
 
-// ============================================================================
-// Main Component
-// ============================================================================
-
 export const SubagentGroupStatic = memo(
   ({ agents }: SubagentGroupStaticProps) => {
     if (agents.length === 0) {
@@ -180,7 +165,6 @@ export const SubagentGroupStatic = memo(
     const label = hasRunning ? "Running" : "Ran";
     const suffix = agents.length !== 1 ? "agents" : "agent";
 
-    // Use error color for dot if any subagent errored
     const dotColor = hasErrors
       ? colors.subagent.error
       : hasRunning
@@ -189,7 +173,6 @@ export const SubagentGroupStatic = memo(
 
     return (
       <Box flexDirection="column">
-        {/* Header */}
         <Box flexDirection="row">
           <Text color={dotColor}>{CLI_GLYPHS.bullet}</Text>
           <Text>
@@ -198,7 +181,6 @@ export const SubagentGroupStatic = memo(
           </Text>
         </Box>
 
-        {/* Agent rows */}
         {agents.map((agent, index) => (
           <AgentRow
             key={agent.id}

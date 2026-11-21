@@ -7,8 +7,6 @@ import {
   parseEvery,
 } from "@/cron/parse-interval";
 
-// ── parseEvery ──────────────────────────────────────────────────────
-
 describe("parseEvery", () => {
   test("minutes — clean divisor of 60", () => {
     const result = parseEvery("5m");
@@ -24,7 +22,6 @@ describe("parseEvery", () => {
   test("minutes — non-divisor rounds to nearest", () => {
     const result = parseEvery("7m");
     expect(result).not.toBeNull();
-    // 7 rounds to nearest divisor of 60 (5 or 6)
     expect(result?.note).toBeDefined();
   });
 
@@ -90,8 +87,6 @@ describe("parseEvery", () => {
   });
 });
 
-// ── parseAt ─────────────────────────────────────────────────────────
-
 describe("parseAt", () => {
   const baseTime = new Date("2026-03-26T10:00:00"); // 10:00 AM local
 
@@ -128,7 +123,6 @@ describe("parseAt", () => {
   test("absolute time — past today → schedules tomorrow", () => {
     const result = parseAt("9:00am", baseTime);
     expect(result).not.toBeNull();
-    // Should be tomorrow since 9 AM is before 10 AM
     expect(result?.scheduledFor.getDate()).toBe(baseTime.getDate() + 1);
   });
 
@@ -171,8 +165,6 @@ describe("parseAt", () => {
   });
 });
 
-// ── isValidCron ─────────────────────────────────────────────────────
-
 describe("isValidCron", () => {
   test("valid expressions", () => {
     expect(isValidCron("*/5 * * * *")).toBe(true);
@@ -203,11 +195,8 @@ describe("isValidCron", () => {
   });
 
   test("valid comma-separated with ranges and steps", () => {
-    // Comma-separated items that include ranges
     expect(isValidCron("1-5,10-15 * * * *")).toBe(true);
-    // Comma-separated items that include steps
     expect(isValidCron("*/5,*/15 * * * *")).toBe(true);
-    // Mixed: exact, range, step
     expect(isValidCron("0,10-20,30-59/5 * * * *")).toBe(true);
   });
 
@@ -238,8 +227,6 @@ describe("isValidCron", () => {
     expect(isValidCron(expression)).toBe(false);
   });
 });
-
-// ── cronMatchesTime ─────────────────────────────────────────────────
 
 describe("cronMatchesTime", () => {
   test("wildcard matches everything", () => {
@@ -332,10 +319,8 @@ describe("cronMatchesTime", () => {
   });
 
   test("timezone-aware matching", () => {
-    // Create a UTC date: 2026-03-26 at 22:30 UTC
     const utcDate = new Date("2026-03-26T22:30:00Z");
 
-    // In UTC, this is hour 22, minute 30
     expect(cronMatchesTime("30 22 * * *", utcDate, "UTC")).toBe(true);
     expect(cronMatchesTime("30 15 * * *", utcDate, "UTC")).toBe(false);
 
@@ -347,7 +332,6 @@ describe("cronMatchesTime", () => {
       false,
     );
 
-    // In Asia/Tokyo (JST, UTC+9), 22:30 UTC = 07:30 next day (March 27)
     expect(cronMatchesTime("30 7 27 3 *", utcDate, "Asia/Tokyo")).toBe(true);
     expect(cronMatchesTime("30 22 26 3 *", utcDate, "Asia/Tokyo")).toBe(false);
   });
@@ -401,35 +385,25 @@ describe("cronMatchesTime", () => {
 
   test("comma-separated values match", () => {
     const date = new Date("2026-03-26T14:30:00");
-    // minute 30 is in the list 0,15,30,45
     expect(cronMatchesTime("0,15,30,45 * * * *", date)).toBe(true);
-    // minute 30 is NOT in the list 1,5,9
     expect(cronMatchesTime("1,5,9 * * * *", date)).toBe(false);
-    // comma-separated day-of-week: Thursday is 4
     expect(cronMatchesTime("30 14 * * 1,3,5", date)).toBe(false); // not Mon/Wed/Fri
     expect(cronMatchesTime("30 14 * * 1,4,5", date)).toBe(true); // Thu is in list
   });
 
   test("range with step matches", () => {
     const date = new Date("2026-03-26T14:30:00");
-    // 1-21/4 → 1,5,9,13,17,21 → 30 is NOT in this set
     expect(cronMatchesTime("1-21/4 * * * *", date)).toBe(false);
-    // 0-59/15 → 0,15,30,45 → 30 IS in this set
     expect(cronMatchesTime("0-59/15 * * * *", date)).toBe(true);
-    // Range with step for hour: 14 is in 0-23/2 → 0,2,4,...,14,...,22
     expect(cronMatchesTime("* 0-23/2 * * *", date)).toBe(true);
   });
 
   test("comma-separated with ranges", () => {
     const date = new Date("2026-03-26T14:30:00");
-    // 10-20,30-40 → minute 30 is in 30-40 range
     expect(cronMatchesTime("10-20,30-40 * * * *", date)).toBe(true);
-    // 1-5,10-15 → minute 30 is NOT in either range
     expect(cronMatchesTime("1-5,10-15 * * * *", date)).toBe(false);
   });
 });
-
-// ── estimatePeriodMs ────────────────────────────────────────────────
 
 describe("estimatePeriodMs", () => {
   test("every N minutes", () => {

@@ -44,10 +44,8 @@ function trackListenerError(
     context,
   });
 }
-/** File/directory names filtered from directory listings (OS/VCS noise). */
 const DIR_LISTING_IGNORED_NAMES = new Set([".DS_Store", ".git", "Thumbs.db"]);
 
-/** Directories skipped by recursive listener filesystem operations. */
 const RECURSIVE_IGNORED_NAMES = new Set([
   ...DIR_LISTING_IGNORED_NAMES,
   ".cache",
@@ -453,7 +451,6 @@ export function createFileCommandSession(params: {
   };
 
   const handle = (parsed: unknown): boolean => {
-    // File search (no runtime scope required)
     if (isSearchFilesCommand(parsed)) {
       runDetachedListenerTask("search_files", async () => {
         try {
@@ -499,7 +496,6 @@ export function createFileCommandSession(params: {
       return true;
     }
 
-    // Find-in-files content search (no runtime scope required)
     if (isGrepInFilesCommand(parsed)) {
       runDetachedListenerTask("grep_in_files", async () => {
         try {
@@ -577,7 +573,6 @@ export function createFileCommandSession(params: {
       return true;
     }
 
-    // Directory listing (no runtime scope required)
     if (isListInDirectoryCommand(parsed)) {
       logFileCommand(
         `[Listen] Received list_in_directory command: path=${parsed.path}`,
@@ -596,7 +591,6 @@ export function createFileCommandSession(params: {
           const offset = parsed.offset ?? 0;
           const limit = parsed.limit ?? total;
 
-          // Paginate over the combined [folders, files] list
           const combined = [...allFolders, ...allFiles];
           const page = combined.slice(offset, offset + limit);
           const folderSet = new Set(allFolders);
@@ -653,7 +647,6 @@ export function createFileCommandSession(params: {
       return true;
     }
 
-    // Depth-limited subtree fetch (no runtime scope required)
     if (isGetTreeCommand(parsed)) {
       logFileCommand(
         `[Listen] Received get_tree command: path=${parsed.path}, depth=${parsed.depth}`,
@@ -709,7 +702,6 @@ export function createFileCommandSession(params: {
       return true;
     }
 
-    // File reading (no runtime scope required)
     if (isReadFileCommand(parsed)) {
       const encoding = parsed.encoding ?? "utf8";
       logFileCommand(
@@ -775,7 +767,6 @@ export function createFileCommandSession(params: {
       return true;
     }
 
-    // File writing (no runtime scope required)
     if (isWriteFileCommand(parsed)) {
       logFileCommand(
         `[Listen] Received write_file command: path=${parsed.path}, request_id=${parsed.request_id}`,
@@ -843,7 +834,6 @@ export function createFileCommandSession(params: {
       return true;
     }
 
-    // File watching (no runtime scope required)
     if (isWatchFileCommand(parsed)) {
       runDetachedListenerTask("watch_file", async () => {
         const existing = fileWatchers.get(parsed.path);
@@ -887,7 +877,6 @@ export function createFileCommandSession(params: {
                       );
                     })
                     .catch(() => {
-                      // File deleted -- stop watching
                       const entry = fileWatchers.get(parsed.path);
                       if (entry) {
                         entry.watcher.close();
@@ -930,7 +919,6 @@ export function createFileCommandSession(params: {
       return true;
     }
 
-    // File editing (no runtime scope required)
     if (isEditFileCommand(parsed)) {
       logFileCommand(
         `[Listen] Received edit_file command: file_path=${parsed.file_path}, request_id=${parsed.request_id}`,
@@ -1016,7 +1004,6 @@ export function createFileCommandSession(params: {
       return true;
     }
 
-    // Egwalker CRDT ops (no runtime scope required)
     if (isFileOpsCommand(parsed)) {
       // Use document_content if provided (reliable, no race conditions).
       // Falls back to applying ops character-by-character.

@@ -832,7 +832,6 @@ describe("EnterWorktree tool", () => {
       throw new Error("Expected EnterWorktree to return worktree paths");
     }
 
-    // conv-a takes worktree one, then moves to worktree two (releasing one).
     await runWithRuntimeContext(
       { conversationId: "conv-a", workingDirectory: repo },
       () => enter_worktree({ path: pathOne }),

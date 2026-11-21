@@ -1,7 +1,3 @@
-/**
- * Tests for memory filesystem sync
- */
-
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import {
@@ -87,7 +83,6 @@ afterEach(() => {
   restoreMemfsEnv();
 });
 
-// Helper to create a mock client
 function createMockClient(options: {
   blocks?: Array<{
     id: string;
@@ -146,7 +141,6 @@ function createMockClient(options: {
       }),
       delete: mock(() => Promise.resolve({})),
       list: mock((params?: { tags?: string[] }) => {
-        // Filter by tags if provided
         if (params?.tags?.length) {
           const filtered = ownedBlocks.filter((b) =>
             params.tags?.some((tag) => b.tags?.includes(tag)),
@@ -162,9 +156,6 @@ function createMockClient(options: {
     },
   };
 }
-
-// parseBlockFromFileContent tests removed - YAML frontmatter no longer
-// used with git-backed memory (files contain raw block content).
 
 describe("stampMemfsTagOnCreateBody", () => {
   const TAG = "git-memory-enabled";
@@ -295,7 +286,6 @@ describe("renderMemoryFilesystemTree", () => {
     const tree = renderMemoryFilesystemTree([], []);
     expect(tree).toContain("/memory/");
     expect(tree).toContain("system/");
-    // Note: detached blocks go at root level now, not in /user/
   });
 
   test("renders system blocks with nesting", () => {
@@ -316,7 +306,6 @@ describe("renderMemoryFilesystemTree", () => {
     );
     expect(tree).toContain("system/");
     expect(tree).toContain("persona.md");
-    // Detached blocks go at root level (flat structure)
     expect(tree).toContain("notes/");
     expect(tree).toContain("project-ideas.md");
     // Should NOT have user/ directory anymore
@@ -446,14 +435,12 @@ describe("syncMemoryFilesystem", () => {
   let agentId: string;
 
   beforeEach(() => {
-    // Create a unique temp directory for each test
     agentId = `test-agent-${Date.now()}`;
     tempDir = join(tmpdir(), `letta-test-${Date.now()}`);
     mkdirSync(tempDir, { recursive: true });
   });
 
   afterEach(() => {
-    // Clean up temp directory
     if (existsSync(tempDir)) {
       rmSync(tempDir, { recursive: true, force: true });
     }
@@ -488,7 +475,6 @@ describe("syncMemoryFilesystem", () => {
   });
 
   test("handles Not Found error when updating deleted block", async () => {
-    // This tests the fix we just made
     const systemDir = join(
       tempDir,
       ".letta",
@@ -507,41 +493,27 @@ describe("syncMemoryFilesystem", () => {
       onBlockCreate: () => ({ id: "new-block-id" }),
     });
 
-    // The sync should handle the Not Found error and create the block instead
-    // This verifies our fix works
     expect(mockClient.blocks.create).toBeDefined();
   });
 });
 
 describe("memory filesystem sync - rename handling", () => {
   test("detects file rename as delete + create", () => {
-    // When persona.md is renamed to persona/soul.md:
-    // - Old label "persona" has: block exists, file doesn't exist
-    // - New label "persona/soul" has: file exists, block doesn't exist
-    //
-    // The sync should:
-    // 1. Delete the old "persona" block (if file was deleted and block unchanged)
-    // 2. Create new "persona/soul" block from file
-
     // This is more of a documentation test - the actual behavior depends on
     // the sync state (lastFileHash, lastBlockHash) and whether things changed
 
     const oldLabel = "persona";
     const newLabel = "persona/soul";
 
-    // File system state after rename:
     const fileExists = { [oldLabel]: false, [newLabel]: true };
-    // Block state before sync:
     const blockExists = { [oldLabel]: true, [newLabel]: false };
 
-    // Expected actions:
     expect(fileExists[oldLabel]).toBe(false);
     expect(blockExists[oldLabel]).toBe(true);
     // -> Should delete old block (file deleted, assuming block unchanged)
 
     expect(fileExists[newLabel]).toBe(true);
     expect(blockExists[newLabel]).toBe(false);
-    // -> Should create new block from file
   });
 });
 
@@ -602,7 +574,6 @@ describe("block tagging", () => {
       },
     });
 
-    // Verify mock client tracks tags in block creation
     await mockClient.blocks.create({
       label: "test-block",
       value: "test content",
@@ -641,7 +612,6 @@ describe("block tagging", () => {
   test("detached blocks are discovered via owner tag", async () => {
     const agentId = "agent-123";
 
-    // Attached blocks (returned by agents.blocks.list)
     const attachedBlocks = [
       {
         id: "attached-1",
@@ -651,7 +621,6 @@ describe("block tagging", () => {
       },
     ];
 
-    // All owned blocks (returned by blocks.list with tag filter)
     const ownedBlocks = [
       ...attachedBlocks,
       {
@@ -673,16 +642,13 @@ describe("block tagging", () => {
       ownedBlocks: ownedBlocks,
     });
 
-    // Get attached blocks
     const attached = await mockClient.agents.blocks.list();
     const attachedIds = new Set(attached.map((b) => b.id));
 
-    // Get all owned blocks via tag
     const allOwned = await mockClient.blocks.list({
       tags: [`owner:${agentId}`],
     });
 
-    // Calculate detached = owned - attached
     const detached = allOwned.filter((b) => !attachedIds.has(b.id));
 
     expect(detached.length).toBe(2);
@@ -711,7 +677,6 @@ describe("block tagging", () => {
       },
     });
 
-    // Simulate backfill logic
     const blocks = await mockClient.agents.blocks.list();
     const ownerTag = `owner:${agentId}`;
 
@@ -734,20 +699,6 @@ describe("block tagging", () => {
 
 describe("sync behavior - location mismatch handling", () => {
   test("file move from system/ to root/ should detach block, not create duplicate", () => {
-    // Bug fix test: When a file moves from system/ to root/
-    //
-    // Before fix:
-    // 1. Sync builds detachedBlockMap from owner-tagged blocks
-    // 2. System loop: "file missing in system/, block exists" → detaches block
-    // 3. Detached loop: "file exists at root/, no block in detachedBlockMap"
-    //    → Creates NEW block (duplicate!)
-    //
-    // After fix:
-    // 1. System loop detaches the block
-    // 2. System loop adds the detached block to detachedBlockMap
-    // 3. Detached loop sees both file AND block → syncs them correctly
-
-    // The fix ensures no duplicate blocks are created on file move
     const scenario = {
       before: {
         systemFile: "persona.md",
@@ -756,7 +707,6 @@ describe("sync behavior - location mismatch handling", () => {
       action: "mv system/persona.md root/persona.md",
       after: {
         detachedFile: "persona.md",
-        // Block should be detached, NOT duplicated
         expectedBlockCount: 1,
       },
     };
@@ -765,18 +715,6 @@ describe("sync behavior - location mismatch handling", () => {
   });
 
   test("file deletion should remove owner tag, not resurrect", () => {
-    // Bug fix test: When a detached file is deleted
-    //
-    // Before fix:
-    // 1. User deletes root/notes.md
-    // 2. Sync: "file missing, block exists" → untracks from state only
-    // 3. Next sync: "block exists (via owner tag), file missing" → recreates file!
-    //
-    // After fix:
-    // 1. User deletes root/notes.md
-    // 2. Sync: "file missing, block exists" → removes owner tag from block
-    // 3. Next sync: block no longer discovered via owner tag → file stays deleted
-
     const scenario = {
       before: {
         detachedFile: "notes.md",
@@ -784,7 +722,6 @@ describe("sync behavior - location mismatch handling", () => {
       },
       action: "rm root/notes.md",
       after: {
-        // Block should have owner tag removed
         expectedTags: [],
         // File should NOT resurrect
         fileExists: false,
@@ -821,7 +758,6 @@ describe("sync state migration", () => {
       lastSync: "2024-01-01T00:00:00.000Z",
     };
 
-    // The migration merges system + detached into unified maps
     expect(Object.keys(expectedMigratedState.blockHashes)).toHaveLength(2);
     expect(Object.keys(expectedMigratedState.fileHashes)).toHaveLength(2);
   });
@@ -852,9 +788,6 @@ describe("FS wins all policy", () => {
   });
 
   test("explicit resolution=block can override FS wins policy", () => {
-    // Even with "FS wins all", explicit resolutions are respected
-    // If user provides resolution.resolution === "block", block wins
-
     const scenario = {
       fileChanged: true,
       blockChanged: true,
@@ -868,10 +801,6 @@ describe("FS wins all policy", () => {
 
 describe("location mismatch auto-sync", () => {
   test("content matches but location mismatches → auto-sync attachment", () => {
-    // When file and block have same content but location doesn't match:
-    // - File at root, block attached → detach block
-    // - File in system/, block detached → attach block
-    //
     // This implements "FS location is authoritative for attachment status"
 
     const scenario = {
@@ -896,12 +825,6 @@ describe("location mismatch auto-sync", () => {
   });
 
   test("content differs AND location mismatches → sync both in one pass", () => {
-    // "FS wins all" applies to both content AND location
-    // When content differs and location mismatches:
-    // 1. File content wins → block updated
-    // 2. File location wins → attachment status synced
-    // Both happen in the SAME sync (not requiring two syncs)
-
     const scenario = {
       fileLocation: "root",
       blockAttached: true,

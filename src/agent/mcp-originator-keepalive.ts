@@ -322,7 +322,6 @@ export function configureMcpOriginatorKeepaliveForTests(
   schedulingEnabled = false;
 }
 
-/** Test-only: synchronously drive one tick for a run. */
 export async function runMcpOriginatorKeepaliveTickForTests(
   superRunId: string,
 ): Promise<void> {
@@ -339,7 +338,6 @@ export async function runMcpOriginatorKeepaliveTickForTests(
   await runKeepaliveTick(superRunId);
 }
 
-/** Test-only: is a keepalive interval registered for this run? */
 export function hasMcpOriginatorKeepaliveForTests(superRunId: string): boolean {
   return keepalives.has(superRunId);
 }

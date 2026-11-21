@@ -67,10 +67,6 @@ function makeOptions(): StartListenerOptions {
   };
 }
 
-/**
- * Drive a Slack-originated source turn through the production finalizer while
- * a teleport is pending, and return the frames the source connection emitted.
- */
 function yieldSourceTurnToTeleport(
   drained: boolean,
   lateDuplicate = false,
@@ -263,7 +259,6 @@ test("an active-turn teleport handoff publishes readiness without a source turn_
       }),
     );
 
-    // Nothing durable is left to replay as a terminal on a later reconnect.
     expect(
       createTurnFinishedStore().read(AGENT_ID, CONVERSATION_ID)?.terminals ??
         [],

@@ -460,7 +460,6 @@ export async function applyPersonalityToMemory(
     ? getScopedMemoryFilesystemRoot(params.agentId)
     : getMemoryRepoDir(params.agentId);
 
-  // Fail early if the memory repo has uncommitted changes
   const statusResult = await execFile("git", ["status", "--porcelain"], {
     cwd: repoDir,
     timeout: 10_000,

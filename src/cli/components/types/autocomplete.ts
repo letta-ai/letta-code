@@ -1,7 +1,3 @@
-/**
- * Shared types for autocomplete components
- */
-
 export interface ModCommandAutocompleteItem {
   id: string;
   description: string;
@@ -9,19 +5,13 @@ export interface ModCommandAutocompleteItem {
   order: number;
 }
 
-/**
- * Base props shared by all autocomplete components
- */
 export interface AutocompleteProps {
-  /** Current input text from the user */
   currentInput: string;
-  /** Current cursor position in the input */
   cursorPosition?: number;
   /** Callback when an item is selected (Enter key - may execute) */
   onSelect?: (value: string) => void;
   /** Callback when an item is autocompleted (Tab key - fill text only) */
   onAutocomplete?: (value: string) => void;
-  /** Callback when autocomplete active state changes */
   onActiveChange?: (isActive: boolean) => void;
   /** Current agent ID for context-sensitive command filtering */
   agentId?: string;

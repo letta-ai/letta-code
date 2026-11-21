@@ -55,7 +55,6 @@ export type ChannelSlashCommandDefinition = {
  * name.
  */
 export type ChannelSlashCommandSurfaceOptions = {
-  /** Host-specific command definitions appended after the shared surface. */
   extraCommands?: readonly ChannelSlashCommandDefinition[];
   /**
    * Section label for extras in help output, e.g. "Cloud-only commands".
@@ -111,7 +110,6 @@ export type ChannelSlashCommandHandlers = {
   ) => Promise<ChannelSlashCommandHandlerResult>;
 };
 
-/** Resolves a channel id (e.g. "slack") to its human display name. */
 export type ChannelDisplayNameResolver = (channelId: string) => string;
 
 const DEFAULT_CHANNEL_DISPLAY_NAMES: Readonly<Record<string, string>> = {
@@ -209,12 +207,6 @@ function copyDefinition(
   };
 }
 
-/**
- * Applies the shared-wins dedupe documented on
- * `ChannelSlashCommandSurfaceOptions`: returns the surviving host extras (as
- * fresh copies) with colliding definitions dropped and colliding aliases
- * filtered.
- */
 function dedupedExtraCommands(
   options?: ChannelSlashCommandSurfaceOptions,
 ): ChannelSlashCommandDefinition[] {

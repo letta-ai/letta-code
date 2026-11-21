@@ -16,9 +16,6 @@ import {
 import { normalizeTelegramChatId } from "./telegram/chat-id";
 import type { ChannelRoute, InboundChannelMessage } from "./types";
 
-// ── In-memory store ───────────────────────────────────────────────
-
-/** Key: "channel:chatId" */
 const routesByKey = new Map<string, ChannelRoute>();
 const routeChangeListeners = new Set<(channelId: string) => void>();
 
@@ -49,8 +46,6 @@ function routeKey(
   return `${channel}:${normalizeAccountId(accountId)}:${chatId}:${resolveChannelRouteThreadKey(threadId)}`;
 }
 
-// ── Load/save ─────────────────────────────────────────────────────
-
 /** Read the current persisted routes without merging into the process cache. */
 export function readRoutes(channelId: string): ChannelRoute[] {
   if (loadRoutesOverride) {
@@ -59,9 +54,6 @@ export function readRoutes(channelId: string): ChannelRoute[] {
   return readChannelRoutesFromDisk(channelId);
 }
 
-/**
- * Load routing table from disk for a given channel.
- */
 export function loadRoutes(channelId: string): void {
   if (loadRoutesOverride) {
     const overriddenRoutes = loadRoutesOverride(channelId);
@@ -129,7 +121,6 @@ export function loadRoutes(channelId: string): void {
   }
 }
 
-// Test hook: when set, saveRoutes calls this instead of writing to disk.
 let saveRoutesOverride: ((channelId: string) => void) | null = null;
 
 /** @internal Test-only: override saveRoutes behavior. Pass null to restore. */
@@ -146,9 +137,6 @@ export function __testOverrideLoadRoutes(
   loadRoutesOverride = fn;
 }
 
-/**
- * Save all routes for a given channel to disk.
- */
 export function saveRoutes(channelId: string): void {
   if (saveRoutesOverride) {
     saveRoutesOverride(channelId);
@@ -157,8 +145,6 @@ export function saveRoutes(channelId: string): void {
 
   writeChannelRoutesToDisk(channelId, getRoutesForChannel(channelId));
 }
-
-// ── Lookup ────────────────────────────────────────────────────────
 
 /**
  * Get the route for a specific channel + chatId.
@@ -238,9 +224,6 @@ export function loadRouteForInboundMessage(
   return getRouteForInboundMessage(msg, accountId, options);
 }
 
-/**
- * Get all routes for a channel.
- */
 export function getRoutesForChannel(
   channelId: string,
   accountId?: string,
@@ -258,14 +241,9 @@ export function getRoutesForChannel(
   return routes;
 }
 
-/**
- * Get all routes across all channels.
- */
 export function getAllRoutes(): ChannelRoute[] {
   return Array.from(routesByKey.values());
 }
-
-// ── Mutations ─────────────────────────────────────────────────────
 
 /**
  * Add or update a route. Automatically saves to disk.
@@ -387,9 +365,6 @@ export function removeRoutesForAccount(
   return removed;
 }
 
-/**
- * Clear all in-memory routes (for testing).
- */
 export function clearAllRoutes(): void {
   routesByKey.clear();
 }

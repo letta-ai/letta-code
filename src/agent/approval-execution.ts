@@ -1,4 +1,3 @@
-// src/agent/approval-execution.ts
 // Shared logic for executing approval batches (used by both interactive and headless modes)
 import * as path from "node:path";
 import { APIUserAbortError } from "@letta-ai/letta-client/core/error";
@@ -27,7 +26,6 @@ import {
  * before discarding stragglers (ms). */
 export const ABORT_GRACE_MS = 500;
 
-/** True when an error represents a user-initiated abort of a tool batch. */
 export function isUserAbortError(error: unknown): boolean {
   return (
     error instanceof APIUserAbortError ||
@@ -101,15 +99,10 @@ export function appendAbortPartials(
   abortError.partialResults = [...(abortError.partialResults ?? []), ...extras];
 }
 
-/**
- * Extract displayable text from tool return content (for UI display).
- * Multimodal content returns the text parts concatenated.
- */
 export function getDisplayableToolReturn(content: ToolReturnContent): string {
   if (typeof content === "string") {
     return content;
   }
-  // Extract text from multimodal content
   return content
     .filter((part): part is TextContent => part.type === "text")
     .map((part) => part.text)
@@ -177,12 +170,10 @@ export function getResourceKey(
   toolArgs: Record<string, unknown>,
   workingDirectory: string = getCurrentWorkingDirectory(),
 ): string {
-  // Global lock tools serialize with everything
   if (GLOBAL_LOCK_TOOLS.has(toolName)) {
     return "__global__";
   }
 
-  // File-based tools use the file path as resource key
   if (FILE_PATH_TOOLS.has(toolName)) {
     const filePath = toolArgs.file_path;
     if (typeof filePath === "string") {
@@ -197,7 +188,6 @@ export function getResourceKey(
   return "__global__";
 }
 
-/** Result format expected by App.tsx for auto-allowed tools */
 export type AutoAllowedResult = {
   toolCallId: string;
   result: ToolExecutionResult;
@@ -248,7 +238,6 @@ async function executeSingleDecision(
     executeTool?: typeof executeTool;
   },
 ): Promise<ApprovalResult> {
-  // If aborted, record an interrupted result
   if (options?.abortSignal?.aborted) {
     if (onChunk) {
       onChunk({
@@ -269,7 +258,6 @@ async function executeSingleDecision(
   }
 
   if (decision.type === "approve") {
-    // If fancy UI already computed the result, use it directly
     if (decision.precomputedResult) {
       return {
         type: "tool",
@@ -285,7 +273,6 @@ async function executeSingleDecision(
     // Cross the caller's durable effect fence immediately before tool code can run.
     await options?.beforeToolExecution?.(decision.approval.toolCallId);
 
-    // Execute the approved tool
     try {
       // Safe parse - toolArgs should be "{}" but handle edge cases
       let parsedArgs: Record<string, unknown> = {};
@@ -293,7 +280,6 @@ async function executeSingleDecision(
         try {
           parsedArgs = JSON.parse(decision.approval.toolArgs);
         } catch {
-          // Empty or malformed args - use empty object
           parsedArgs = {};
         }
       } else {
@@ -320,7 +306,6 @@ async function executeSingleDecision(
         },
       );
 
-      // Update UI if callback provided (interactive mode)
       // Note: UI display uses text-only version, backend gets full multimodal content
       if (onChunk) {
         onChunk({
@@ -373,7 +358,6 @@ async function executeSingleDecision(
     }
   }
 
-  // Format denial for backend
   if (onChunk) {
     onChunk({
       message_type: "tool_return_message",
@@ -592,7 +576,6 @@ async function executeApprovalBatchUnwatched(
       }
     : options;
 
-  // Categorize decisions by execution strategy
   const parallelIndices: number[] = [];
   const writeToolsByResource = new Map<string, number[]>();
   const denyIndices: number[] = [];
@@ -611,14 +594,12 @@ async function executeApprovalBatchUnwatched(
     if (isParallelSafe(toolName, toolContextId)) {
       parallelIndices.push(i);
     } else {
-      // Get resource key for write tools
       // Safe parse - handle empty or malformed toolArgs
       let args: Record<string, unknown> = {};
       if (typeof decision.approval.toolArgs === "string") {
         try {
           args = JSON.parse(decision.approval.toolArgs);
         } catch {
-          // Empty or malformed args - use empty object (will use global lock)
           args = {};
         }
       } else {
@@ -636,7 +617,6 @@ async function executeApprovalBatchUnwatched(
     }
   }
 
-  // Helper to execute a decision and store result
   const execute = async (i: number) => {
     const decision = decisions[i];
     if (decision) {
@@ -669,10 +649,8 @@ async function executeApprovalBatchUnwatched(
   try {
     await settleApprovalExecutionTasks(
       [
-        // Parallel-safe tools + denials: all run in parallel
         ...parallelIndices.map(execute),
         ...denyIndices.map(execute),
-        // Write tools: sequential within each resource group, parallel across groups
         ...Array.from(writeToolsByResource.values()).map(async (indices) => {
           for (const i of indices) {
             await execute(i);

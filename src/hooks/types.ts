@@ -22,18 +22,10 @@ export type SimpleHookEvent =
   | "SessionStart" // Runs when a new session starts or is resumed
   | "SessionEnd"; // Runs when session ends (cannot block)
 
-/**
- * All hook event types
- */
 export type HookEvent = ToolHookEvent | SimpleHookEvent;
 
-/**
- * Command hook configuration - executes a shell command
- */
 export interface CommandHookConfig {
-  /** Type of hook */
   type: "command";
-  /** Shell command to execute */
   command: string;
   /** Optional timeout in milliseconds (default: 60000 for command hooks) */
   timeout?: number;
@@ -47,14 +39,12 @@ export interface CommandHookConfig {
  * PermissionRequest, UserPromptSubmit, Stop, and SubagentStop.
  */
 export interface PromptHookConfig {
-  /** Type of hook */
   type: "prompt";
   /**
    * Prompt text to send to the model.
    * Use $ARGUMENTS as a placeholder for the hook input JSON.
    */
   prompt: string;
-  /** Optional model to use for evaluation */
   model?: string;
   /** Optional timeout in milliseconds (default: 30000 for prompt hooks) */
   timeout?: number;
@@ -62,16 +52,8 @@ export interface PromptHookConfig {
   quiet?: boolean;
 }
 
-/**
- * Placeholder for $ARGUMENTS in prompt hooks
- */
 export const PROMPT_ARGUMENTS_PLACEHOLDER = "$ARGUMENTS";
 
-/**
- * Events that support prompt-based hooks:
- * PreToolUse, PostToolUse, PostToolUseFailure, PermissionRequest,
- * UserPromptSubmit, Stop, SubagentStop
- */
 export const PROMPT_HOOK_SUPPORTED_EVENTS: Set<HookEvent> = new Set([
   "PreToolUse",
   "PostToolUse",
@@ -82,35 +64,20 @@ export const PROMPT_HOOK_SUPPORTED_EVENTS: Set<HookEvent> = new Set([
   "SubagentStop",
 ]);
 
-/**
- * Type guard to check if an event supports prompt hooks
- */
 export function supportsPromptHooks(event: HookEvent): boolean {
   return PROMPT_HOOK_SUPPORTED_EVENTS.has(event);
 }
 
-/**
- * Individual hook configuration - can be command or prompt type
- */
 export type HookCommand = CommandHookConfig | PromptHookConfig;
 
-/**
- * Type guard to check if a hook is a command hook
- */
 export function isCommandHook(hook: HookCommand): hook is CommandHookConfig {
   return hook.type === "command";
 }
 
-/**
- * Type guard to check if a hook is a prompt hook
- */
 export function isPromptHook(hook: HookCommand): hook is PromptHookConfig {
   return hook.type === "prompt";
 }
 
-/**
- * Hook matcher configuration for tool events - matches hooks to specific tools
- */
 export interface HookMatcher {
   /**
    * Tool name pattern to match:
@@ -119,15 +86,10 @@ export interface HookMatcher {
    * - All tools: "*" or ""
    */
   matcher: string;
-  /** List of hooks to run when matched */
   hooks: HookCommand[];
 }
 
-/**
- * Simple hook matcher for non-tool events - no matcher needed, just hooks
- */
 export interface SimpleHookMatcher {
-  /** List of hooks to run */
   hooks: HookCommand[];
 }
 
@@ -146,9 +108,6 @@ export type HooksConfig = {
   [K in SimpleHookEvent]?: SimpleHookMatcher[];
 };
 
-/**
- * Set of tool events that require matchers
- */
 export const TOOL_EVENTS: Set<HookEvent> = new Set([
   "PreToolUse",
   "PostToolUse",
@@ -156,16 +115,10 @@ export const TOOL_EVENTS: Set<HookEvent> = new Set([
   "PermissionRequest",
 ]);
 
-/**
- * Type guard to check if an event is a tool event
- */
 export function isToolEvent(event: HookEvent): event is ToolHookEvent {
   return TOOL_EVENTS.has(event);
 }
 
-/**
- * Exit codes from hook execution
- */
 export enum HookExitCode {
   /** Allow/continue - hook completed successfully, proceed with action */
   ALLOW = 0,
@@ -175,21 +128,12 @@ export enum HookExitCode {
   BLOCK = 2,
 }
 
-/**
- * Result of executing a single hook
- */
 export interface HookResult {
-  /** Exit code from the hook command */
   exitCode: HookExitCode;
-  /** Standard output from the hook */
   stdout: string;
-  /** Standard error from the hook */
   stderr: string;
-  /** Whether the hook timed out */
   timedOut: boolean;
-  /** Duration in milliseconds */
   durationMs: number;
-  /** Error message if hook failed to execute */
   error?: string;
 }
 
@@ -204,74 +148,41 @@ export interface PromptHookResponse {
   reason?: string;
 }
 
-/**
- * Aggregated result from running all matched hooks
- */
 export interface HookExecutionResult {
-  /** Whether any hook blocked the action */
   blocked: boolean;
-  /** Whether any hook errored */
   errored: boolean;
   /** Feedback messages from hooks (stdout when blocking) */
   feedback: string[];
-  /** Individual results from each hook */
   results: HookResult[];
   /** Rewritten tool input from a hook (PreToolUse updatedInput protocol) */
   updatedInput?: Record<string, unknown>;
 }
 
-// ============================================================================
-// Input payloads for different hook events
-// ============================================================================
-
-/**
- * Base input structure sent to all hooks
- */
 export interface HookInputBase {
-  /** The event type that triggered this hook */
   event_type: HookEvent;
-  /** Working directory */
   working_directory: string;
-  /** Session ID if available */
   session_id?: string;
 }
 
-/**
- * Input for PreToolUse hooks
- */
 export interface PreToolUseHookInput extends HookInputBase {
   event_type: "PreToolUse";
-  /** Name of the tool being used */
   tool_name: string;
-  /** Tool input arguments */
   tool_input: Record<string, unknown>;
-  /** Tool call ID */
   tool_call_id?: string;
-  /** Agent ID (for server-side tools like memory) */
   agent_id?: string;
 }
 
-/**
- * Input for PostToolUse hooks
- */
 export interface PostToolUseHookInput extends HookInputBase {
   event_type: "PostToolUse";
-  /** Name of the tool that was used */
   tool_name: string;
-  /** Tool input arguments */
   tool_input: Record<string, unknown>;
-  /** Tool call ID */
   tool_call_id?: string;
-  /** Tool execution result */
   tool_result?: {
     status: "success" | "error";
     output?: string;
   };
-  /** Agent ID (for server-side tools like memory) */
   agent_id?: string;
-  /** Reasoning/thinking content that preceded this tool call */
   preceding_reasoning?: string;
-  /** Assistant message content that preceded this tool call */
   preceding_assistant_message?: string;
 }
 
@@ -281,36 +192,21 @@ export interface PostToolUseHookInput extends HookInputBase {
  */
 export interface PostToolUseFailureHookInput extends HookInputBase {
   event_type: "PostToolUseFailure";
-  /** Name of the tool that failed */
   tool_name: string;
-  /** Tool input arguments */
   tool_input: Record<string, unknown>;
-  /** Tool call ID */
   tool_call_id?: string;
-  /** Error message from the tool failure */
   error_message: string;
-  /** Error type/name (e.g., "AbortError", "TypeError") */
   error_type?: string;
-  /** Agent ID (for server-side tools like memory) */
   agent_id?: string;
-  /** Reasoning/thinking content that preceded this tool call */
   preceding_reasoning?: string;
-  /** Assistant message content that preceded this tool call */
   preceding_assistant_message?: string;
 }
 
-/**
- * Input for PermissionRequest hooks
- */
 export interface PermissionRequestHookInput extends HookInputBase {
   event_type: "PermissionRequest";
-  /** Name of the tool requesting permission */
   tool_name: string;
-  /** Tool input arguments */
   tool_input: Record<string, unknown>;
-  /** Agent ID if available */
   agent_id?: string;
-  /** Permission being requested */
   permission: {
     type: "allow" | "deny" | "ask";
     scope?: "session" | "project" | "user";
@@ -323,57 +219,33 @@ export interface PermissionRequestHookInput extends HookInputBase {
   };
 }
 
-/**
- * Input for UserPromptSubmit hooks
- */
 export interface UserPromptSubmitHookInput extends HookInputBase {
   event_type: "UserPromptSubmit";
-  /** The user's prompt text */
   prompt: string;
   /** Whether this is a command (starts with /) */
   is_command: boolean;
-  /** Agent ID if available */
   agent_id?: string;
-  /** Conversation ID if available */
   conversation_id?: string;
 }
 
-/**
- * Input for Notification hooks
- */
 export interface NotificationHookInput extends HookInputBase {
   event_type: "Notification";
-  /** Notification message */
   message: string;
-  /** Notification type/level */
   level?: "info" | "warning" | "error";
 }
 
-/**
- * Input for Stop hooks
- */
 export interface StopHookInput extends HookInputBase {
   event_type: "Stop";
-  /** Stop reason from the API */
   stop_reason: string;
-  /** Number of messages in the turn */
   message_count?: number;
-  /** Number of tool calls in the turn */
   tool_call_count?: number;
-  /** Reasoning/thinking content that preceded the final response */
   preceding_reasoning?: string;
-  /** The assistant's final message content */
   assistant_message?: string;
-  /** The user's original prompt that initiated this turn */
   user_message?: string;
 }
 
-/**
- * Input for SubagentStop hooks
- */
 export interface SubagentStopHookInput extends HookInputBase {
   event_type: "SubagentStop";
-  /** Subagent type */
   subagent_type: string;
   /** Subagent ID */
   subagent_id: string;
@@ -387,9 +259,6 @@ export interface SubagentStopHookInput extends HookInputBase {
   conversation_id?: string;
 }
 
-/**
- * Input for PreCompact hooks
- */
 export interface PreCompactHookInput extends HookInputBase {
   event_type: "PreCompact";
   /** Current context length */
@@ -402,41 +271,23 @@ export interface PreCompactHookInput extends HookInputBase {
   conversation_id?: string;
 }
 
-/**
- * Input for SessionStart hooks
- */
 export interface SessionStartHookInput extends HookInputBase {
   event_type: "SessionStart";
-  /** Whether this is a new session or resumed */
   is_new_session: boolean;
-  /** Agent ID */
   agent_id?: string;
-  /** Agent name */
   agent_name?: string;
-  /** Conversation ID */
   conversation_id?: string;
 }
 
-/**
- * Input for SessionEnd hooks
- */
 export interface SessionEndHookInput extends HookInputBase {
   event_type: "SessionEnd";
-  /** Session duration in milliseconds */
   duration_ms?: number;
-  /** Total messages in session */
   message_count?: number;
-  /** Total tool calls in session */
   tool_call_count?: number;
-  /** Agent ID */
   agent_id?: string;
-  /** Conversation ID */
   conversation_id?: string;
 }
 
-/**
- * Union type for all hook inputs
- */
 export type HookInput =
   | PreToolUseHookInput
   | PostToolUseHookInput

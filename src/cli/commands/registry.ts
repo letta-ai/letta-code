@@ -1,6 +1,3 @@
-// src/cli/commands/registry.ts
-// Registry of available CLI commands
-
 import {
   type DreamCommandScope,
   requestCloudReflectionRun,
@@ -48,7 +45,6 @@ async function handleReflectionCommand(
 }
 
 export const commands: Record<string, Command> = {
-  // === Page 1: Most commonly used (order 10-19) ===
   "/agents": {
     desc: "Browse agents (pinned, Letta Code, all)",
     order: 10,
@@ -236,7 +232,6 @@ export const commands: Record<string, Command> = {
     },
   },
 
-  // === Page 2: Agent management (order 20-29) ===
   "/new": {
     desc: "Start a new conversation (keep agent memory)",
     order: 20,
@@ -340,7 +335,6 @@ export const commands: Record<string, Command> = {
     },
   },
 
-  // === Page 3: Advanced features (order 30-39) ===
   "/system": {
     desc: "Switch system prompt",
     order: 30,
@@ -559,7 +553,6 @@ export const commands: Record<string, Command> = {
     },
   },
 
-  // === Session management (order 40-49) ===
   "/bg": {
     desc: "Show background shell processes",
     order: 42,
@@ -609,7 +602,6 @@ export const commands: Record<string, Command> = {
     },
   },
 
-  // === Hidden commands (not shown in autocomplete) ===
   "/stream": {
     desc: "Toggle token streaming on/off",
     hidden: true,
@@ -698,9 +690,6 @@ function normalizeCommandHandlerResult(result: CommandHandlerResult): {
   return result;
 }
 
-/**
- * Execute a command and return the result
- */
 export async function executeCommand(
   input: string,
   scope?: DreamCommandScope,

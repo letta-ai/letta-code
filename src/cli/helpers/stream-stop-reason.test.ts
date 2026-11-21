@@ -12,7 +12,6 @@ function makeStreamWithToolCall(
   return {
     controller: new AbortController(),
     async *[Symbol.asyncIterator]() {
-      // Seed a running server-side tool call
       yield {
         message_type: "tool_call_message",
         id: "msg-1",
@@ -22,7 +21,6 @@ function makeStreamWithToolCall(
           arguments: '{"command":"ls"}',
         },
       } as LettaStreamingResponse;
-      // Then die mid-stream
       throw new Error("simulated network drop");
     },
   } as unknown as Stream<LettaStreamingResponse>;

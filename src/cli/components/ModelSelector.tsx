@@ -64,7 +64,6 @@ type ModelCategory =
   | "server-recommended"
   | "server-all";
 
-// Re-export for consumers that import from ModelSelector
 export { buildByokProviderAliases, isByokHandleForSelector };
 export type {
   ModelSelectorSelection,
@@ -149,15 +148,11 @@ interface ModelSelectorProps {
   onOpenConnect?: () => void;
   onOpenLogin?: () => void;
   onCancel: () => void;
-  /** Filter models to only show those matching this provider prefix (e.g., "chatgpt-plus-pro") */
   filterProvider?: string;
-  /** Force refresh the models list on mount */
   forceRefresh?: boolean;
   /** User's billing tier (kept for compatibility and future gating logic) */
   billingTier?: string;
-  /** Whether connected to a self-hosted server (not api.letta.com) */
   isSelfHosted?: boolean;
-  /** Whether the active backend provides a local-only model catalog */
   localModelCatalog?: boolean;
 }
 
@@ -177,7 +172,6 @@ export function ModelSelector({
 }: ModelSelectorProps) {
   const typedModels = models as UiModel[];
 
-  // For self-hosted and local backends, only show the active backend's model catalog.
   const modelCategories = useMemo(
     () => getModelCategories(billingTier, isSelfHosted, localModelCatalog),
     [billingTier, isSelfHosted, localModelCatalog],
@@ -258,7 +252,6 @@ export function ModelSelector({
     };
   }, [isSelfHosted]);
 
-  // Fetch available models from the API (with caching + inflight dedupe)
   const loadModels = useRef(async (forceRefresh = false) => {
     try {
       if (forceRefresh) {
@@ -494,13 +487,11 @@ export function ModelSelector({
       availableHandles,
       allApiHandles,
     );
-    // Apply provider filter if specified
     if (filterProvider) {
       available = available.filter((m) =>
         m.handle.startsWith(`${filterProvider}/`),
       );
     }
-    // Apply search filter
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       available = available.filter(
@@ -538,7 +529,6 @@ export function ModelSelector({
     serviceTierForModel,
   ]);
 
-  // BYOK models: models from ChatGPT OAuth, standard lc-* providers, or any connected custom BYOK provider
   const isByokHandle = useCallback(
     (handle: string) => isByokHandleForSelector(handle, byokProviderAliases),
     [byokProviderAliases],
@@ -592,20 +582,16 @@ export function ModelSelector({
     [byokProviderAliases],
   );
 
-  // BYOK (recommended): BYOK API handles with matching runtime catalog entries
   const byokModels = useMemo(() => {
     if (availableHandles === undefined) return [];
 
-    // Get all BYOK handles from API
     const byokHandles = allApiHandles.filter(isByokHandle);
 
-    // Find matching catalog entries (using aliases for lc-* providers)
     const matched: UiModel[] = [];
     for (const handle of byokHandles) {
       const baseHandle = toBaseHandle(handle);
       const staticModel = pickPreferredStaticModel(baseHandle);
       if (staticModel) {
-        // Use catalog metadata but keep the BYOK handle as the ID
         matched.push(
           toByokSelectorModel(
             staticModel,
@@ -620,7 +606,6 @@ export function ModelSelector({
       }
     }
 
-    // Apply search filter
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       return matched.filter(
@@ -643,13 +628,11 @@ export function ModelSelector({
     withProviderTypeMetadata,
   ]);
 
-  // BYOK (all): all BYOK handles from API (including recommended ones)
   const byokAllModels = useMemo(() => {
     if (availableHandles === undefined) return [];
 
     const byokHandles = allApiHandles.filter(isByokHandle);
 
-    // Apply search filter
     let filtered = byokHandles;
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
@@ -686,7 +669,6 @@ export function ModelSelector({
           m.handle.toLowerCase().includes(query),
       );
     }
-    // Deduplicate by handle+context_window (same as supportedModels)
     const seen = new Set<string>();
     const deduped: UiModel[] = [];
     for (const m of available) {
@@ -737,8 +719,6 @@ export function ModelSelector({
     searchQuery,
   ]);
 
-  // Recent models: models the user has recently selected (max 10)
-  // Only includes models that are currently available
   const recentModels = useMemo(() => {
     if (availableHandles === undefined) return [];
     const recentHandles = settingsManager.getRecentModels();
@@ -746,7 +726,6 @@ export function ModelSelector({
 
     const resolved: UiModel[] = [];
     for (const handle of recentHandles) {
-      // When availableHandles is non-null, skip unavailable models
       if (availableHandles !== null && !availableHandles.has(handle)) continue;
 
       if (backendModelCatalog) {
@@ -755,7 +734,6 @@ export function ModelSelector({
         continue;
       }
 
-      // Try to resolve to a static model with label/description
       const staticModel = pickPreferredStaticModel(toBaseHandle(handle));
       if (staticModel) {
         resolved.push(
@@ -839,14 +817,12 @@ export function ModelSelector({
       modelCategories.filter((cat) => {
         const list = categoryListMap[cat];
         if (!list || list.length === 0) return false;
-        // Recents tab only shows when there are ≥2 available recent models
         if (cat === "recents" && list.length < 2) return false;
         return true;
       }),
     [modelCategories, categoryListMap],
   );
 
-  // All categories empty → show null state under a single "All" tab
   const allEmpty =
     !isLoading && nonEmptyCategories.length === 0 && !searchQuery;
   const emptyStateActions = useMemo(
@@ -858,7 +834,6 @@ export function ModelSelector({
     [onOpenConnect, onOpenLogin, showLoginAction],
   );
 
-  // When all categories are empty, collapse to a single "All" tab
   const displayCategories = useMemo(
     () =>
       allEmpty
@@ -867,7 +842,6 @@ export function ModelSelector({
     [allEmpty, backendModelCatalog, nonEmptyCategories],
   );
 
-  // Get the list for current category
   const currentList: UiModel[] = useMemo(() => {
     const list = categoryListMap[category] as UiModel[] | undefined;
     return list ?? [];
@@ -876,9 +850,7 @@ export function ModelSelector({
   // Show 1 fewer item because Search line takes space
   const visibleCount = VISIBLE_ITEMS - 1;
 
-  // Scrolling - keep selectedIndex in view
   const startIndex = useMemo(() => {
-    // Keep selected item in the visible window
     if (selectedIndex < visibleCount) return 0;
     return Math.min(
       selectedIndex - visibleCount + 1,
@@ -893,7 +865,6 @@ export function ModelSelector({
   const showScrollDown = startIndex + visibleCount < currentList.length;
   const itemsBelow = currentList.length - startIndex - visibleCount;
 
-  // Auto-switch to first non-empty category if current category becomes empty
   useEffect(() => {
     if (allEmpty) return;
     if (
@@ -905,7 +876,6 @@ export function ModelSelector({
     }
   }, [nonEmptyCategories, category, allEmpty]);
 
-  // Reset selection when category changes
   const cycleCategory = useCallback(() => {
     setCategory((current) => {
       const cats =
@@ -917,7 +887,6 @@ export function ModelSelector({
     setSearchQuery("");
   }, [displayCategories, modelCategories]);
 
-  // Set initial selection to current model on mount
   const initializedRef = useRef(false);
   useEffect(() => {
     if (!initializedRef.current && currentList.length > 0) {
@@ -929,7 +898,6 @@ export function ModelSelector({
     }
   }, [currentList, currentModelId]);
 
-  // Clamp selectedIndex when list changes
   useEffect(() => {
     const selectableCount = allEmpty
       ? emptyStateActions.length
@@ -967,14 +935,12 @@ export function ModelSelector({
         return;
       }
 
-      // Tab or left/right arrows to switch categories
       if (key.tab || key.rightArrow) {
         cycleCategory();
         return;
       }
 
       if (key.leftArrow) {
-        // Cycle backwards through categories
         setCategory((current) => {
           const cats =
             displayCategories.length > 0 ? displayCategories : modelCategories;
@@ -986,7 +952,6 @@ export function ModelSelector({
         return;
       }
 
-      // Handle backspace for search
       if (key.backspace || key.delete) {
         if (searchQuery) {
           setSearchQuery((prev) => prev.slice(0, -1));
@@ -1012,8 +977,6 @@ export function ModelSelector({
         }
       }
 
-      // Capture text input for search (allow typing even with 0 results)
-      // Exclude special keys like Enter, arrows, etc.
       if (
         input &&
         input.length === 1 &&
@@ -1028,7 +991,6 @@ export function ModelSelector({
         return;
       }
 
-      // Disable navigation/selection while loading or no results
       if (isLoading || currentList.length === 0) {
         return;
       }
@@ -1132,7 +1094,6 @@ export function ModelSelector({
         </Box>
       )}
 
-      {/* Null state — no models available */}
       {!isLoading && allEmpty && (
         <Box flexDirection="column" paddingLeft={1}>
           <TabBar
@@ -1169,7 +1130,6 @@ export function ModelSelector({
         </Box>
       )}
 
-      {/* Loading states */}
       {isLoading && (
         <Box paddingLeft={2}>
           <Text dimColor>Loading available models...</Text>
@@ -1194,7 +1154,6 @@ export function ModelSelector({
         </Box>
       )}
 
-      {/* Model list */}
       {refreshing && (
         <Box paddingLeft={2}>
           <Text dimColor>Refreshing list...</Text>
@@ -1213,7 +1172,6 @@ export function ModelSelector({
             (model.id === currentModelId ||
               model.handle === currentModelHandle) &&
             modelServiceTier === currentServiceTier;
-          // Show lock for non-free models when on free tier (only for Letta API tabs)
           const showLock =
             isFreeTier &&
             !model.free &&

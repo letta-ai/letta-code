@@ -1,12 +1,3 @@
-/**
- * Git hook scripts installed into agent and shared memory repositories.
- *
- * The pre-commit hook validates memory markdown frontmatter; the post-commit
- * hook mirrors commits to an optional user-configured memory-repository
- * remote. Both are (re)installed by the CLI harness on clone/pull/init —
- * see memory-git.ts.
- */
-
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -192,9 +183,6 @@ validate_memory_constraints
 
 export const PRE_COMMIT_HOOK_SCRIPT = buildPreCommitHookScript();
 
-/**
- * Install the pre-commit hook for frontmatter validation.
- */
 function installPreCommitHookWithPolicy(
   dir: string,
   policy: MemoryLayoutPolicy,
@@ -227,7 +215,6 @@ export function installPreCommitHook(
   );
 }
 
-/** True when the repo uses the MemFS v2 root layout (root `MEMORY.md` marker). */
 export function hasRootMemoryMarker(dir: string): boolean {
   return (
     existsSync(join(dir, "MEMORY.md")) ||
@@ -246,7 +233,6 @@ export function installLocalMemoryPreCommitHook(dir: string): void {
   );
 }
 
-/** Install memory validation for an attached shared repository. */
 export function installSharedMemoryPreCommitHook(dir: string): void {
   installPreCommitHookWithPolicy(dir, "shared-memory");
 }
@@ -302,7 +288,6 @@ export function installPostCommitHook(dir: string): void {
   debugLog("memfs-git", "Installed post-commit memory-repository hook");
 }
 
-/** Refresh every harness-owned Git hook for an API-backed memory checkout. */
 export function installMemoryGitHooks(dir: string): void {
   installPreCommitHook(dir, true);
   installPostCommitHook(dir);

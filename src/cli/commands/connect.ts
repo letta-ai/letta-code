@@ -1,6 +1,3 @@
-// src/cli/commands/connect.ts
-// Command handlers for provider connection management in TUI slash commands
-
 import {
   formatLocalProviderTimeout,
   type LocalProviderTimeout,
@@ -45,7 +42,6 @@ import {
 } from "./connect-oauth-core";
 import { runCloudXaiOAuthConnectFlow } from "./connect-xai-oauth";
 
-// tiny helper for unique ids
 function uid(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }

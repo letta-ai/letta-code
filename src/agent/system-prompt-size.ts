@@ -45,7 +45,6 @@ function walkMarkdownFiles(dir: string): string[] {
   const entries = readdirSync(dir, { withFileTypes: true });
 
   for (const entry of entries) {
-    // Skip hidden entries (.git, .DS_Store, etc.)
     if (entry.name.startsWith(".")) {
       continue;
     }

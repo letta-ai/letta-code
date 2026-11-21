@@ -23,7 +23,6 @@ export async function detectAndEnableKittyProtocol(): Promise<void> {
     return;
   }
 
-  // Allow disabling Kitty protocol for debugging terminal issues
   if (DISABLED) {
     if (DEBUG) {
       // eslint-disable-next-line no-console
@@ -59,8 +58,6 @@ export async function detectAndEnableKittyProtocol(): Promise<void> {
         process.stdin.setRawMode(false);
       }
 
-      // If the terminal explicitly answered the progressive enhancement query,
-      // treat it as supported.
       if (progressiveEnhancementReceived) kittySupported = true;
 
       // Best-effort: even when the query isn't supported (common in xterm.js),
@@ -109,7 +106,6 @@ export async function detectAndEnableKittyProtocol(): Promise<void> {
 
       // Check for device attributes response (CSI ? <attrs> c)
       if (responseBuffer.includes("\x1b[?") && responseBuffer.includes("c")) {
-        // If we also got progressive enhancement, we can be confident.
         if (progressiveEnhancementReceived) kittySupported = true;
 
         finish();
@@ -147,9 +143,7 @@ function enableKittyKeyboardProtocol() {
     // See: .notes/csi-u-release-events-fix.md for full analysis.
     fs.writeSync(process.stdout.fd, "\x1b[>1u");
     kittyEnabled = true;
-  } catch {
-    // Ignore errors
-  }
+  } catch {}
 }
 
 function disableKittyKeyboardProtocol() {
@@ -158,7 +152,5 @@ function disableKittyKeyboardProtocol() {
       fs.writeSync(process.stdout.fd, "\x1b[<u");
       kittyEnabled = false;
     }
-  } catch {
-    // Ignore errors
-  }
+  } catch {}
 }

@@ -4,17 +4,6 @@ import { getRuntimeContext } from "@/runtime-context";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
 import { subagentScopeMatches } from "@/utils/subagent-scope";
 
-/**
- * Task Notification Formatting
- *
- * Formats background task completion notifications as XML.
- * The actual queueing is handled by messageQueueBridge.ts.
- */
-
-// ============================================================================
-// Types
-// ============================================================================
-
 export interface NotificationScope {
   agentId: string;
   conversationId: string;
@@ -50,10 +39,6 @@ function escapeXml(str: string): string {
 function unescapeXml(str: string): string {
   return str.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 }
-
-// ============================================================================
-// Public API
-// ============================================================================
 
 /**
  * Capture the conversation and initiating sender when background work starts.
@@ -97,9 +82,6 @@ export function resolveNotificationScope(parentScope?: {
   }
 }
 
-/**
- * Format a single notification as XML string for queueing.
- */
 export function formatTaskNotification(notification: TaskNotification): string {
   // Escape summary and result to prevent XML injection
   const escapedSummary = escapeXml(notification.summary);
@@ -203,10 +185,6 @@ export function extractTaskNotificationsForDisplay(message: string): {
 
   return { notifications, cleanedText };
 }
-
-// ============================================================================
-// Buffer Helpers
-// ============================================================================
 
 /**
  * Append task-notification events to a transcript buffer and flush.

@@ -59,7 +59,6 @@ async function waitForShutdown(close: () => Promise<void>): Promise<number> {
   });
 }
 
-/** App Server settings parsed from `letta server --listen` arguments. */
 export interface AppServerCliOptions {
   listen?: string;
   websocketAuth: AppServerWebsocketAuthSettings;

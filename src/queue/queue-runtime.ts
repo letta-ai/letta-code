@@ -10,16 +10,10 @@ import { isDebugEnabled } from "@/utils/debug";
 
 export type { QueueBlockedReason, QueueClearedReason, QueueItemKind };
 
-// ── Item types ───────────────────────────────────────────────────
-
 type QueueItemBase = {
-  /** Stable monotonic ID assigned on enqueue. */
   id: string;
-  /** Optional client-side message correlation ID from submit payloads. */
   clientMessageId?: string;
-  /** Optional agent scope for listener-mode attribution. */
   agentId?: string;
-  /** Optional conversation scope for listener-mode attribution. */
   conversationId?: string;
   /**
    * Cloud user id of the human who actually submitted this item,
@@ -47,7 +41,6 @@ type QueueItemBase = {
 
 export type MessageQueueItem = QueueItemBase & {
   kind: "message";
-  /** Full multimodal content — string or content-part array. */
   content: MessageCreate["content"];
   /**
    * Never merge this item with other queued messages. Set by request-scoped
@@ -59,7 +52,6 @@ export type MessageQueueItem = QueueItemBase & {
 
 export type TaskNotificationQueueItem = QueueItemBase & {
   kind: "task_notification";
-  /** XML notification string. */
   text: string;
   /** Complete model-facing notification parts; text remains the display fallback. */
   content?: MessageCreate["content"];
@@ -69,9 +61,7 @@ export type TaskNotificationQueueItem = QueueItemBase & {
 
 export type CronPromptQueueItem = QueueItemBase & {
   kind: "cron_prompt";
-  /** XML-wrapped prompt text. */
   text: string;
-  /** Cron task ID for tracing. */
   cronTaskId: string;
 };
 
@@ -94,8 +84,6 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown
 
 export type QueueItemInput = DistributiveOmit<QueueItem, "id" | "enqueuedAt">;
 
-// ── Scope ────────────────────────────────────────────────────────
-
 function hasSameScope(a: QueueItem, b: QueueItem): boolean {
   return (
     (a.agentId ?? null) === (b.agentId ?? null) &&
@@ -103,17 +91,10 @@ function hasSameScope(a: QueueItem, b: QueueItem): boolean {
   );
 }
 
-// ── Batch / callbacks ────────────────────────────────────────────
-
 export interface DequeuedBatch {
   batchId: string;
   items: QueueItem[];
-  /**
-   * Number of items that were merged into this batch.
-   * Always equal to items.length.
-   */
   mergedCount: number;
-  /** Queue length after this batch was removed. */
   queueLenAfter: number;
 }
 
@@ -149,10 +130,6 @@ export interface QueueCallbacks {
     reason: QueueItemDroppedReason,
     queueLen: number,
   ) => void;
-  /**
-   * Fired when an item is explicitly removed via removeItem().
-   * queueLen is the post-removal queue depth.
-   */
   onRemoved?: (item: QueueItem, queueLen: number) => void;
   /**
    * Fired when pause()/resume() changes which items are parked.
@@ -160,8 +137,6 @@ export interface QueueCallbacks {
    */
   onPauseChanged?: (pausedCount: number, queueLen: number) => void;
 }
-
-// ── Options ──────────────────────────────────────────────────────
 
 export interface QueueRuntimeOptions {
   /**
@@ -177,8 +152,6 @@ export interface QueueRuntimeOptions {
   callbacks?: QueueCallbacks;
 }
 
-// ── Runtime ──────────────────────────────────────────────────────
-
 export class QueueRuntime {
   private readonly store: QueueItem[] = [];
   private readonly callbacks: QueueCallbacks;
@@ -187,7 +160,6 @@ export class QueueRuntime {
   private nextId = 0;
   private nextBatchId = 0;
 
-  // Blocked-reason transition tracking
   private lastEmittedBlockedReason: QueueBlockedReason | null = null;
   private blockedEmittedForNonEmpty = false;
 
@@ -201,8 +173,6 @@ export class QueueRuntime {
     this.hardMaxItems = hardMaxItems;
     this.callbacks = options.callbacks ?? {};
   }
-
-  // ── Enqueue ────────────────────────────────────────────────────
 
   /**
    * Add an item to the queue. Returns the enqueued item (with assigned id
@@ -224,7 +194,6 @@ export class QueueRuntime {
     ) {
       return null;
     }
-    // Hard ceiling check
     if (this.store.length >= this.hardMaxItems) {
       const phantom = this.makeItem(input);
       if (!this.mutationAllowed("beforeDropped", phantom)) return null;
@@ -237,7 +206,6 @@ export class QueueRuntime {
       return null;
     }
 
-    // Soft limit: drop the oldest item
     if (this.store.length >= this.maxItems) {
       const dropped = this.store[0];
       if (dropped !== undefined) {
@@ -280,8 +248,6 @@ export class QueueRuntime {
     return item;
   }
 
-  // ── Dequeue ────────────────────────────────────────────────────
-
   /**
    * Attempt to dequeue the next batch.
    *
@@ -293,7 +259,6 @@ export class QueueRuntime {
    */
   tryDequeue(blockedReason: QueueBlockedReason | null): DequeuedBatch | null {
     if (blockedReason !== null) {
-      // Only emit on transition when queue is non-empty
       if (this.store.length > 0) {
         const shouldEmit =
           blockedReason !== this.lastEmittedBlockedReason ||
@@ -313,7 +278,6 @@ export class QueueRuntime {
       return this.tryDequeue("paused_by_user");
     }
 
-    // Unblocked — reset tracking
     this.lastEmittedBlockedReason = null;
     this.blockedEmittedForNonEmpty = false;
 
@@ -339,7 +303,6 @@ export class QueueRuntime {
     if (!this.mutationAllowed("beforeDequeued", batch)) return null;
     this.removeAll(batch);
 
-    // When queue becomes empty after dequeue, reset blocked epoch tracking
     if (this.store.length === 0) {
       this.blockedEmittedForNonEmpty = false;
     }
@@ -364,7 +327,6 @@ export class QueueRuntime {
    */
   consumeItems(n: number): DequeuedBatch | null {
     if (this.store.length === 0 || n <= 0) return null;
-    // Paused items are skipped: the first `n` ready items are consumed.
     const batch = this.store.filter((item) => !item.paused).slice(0, n);
     const count = batch.length;
     if (count === 0) return null;
@@ -394,12 +356,6 @@ export class QueueRuntime {
     this.blockedEmittedForNonEmpty = false;
   }
 
-  // ── Remove ──────────────────────────────────────────────────────
-
-  /**
-   * Remove a specific item by ID. Returns the removed item, or null
-   * if no item with that ID exists. Fires onRemoved callback.
-   */
   removeItem(id: string): QueueItem | null {
     const idx = this.store.findIndex((item) => item.id === id);
     if (idx === -1) return null;
@@ -415,8 +371,6 @@ export class QueueRuntime {
     this.safeCallback("onRemoved", removed, this.store.length);
     return removed;
   }
-
-  // ── Pause / resume ─────────────────────────────────────────────
 
   /**
    * Park every queued user message. Called when the user interrupts: the
@@ -440,7 +394,6 @@ export class QueueRuntime {
     return changed;
   }
 
-  /** Release every paused item. Returns the number of items resumed. */
   resume(): number {
     let changed = 0;
     for (const item of this.store) {
@@ -457,9 +410,6 @@ export class QueueRuntime {
     return changed;
   }
 
-  // ── Clear ──────────────────────────────────────────────────────
-
-  /** Remove all items and fire onCleared. */
   clear(reason: QueueClearedReason): void {
     const count = this.store.length;
     const clearedItems = this.store.slice();
@@ -470,8 +420,6 @@ export class QueueRuntime {
     this.safeCallback("onCleared", reason, count, clearedItems);
   }
 
-  // ── Accessors ──────────────────────────────────────────────────
-
   get length(): number {
     return this.store.length;
   }
@@ -480,7 +428,6 @@ export class QueueRuntime {
     return this.store.length === 0;
   }
 
-  /** Items a dequeue may take right now (everything that is not paused). */
   get readyLength(): number {
     return this.store.reduce((n, item) => (item.paused ? n : n + 1), 0);
   }

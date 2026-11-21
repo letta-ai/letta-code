@@ -224,7 +224,6 @@ async function withAbort<T>(
   }
 }
 
-/** Start a stdio MCP server on the client machine. */
 export function connectStdioMcpServer(
   config: StdioMcpServerConfig,
   options: ConnectMcpServerOptions = {},

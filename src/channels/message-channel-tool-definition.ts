@@ -307,7 +307,6 @@ export function buildMessageChannelToolFromDiscovery(params: {
   };
 }
 
-/** Build the exact model-facing MessageChannel tool for an external gateway. */
 export function buildMessageChannelExternalToolDefinition(
   options: BuildMessageChannelToolOptions,
 ): ExternalToolDefinitionPayload {

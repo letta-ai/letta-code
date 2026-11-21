@@ -148,7 +148,6 @@ describe("FakeHeadlessBackend", () => {
     expect(runFor("agent-b")?.status).toBe("cancelled");
     expect(runFor("agent-a")?.status).toBe("running");
 
-    // Agent B's cleanup left agent A's ownership intact.
     await expect(
       backend.createConversationMessageStream("default", {
         agent_id: "agent-a",
@@ -183,7 +182,6 @@ describe("FakeHeadlessBackend", () => {
     });
     expect(JSON.stringify(page)).not.toContain("aborted input");
 
-    // A later send starts cleanly instead of tripping over an orphaned run.
     const chunks = await collect(
       await backend.createConversationMessageStream(conversation.id, {
         agent_id: "agent-fake-headless",
@@ -225,7 +223,6 @@ describe("FakeHeadlessBackend", () => {
     ).runControllerByRunId;
     expect(controllers.size).toBe(0);
 
-    // The cancelled run was completed, so a later send starts cleanly.
     const chunks = await collect(
       await backend.createConversationMessageStream(conversation.id, {
         agent_id: "agent-fake-headless",
@@ -665,8 +662,6 @@ describe("FakeHeadlessBackend", () => {
       } as ConversationMessageCreateBody),
     );
 
-    // Inspect the raw local messages before the next turn: there should be one
-    // tool call with no corresponding result.
     const storeBefore = (
       backend as unknown as {
         store: { listLocalMessages: (id: string) => unknown[] };
@@ -690,7 +685,6 @@ describe("FakeHeadlessBackend", () => {
     );
     expect(unsettled.length).toBe(1); // one orphaned tool call before the next turn
 
-    // Start the next turn — executeConversationTurn should settle the orphan first.
     await collect(
       await backend.createConversationMessageStream(conversation.id, {
         agent_id: "agent-fake-headless",
@@ -698,7 +692,6 @@ describe("FakeHeadlessBackend", () => {
       } as ConversationMessageCreateBody),
     );
 
-    // Now the orphaned tool call should have a synthetic error result.
     const storeAfter = (
       backend as unknown as {
         store: { listLocalMessages: (id: string) => unknown[] };

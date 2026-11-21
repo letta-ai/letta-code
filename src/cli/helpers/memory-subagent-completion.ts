@@ -36,10 +36,6 @@ export interface MemorySubagentCompletionDeps {
   recompileAgentSystemPromptImpl?: RecompileAgentSystemPromptFn;
 }
 
-/**
- * Finalize a memory-writing subagent by recompiling the parent agent's
- * system prompt and returning the user-facing completion text.
- */
 export async function handleMemorySubagentCompletion(
   args: MemorySubagentCompletionArgs,
   deps: MemorySubagentCompletionDeps,

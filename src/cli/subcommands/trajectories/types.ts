@@ -7,7 +7,6 @@
  * orchestrates them and indexes the results.
  */
 
-/** Per-session entry in the export manifest. */
 export interface SessionManifestEntry {
   source: string;
   /** Source-native session identity (session/conversation/thread id). */

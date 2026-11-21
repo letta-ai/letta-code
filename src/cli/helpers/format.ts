@@ -16,7 +16,6 @@ export function formatCompact(n: number): string {
     }
     return `${Math.round(k)}k`;
   }
-  // Millions
   const m = n / 1_000_000;
   if (m < 10) {
     const rounded = Math.round(m * 10) / 10;
@@ -28,9 +27,6 @@ export function formatCompact(n: number): string {
 // 4 bytes per token (Codex heuristic: codex-rs/core/src/truncate.rs APPROX_BYTES_PER_TOKEN = 4)
 const BYTES_PER_TOKEN = 4;
 
-/**
- * Estimate token count from a byte count using the 4-bytes-per-token heuristic.
- */
 export function bytesToTokens(bytes: number): number {
   return Math.ceil(bytes / BYTES_PER_TOKEN);
 }

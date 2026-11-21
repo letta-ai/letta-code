@@ -11,7 +11,6 @@ import { execSync } from "node:child_process";
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
-// Build exact mapping from git staged renames: oldBase -> newBase (no extension)
 const renameMap = new Map(); // "OldName" -> "new-name"
 
 const gitStatus = execSync("git diff --cached --name-status", {
@@ -43,13 +42,11 @@ function* walkSrc(dir) {
   }
 }
 
-// Replace the last path segment of an import path if it's in the rename map
 function updatePath(importPath) {
   const lastSlash = importPath.lastIndexOf("/");
   const dir = lastSlash >= 0 ? importPath.slice(0, lastSlash + 1) : "";
   let file = lastSlash >= 0 ? importPath.slice(lastSlash + 1) : importPath;
 
-  // Strip explicit .ts/.js extension for lookup (imports usually have no ext)
   let ext = "";
   if (file.endsWith(".ts") || file.endsWith(".js")) {
     ext = file.slice(file.lastIndexOf("."));

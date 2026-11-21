@@ -21,7 +21,6 @@ import type { CreateBlock } from "@letta-ai/letta-client/resources/blocks/blocks
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import type { ToolReturnMessage as LettaToolReturnMessage } from "@letta-ai/letta-client/resources/tools";
 
-// Re-export letta-client types that consumers may need
 export type {
   LettaStreamingResponse,
   LettaMessage,
@@ -31,11 +30,6 @@ export type {
   LettaToolReturnMessage,
   CreateBlock,
 };
-
-// ═══════════════════════════════════════════════════════════════
-// CONFIGURATION TYPES (session options)
-// Used internally by headless.ts/App.tsx, also exported for SDK
-// ═══════════════════════════════════════════════════════════════
 
 /**
  * System prompt preset configuration.
@@ -63,11 +57,6 @@ export interface SystemPromptPresetConfig {
  */
 export type SystemPromptConfig = string | SystemPromptPresetConfig;
 
-// ═══════════════════════════════════════════════════════════════
-// BASE ENVELOPE
-// All wire messages include these fields
-// ═══════════════════════════════════════════════════════════════
-
 export interface MessageEnvelope {
   session_id: string;
   uuid: string;
@@ -88,10 +77,6 @@ export interface MessageEnvelope {
   /** Conversation that triggered this event. Used for conversation-scoped filtering. */
   conversation_id?: string;
 }
-
-// ═══════════════════════════════════════════════════════════════
-// SYSTEM MESSAGES
-// ═══════════════════════════════════════════════════════════════
 
 export interface SystemInitMessage extends MessageEnvelope {
   type: "system";
@@ -114,45 +99,24 @@ export interface SystemInitMessage extends MessageEnvelope {
 
 export type SystemMessage = SystemInitMessage;
 
-// ═══════════════════════════════════════════════════════════════
-// CONTENT MESSAGES
-// These wrap letta-client message types with the wire envelope
-// ═══════════════════════════════════════════════════════════════
-
-/**
- * Wire format for assistant messages.
- * Extends LettaAssistantMessage with wire envelope fields.
- */
 export interface AssistantMessageWire
   extends LettaAssistantMessage,
     MessageEnvelope {
   type: "message";
 }
 
-/**
- * Wire format for tool call messages.
- * Extends LettaToolCallMessage with wire envelope fields.
- */
 export interface ToolCallMessageWire
   extends LettaToolCallMessage,
     MessageEnvelope {
   type: "message";
 }
 
-/**
- * Wire format for reasoning messages.
- * Extends LettaReasoningMessage with wire envelope fields.
- */
 export interface ReasoningMessageWire
   extends LettaReasoningMessage,
     MessageEnvelope {
   type: "message";
 }
 
-/**
- * Wire format for tool return messages.
- * Extends LettaToolReturnMessage with wire envelope fields.
- */
 export interface ToolReturnMessageWire
   extends LettaToolReturnMessage,
     MessageEnvelope {
@@ -173,18 +137,10 @@ export type MessageWire = MessageEnvelope & {
   type: "message";
 } & LettaStreamingResponse;
 
-// ═══════════════════════════════════════════════════════════════
-// STREAM EVENTS (partial message updates)
-// ═══════════════════════════════════════════════════════════════
-
 export interface StreamEvent extends MessageEnvelope {
   type: "stream_event";
   event: LettaStreamingResponse;
 }
-
-// ═══════════════════════════════════════════════════════════════
-// TOOL LIFECYCLE EVENTS
-// ═══════════════════════════════════════════════════════════════
 
 /**
  * Informational lifecycle event emitted when the runtime asks for user approval
@@ -241,20 +197,12 @@ export interface ToolExecutionFinishedMessage extends MessageEnvelope {
   run_id?: string;
 }
 
-// ═══════════════════════════════════════════════════════════════
-// AUTO APPROVAL
-// ═══════════════════════════════════════════════════════════════
-
 export interface AutoApprovalMessage extends MessageEnvelope {
   type: "auto_approval";
   tool_call: ToolCall;
   reason: string;
   matched_rule: string;
 }
-
-// ═══════════════════════════════════════════════════════════════
-// ERROR & RETRY
-// ═══════════════════════════════════════════════════════════════
 
 export interface ErrorMessage extends MessageEnvelope {
   type: "error";
@@ -282,12 +230,10 @@ export interface RetryMessage extends MessageEnvelope {
  */
 export interface RecoveryMessage extends MessageEnvelope {
   type: "recovery";
-  /** Type of recovery performed */
   recovery_type:
     | "approval_pending"
     | "approval_desync"
     | "invalid_tool_call_ids";
-  /** Human-readable description of what happened */
   message: string;
   run_id?: string;
 }
@@ -303,10 +249,6 @@ export interface CancelAckMessage extends MessageEnvelope {
   reason?: string;
 }
 
-// ═══════════════════════════════════════════════════════════════
-// RESULT
-// ═══════════════════════════════════════════════════════════════
-
 /**
  * Result subtypes.
  * For errors, use stop_reason field with StopReasonType from letta-client.
@@ -315,10 +257,6 @@ export interface CancelAckMessage extends MessageEnvelope {
  */
 export type ResultSubtype = "success" | "interrupted" | "error" | "queued";
 
-/**
- * Usage statistics from letta-client.
- * Re-exported for convenience.
- */
 export type UsageStatistics = LettaStreamingResponse.LettaUsageStatistics & {
   /** Client-computed list-price USD; null when pricing is unavailable. */
   api_cost_usd?: number | null;
@@ -343,14 +281,6 @@ export interface ResultMessage extends MessageEnvelope {
    */
   stop_reason?: StopReasonType;
 }
-
-// ═══════════════════════════════════════════════════════════════
-// QUEUE LIFECYCLE
-// Events emitted by the shared queue runtime. Each describes a
-// discrete state transition in the turn queue. Consumers (TUI,
-// headless bidir JSON, WS listen) emit these through their
-// respective output channels.
-// ═══════════════════════════════════════════════════════════════
 
 /**
  * Source that produced the queue item.
@@ -385,7 +315,6 @@ export type QueueItemKind =
  * and queue lifecycle transport events.
  */
 export interface QueueRuntimeItemWire {
-  /** Stable queue item identifier. */
   id: string;
   /** Correlates this queue item back to the originating client submit payload. */
   client_message_id: string;
@@ -476,9 +405,6 @@ export interface QueueBlockedEvent extends MessageEnvelope {
   queue_len: number;
 }
 
-/**
- * Why the queue was cleared.
- */
 export type QueueClearedReason =
   | "processed"
   | "error"
@@ -495,14 +421,8 @@ export interface QueueClearedEvent extends MessageEnvelope {
   cleared_count: number;
 }
 
-/**
- * Why an item was dropped without processing.
- */
 export type QueueItemDroppedReason = "buffer_limit" | "stale_generation";
 
-/**
- * Emitted when an item is dropped from the queue without being processed.
- */
 export interface QueueItemDroppedEvent extends MessageEnvelope {
   type: "queue_item_dropped";
   /** Stable queue item identifier. Preferred field. */
@@ -513,9 +433,6 @@ export interface QueueItemDroppedEvent extends MessageEnvelope {
   queue_len: number;
 }
 
-/**
- * Union of all queue lifecycle events.
- */
 export type QueueLifecycleEvent =
   | QueueItemEnqueuedEvent
   | QueueBatchDequeuedEvent
@@ -523,12 +440,6 @@ export type QueueLifecycleEvent =
   | QueueClearedEvent
   | QueueItemDroppedEvent;
 
-// ═══════════════════════════════════════════════════════════════
-// CONTROL PROTOCOL
-// Bidirectional: SDK → CLI and CLI → SDK both use control_request/response
-// ═══════════════════════════════════════════════════════════════
-
-// --- Control Request (bidirectional) ---
 export interface ControlRequest {
   type: "control_request";
   request_id: string;
@@ -539,13 +450,10 @@ export interface ControlRequest {
    * control requests are not stamped by the CLI.
    */
   timestamp?: string;
-  /** Agent that triggered this control request. */
   agent_id?: string;
-  /** Conversation that triggered this control request. */
   conversation_id?: string;
 }
 
-// SDK → CLI request subtypes
 export type SdkToCliControlRequest =
   | { subtype: "initialize" }
   | { subtype: "interrupt" }
@@ -567,17 +475,10 @@ export interface BootstrapSessionStateRequest {
   order?: "asc" | "desc";
 }
 
-/**
- * Successful bootstrap_session_state response payload.
- */
 export interface BootstrapSessionStatePayload {
-  /** Resolved agent ID for this session. */
   agent_id: string;
-  /** Resolved conversation ID for this session. */
   conversation_id: string;
-  /** LLM model handle. */
   model: string | undefined;
-  /** Tool names registered on the agent. */
   tools: string[];
   /** Whether memfs (git-backed memory) is enabled. */
   memfs_enabled: boolean;
@@ -585,30 +486,20 @@ export interface BootstrapSessionStatePayload {
   messages: unknown[];
   /** Cursor to fetch older messages (null if none). */
   next_before: string | null;
-  /** Whether more history pages exist. */
   has_more: boolean;
-  /** Whether there is a pending approval waiting for a response. */
   has_pending_approval: boolean;
   /** Optional wall-clock timings in milliseconds. */
   timings?: {
-    /** Time to resolve agent + conversation context. */
     resolve_ms: number;
-    /** Time to fetch the initial message page. */
     list_messages_ms: number;
-    /** Total bootstrap wall-clock time. */
     total_ms: number;
   };
 }
 
-/**
- * Request to list conversation messages (SDK → CLI).
- * Returns paginated messages from a specific conversation.
- */
 export interface ListMessagesControlRequest {
   subtype: "list_messages";
   /** Explicit conversation ID (e.g. "conv-123"). */
   conversation_id?: string;
-  /** Use the agent's default conversation. */
   agent_id?: string;
   /** Cursor: return messages before this message ID. */
   before?: string;
@@ -646,9 +537,6 @@ export interface RecoverPendingApprovalsResponsePayload {
   approvals_processed: number;
 }
 
-/**
- * Successful list_messages response payload.
- */
 export interface ListMessagesResponsePayload {
   messages: unknown[]; // Raw API Message objects
   next_before?: string | null;
@@ -665,17 +553,12 @@ export interface RegisterExternalToolsRequest {
   tools: ExternalToolDefinition[];
 }
 
-/**
- * External tool definition (from SDK)
- */
 export interface ExternalToolDefinition {
   name: string;
   label?: string;
   description: string;
   parameters: Record<string, unknown>; // JSON Schema
 }
-
-// --- Diff preview types (wire-safe, no CLI imports) ---
 
 export interface DiffHunkLine {
   type: "context" | "add" | "remove";
@@ -695,23 +578,17 @@ export type DiffPreview =
   | { mode: "fallback"; fileName: string; reason: string }
   | { mode: "unpreviewable"; fileName: string; reason: string };
 
-// CLI → SDK request subtypes
 export interface CanUseToolControlRequest {
   subtype: "can_use_tool";
   tool_name: string;
   input: Record<string, unknown>;
   tool_call_id: string; // Letta-specific: needed to track the tool call
-  /** TODO: Not implemented - suggestions for permission updates */
   permission_suggestions: unknown[];
-  /** TODO: Not implemented - path that triggered the permission check */
   blocked_path: string | null;
   /** Pre-computed diff previews for file-modifying tools (Write/Edit/Patch) */
   diffs?: DiffPreview[];
 }
 
-/**
- * Request to execute an external tool (CLI → SDK)
- */
 export interface ExecuteExternalToolRequest {
   subtype: "execute_external_tool";
   tool_call_id: string;
@@ -723,12 +600,10 @@ export type CliToSdkControlRequest =
   | CanUseToolControlRequest
   | ExecuteExternalToolRequest;
 
-// Combined for parsing
 export type ControlRequestBody =
   | SdkToCliControlRequest
   | CliToSdkControlRequest;
 
-// --- Control Response (bidirectional) ---
 export interface ControlResponse extends MessageEnvelope {
   type: "control_response";
   response: ControlResponseBody;
@@ -746,14 +621,10 @@ export type ControlResponseBody =
   | { subtype: "error"; request_id: string; error: string }
   | ExternalToolResultResponse;
 
-// --- can_use_tool response payloads ---
 export interface CanUseToolResponseAllow {
   behavior: "allow";
-  /** Optional user comment attached to an allow decision */
   message?: string;
-  /** Modified tool input */
   updatedInput?: Record<string, unknown> | null;
-  /** TODO: Not implemented - dynamic permission rule updates */
   updatedPermissions?: unknown[];
 }
 
@@ -778,9 +649,6 @@ export interface ExternalToolResultContent {
   mimeType?: string;
 }
 
-/**
- * External tool result response (SDK → CLI)
- */
 export interface ExternalToolResultResponse {
   subtype: "external_tool_result";
   request_id: string;
@@ -788,10 +656,6 @@ export interface ExternalToolResultResponse {
   content: ExternalToolResultContent[];
   is_error: boolean;
 }
-
-// ═══════════════════════════════════════════════════════════════
-// USER INPUT
-// ═══════════════════════════════════════════════════════════════
 
 /**
  * User input message for bidirectional communication.
@@ -801,14 +665,6 @@ export interface UserInput {
   type: "user";
   message: MessageCreate;
 }
-
-// ═══════════════════════════════════════════════════════════════
-// STATIC TRANSCRIPT SYNC
-// Emitted by the WS listen client when a remote consumer (SDK,
-// desktop app) connects or reconnects mid-session. Together they
-// allow the consumer to reconstruct the full session state without
-// polling. See listen-client.ts for the emit sequence.
-// ═══════════════════════════════════════════════════════════════
 
 /**
  * Emitted once during the static sync phase (before sync_complete).
@@ -876,13 +732,6 @@ export interface TranscriptSupplementMessage extends MessageEnvelope {
   messages: LettaMessage[];
 }
 
-// ═══════════════════════════════════════════════════════════════
-// UNION TYPE
-// ═══════════════════════════════════════════════════════════════
-
-/**
- * Union of all wire message types that can be emitted by headless.ts
- */
 export type WireMessage =
   | SystemMessage
   | ContentMessage

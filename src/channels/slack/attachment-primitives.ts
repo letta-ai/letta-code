@@ -127,7 +127,6 @@ function normalizeSlackAttachmentLike(
   };
 }
 
-/** Normalize, deduplicate, and cap the Slack files attached to one event/message. */
 export function collectSlackFiles(rawEvent: unknown): SlackFileLike[] {
   const record = asRecord(rawEvent);
   if (!record) return [];

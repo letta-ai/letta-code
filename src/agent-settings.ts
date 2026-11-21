@@ -3,7 +3,6 @@ import { isToolsetPreference } from "./tools/toolset-catalog";
 import type { ToolsetPreference } from "./tools/toolset-types";
 import type { ClientPreferences } from "./types/client-preferences";
 
-/** Per-agent settings; baseUrl is omitted for the Letta API. */
 export interface AgentSettings {
   clientPreferencesByConversation?: Record<string, ClientPreferences>;
   agentId: string;

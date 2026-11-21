@@ -120,7 +120,6 @@ export async function task_stop(
   validateRequiredParams(args, ["task_id"], "TaskStop");
   const { task_id } = args;
 
-  // Check if this is a background Task (subagent)
   const task = backgroundTasks.get(task_id);
   if (task) {
     if (task.cancelPendingWakes) return finishPendingWakeCancellation(task);
@@ -263,7 +262,6 @@ export async function task_stop(
       scheduleBackgroundTaskCleanup(task_id);
       return remote ?? { killed: true };
     }
-    // Task exists but isn't running or doesn't have abort controller
     return { killed: false };
   }
 

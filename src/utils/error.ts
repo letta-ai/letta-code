@@ -1,8 +1,4 @@
 /**
- * Error handling utilities
- */
-
-/**
  * Extract an error message without letting hostile values throw during coercion.
  */
 export function getErrorMessage(error: unknown): string {

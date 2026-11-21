@@ -179,7 +179,6 @@ export async function drainStream(
   if (abortSignal && !abortSignal.aborted) {
     abortSignal.addEventListener("abort", abortHandler, { once: true });
   } else if (abortSignal?.aborted) {
-    // Already aborted before we started
     abortedViaListener = true;
     abortStreamController(stream, "pre_aborted_signal");
   }
@@ -212,7 +211,6 @@ export async function drainStream(
         break;
       }
 
-      // Check if stream was aborted
       if (abortSignal?.aborted) {
         stopReason = "cancelled";
         markIncompleteToolsAsCancelled(buffers, true, "user_interrupt");
@@ -220,7 +218,6 @@ export async function drainStream(
         break;
       }
 
-      // Call onFirstMessage callback on the first agent response chunk
       if (
         !hasCalledFirstMessage &&
         onFirstMessage &&
@@ -232,7 +229,6 @@ export async function drainStream(
         queueMicrotask(() => onFirstMessage());
       }
 
-      // Log TTFT (time-to-first-token) when first content chunk arrives
       if (
         !hasLoggedTTFT &&
         (chunk.message_type === "reasoning_message" ||
@@ -254,7 +250,6 @@ export async function drainStream(
         terminalEofGuard.arm();
       }
 
-      // Log chunk for feedback diagnostics
       try {
         chunkLog.append(chunk);
       } catch {
@@ -397,7 +392,6 @@ export async function drainStream(
       // Silently ignore -- diagnostics should not break streaming
     }
 
-    // Clean up abort listener
     if (abortSignal) {
       abortSignal.removeEventListener("abort", abortHandler);
     }
@@ -435,7 +429,6 @@ export async function drainStream(
     queueMicrotask(refresh);
   }
 
-  // Stream has ended, check if we captured a stop reason
   if (!stopReason) {
     stopReason = "error";
   }
@@ -572,7 +565,6 @@ export async function drainStreamWithResume(
   // returned by getStreamToolContextId (which is ctx-{ts}-N, not meaningful for resume).
   const streamOtid = streamRequestContext?.otid ?? null;
 
-  // Attempt initial drain.
   // skipCancelToolsOnError=true: don't cancel tool calls on stream error here —
   // drainStreamWithResume will attempt a resume that replays tool_return_message
   // chunks. Tools are only cancelled in the failure/no-resume paths below.
@@ -872,11 +864,9 @@ export async function drainStreamWithResume(
         (originalApprovals?.length ?? 0) > 0
       ) {
         if ((result.approvals?.length ?? 0) === 0) {
-          // Case 1: full carry-over
           result.approvals = originalApprovals;
           result.approval = originalApproval;
         } else {
-          // Case 2: merge prefix args from original with suffix args from resume
           result.approvals = (result.approvals ?? []).map((resumeApproval) => {
             const orig = originalApprovals?.find(
               (a) => a.toolCallId === resumeApproval.toolCallId,
@@ -981,7 +971,6 @@ export async function drainStreamWithResume(
     markCurrentLineAsFinished(buffers);
   }
 
-  // Update duration to reflect total time (including resume attempt)
   result.apiDurationMs = performance.now() - overallStartTime;
   recordTuiPerf(`stream_lifecycle:end:${result.stopReason}`, {
     ms: result.apiDurationMs,

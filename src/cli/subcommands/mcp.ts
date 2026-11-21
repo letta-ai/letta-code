@@ -94,7 +94,6 @@ interface CatalogTool {
 
 interface ToolCatalog {
   tools: CatalogTool[];
-  /** True when hosted Letta Cloud excluded stdio-type cloud servers. */
   excludedHostedStdioServers: boolean;
   close(): Promise<void>;
 }
@@ -229,7 +228,6 @@ function redactUrl(value: string): string {
   }
 }
 
-/** Redact values that follow (or are inline with) sensitive-named flags. */
 function redactArgs(args: string[]): string[] {
   const redacted: string[] = [];
   let redactNext = false;

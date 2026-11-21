@@ -3,7 +3,6 @@ import { DEFAULT_MCP_OAUTH_CLIENT_NAME } from "@/mcp-oauth-client-name";
 
 const CALLBACK_TIMEOUT_MS = 5 * 60 * 1000;
 
-/** Accepted OAuth callback parameters. */
 export interface OAuthCallbackResult {
   code: string;
   /**

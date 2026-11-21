@@ -33,10 +33,6 @@ import {
   type SkillSource,
 } from "./skills";
 
-// ---------------------------------------------------------------------------
-// Cache layer
-// ---------------------------------------------------------------------------
-
 /**
  * In-memory cache for `buildClientSkillsPayload` results.
  *
@@ -314,10 +310,6 @@ export function buildClientSkillsUpdateReminder(
   ].join("\n");
 }
 
-// ---------------------------------------------------------------------------
-// Skill discovery helpers
-// ---------------------------------------------------------------------------
-
 function getMemorySkillsDirs(agentId?: string): string[] {
   const dirs = new Set<string>();
 
@@ -380,10 +372,6 @@ async function discoverMemorySkills(
   };
 }
 
-// ---------------------------------------------------------------------------
-// Public types
-// ---------------------------------------------------------------------------
-
 export type ClientSkill = NonNullable<
   ConversationMessageCreateParams["client_skills"]
 >[number];
@@ -407,10 +395,6 @@ export interface BuildClientSkillsPayloadResult {
   skillPathById: Record<string, string>;
   errors: SkillDiscoveryError[];
 }
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
 
 function toClientSkill(skill: Skill): ClientSkill {
   return {
@@ -674,10 +658,6 @@ export async function discoverClientSideSkills(
     sharedMemoryErrors: sharedMemoryContext.errors,
   });
 }
-
-// ---------------------------------------------------------------------------
-// Core function (with cache)
-// ---------------------------------------------------------------------------
 
 /**
  * Build `client_skills` payload for conversations.messages.create.

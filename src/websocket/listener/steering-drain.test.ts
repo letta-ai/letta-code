@@ -211,7 +211,6 @@ describe("steering drains queued inputs into the next model request", () => {
             input("steer", queuedRun),
           ]);
 
-        // The queued input rides the continuation right after the tool return.
         expect(modelRequests).toHaveLength(1);
         const request = JSON.stringify(modelRequests[0]);
         expect(request).toContain("tool-result");

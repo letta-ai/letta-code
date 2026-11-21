@@ -15,10 +15,6 @@ import {
 import type { LocalAgentRecord } from "@/backend/local/local-types";
 import { getLocalBackendStorageDir } from "@/backend/local/paths";
 
-/**
- * Read all local agent records from disk and project them to AgentState.
- * Returns an empty array if the local backend directory doesn't exist yet.
- */
 export function listLocalAgentsFromDisk(): AgentState[] {
   const storageDir = getLocalBackendStorageDir();
   const agentsDir = join(storageDir, "agents");
@@ -49,7 +45,6 @@ export function listLocalAgentsFromDisk(): AgentState[] {
     }
   }
 
-  // Sort by file mtime descending (most recently modified first)
   agents.sort((a, b) => b.mtime - a.mtime);
 
   return agents.map((a) => a.agent);

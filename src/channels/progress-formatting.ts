@@ -565,7 +565,6 @@ export function formatToolProgressDetails(
     return undefined;
   }
 
-  // Try JSON parse first (complete arguments)
   const parsedArguments = parseToolArguments(summary.argumentsText);
   if (parsedArguments) {
     if (isWebSearchTool(summary.name)) {

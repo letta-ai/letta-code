@@ -9,7 +9,6 @@ export interface TurnToolSelection {
   excludeInteractiveTools?: boolean;
 }
 
-/** Keep entries of `narrower` that `ceiling` also allows. */
 export function intersectToolAllowlists(
   ceiling: readonly string[],
   narrower: readonly string[],
@@ -56,7 +55,6 @@ export function resolveTurnToolSelection(
   };
 }
 
-/** Fill toolset fields the turn left unset from the saved conversation choice. */
 export function mergeClientToolsetFields(
   primary: ClientToolsetConfig | undefined,
   fallback: ClientToolsetConfig | undefined,

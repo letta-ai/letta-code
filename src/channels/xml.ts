@@ -1,10 +1,3 @@
-/**
- * XML formatting for channel notifications.
- *
- * Produces structured XML that the agent receives as message content.
- * Follows the same escaping patterns used in taskNotifications.ts.
- */
-
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ChannelUserMention } from "@/channels/message-references";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
@@ -25,9 +18,6 @@ export function escapeXmlText(text: string): string {
     .replace(/>/g, "&gt;");
 }
 
-/**
- * Escape XML attribute values, including quotes.
- */
 function escapeXmlAttribute(text: string): string {
   return escapeXmlText(text).replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }

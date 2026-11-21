@@ -1,4 +1,3 @@
-/** Types shared by the Claude Code stream session and its steering logic. */
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { SubagentResult } from "@/agent/subagents";
 import type { ExternalTraceContext } from "./external-llm-trace-session";

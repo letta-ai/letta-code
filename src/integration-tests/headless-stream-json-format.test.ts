@@ -11,11 +11,6 @@ import {
   formatCapturedOutput,
 } from "./process-diagnostics";
 
-/**
- * Tests for stream-json output format.
- * These verify the message structure matches the wire format types.
- */
-
 async function runHeadlessCommandOnce(
   prompt: string,
   extraArgs: string[] = [],
@@ -60,7 +55,6 @@ async function runHeadlessCommandOnce(
       stderr += data.toString();
     });
 
-    // Safety timeout for CI
     const timeout = setTimeout(() => {
       proc.kill();
       reject(
@@ -93,7 +87,6 @@ async function runHeadlessCommandOnce(
           ),
         );
       } else {
-        // Parse line-delimited JSON
         const lines = stdout
           .split("\n")
           .filter((line) => line.trim())
@@ -160,7 +153,6 @@ async function runHeadlessCommand(
   }
 }
 
-// Prescriptive prompt to ensure single-step response without tool use
 const FAST_PROMPT =
   "This is a test. Do not call any tools. Just respond with the word OK and nothing else.";
 
@@ -202,7 +194,6 @@ describe("stream-json format", () => {
     async () => {
       const lines = await runHeadlessCommand(FAST_PROMPT);
 
-      // Find a message line
       const messageLine = lines.find((line) => {
         const obj = JSON.parse(line);
         return obj.type === "message";
@@ -308,7 +299,6 @@ describe("stream-json format", () => {
     async () => {
       const lines = await runHeadlessCommand(FAST_PROMPT);
 
-      // Should have message lines, not stream_event
       const messageLines = lines.filter((line) => {
         const obj = JSON.parse(line);
         return obj.type === "message";
@@ -327,7 +317,6 @@ describe("stream-json format", () => {
         expect(streamEventLines.length).toBe(0);
       }
 
-      // Always should have a result
       const resultLine = lines.find((line) => {
         const obj = JSON.parse(line);
         return obj.type === "result";

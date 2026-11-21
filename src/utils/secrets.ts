@@ -1,5 +1,4 @@
 /// <reference types="bun-types" />
-// src/utils/secrets.ts
 // Secure storage utilities for tokens using Bun's secrets API with Node.js fallback
 
 import { debugWarn } from "./debug.js";
@@ -142,9 +141,6 @@ export interface SecureTokens {
   refreshToken?: string;
 }
 
-/**
- * Store API key in system secrets
- */
 export async function setApiKey(apiKey: string): Promise<void> {
   if (!secrets) {
     // When secrets unavailable, let the settings manager handle fallback
@@ -154,16 +150,10 @@ export async function setApiKey(apiKey: string): Promise<void> {
   await setSecretValue(API_KEY_NAME, apiKey);
 }
 
-/**
- * Retrieve API key from system secrets
- */
 export async function getApiKey(): Promise<string | null> {
   return getSecretValue(API_KEY_NAME, "API key");
 }
 
-/**
- * Store refresh token in system secrets
- */
 export async function setRefreshToken(refreshToken: string): Promise<void> {
   if (!secrets) {
     // When secrets unavailable, let the settings manager handle fallback
@@ -173,16 +163,10 @@ export async function setRefreshToken(refreshToken: string): Promise<void> {
   await setSecretValue(REFRESH_TOKEN_NAME, refreshToken);
 }
 
-/**
- * Retrieve refresh token from system secrets
- */
 export async function getRefreshToken(): Promise<string | null> {
   return getSecretValue(REFRESH_TOKEN_NAME, "refresh token");
 }
 
-/**
- * Get both tokens from secrets
- */
 export async function getSecureTokens(): Promise<SecureTokens> {
   const [apiKey, refreshToken] = await Promise.allSettled([
     getApiKey(),
@@ -199,9 +183,6 @@ export async function getSecureTokens(): Promise<SecureTokens> {
   };
 }
 
-/**
- * Store both tokens in secrets
- */
 export async function setSecureTokens(tokens: SecureTokens): Promise<void> {
   const promises: Promise<void>[] = [];
 
@@ -218,9 +199,6 @@ export async function setSecureTokens(tokens: SecureTokens): Promise<void> {
   }
 }
 
-/**
- * Remove API key from system secrets
- */
 export async function deleteApiKey(): Promise<void> {
   if (secrets) {
     try {
@@ -238,9 +216,6 @@ export async function deleteApiKey(): Promise<void> {
   // No action needed here
 }
 
-/**
- * Remove refresh token from system secrets
- */
 export async function deleteRefreshToken(): Promise<void> {
   if (secrets) {
     try {
@@ -258,9 +233,6 @@ export async function deleteRefreshToken(): Promise<void> {
   // No action needed here
 }
 
-/**
- * Remove all tokens from system secrets
- */
 export async function deleteSecureTokens(): Promise<void> {
   await Promise.allSettled([deleteApiKey(), deleteRefreshToken()]);
 }

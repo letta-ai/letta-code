@@ -193,7 +193,6 @@ export async function runTeleportSubcommand(
       return 0;
     }
 
-    // cloud and <computer> both need a valid session
     const session = resolveTeleportSession(
       process.env,
       (

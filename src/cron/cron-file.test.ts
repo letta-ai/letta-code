@@ -32,8 +32,6 @@ import {
 } from "@/cron/cron-file";
 import { __testOverridePidReuseProbe } from "@/cron/process-identity";
 
-// ── Test setup ──────────────────────────────────────────────────────
-
 const TEST_DIR = path.join(import.meta.dir, "__cron_test_tmp__");
 const _CRON_PATH = path.join(TEST_DIR, "crons.json");
 const _LOCK_PATH = path.join(TEST_DIR, "crons.lock");
@@ -46,15 +44,10 @@ const origConfigDir = process.env.LETTA_CONFIG_DIR;
 const origXdg = process.env.XDG_CONFIG_HOME;
 
 beforeEach(() => {
-  // Point LETTA_HOME to test dir so cronFile uses our temp path
   if (existsSync(TEST_DIR)) {
     rmSync(TEST_DIR, { recursive: true });
   }
   mkdirSync(TEST_DIR, { recursive: true });
-  // Note: cronFile.ts reads from ~/.letta/crons.json.
-  // For unit tests we need to test the pure logic functions.
-  // We'll test addTask/listTasks/deleteTask through the public API
-  // by setting LETTA_HOME.
   process.env.LETTA_HOME = TEST_DIR;
   delete process.env.LETTA_CONFIG_DIR;
 });
@@ -81,8 +74,6 @@ test("product config root takes precedence over legacy LETTA_HOME", () => {
 
   expect(getCronFilePath()).toBe(path.join(productConfigDir, "crons.json"));
 });
-
-// ── Helper ──────────────────────────────────────────────────────────
 
 function makeInput(overrides: Partial<AddTaskInput> = {}): AddTaskInput {
   return {
@@ -147,8 +138,6 @@ function simulateLegacyClaimSchedulerLease(): string {
     return token;
   });
 }
-
-// ── Tests ───────────────────────────────────────────────────────────
 
 describe("addTask", () => {
   test("creates a new recurring task", () => {
@@ -241,7 +230,6 @@ describe("listTasks", () => {
         scheduled_for: new Date(Date.now() + 60000),
       }),
     );
-    // Mark second as cancelled
     updateTask(t2.task.id, (t) => {
       t.status = "cancelled";
     });
@@ -924,13 +912,10 @@ describe("withLock", () => {
   });
 });
 
-// ── computeJitter ─────────────────────────────────────────────────
-
 describe("computeJitter", () => {
   const now = new Date("2026-03-26T00:00:00Z");
 
   test("recurring jitter is always < 60s", () => {
-    // Hourly cron: period=3600s, 10% = 360s, but cap at 59999ms
     const jitter = computeJitter(
       "test-hourly-task",
       "0 * * * *",
@@ -943,7 +928,6 @@ describe("computeJitter", () => {
   });
 
   test("recurring jitter for daily cron is < 60s", () => {
-    // Daily: period=86400s, 10% = 8640s, but cap at 59999ms
     const jitter = computeJitter(
       "test-daily-task",
       "30 9 * * *",
@@ -956,7 +940,6 @@ describe("computeJitter", () => {
   });
 
   test("recurring jitter for frequent cron stays small", () => {
-    // Every 5 min: period=300s, 10% = 30s < 60s → no cap needed
     const jitter = computeJitter(
       "test-5m-task",
       "*/5 * * * *",

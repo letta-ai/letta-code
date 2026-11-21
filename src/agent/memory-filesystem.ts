@@ -1,12 +1,3 @@
-/**
- * Memory filesystem helpers.
- *
- * With git-backed memory, most sync/hash logic is removed.
- * This module retains: directory helpers, tree rendering, and
- * the shared memfs initialization logic used by both interactive
- * and headless code paths.
- */
-
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -45,8 +36,6 @@ export interface MemoryTreeRenderOptions {
   maxChars?: number;
   maxChildrenPerDir?: number;
 }
-
-// ----- Directory helpers -----
 
 export function getMemoryFilesystemRoot(
   agentId: string,
@@ -159,10 +148,6 @@ export interface MemfsCreateBodyLike {
   memory_blocks?: CreateBlock[] | null;
 }
 
-/**
- * Stamp the git-memory-enabled tag onto a create-agent body (pure helper).
- * Returns the body unchanged when the tag is already present.
- */
 export function stampMemfsTagOnCreateBody<T extends MemfsCreateBodyLike>(
   body: T,
   gitMemoryEnabledTag: string,
@@ -172,7 +157,6 @@ export function stampMemfsTagOnCreateBody<T extends MemfsCreateBodyLike>(
   return { ...body, tags: [...tags, gitMemoryEnabledTag] };
 }
 
-/** Add the root marker that requests MemFS v2 repository initialization. */
 export function stampRootMemoryOnCreateBody<T extends MemfsCreateBodyLike>(
   body: T,
 ): T {
@@ -305,19 +289,11 @@ export async function ensureLocalMemfsCheckout(
   await cloneMemoryRepo(agentId);
 }
 
-// ----- Path helpers -----
-
 export function labelFromRelativePath(relativePath: string): string {
   const normalized = relativePath.replace(/\\/g, "/");
   return normalized.replace(/\.md$/, "");
 }
 
-// ----- Tree rendering -----
-
-/**
- * Render a tree visualization of the memory filesystem.
- * Takes system labels (under system/) and detached labels (at root).
- */
 export function renderMemoryFilesystemTree(
   systemLabels: string[],
   detachedLabels: string[],
@@ -462,12 +438,8 @@ export function renderMemoryFilesystemTree(
   return lines.join("\n");
 }
 
-// ----- Shared memfs initialization -----
-
 export interface ApplyMemfsFlagsResult {
-  /** Whether memfs was enabled or unchanged */
   action: "enabled" | "unchanged";
-  /** Path to the memory directory (when enabled) */
   memoryDir?: string;
   /** Summary from git pull (when pullOnExistingRepo is true and repo already existed) */
   pullSummary?: string;
@@ -590,7 +562,6 @@ export async function applyMemfsFlags(
 
   const isEnabled = enabling || localMemfsEnabled;
 
-  // 3. Add git tag + clone/pull repo.
   let pullSummary: string | undefined;
   if (isEnabled) {
     const { addGitMemoryTag, isGitRepo, cloneMemoryRepo, pullMemory } =
@@ -641,9 +612,6 @@ export async function applyMemfsFlags(
   };
 }
 
-/**
- * Whether the current server is the Letta API (or local memfs testing is enabled).
- */
 export async function isLettaCloud(): Promise<boolean> {
   const { getServerUrl } = await import("@/backend/api/server-url");
   const serverUrl = getServerUrl();
@@ -664,9 +632,6 @@ function getServerHostLabel(serverUrl: string): string {
   }
 }
 
-/**
- * Whether the MemFS sync endpoint is backed by the Letta API.
- */
 export async function isLettaMemfsServer(): Promise<boolean> {
   const { getMemfsServerUrl } = await import("@/backend/api/memfs-git-proxy");
   const memfsServerUrl = getMemfsServerUrl();

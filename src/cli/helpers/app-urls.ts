@@ -8,9 +8,6 @@ export function isLocalAgentId(agentId: string): boolean {
   return isLocalAgentIdShared(agentId);
 }
 
-/**
- * Build a chat URL for an agent, with optional conversation and extra query params.
- */
 export function buildChatUrl(
   agentId: string,
   options?: {

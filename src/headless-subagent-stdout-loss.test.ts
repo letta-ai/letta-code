@@ -52,7 +52,6 @@ describe("headless subagent stdout loss", () => {
     expect(summary.spawnArgvs, formatSummary(summary)).toHaveLength(2);
     // The retry must preserve the original spawn arguments verbatim.
     expect(summary.spawnArgvs[1]).toEqual(summary.spawnArgvs[0]);
-    // The recovered report reaches the background task transcript.
     expect(summary.taskOutput, formatSummary(summary)).toContain(
       "SUBAGENT-REPORT-OK",
     );

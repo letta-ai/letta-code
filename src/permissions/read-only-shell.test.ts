@@ -602,7 +602,6 @@ describe("isReadOnlyShellCommand", () => {
       expect(isReadOnlyShellCommand("git branch --list 'feature/*'")).toBe(
         true,
       );
-      // Filter flags combined with listing flags
       expect(isReadOnlyShellCommand("git branch -a --contains 63dd7483")).toBe(
         true,
       );

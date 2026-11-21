@@ -198,7 +198,6 @@ describe("MCP originator keepalive", () => {
     await runMcpOriginatorKeepaliveTickForTests("run-a");
     await runMcpOriginatorKeepaliveTickForTests("run-a");
     expect(hasMcpOriginatorKeepaliveForTests("run-a")).toBe(true);
-    // Fresh delivery: the failure counter resets.
     recordMcpOriginatorDelivery({
       mcp_originator_token: "mst_b",
       super_run_id: "run-a",
@@ -236,7 +235,6 @@ describe("round-8: hard bound and stale-error budget guard (evil-shub round-8 P1
     });
     expect(hasMcpOriginatorKeepaliveForTests("run-a")).toBe(true);
     await runMcpOriginatorKeepaliveTickForTests("run-a"); // must resolve, not hang
-    // Two more hung ticks reach MAX_CONSECUTIVE_FAILURES and stop renewal…
     await runMcpOriginatorKeepaliveTickForTests("run-a");
     await runMcpOriginatorKeepaliveTickForTests("run-a");
     expect(hasMcpOriginatorKeepaliveForTests("run-a")).toBe(false);
@@ -280,10 +278,8 @@ describe("round-8: hard bound and stale-error budget guard (evil-shub round-8 P1
       release?.(new Error("network down"));
       await tick;
     }
-    // The replacement kept its fresh budget: renewal is still registered…
     expect(hasMcpOriginatorKeepaliveForTests("run-a")).toBe(true);
     expect(getMcpOriginatorToken("run-a")).toBe("mst_b");
-    // …and a clean verify of the replacement resets the (untouched) budget.
     await runMcpOriginatorKeepaliveTickForTests("run-a");
     expect(hasMcpOriginatorKeepaliveForTests("run-a")).toBe(true);
   });

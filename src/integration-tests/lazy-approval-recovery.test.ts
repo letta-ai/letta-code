@@ -25,11 +25,9 @@ import {
  * 2. Or by modifying headless mode to not drop messages during permission wait
  */
 
-// Prompt that will trigger a Bash tool call requiring approval
 const BASH_TRIGGER_PROMPT =
   "Run this exact bash command: echo test123. Do not use any other tools.";
 
-// Second message to send while approval is pending
 const INTERRUPT_MESSAGE =
   "Actually, just say OK instead. Do not call any tools.";
 
@@ -44,10 +42,6 @@ interface StreamMessage {
   [key: string]: any;
 }
 
-/**
- * Run bidirectional test with custom message handling.
- * Allows sending messages at specific points in the flow.
- */
 async function runLazyRecoveryTest(timeoutMs = 300000): Promise<{
   messages: StreamMessage[];
   success: boolean;
@@ -149,7 +143,6 @@ async function runLazyRecoveryTest(timeoutMs = 300000): Promise<{
         const msg: StreamMessage = JSON.parse(line);
         messages.push(msg);
 
-        // Debug output
         if (process.env.DEBUG_TEST) {
           console.log("MSG:", JSON.stringify(msg, null, 2));
         }
@@ -170,7 +163,6 @@ async function runLazyRecoveryTest(timeoutMs = 300000): Promise<{
               );
             }
 
-            // Send the interrupt message while approval is pending, then deny.
             if (!interruptSent) {
               interruptSent = true;
               const userMsg = JSON.stringify({
@@ -196,7 +188,6 @@ async function runLazyRecoveryTest(timeoutMs = 300000): Promise<{
           return;
         }
 
-        // Step 1: Wait for init, then send bash trigger prompt
         if (msg.type === "system" && msg.subtype === "init" && !initReceived) {
           initReceived = true;
           sendPrompt();
@@ -234,7 +225,6 @@ async function runLazyRecoveryTest(timeoutMs = 300000): Promise<{
           return;
         }
 
-        // Track recovery messages - this is the key signal that lazy recovery worked
         if (
           msg.type === "recovery" &&
           msg.recovery_type === "approval_pending"
@@ -242,24 +232,20 @@ async function runLazyRecoveryTest(timeoutMs = 300000): Promise<{
           errorSeen = true; // reusing this flag to mean "recovery message seen"
         }
 
-        // Also track raw errors (shouldn't see these if recovery works properly)
         if (
           msg.type === "error" ||
           (msg.type === "message" && msg.message_type === "error_message")
         ) {
           const detail = msg.detail || msg.message || "";
           if (detail.toLowerCase().includes("cannot send a new message")) {
-            // Raw error leaked through - recovery may have failed
             console.log(
               "WARNING: Raw CONFLICT error seen (recovery may have failed)",
             );
           }
         }
 
-        // Track results and complete once we prove the pending-approval flow unblocks.
         if (msg.type === "result") {
           resultCount++;
-          // If model responded without calling a tool, retry prompt (up to 3 attempts)
           if (!approvalSeen && promptAttempts < 3) {
             sendPrompt();
             return;
@@ -279,9 +265,7 @@ async function runLazyRecoveryTest(timeoutMs = 300000): Promise<{
             finish(true);
           }
         }
-      } catch {
-        // Not valid JSON, ignore
-      }
+      } catch {}
     };
 
     proc.stdout?.on("data", (data) => {
@@ -301,7 +285,6 @@ async function runLazyRecoveryTest(timeoutMs = 300000): Promise<{
 
     proc.on("close", (_code) => {
       clearTimeout(timeout);
-      // Process any remaining buffer
       if (buffer.trim()) {
         processLine(buffer);
       }
@@ -326,7 +309,6 @@ describe("lazy approval recovery", () => {
       result = await runLazyRecoveryTest();
     }
 
-    // Log messages for debugging if test fails
     if (!result.success) {
       console.log("All messages received:");
       for (const msg of result.messages) {
@@ -334,8 +316,6 @@ describe("lazy approval recovery", () => {
       }
     }
 
-    // We should have seen at least one tool invocation (tool_call_message) or a
-    // real approval prompt (control_request) — i.e. the tool flow was entered.
     const approvalSignal = result.messages.find(
       (m) =>
         (m.type === "message" && m.message_type === "tool_call_message") ||
@@ -343,17 +323,13 @@ describe("lazy approval recovery", () => {
     );
     expect(approvalSignal).toBeDefined();
 
-    // The test should complete successfully
     expect(result.success).toBe(true);
 
-    // Count results - we should get at least 1 (the second message should always complete)
     const resultCount = result.messages.filter(
       (m) => m.type === "result",
     ).length;
     expect(resultCount).toBeGreaterThanOrEqual(1);
 
-    // KEY ASSERTION: Check if we saw the recovery message
-    // This proves the lazy recovery mechanism was triggered
     const recoveryMessage = result.messages.find(
       (m) => m.type === "recovery" && m.recovery_type === "approval_pending",
     );

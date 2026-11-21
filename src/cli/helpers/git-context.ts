@@ -149,10 +149,6 @@ export function gatherGitContextSnapshot(
   };
 }
 
-// ─────────────────────────────────────────────────
-//  Lightweight git context for DeviceStatus
-// ─────────────────────────────────────────────────
-
 export interface LightGitContext {
   branch: string | null;
   recent_branches: string[];

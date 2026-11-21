@@ -97,7 +97,6 @@ describe("completePairing", () => {
 
     const result = completePairing("telegram", code, "agent-a", "conv-1");
 
-    // Should report failure with rollback
     expect(result.success).toBe(false);
     expect(result.error).toContain("rolled back");
     expect(result.error).toContain("EACCES");
@@ -114,7 +113,6 @@ describe("completePairing", () => {
   test("restores pre-existing route when rebind fails", () => {
     new ChannelRegistry();
 
-    // Set up an existing route for 50
     addRoute("telegram", {
       chatId: "50",
       agentId: "agent-old",
@@ -123,15 +121,12 @@ describe("completePairing", () => {
       createdAt: "2026-01-01T00:00:00Z",
     });
 
-    // Verify it exists
     const before = getRoute("telegram", "50");
     expect(before).not.toBeNull();
     expect(before?.agentId).toBe("agent-old");
 
-    // Create a pairing for the same chat
     const code = createPairingCode("telegram", "user-2", "50", "jane");
 
-    // Make saveRoutes throw on the rebind attempt
     __testOverrideSaveRoutes(() => {
       throw new Error("ENOSPC: no space left");
     });

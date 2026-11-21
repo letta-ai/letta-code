@@ -318,7 +318,6 @@ describe("listener auth", () => {
       tokenExpiresAt: expect.any(Number),
     });
     expect(updateSettingsMock).not.toHaveBeenCalled();
-    // Turn-side readers in this process now see the organization sign-in.
     expect(peekOrgAccessToken()).toBe("org-access-token");
     expect(await getOrgAccessToken()).toBe("org-access-token");
   });

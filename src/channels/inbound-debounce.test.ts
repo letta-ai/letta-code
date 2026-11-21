@@ -224,7 +224,6 @@ describe("createInboundDebouncer", () => {
       },
     });
 
-    // Fill up the two slots with buffered flushes (no timer fires yet).
     await debouncer.enqueue({ key: "a", value: "a1" });
     await debouncer.enqueue({ key: "b", value: "b1" });
     expect(flushed).toEqual([]);
@@ -253,7 +252,6 @@ describe("createInboundDebouncer", () => {
     await debouncer.enqueue({ key: "k", value: "boom" });
     await sleep(30);
     expect(errors).toEqual(["boom"]);
-    // Another item for the same key still flushes after the failure.
     await debouncer.enqueue({ key: "k", value: "ok" });
     await sleep(30);
     expect(flushed).toEqual([["ok"]]);

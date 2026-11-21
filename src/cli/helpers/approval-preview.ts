@@ -1,8 +1,5 @@
 import stringWidth from "string-width";
 
-/**
- * Terminal rows `lines` take when wrapped at `width` columns.
- */
 export function countPreviewRows(lines: string[], width: number): number {
   const wrapWidth = Math.max(1, width);
   return lines.reduce(

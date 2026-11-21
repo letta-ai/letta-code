@@ -1,5 +1,3 @@
-// src/cli/app/useBashHandlers.ts
-
 import { type Dispatch, type MutableRefObject, useCallback } from "react";
 import { appendStreamingOutput, type Buffers } from "@/cli/helpers/accumulator";
 import { INTERRUPTED_BY_USER } from "@/constants";
@@ -44,11 +42,9 @@ export function useBashHandlers(ctx: BashHandlersContext) {
       const cmdId = uid("bash");
       const startTime = Date.now();
 
-      // Set up state for input locking and cancellation
       setBashRunning(true);
       bashAbortControllerRef.current = new AbortController();
 
-      // Add running bash_command line with streaming state
       buffersRef.current.byId.set(cmdId, {
         kind: "bash_command",
         id: cmdId,
@@ -67,16 +63,13 @@ export function useBashHandlers(ctx: BashHandlersContext) {
       refreshDerived();
 
       try {
-        // Expand aliases before running
         const { expandAliases } = await import("@/cli/helpers/shell-aliases");
         const expanded = expandAliases(command);
 
-        // If command uses a shell function, prepend the function definition
         const finalCommand = expanded.functionDef
           ? `${expanded.functionDef}\n${expanded.command}`
           : expanded.command;
 
-        // Use spawnCommand for actual execution
         const { spawnCommand } = await import("@/tools/impl/bash.js");
         const { getShellEnv } = await import("@/tools/impl/shell-env.js");
 
@@ -103,11 +96,9 @@ export function useBashHandlers(ctx: BashHandlersContext) {
           },
         });
 
-        // Combine stdout and stderr for output
         const output = (result.stdout + result.stderr).trim();
         const success = result.exitCode === 0;
 
-        // Update line with output, clear streaming state
         const displayOutput =
           output ||
           (success
@@ -123,13 +114,11 @@ export function useBashHandlers(ctx: BashHandlersContext) {
           streaming: undefined,
         });
 
-        // Cache for next user message
         bashCommandCacheRef.current.push({
           input: command,
           output: displayOutput,
         });
       } catch (error: unknown) {
-        // Check if this was an abort (user pressed ESC)
         const err = error as { name?: string; code?: string; message?: string };
         const isAbort =
           bashAbortControllerRef.current?.signal.aborted ||
@@ -141,7 +130,6 @@ export function useBashHandlers(ctx: BashHandlersContext) {
         if (isAbort) {
           errOutput = INTERRUPTED_BY_USER;
         } else {
-          // Handle command errors (timeout, other failures)
           errOutput =
             error instanceof Error
               ? (error as { stderr?: string; stdout?: string }).stderr ||
@@ -160,10 +148,8 @@ export function useBashHandlers(ctx: BashHandlersContext) {
           streaming: undefined,
         });
 
-        // Still cache for next user message (even failures are visible to agent)
         bashCommandCacheRef.current.push({ input: command, output: errOutput });
       } finally {
-        // Clean up state
         setBashRunning(false);
         bashAbortControllerRef.current = null;
       }

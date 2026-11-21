@@ -5,7 +5,6 @@ import { readUtf8TextStrict } from "@/utils/text-files";
 
 const BASE64_PATTERN = /^[A-Za-z0-9+/]*={0,2}$/;
 
-/** Resolves a leading `~/` against the listener's home directory. */
 export function resolveBinaryWritePath(target: string): string {
   if (target === "~" || target.startsWith("~/")) {
     return path.join(process.env.HOME || homedir(), target.slice(1));
@@ -75,7 +74,6 @@ export async function writeUtf8FileViaTools(
     // New file -- use write so directories are created as needed.
     await write({ file_path: filePath, content });
   } else {
-    // Existing file -- use edit for a full-content replacement.
     // Normalise line endings before comparing to avoid a spurious
     // "no changes" error when the only difference is CRLF vs LF.
     const normalizedCurrent = currentContent.replace(/\r\n/g, "\n");

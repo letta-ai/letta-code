@@ -283,7 +283,6 @@ export async function resolveSubagentModel(options: {
     }
   };
 
-  // Free-tier default for subagents: auto-fast, when available.
   const freeTierDefaultHandle = isFreeTier ? resolveModel("auto-fast") : null;
   if (freeTierDefaultHandle && (await isAvailable(freeTierDefaultHandle))) {
     return freeTierDefaultHandle;

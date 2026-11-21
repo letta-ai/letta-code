@@ -275,7 +275,6 @@ async function executeScript(
     return toolInfo;
   }
 
-  /** `[{ name, description }]` for every tool callable through `tools`. */
   async function listTools(): Promise<
     Array<{ name: string; description: string }>
   > {
@@ -285,7 +284,6 @@ async function executeScript(
     }));
   }
 
-  /** `{ name, description, inputSchema }`, or undefined for an unknown tool. */
   async function describeTool(
     name: unknown,
   ): Promise<WorkflowToolInfo | undefined> {

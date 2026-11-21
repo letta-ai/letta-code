@@ -122,10 +122,8 @@ export async function discoverFallbackRunIdForResume(
   }> = [];
 
   if (ctx.conversationId === "default") {
-    // Default conversation lookup by conversation id first.
     lookupQueries.push({ conversation_id: ctx.resolvedConversationId });
   } else {
-    // Named conversation: first use the explicit conversation id.
     lookupQueries.push({ conversation_id: ctx.conversationId });
 
     // Keep resolved route as backup only when it differs.

@@ -158,7 +158,6 @@ describe("buildAgentConfigReport", () => {
   });
 });
 
-// Real CLI subprocesses against a disk-backed local backend; no inference.
 describe("agents create --body", () => {
   const root = resolve(import.meta.dir, "../../..");
   let home: string;

@@ -743,7 +743,6 @@ export function configureMcpOriginatorAuthorityTtlForTests(
   recordTtlMs = ttlMs ?? AUTHORITY_RECORD_TTL_MS;
 }
 
-/** Test-only: drop every record and forget any loaded state. */
 export function resetMcpOriginatorAuthority(): void {
   recordsBySuperRunId.clear();
   pendingRetirements.clear();
@@ -754,7 +753,6 @@ export function resetMcpOriginatorAuthority(): void {
   }
 }
 
-/** Test-only diagnostics. */
 export function readMcpOriginatorAuthorityForTests(runId: string):
   | {
       floor?: number;

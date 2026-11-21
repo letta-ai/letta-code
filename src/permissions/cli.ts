@@ -1,5 +1,3 @@
-// src/permissions/cli.ts
-// CLI-level permission overrides from command-line flags
 // These take precedence over settings.json but not over enterprise managed policies
 
 import { getRuntimeContext } from "@/runtime-context";
@@ -61,7 +59,6 @@ export class CliPermissions {
     let current = "";
     let depth = 0;
 
-    // Parse comma-separated list, respecting parentheses
     for (let i = 0; i < toolsString.length; i++) {
       const char = toolsString[i];
 
@@ -72,7 +69,6 @@ export class CliPermissions {
         depth--;
         current += char;
       } else if (char === "," && depth === 0) {
-        // Only split on commas outside parentheses
         if (current.trim()) {
           tools.push(this.normalizePattern(current.trim()));
         }
@@ -82,7 +78,6 @@ export class CliPermissions {
       }
     }
 
-    // Add the last tool
     if (current.trim()) {
       tools.push(this.normalizePattern(current.trim()));
     }
@@ -99,7 +94,6 @@ export class CliPermissions {
   private normalizePattern(pattern: string): string {
     const trimmed = pattern.trim();
 
-    // If pattern has parentheses, keep as-is
     if (trimmed.includes("(")) {
       return normalizePermissionRule(trimmed);
     }
@@ -116,7 +110,6 @@ export class CliPermissions {
       return `${canonicalTool}(**)`;
     }
 
-    // All other bare tool names stay as-is
     return canonicalTool;
   }
 

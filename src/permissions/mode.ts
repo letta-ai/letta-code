@@ -1,15 +1,11 @@
-// Permission mode management (unrestricted, standard, acceptEdits, strict)
-
 export type PermissionMode =
   | "standard"
   | "acceptEdits"
   | "unrestricted"
   | "strict";
 
-/** The default starting permission mode. */
 export const DEFAULT_PERMISSION_MODE: PermissionMode = "unrestricted";
 
-/** All valid current permission mode values. */
 export const VALID_PERMISSION_MODES: readonly PermissionMode[] = [
   "unrestricted",
   "standard",
@@ -78,16 +74,10 @@ class PermissionModeManager {
     setGlobalMode(value);
   }
 
-  /**
-   * Set the permission mode for this session
-   */
   setMode(mode: PermissionMode): void {
     this.currentMode = mode;
   }
 
-  /**
-   * Get the current permission mode
-   */
   getMode(): PermissionMode {
     return this.currentMode;
   }
@@ -120,7 +110,6 @@ class PermissionModeManager {
         return null;
 
       case "standard":
-        // No mode overrides, use normal permission flow
         return null;
 
       case "strict":

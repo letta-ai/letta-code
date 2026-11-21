@@ -5,7 +5,6 @@ import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { MarkdownDisplay } from "./MarkdownDisplay.js";
 import { Text } from "./Text";
 
-// Helper function to normalize text - copied from old codebase
 // NOTE: Less aggressive than before to preserve spacing when content is split across chunks
 const normalize = (s: string) =>
   s

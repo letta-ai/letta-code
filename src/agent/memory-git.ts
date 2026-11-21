@@ -82,12 +82,10 @@ export interface CommitMemoryWriteResult {
   committed: boolean;
   sha?: string;
 }
-/** Get the agent root directory below the active product config root. */
 export function getAgentRootDir(agentId: string): string {
   return join(resolveGlobalConfigDir(), "agents", agentId);
 }
 
-/** Get the git repo directory for memory. */
 export function getMemoryRepoDir(agentId: string): string {
   return join(getAgentRootDir(agentId), "memory");
 }

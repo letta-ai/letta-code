@@ -1,6 +1,3 @@
-// Image resizing utilities for clipboard paste
-// Follows Codex CLI's approach (codex-rs/utils/image/src/lib.rs)
-
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";

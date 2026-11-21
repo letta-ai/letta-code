@@ -2,7 +2,6 @@ import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs"
 import { shouldRetryPostStreamRunError } from "@/agent/approval-recovery";
 import { getBackend } from "@/backend";
 
-// Check if error is retriable based on stop reason and run metadata
 export async function isRetriableError(
   stopReason: StopReasonType,
   lastRunId: string | null | undefined,
@@ -43,7 +42,6 @@ export async function isRetriableError(
           }
         | undefined;
 
-      // Check for llm_error at top level or nested (handles error.error nesting)
       const errorType = metaError?.error_type ?? metaError?.error?.error_type;
       const detail = metaError?.detail ?? metaError?.error?.detail;
       const retryable = metaError?.retryable ?? metaError?.error?.retryable;

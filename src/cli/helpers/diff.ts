@@ -160,12 +160,10 @@ export function parsePatchToAdvancedDiff(
 
   for (const line of patchLines) {
     if (line.startsWith("@@")) {
-      // Start new hunk - try to parse line numbers from @@ -old,count +new,count @@
       if (currentHunk && currentHunk.lines.length > 0) {
         hunks.push(currentHunk);
       }
 
-      // Try standard unified diff format: @@ -10,5 +10,7 @@
       const match = line.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
       currentHunk = {
         oldStart: match?.[1] ? parseInt(match[1], 10) : oldLine,
@@ -176,13 +174,10 @@ export function parsePatchToAdvancedDiff(
     }
 
     if (!currentHunk) {
-      // Create implicit first hunk if no @@ header seen yet
       currentHunk = { oldStart: 1, newStart: 1, lines: [] };
     }
 
-    // Parse diff line (prefix + content)
     if (line.length === 0) {
-      // Empty line - treat as context
       currentHunk.lines.push({ raw: " " });
       oldLine++;
       newLine++;

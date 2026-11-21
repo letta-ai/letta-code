@@ -53,8 +53,6 @@ import {
   resolveTaskName,
 } from "./cron-task-ref";
 
-// ── Usage ───────────────────────────────────────────────────────────
-
 function printUsage(): void {
   console.log(
     `
@@ -95,8 +93,6 @@ Output is JSON.
   );
 }
 
-// ── Args ────────────────────────────────────────────────────────────
-
 const CRON_OPTIONS = {
   help: { type: "boolean", short: "h" },
   name: { type: "string" },
@@ -125,8 +121,6 @@ function parseCronArgs(argv: string[]) {
     allowPositionals: true,
   });
 }
-
-// ── Cloud output mapping ────────────────────────────────────────────
 
 function extractPromptFromCloudSchedule(
   schedule: CloudSchedule,
@@ -158,8 +152,6 @@ function formatCloudScheduleOutput(
   };
 }
 
-// ── Handlers ────────────────────────────────────────────────────────
-
 async function handleAdd(values: CronArgValues): Promise<number> {
   const name = values.name;
   if (!name || typeof name !== "string") {
@@ -188,7 +180,6 @@ async function handleAdd(values: CronArgValues): Promise<number> {
   const conversationId = resolveCronAddConversationTarget(values.conversation);
   if (conversationId === null) return 1;
 
-  // Determine schedule type
   const everyValue = values.every;
   const atValue = values.at;
   const cronValue = values.cron;
@@ -671,8 +662,6 @@ async function handleDeleteAll(values: CronArgValues): Promise<number> {
   );
   return 0;
 }
-
-// ── Entry ───────────────────────────────────────────────────────────
 
 export async function runCronSubcommand(argv: string[]): Promise<number> {
   let parsed: ReturnType<typeof parseCronArgs>;

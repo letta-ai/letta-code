@@ -90,9 +90,7 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 40));
 
 interface Observed {
   value: string;
-  /** Caret offset the input reported to the parent (`onCursorMove`). */
   caret: number | null;
-  /** Caret offset actually drawn in the last frame. */
   renderedCaret: number | null;
 }
 
@@ -114,10 +112,6 @@ function Harness({ observed }: { observed: Observed }) {
   );
 }
 
-/**
- * Renders the real composer input under Ink and feeds `groups` of stdin reads,
- * one group per tick. Returns the parent-observed value and caret.
- */
 async function typeInReads(groups: string[][]): Promise<Observed> {
   const observed: Observed = { value: "", caret: null, renderedCaret: null };
   const stdin = new MultiReadStdin();
@@ -153,7 +147,6 @@ async function typeInReads(groups: string[][]): Promise<Observed> {
 
 describe("PasteAwareTextInput multi-read input commits (#4493)", () => {
   test("keeps the caret at the end when one commit arrives as two reads in one tick", async () => {
-    // Reporter's first log: 日本語 delivered as 日本 + 語 within one tick.
     const observed = await typeInReads([["日本", "語"]]);
     expect(observed.value).toBe("日本語");
     expect(observed.caret).toBe(3);
@@ -161,7 +154,6 @@ describe("PasteAwareTextInput multi-read input commits (#4493)", () => {
   });
 
   test("preserves every chunk when one commit arrives as three reads in one tick", async () => {
-    // Reporter's second log: the middle chunk used to be dropped.
     const chunks = ["日本", "語の", "入力中に変換がおかしくなるのが問題だ"];
     const observed = await typeInReads([chunks]);
     expect(observed.value).toBe(chunks.join(""));

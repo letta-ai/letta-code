@@ -1,8 +1,3 @@
-/**
- * BYOK (Bring Your Own Key) Provider Service
- * Unified module for managing custom LLM provider connections
- */
-
 import { getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import {
   checkProviderApiKey as checkProviderApiKeyRequest,
@@ -54,7 +49,6 @@ export interface ProviderOperationOptions {
   connection?: ProviderConnectionOptions;
 }
 
-// Field definition for multi-field providers (like Bedrock)
 export interface ProviderField {
   key: string;
   label: string;
@@ -63,7 +57,6 @@ export interface ProviderField {
   required?: boolean; // Defaults to true when omitted
 }
 
-// Auth method definition for providers with multiple auth options
 export interface AuthMethod {
   id: string;
   label: string;
@@ -114,7 +107,6 @@ const BEDROCK_AUTH_METHODS: AuthMethod[] = [
   },
 ];
 
-// Provider configuration for the Letta Cloud / API provider store.
 export const CLOUD_BYOK_PROVIDERS: readonly ByokProvider[] = [
   {
     id: "codex",
@@ -566,11 +558,9 @@ function assertLocalProviderSupported(providerType: string): void {
   }
 }
 
-// ── BYOK handle classification helpers ──────────────────────────────────────
 // These are used by both the TUI ModelSelector and the WS list_models handler
 // to categorize model handles as BYOK vs Letta API.
 
-/** Prefixes that always indicate a BYOK handle (subscription aliases + lc-* providers) */
 export const STATIC_BYOK_PROVIDER_PREFIXES = [
   "chatgpt-plus-pro/",
   "openai-codex/",
@@ -626,7 +616,6 @@ export function buildByokProviderAliases(
     }
   }
 
-  // Layer on connected providers (supports custom names like "openai-sarah")
   for (const provider of connectedProviders) {
     const base = PROVIDER_TYPE_TO_BASE_PROVIDER[provider.provider_type];
     if (base) {
@@ -659,9 +648,6 @@ export function isByokHandleForSelector(
   return provider in byokProviderAliases;
 }
 
-/**
- * List all BYOK providers for the target store.
- */
 export async function listProviders(
   options: ProviderOperationOptions = {},
 ): Promise<ProviderResponse[]> {
@@ -671,9 +657,6 @@ export async function listProviders(
   return listApiProviders();
 }
 
-/**
- * Get a map of connected providers by name.
- */
 export async function getConnectedProviders(
   options: ProviderOperationOptions = {},
 ): Promise<Map<string, ProviderResponse>> {
@@ -685,9 +668,6 @@ export async function getConnectedProviders(
   return map;
 }
 
-/**
- * Check if a specific BYOK provider is connected.
- */
 export async function isProviderConnected(
   providerName: string,
   options: ProviderOperationOptions = {},
@@ -695,9 +675,6 @@ export async function isProviderConnected(
   return (await getProviderByName(providerName, options)) !== null;
 }
 
-/**
- * Get a provider by ID.
- */
 export async function getProviderById(
   providerId: string,
   options: ProviderOperationOptions = {},
@@ -729,9 +706,6 @@ export async function removeProviderById(
   }
 }
 
-/**
- * Get a provider by name.
- */
 export async function getProviderByName(
   providerName: string,
   options: ProviderOperationOptions = {},
@@ -768,9 +742,6 @@ export async function checkProviderApiKey(
   );
 }
 
-/**
- * Create a new BYOK provider.
- */
 export async function createProvider(
   providerType: string,
   providerName: string,
@@ -804,9 +775,6 @@ export async function createProvider(
   );
 }
 
-/**
- * Update an existing provider's API key.
- */
 export async function updateProvider(
   providerId: string,
   apiKey: string,
@@ -839,9 +807,6 @@ export async function updateProvider(
   );
 }
 
-/**
- * Delete a provider by ID.
- */
 export async function deleteProvider(
   providerId: string,
   options: ProviderOperationOptions = {},
@@ -890,9 +855,6 @@ export async function createOrUpdateProvider(
   );
 }
 
-/**
- * Remove a provider by name.
- */
 export async function removeProviderByName(
   providerName: string,
   options: ProviderOperationOptions = {},
@@ -904,9 +866,6 @@ export async function removeProviderByName(
   await removeProviderByNameRequest(providerName);
 }
 
-/**
- * Get provider config by ID for a target.
- */
 export function getProviderConfig(
   id: ByokProviderId,
   target: ProviderStorageTarget = defaultProviderStorageTarget(),

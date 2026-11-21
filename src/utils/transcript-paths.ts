@@ -1,7 +1,6 @@
 import { join } from "node:path";
 import { resolveGlobalConfigDir } from "@/utils/settings-path";
 
-/** Env override for the reflection transcript root. */
 export const TRANSCRIPT_ROOT_ENV = "LETTA_TRANSCRIPT_ROOT";
 
 /**

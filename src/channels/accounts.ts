@@ -621,10 +621,8 @@ function saveChannelAccounts(channelId: string): void {
   const store = getStore(channelId);
   const writeAccounts = store.accounts.map((account) => {
     const cloned = prepareAccountForStorage(account);
-    // Canonicalize: convert camelCase keys to snake_case for storage
     for (const [snakeKey, camelKey] of Object.entries(SNAKE_TO_CAMEL)) {
       const value = (cloned as unknown as Record<string, unknown>)[camelKey];
-      // Remove camelCase key
       delete (cloned as unknown as Record<string, unknown>)[camelKey];
       // Set snake_case key (only if value is not undefined — omit absent fields)
       if (value !== undefined) {

@@ -56,7 +56,6 @@ export async function handleSkillCommand(
 
   if (parsed.type === "skill_enable") {
     try {
-      // Validate the skill path exists
       if (!existsSync(parsed.skill_path)) {
         safeSocketSend(
           socket,
@@ -72,7 +71,6 @@ export async function handleSkillCommand(
         return true;
       }
 
-      // Check it contains a SKILL.md
       const skillMdPath = join(parsed.skill_path, "SKILL.md");
       if (!existsSync(skillMdPath)) {
         safeSocketSend(
@@ -92,10 +90,8 @@ export async function handleSkillCommand(
       const linkName = basename(parsed.skill_path);
       const linkPath = join(globalSkillsDir, linkName);
 
-      // Ensure ~/.letta/skills/ exists
       mkdirSync(globalSkillsDir, { recursive: true });
 
-      // If symlink/junction already exists, remove it first
       if (existsSync(linkPath)) {
         const stat = lstatSync(linkPath);
         if (stat.isSymbolicLink()) {
@@ -258,7 +254,6 @@ export async function handleCreateAgentCommand(
       ...(parsed.tags && { tags: parsed.tags }),
     });
 
-    // Pin the agent globally (favorites it) unless explicitly disabled
     if (parsed.pin_global !== false) {
       settingsManager.pinAgent(result.agent.id);
     }

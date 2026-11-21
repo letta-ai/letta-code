@@ -1,18 +1,3 @@
-/**
- * /memory-repository command handler.
- *
- * Configures an additional git remote that the memfs repo pushes to after
- * every commit. Backed by per-repo git config (`letta.memoryRepository.url`)
- * and a post-commit hook installed by src/agent/memoryGit.ts.
- *
- * Usage:
- *   /memory-repository set <url>    Configure a remote URL
- *   /memory-repository unset        Remove the configured URL
- *   /memory-repository status       Show current URL + tail of push log
- *   /memory-repository push         Force a push now (useful after a failure)
- *   /memory-repository help         Show usage
- */
-
 import { getCurrentAgentId } from "@/agent/context";
 import {
   getMemoryRepositoryUrl,
@@ -35,9 +20,7 @@ function resolveAgentId(): string | null {
     if (scoped) {
       return scoped;
     }
-  } catch {
-    // Fall through to env.
-  }
+  } catch {}
   const fromEnv = (
     process.env.LETTA_AGENT_ID ||
     process.env.AGENT_ID ||

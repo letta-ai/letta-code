@@ -179,7 +179,6 @@ export const __watcherIdleStopTestUtils = {
   },
 };
 
-/** The conversation is active again: keep its worktree watcher running. */
 function cancelWorktreeWatcherIdleStop(
   listener: ListenerRuntime,
   agentId?: string | null,

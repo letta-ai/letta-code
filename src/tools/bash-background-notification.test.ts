@@ -67,7 +67,6 @@ describe("Background bash completion notifications", () => {
   const notificationsFor = (bashId: string): QueuedMessage[] =>
     queued.filter((message) => message.text.includes(`<task-id>${bashId}<`));
 
-  /** Wait for this shell's own notification, ignoring any strays. */
   const waitForNotification = async (
     bashId: string,
     timeoutMs = 5_000,

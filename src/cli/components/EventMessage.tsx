@@ -25,12 +25,6 @@ type EventLine = {
   };
 };
 
-/**
- * EventMessage - Displays compaction events like a tool call
- *
- * When running: Shows blinking dot with "Compacting..."
- * When finished: Shows completed dot with summary
- */
 export const EventMessage = memo(({ line }: { line: EventLine }) => {
   const columns = useTerminalWidth();
   const rightWidth = Math.max(0, columns - 2);
@@ -49,7 +43,6 @@ export const EventMessage = memo(({ line }: { line: EventLine }) => {
     );
   }
 
-  // Only handle compaction events for now
   if (line.eventType !== "compaction") {
     return (
       <Box flexDirection="row">
@@ -65,7 +58,6 @@ export const EventMessage = memo(({ line }: { line: EventLine }) => {
 
   const isRunning = line.phase === "running";
 
-  // Dot indicator based on phase
   const dotElement = isRunning ? (
     <BlinkDot color={colors.tool.running} />
   ) : (
@@ -74,7 +66,6 @@ export const EventMessage = memo(({ line }: { line: EventLine }) => {
 
   return (
     <Box flexDirection="column">
-      {/* Main tool call line */}
       <Box flexDirection="row">
         <Box width={2} flexShrink={0}>
           {dotElement}
@@ -95,7 +86,6 @@ export const EventMessage = memo(({ line }: { line: EventLine }) => {
         (process.env.LETTA_DEBUG === "1" ||
           process.env.LETTA_DEBUG === "true") && (
           <>
-            {/* Header line with L-bracket */}
             <Box flexDirection="row">
               <Box width={5} flexShrink={0}>
                 <Text dimColor>{`  ${CLI_GLYPHS.result}  `}</Text>
@@ -104,11 +94,9 @@ export const EventMessage = memo(({ line }: { line: EventLine }) => {
                 <Text dimColor>{COMPACTION_SUMMARY_HEADER}</Text>
               </Box>
             </Box>
-            {/* Empty line for separation */}
             <Box flexDirection="row">
               <Text> </Text>
             </Box>
-            {/* Summary text - indented with 5 spaces to align */}
             <Box flexDirection="row">
               <Box width={5} flexShrink={0}>
                 <Text>{"     "}</Text>

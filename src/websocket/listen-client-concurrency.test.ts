@@ -358,8 +358,6 @@ function makeIncomingMessage(
   };
 }
 
-// Keep listener/runtime setup consistent across tests without repeating the
-// full construction sequence at every handleIncomingMessage boundary.
 function createRuntime(
   agentId: string,
   conversationId: string,

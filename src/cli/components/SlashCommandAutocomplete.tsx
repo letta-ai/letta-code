@@ -25,7 +25,6 @@ const BUILTIN_SKILL_ALIASES = new Set([
   "syncing-memory-filesystem",
 ]);
 
-// Compute filtered command list (excluding hidden commands), sorted by order
 const _allCommands: CommandMatch[] = Object.entries(commands)
   .filter(([, { hidden }]) => !hidden)
   .map(([cmd, { desc, order }]) => ({
@@ -35,7 +34,6 @@ const _allCommands: CommandMatch[] = Object.entries(commands)
   }))
   .sort((a, b) => a.order - b.order);
 
-// Extract the text after the "/" symbol where the cursor is positioned
 function extractSearchQuery(
   input: string,
   cursor: number,
@@ -46,7 +44,6 @@ function extractSearchQuery(
   const spaceIndex = afterSlash.indexOf(" ");
   const endPos = spaceIndex === -1 ? input.length : 1 + spaceIndex;
 
-  // Check if cursor is within this /command
   if (cursor < 0 || cursor > endPos) {
     return null;
   }
@@ -73,7 +70,6 @@ export function SlashCommandAutocomplete({
   const [customCommands, setCustomCommands] = useState<CommandMatch[]>([]);
   const [skillCommands, setSkillCommands] = useState<CommandMatch[]>([]);
 
-  // Load custom commands once on mount
   useEffect(() => {
     import("@/cli/commands/custom.js").then(({ getCustomCommands }) => {
       getCustomCommands().then((customs) => {
@@ -88,7 +84,6 @@ export function SlashCommandAutocomplete({
     });
   }, []);
 
-  // Load user-invocable skills for slash-command autocomplete.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -129,7 +124,6 @@ export function SlashCommandAutocomplete({
     };
   }, [agentId]);
 
-  // Check pin status to conditionally show/hide pin/unpin commands
   const allCommands = useMemo(() => {
     let builtins = _allCommands;
 
@@ -138,18 +132,15 @@ export function SlashCommandAutocomplete({
         const isPinned = settingsManager.isAgentPinned(agentId);
 
         builtins = _allCommands.filter((cmd) => {
-          // Hide /pin if agent is already pinned
           if (cmd.cmd === "/pin" && isPinned) {
             return false;
           }
-          // Hide /unpin if agent is not pinned
           if (cmd.cmd === "/unpin" && !isPinned) {
             return false;
           }
           return true;
         });
       } catch (_error) {
-        // If settings aren't loaded, just use all builtins
         builtins = _allCommands;
       }
     }
@@ -181,7 +172,6 @@ export function SlashCommandAutocomplete({
       (cmd) => !reservedCommands.has(cmd.cmd),
     );
 
-    // Merge command sources and sort by order.
     return [
       ...visibleBuiltins,
       ...visibleModCommands,
@@ -257,7 +247,6 @@ export function SlashCommandAutocomplete({
     return null;
   }
 
-  // Show "no matching commands" message when query has content but no results
   if (showNoMatches) {
     return (
       <AutocompleteBox>
@@ -271,7 +260,6 @@ export function SlashCommandAutocomplete({
     return null;
   }
 
-  // Calculate visible window based on selected index, bounded by viewport.
   const availablePopupRows = Math.max(1, terminalRows - 8);
   const visibleCommandCount = Math.min(MAX_POPUP_ROWS, availablePopupRows);
   const totalMatches = matches.length;
@@ -279,7 +267,6 @@ export function SlashCommandAutocomplete({
 
   let startIndex = 0;
   if (needsScrolling) {
-    // Keep selected item visible, preferring to show it in the middle
     const halfWindow = Math.floor(visibleCommandCount / 2);
     startIndex = Math.max(0, selectedIndex - halfWindow);
     startIndex = Math.min(startIndex, totalMatches - visibleCommandCount);

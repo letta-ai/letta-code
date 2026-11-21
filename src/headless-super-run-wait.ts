@@ -49,7 +49,6 @@ class RemoteExecutionFailed extends Error {}
 /** The server can link a child run to its Super Run after marking it complete. */
 const DEFAULT_RUN_LINK_GRACE_MS = 60_000;
 
-/** Read only the accepted send's conversation from the runtime snapshot. */
 export async function readConversationRuntimeStatus(
   agentId: string,
   conversationId: string,

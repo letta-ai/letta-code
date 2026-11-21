@@ -233,7 +233,6 @@ interface ParentMemoryFile {
 }
 
 interface ParentMemorySnapshotOptions {
-  /** Maximum characters for the full rendered parent memory preview. */
   maxChars?: number;
   memoryFormat?: LocalMemoryFormat;
 }
@@ -291,9 +290,7 @@ async function collectParentMemoryFiles(
           content,
           description,
         });
-      } catch {
-        // Skip unreadable files.
-      }
+      } catch {}
     }
   };
 
@@ -620,10 +617,6 @@ function countAssistantRows(entries: TranscriptEntry[]): number {
   return entries.filter((entry) => entry.kind === "assistant").length;
 }
 
-/**
- * Normalize a selected client-transcript fragment into the shared trajectory
- * record format consumed by reflection agents.
- */
 function normalizeReflectionTranscript(entries: TranscriptEntry[]): string {
   const transcript = entries.map((entry) => JSON.stringify(entry)).join("\n");
   const { records } = normalizeTranscript({

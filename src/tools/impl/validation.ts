@@ -35,7 +35,6 @@ export function validateParamTypes(
   for (const [paramName, paramSchema] of Object.entries(schema.properties)) {
     const value = args[paramName];
 
-    // Skip undefined optional parameters
     if (value === undefined) continue;
 
     const expectedType = paramSchema.type;
@@ -52,7 +51,6 @@ export function validateParamTypes(
       );
     }
 
-    // Additional validation for arrays to ensure they contain the right element types
     if (expectedType === "array" && Array.isArray(value) && paramSchema.items) {
       const itemType = paramSchema.items.type;
       if (itemType) {
@@ -72,9 +70,6 @@ export function validateParamTypes(
   }
 }
 
-/**
- * Gets the JSON Schema type name for a JavaScript value.
- */
 function getJsonSchemaType(value: unknown): string {
   if (value === null) return "null";
   if (Array.isArray(value)) return "array";

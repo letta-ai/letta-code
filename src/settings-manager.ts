@@ -1,4 +1,3 @@
-// src/settings-manager.ts
 // In-memory settings manager that loads once and provides sync access
 
 import { randomUUID } from "node:crypto";
@@ -94,17 +93,12 @@ export interface Settings {
   windowTitle?: WindowTitleConfig; // Configurable terminal window title
   env?: Record<string, string>;
   experiments?: Partial<Record<ExperimentId, boolean>>;
-  // Server-indexed settings (agent IDs are server-specific)
   sessionsByServer?: Record<string, SessionRef>; // key = normalized base URL (e.g., "api.letta.com", "localhost:8283")
-  // Per-agent settings (global, keyed by agentId+serverKey)
   agents?: AgentSettings[];
-  // Letta Cloud OAuth token management (stored separately in secrets)
   refreshToken?: string; // DEPRECATED: kept for migration, now stored in secrets
   tokenExpiresAt?: number; // Unix timestamp in milliseconds
   deviceId?: string;
-  // Release notes tracking
   lastSeenReleaseNotesVersion?: string; // Base version of last seen release notes (e.g., "0.13.0")
-  // Pending OAuth state (for PKCE flow)
   oauthState?: {
     state: string;
     codeVerifier: string;
@@ -157,7 +151,6 @@ export interface LocalProjectSettings {
   reflectionMerge?: ReflectionMergeMode;
   reflectionMergeInstructions?: string;
   reflectionSettingsByAgent?: Record<string, StoredReflectionSettings>;
-  // Server-indexed settings (agent IDs are server-specific)
   sessionsByServer?: Record<string, SessionRef>; // key = normalized base URL
   listenerEnvName?: string; // Saved environment name for listener connections (project-specific)
 }
@@ -291,11 +284,6 @@ function getCurrentServerKey(settings?: Settings | null): string {
   return getApiServerKey(settings);
 }
 
-/**
- * Resolve the server key for a specific backend mode, independent of the
- * currently-active backend. "local" always maps to the local backend store;
- * "api" maps to the configured cloud/self-hosted base URL.
- */
 function serverKeyForBackendMode(
   mode: AgentBackendMode,
   settings?: Settings | null,
@@ -372,17 +360,10 @@ class SettingsManager {
     }
   }
 
-  /**
-   * Whether the settings manager has been initialized.
-   */
   get isReady(): boolean {
     return this.initialized;
   }
 
-  /**
-   * Initialize the settings manager (loads from disk)
-   * Should be called once at app startup
-   */
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
@@ -390,16 +371,13 @@ class SettingsManager {
     let shouldRollbackAutoConversationTitles = false;
 
     try {
-      // Check if settings file exists
       if (!exists(settingsPath)) {
-        // Create default settings file
         this.settings = { ...DEFAULT_SETTINGS };
         for (const key of Object.keys(DEFAULT_SETTINGS)) {
           this.markDirty(key);
         }
         await this.persistSettings();
       } else {
-        // Read and parse settings
         const content = await readFile(settingsPath);
         const loadedSettingsRaw = JSON.parse(content) as Record<
           string,
@@ -443,10 +421,8 @@ class SettingsManager {
         }
       }
 
-      // Check secrets availability and warn if not available
       await this.checkSecretsSupport();
 
-      // Migrate tokens to secrets if they exist in settings (parent process only)
       if (!isSubagentProcess()) {
         await this.migrateTokensToSecrets();
       }
@@ -471,9 +447,6 @@ class SettingsManager {
     }
   }
 
-  /**
-   * Check secrets support and warn user if not available
-   */
   private async checkSecretsSupport(): Promise<void> {
     try {
       const available = await this.isKeychainAvailable();
@@ -489,9 +462,6 @@ class SettingsManager {
     }
   }
 
-  /**
-   * Migrate tokens from old storage location to secrets
-   */
   private async migrateTokensToSecrets(): Promise<void> {
     if (!this.settings) return;
 
@@ -499,19 +469,16 @@ class SettingsManager {
       const tokensToMigrate: SecureTokens = {};
       let needsUpdate = false;
 
-      // Check for refresh token in settings
       if (this.settings.refreshToken) {
         tokensToMigrate.refreshToken = this.settings.refreshToken;
         needsUpdate = true;
       }
 
-      // Check for API key in env
       if (this.settings.env?.LETTA_API_KEY) {
         tokensToMigrate.apiKey = this.settings.env.LETTA_API_KEY;
         needsUpdate = true;
       }
 
-      // If we have tokens to migrate, store them in secrets
       if (needsUpdate && Object.keys(tokensToMigrate).length > 0) {
         const available = await this.isKeychainAvailable();
         if (available) {
@@ -519,7 +486,6 @@ class SettingsManager {
             await setSecureTokens(tokensToMigrate);
             this.updateSecureTokensCache(tokensToMigrate);
 
-            // Remove tokens from settings file
             const updatedSettings = { ...this.settings };
             delete updatedSettings.refreshToken;
 
@@ -564,9 +530,6 @@ class SettingsManager {
     return { ...this.settings };
   }
 
-  /**
-   * Get all settings including secure tokens from secrets (async)
-   */
   async getSettingsWithSecureTokens(): Promise<Settings> {
     const baseSettings = this.getSettings();
     const secureTokens: SecureTokens = { ...this.secureTokensCache };
@@ -605,9 +568,6 @@ class SettingsManager {
     };
   }
 
-  /**
-   * Get a specific setting value (synchronous)
-   */
   getSetting<K extends keyof Settings>(key: K): Settings[K] {
     return this.getSettings()[key];
   }
@@ -634,9 +594,6 @@ class SettingsManager {
     return { ...this.secureTokensCache };
   }
 
-  /**
-   * Get or create device ID (generates UUID if not exists)
-   */
   getOrCreateDeviceId(): string {
     const settings = this.getSettings();
     let deviceId = settings.deviceId;
@@ -647,9 +604,6 @@ class SettingsManager {
     return deviceId;
   }
 
-  /**
-   * Update settings (synchronous in-memory, async persist)
-   */
   updateSettings(updates: Partial<Settings>): void {
     if (!this.initialized || !this.settings) {
       throw new Error(
@@ -657,12 +611,10 @@ class SettingsManager {
       );
     }
 
-    // Extract secure tokens from updates
     const { env, refreshToken, ...otherUpdates } = updates;
     let apiKey: string | undefined;
     let updatedEnv = env;
 
-    // Check for API key in env updates
     if (env?.LETTA_API_KEY) {
       apiKey = env.LETTA_API_KEY;
       // Remove from env to prevent storing in settings file
@@ -684,7 +636,6 @@ class SettingsManager {
       this.markDirty("env");
     }
 
-    // Handle secure tokens in keychain
     const secureTokens: SecureTokens = {};
     if (apiKey) {
       secureTokens.apiKey = apiKey;
@@ -693,7 +644,6 @@ class SettingsManager {
       secureTokens.refreshToken = refreshToken;
     }
 
-    // Persist both regular settings and secure tokens asynchronously
     const writePromise = this.persistSettingsAndTokens(secureTokens)
       .catch((error) => {
         trackBoundaryError({
@@ -760,14 +710,10 @@ class SettingsManager {
       this.settings = fallbackSettings;
       await this.persistSettings();
     } else {
-      // No tokens to store, just persist regular settings
       await this.persistSettings();
     }
   }
 
-  /**
-   * Load project settings for a specific directory
-   */
   async loadProjectSettings(
     workingDirectory: string = process.cwd(),
   ): Promise<ProjectSettings> {
@@ -779,7 +725,6 @@ class SettingsManager {
       return defaults;
     }
 
-    // Check cache first
     const cached = this.projectSettings.get(workingDirectory);
     if (cached) {
       return { ...cached };
@@ -812,9 +757,6 @@ class SettingsManager {
     }
   }
 
-  /**
-   * Get project settings (synchronous, from memory)
-   */
   getProjectSettings(
     workingDirectory: string = process.cwd(),
   ): ProjectSettings {
@@ -827,9 +769,6 @@ class SettingsManager {
     return { ...cached };
   }
 
-  /**
-   * Update project settings (synchronous in-memory, async persist)
-   */
   updateProjectSettings(
     updates: Partial<ProjectSettings>,
     workingDirectory: string = process.cwd(),
@@ -876,9 +815,6 @@ class SettingsManager {
     this.pendingWrites.add(writePromise);
   }
 
-  /**
-   * Persist settings to disk (private helper)
-   */
   private async persistSettings(): Promise<void> {
     if (!this.settings) return;
 
@@ -896,9 +832,7 @@ class SettingsManager {
         try {
           const content = await readFile(settingsPath);
           existingSettings = JSON.parse(content) as Record<string, unknown>;
-        } catch {
-          // If read/parse fails, use empty object
-        }
+        } catch {}
       }
 
       // Hard-deprecate legacy fields (now fully ignored). Always strip from disk.
@@ -936,9 +870,6 @@ class SettingsManager {
     }
   }
 
-  /**
-   * Persist project settings to disk (private helper)
-   */
   private async persistProjectSettings(
     workingDirectory: string,
   ): Promise<void> {
@@ -961,12 +892,10 @@ class SettingsManager {
         existingSettings = JSON.parse(content) as Record<string, unknown>;
       }
 
-      // Create directory if needed
       if (!exists(dirPath)) {
         await mkdir(dirPath, { recursive: true });
       }
 
-      // Merge updates with existing settings
       const newSettings = {
         ...existingSettings,
         ...settings,
@@ -997,11 +926,9 @@ class SettingsManager {
     return join(workingDirectory, ".letta", "settings.local.json");
   }
 
-  /** Load local project settings (.letta/settings.local.json). */
   async loadLocalProjectSettings(
     workingDirectory: string = process.cwd(),
   ): Promise<LocalProjectSettings> {
-    // Check cache first
     const cached = this.localProjectSettings.get(workingDirectory);
     if (cached) {
       return { ...cached };
@@ -1053,7 +980,6 @@ class SettingsManager {
     }
   }
 
-  /** Get local project settings (synchronous, from memory). */
   getLocalProjectSettings(
     workingDirectory: string = process.cwd(),
   ): LocalProjectSettings {
@@ -1066,7 +992,6 @@ class SettingsManager {
     return { ...cached };
   }
 
-  /** Update local project settings (synchronous in-memory, async persist). */
   updateLocalProjectSettings(
     updates: Partial<LocalProjectSettings>,
     workingDirectory: string = process.cwd(),
@@ -1094,7 +1019,6 @@ class SettingsManager {
     this.pendingWrites.add(writePromise);
   }
 
-  /** Persist local project settings to disk. */
   private async persistLocalProjectSettings(
     workingDirectory: string,
   ): Promise<void> {
@@ -1105,7 +1029,6 @@ class SettingsManager {
     const dirPath = join(workingDirectory, ".letta");
 
     try {
-      // Create directory if needed
       if (!exists(dirPath)) {
         await mkdir(dirPath, { recursive: true });
       }
@@ -1116,9 +1039,7 @@ class SettingsManager {
         try {
           const content = await readFile(settingsPath);
           existingSettings = JSON.parse(content) as Record<string, unknown>;
-        } catch {
-          // If read/parse fails, use empty object
-        }
+        } catch {}
       }
 
       // Hard-deprecate legacy fields (now fully ignored). Always strip from disk.
@@ -1126,7 +1047,6 @@ class SettingsManager {
         delete existingSettings[key];
       }
 
-      // Merge: existing fields + our managed settings
       const merged = {
         ...existingSettings,
         ...settings,
@@ -1152,7 +1072,6 @@ class SettingsManager {
     const settings = this.getSettings();
     const serverKey = getCurrentServerKey(settings);
 
-    // Try server-indexed lookup first
     const serverSession = settings.sessionsByServer?.[serverKey];
     if (serverSession) {
       if (isSessionCompatibleWithServerKey(serverSession, serverKey)) {
@@ -1190,7 +1109,6 @@ class SettingsManager {
     const settings = this.getSettings();
     const serverKey = getCurrentServerKey(settings);
 
-    // Try server-indexed lookup first
     const serverSession = settings.sessionsByServer?.[serverKey];
     if (serverSession) {
       if (isSessionCompatibleWithServerKey(serverSession, serverKey)) {
@@ -1242,7 +1160,6 @@ class SettingsManager {
       return;
     }
 
-    // Update server-indexed storage
     const sessionsByServer = {
       ...settings.sessionsByServer,
       [serverKey]: session,
@@ -1285,7 +1202,6 @@ class SettingsManager {
     const serverKey = getCurrentServerKey(globalSettings);
     const localSettings = this.getLocalProjectSettings(workingDirectory);
 
-    // Try server-indexed lookup first
     const serverSession = localSettings.sessionsByServer?.[serverKey];
     if (serverSession) {
       if (isSessionCompatibleWithServerKey(serverSession, serverKey)) {
@@ -1324,7 +1240,6 @@ class SettingsManager {
     const serverKey = getCurrentServerKey(globalSettings);
     const localSettings = this.getLocalProjectSettings(workingDirectory);
 
-    // Try server-indexed lookup first
     const serverSession = localSettings.sessionsByServer?.[serverKey];
     if (serverSession) {
       if (isSessionCompatibleWithServerKey(serverSession, serverKey)) {
@@ -1380,7 +1295,6 @@ class SettingsManager {
       return;
     }
 
-    // Update server-indexed storage
     const sessionsByServer = {
       ...localSettings.sessionsByServer,
       [serverKey]: session,
@@ -1405,14 +1319,9 @@ class SettingsManager {
     );
   }
 
-  /**
-   * Get the effective last session (local overrides global).
-   * Returns null if no session is available anywhere.
-   */
   getEffectiveLastSession(
     workingDirectory: string = process.cwd(),
   ): SessionRef | null {
-    // Check local first
     const localSession = this.getLocalLastSession(workingDirectory);
     if (localSession) {
       return localSession;
@@ -1428,7 +1337,6 @@ class SettingsManager {
   getEffectiveLastAgentId(
     workingDirectory: string = process.cwd(),
   ): string | null {
-    // Check local first
     const localAgentId = this.getLocalLastAgentId(workingDirectory);
     if (localAgentId) {
       return localAgentId;
@@ -1454,23 +1362,13 @@ class SettingsManager {
       this.setLocalLastSession(session, workingDirectory);
     this.setGlobalLastSession(session);
   }
-  // =====================================================================
-  // Agent Pin Helpers (global-only, per-backend namespace)
-  // =====================================================================
 
-  /**
-   * Get pinned agent IDs for the currently-active server.
-   */
   getPinnedAgents(): string[] {
     return this.getPinnedAgentsForServerKey(
       getCurrentServerKey(this.getSettings()),
     );
   }
 
-  /**
-   * Get pinned agent IDs scoped to a specific backend mode, independent of the
-   * currently-active backend. Used to look up pins across modes (e.g. --name).
-   */
   getPinnedAgentsForBackendMode(mode: AgentBackendMode): string[] {
     return this.getPinnedAgentsForServerKey(
       serverKeyForBackendMode(mode, this.getSettings()),
@@ -1500,23 +1398,14 @@ class SettingsManager {
     );
   }
 
-  /**
-   * Check if an agent is pinned for the current server.
-   */
   isAgentPinned(agentId: string): boolean {
     return this.getPinnedAgents().includes(agentId);
   }
 
-  /**
-   * Pin an agent for the current server.
-   */
   pinAgent(agentId: string): void {
     this.upsertAgentSettings(agentId, { pinned: true });
   }
 
-  /**
-   * Unpin an agent for the current server.
-   */
   unpinAgent(agentId: string): void {
     this.upsertAgentSettings(agentId, { pinned: false });
   }
@@ -1545,23 +1434,11 @@ class SettingsManager {
     }));
   }
 
-  /**
-   * Check if default agents (Memo/Incognito) should be created on startup.
-   * Defaults to true if not explicitly set to false.
-   */
   shouldCreateDefaultAgents(): boolean {
     const settings = this.getSettings();
     return settings.createDefaultAgents !== false;
   }
 
-  // =====================================================================
-  // Listener Environment Name Helpers
-  // =====================================================================
-
-  /**
-   * Get saved listener environment name from local project settings (if any).
-   * Returns undefined if not set or settings not loaded.
-   */
   getListenerEnvName(
     workingDirectory: string = process.cwd(),
   ): string | undefined {
@@ -1574,10 +1451,6 @@ class SettingsManager {
     }
   }
 
-  /**
-   * Save listener environment name to local project settings.
-   * Loads settings if not already loaded.
-   */
   setListenerEnvName(
     envName: string,
     workingDirectory: string = process.cwd(),
@@ -1602,12 +1475,6 @@ class SettingsManager {
     }
   }
 
-  // Agent Settings (unified agents array) Helpers
-
-  /**
-   * Get settings for a specific agent on the current server.
-   * Returns undefined if agent not found in settings.
-   */
   private getAgentSettings(
     agentId: string,
     serverKeyOverride?: string,
@@ -1623,9 +1490,6 @@ class SettingsManager {
     );
   }
 
-  /**
-   * Create or update settings for a specific agent on the current server.
-   */
   private upsertAgentSettings(
     agentId: string,
     updates: Partial<
@@ -1686,9 +1550,6 @@ class SettingsManager {
     this.updateSettings({ agents });
   }
 
-  /**
-   * Check if memory filesystem is enabled for an agent on the current server.
-   */
   isMemfsEnabled(agentId: string): boolean {
     const settings = this.getSettings();
     const memfsServerKey = getCurrentMemfsServerKey(settings);
@@ -1706,9 +1567,6 @@ class SettingsManager {
     return this.getAgentSettings(agentId, memfsServerKey)?.memfs === false;
   }
 
-  /**
-   * Enable or disable memory filesystem for an agent on the current server.
-   */
   setMemfsEnabled(agentId: string, enabled: boolean): void {
     const settings = this.getSettings();
     const memfsServerKey = getCurrentMemfsServerKey(settings);
@@ -1765,30 +1623,18 @@ class SettingsManager {
     if (update) this.upsertAgentSettings(agentId, update);
   }
 
-  /**
-   * Get the stored system prompt preset for an agent on the current server.
-   */
   getSystemPromptPreset(agentId: string): string | undefined {
     return this.getAgentSettings(agentId)?.systemPromptPreset;
   }
 
-  /**
-   * Get the stored hash for the managed system prompt on the current server.
-   */
   getSystemPromptHash(agentId: string): string | undefined {
     return this.getAgentSettings(agentId)?.systemPromptHash;
   }
 
-  /**
-   * Get the Letta Code version that last wrote the managed system prompt hash.
-   */
   getSystemPromptVersion(agentId: string): string | undefined {
     return this.getAgentSettings(agentId)?.systemPromptVersion;
   }
 
-  /**
-   * Set the system prompt preset for an agent on the current server.
-   */
   setSystemPromptPreset(agentId: string, preset: string): void {
     this.upsertAgentSettings(agentId, {
       systemPromptPreset: preset,
@@ -1797,9 +1643,6 @@ class SettingsManager {
     });
   }
 
-  /**
-   * Store the managed system prompt metadata for an agent on the current server.
-   */
   setManagedSystemPrompt(
     agentId: string,
     prompt: {
@@ -1815,9 +1658,6 @@ class SettingsManager {
     });
   }
 
-  /**
-   * Mark an agent's system prompt as custom and clear managed prompt metadata.
-   */
   setSystemPromptCustom(agentId: string): void {
     this.upsertAgentSettings(agentId, {
       systemPromptPreset: "custom",
@@ -1826,9 +1666,6 @@ class SettingsManager {
     });
   }
 
-  /**
-   * Clear the stored system prompt preset for an agent (e.g., after switching to a subagent prompt).
-   */
   clearSystemPromptPreset(agentId: string): void {
     // Setting to empty string triggers the cleanup `if (!updated.systemPromptPreset) delete ...`
     this.upsertAgentSettings(agentId, {
@@ -1838,17 +1675,11 @@ class SettingsManager {
     });
   }
 
-  /**
-   * Check if local .letta directory exists (indicates existing project)
-   */
   hasLocalLettaDir(workingDirectory: string = process.cwd()): boolean {
     const dirPath = join(workingDirectory, ".letta");
     return exists(dirPath);
   }
 
-  /**
-   * Store OAuth state for pending authorization
-   */
   storeOAuthState(
     state: string,
     codeVerifier: string,
@@ -1866,17 +1697,11 @@ class SettingsManager {
     });
   }
 
-  /**
-   * Get pending OAuth state
-   */
   getOAuthState(): Settings["oauthState"] | null {
     const settings = this.getSettings();
     return settings.oauthState || null;
   }
 
-  /**
-   * Clear pending OAuth state
-   */
   clearOAuthState(): void {
     const settings = this.getSettings();
     const { oauthState: _, ...rest } = settings;
@@ -1890,9 +1715,6 @@ class SettingsManager {
     });
   }
 
-  /**
-   * Check if secrets are available
-   */
   async isKeychainAvailable(): Promise<boolean> {
     if (this.secretsAvailable === true) {
       return true;
@@ -1907,9 +1729,6 @@ class SettingsManager {
     return available;
   }
 
-  /**
-   * Get secure tokens from secrets
-   */
   async getSecureTokens(): Promise<SecureTokens> {
     const available = await this.isKeychainAvailable();
     if (!available) {
@@ -1931,9 +1750,6 @@ class SettingsManager {
     }
   }
 
-  /**
-   * Store secure tokens in secrets
-   */
   async setSecureTokens(tokens: SecureTokens): Promise<void> {
     this.updateSecureTokensCache(tokens);
     const available = await this.isKeychainAvailable();
@@ -1961,9 +1777,6 @@ class SettingsManager {
     }
   }
 
-  /**
-   * Delete secure tokens from secrets
-   */
   async deleteSecureTokens(): Promise<void> {
     this.clearSecureTokensCache();
     const available = await this.isKeychainAvailable();
@@ -1992,22 +1805,16 @@ class SettingsManager {
     await Promise.all(Array.from(this.pendingWrites));
   }
 
-  /**
-   * Logout - clear all tokens and sensitive authentication data
-   */
   async logout(): Promise<void> {
     try {
-      // Clear tokens from secrets
       await this.deleteSecureTokens();
 
-      // Clear token-related settings from in-memory settings
       if (this.settings) {
         const updatedSettings = { ...this.settings };
         delete updatedSettings.refreshToken;
         delete updatedSettings.tokenExpiresAt;
         delete updatedSettings.deviceId;
 
-        // Clear API key from env if present
         if (updatedSettings.env?.LETTA_API_KEY) {
           const { LETTA_API_KEY: _, ...otherEnv } = updatedSettings.env;
           updatedSettings.env =
@@ -2040,10 +1847,6 @@ class SettingsManager {
     this.clearSecureTokensCache();
   }
 
-  /**
-   * Reset the manager (mainly for testing).
-   * Waits for pending writes to complete before resetting.
-   */
   async reset(): Promise<void> {
     // Wait for pending writes BEFORE clearing state
     await this.flush();

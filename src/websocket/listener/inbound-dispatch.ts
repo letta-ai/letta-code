@@ -61,7 +61,6 @@ export function createIncomingMessage(
   const mcpOriginator = readMcpOriginatorDelivery(frame);
   const terminalConsumerId = frame?.terminal_consumer_id ?? undefined;
   if (Object.hasOwn(payload, "external_tool_scope_ids")) {
-    // Removed: every registered tool is visible to every turn of its runtime.
     debugLog("Listen", "Ignoring deprecated external_tool_scope_ids");
   }
   return {

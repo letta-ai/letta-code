@@ -1,6 +1,3 @@
-// Reflection (sleep-time) settings: resolution, persistence, merge policy,
-// and step-count trigger evaluation.
-
 import type {
   ReflectionMergeMode,
   ReflectionTrigger,

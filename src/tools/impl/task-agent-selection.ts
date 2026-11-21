@@ -90,7 +90,6 @@ export function resolveTaskAgentSelection(args: {
   };
 }
 
-/** The subagent_type values to suggest, given the loaded Letta config names. */
 export function listSubagentTypes(configNames: string[]): string {
   return (
     configNames

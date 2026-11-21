@@ -9,7 +9,6 @@
  */
 
 export type ConversationCompaction = {
-  /** The backend instance that observed the compaction. */
   backend: object;
   conversationId: string;
   agentId?: string | null;

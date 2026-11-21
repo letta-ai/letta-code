@@ -43,7 +43,6 @@ export interface MemoryCommit {
   isReflection: boolean; // commit message matches reflection/sleeptime pattern
 }
 
-// Conversation data for memory palace viewer
 export interface ConversationInfo {
   id: string;
   created_at: string;

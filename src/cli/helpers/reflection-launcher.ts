@@ -245,7 +245,6 @@ export interface ReflectionLaunchOptions {
   reflectionSettings?: ReflectionSettings;
   actingUserId?: string | null;
   description: string;
-  /** Explicit model for this reflection subagent, if requested by the caller. */
   model?: string;
   instruction?: string;
   /**
@@ -953,7 +952,6 @@ export async function launchReflectionSubagent(
     });
     releaseOnComplete = true;
     preparedWorktree = undefined;
-    // Fire-and-forget: emit `reflection_start` when the agent ID resolves or after timeout.
     void waitForBackgroundSubagentAgentId(
       subagentId,
       REFLECTION_AGENT_ID_WAIT_MS,

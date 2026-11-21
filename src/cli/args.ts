@@ -233,7 +233,6 @@ export const CLI_FLAG_CATALOG = {
     },
   },
   "pre-load-skills": { parser: { type: "string" }, mode: "headless" },
-  // Internal headless metadata tag assignment (not part of primary user help).
   tags: { parser: { type: "string" }, mode: "headless" },
   memfs: {
     parser: { type: "boolean" },
@@ -348,7 +347,6 @@ const CLI_FLAG_ENTRIES = Object.entries(CLI_FLAG_CATALOG) as Array<
 export const CLI_OPTIONS = Object.fromEntries(
   CLI_FLAG_ENTRIES.map(([name, definition]) => [name, definition.parser]),
 ) as CliCatalogOptionDescriptors;
-// Column width for left-aligned flag labels in generated --help output.
 const HELP_LABEL_WIDTH = 24;
 
 function formatHelpFlagLabel(

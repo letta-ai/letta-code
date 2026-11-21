@@ -1,5 +1,3 @@
-// Output-file transcript lines and result headers shared by Agent task paths.
-
 import { writeFileSync } from "node:fs";
 import {
   serveSubagentEvents,
@@ -80,16 +78,12 @@ export function writeTaskTranscriptResult(
   );
 }
 
-/** Longest `text:` excerpt written per progress line. */
 export const TASK_PROGRESS_TEXT_CHARS = PROGRESS_TEXT_CHARS;
-/** Longest tool-argument excerpt written per progress line. */
 export const TASK_PROGRESS_ARGS_CHARS = 200;
-/** Progress lines written per task, including the final omission notice. */
 export const TASK_PROGRESS_MAX_LINES = 1_000;
 /** Event-log bytes written per task; a safety valve for runaway output. */
 export const TASK_EVENTS_MAX_BYTES = 256 * 1024 * 1024;
 
-/** The full event log written next to a task's output file. */
 export function taskEventsFileFor(outputFile: string): string {
   return `${outputFile.replace(/\.(log|output)$/, "")}.jsonl`;
 }
@@ -319,7 +313,6 @@ export function recordRemoteTaskEvent(
   });
 }
 
-/** Note in both logs that the worker's computer dropped unread events. */
 export function recordMissedRemoteEvents(subagentId: string, missed: number) {
   const log = progressLogs.get(subagentId);
   if (!log || missed <= 0) return;

@@ -22,7 +22,6 @@ let watcher: ReturnType<typeof setInterval> | null = null;
 export function startOrphanDetection(): void {
   const initialParent = process.ppid;
 
-  // If we were already orphaned at startup, there's nothing to detect.
   if (initialParent === 1) return;
 
   watcher = setInterval(() => {
@@ -36,7 +35,6 @@ export function startOrphanDetection(): void {
   watcher.unref();
 }
 
-/** Stop the orphan-detection watcher. */
 export function stopOrphanDetection(): void {
   if (watcher !== null) {
     clearInterval(watcher);

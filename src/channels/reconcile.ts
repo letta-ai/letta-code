@@ -27,10 +27,7 @@ import { isDiscordGuildChannelAllowed } from "./discord/channel-gating";
 import { getRoutesForChannel, loadRoutes, removeRoute } from "./routing";
 import type { ChannelRoute, DiscordChannelAccount } from "./types";
 
-// ── Types ──────────────────────────────────────────────────────────
-
 export interface StaleRouteInfo {
-  /** The route that violates current policy. */
   route: ChannelRoute;
   /** Human-readable explanation of why it's stale. */
   reason: string;
@@ -49,23 +46,15 @@ export interface ReconcileOptions {
 }
 
 export interface ReconciliationResult {
-  /** Channel this reconciliation targeted. */
   channel: string;
-  /** Account ID that was reconciled. */
   accountId: string;
-  /** Total routes examined. */
   totalRoutesChecked: number;
-  /** Routes that violate current allowed_channels policy. */
   staleRoutes: StaleRouteInfo[];
   /** Routes that were actually removed (only when --apply and policy allows). */
   removedRoutes: ChannelRoute[];
-  /** Routes that would be removed but were blocked by policy. */
   skippedByPolicy: StaleRouteInfo[];
-  /** Human-readable explanation of why removal was skipped/policy-blocked. */
   policyGateReason: string | null;
 }
-
-// ── Reconciler registry ────────────────────────────────────────────
 
 type ChannelReconciler = (
   account: DiscordChannelAccount,
@@ -74,9 +63,6 @@ type ChannelReconciler = (
 
 const CHANNEL_RECONCILERS = new Map<string, ChannelReconciler>();
 
-/**
- * Register a channel reconciler. Each channel registers its own handler.
- */
 export function registerReconciler(
   channel: string,
   reconciler: ChannelReconciler,
@@ -84,13 +70,6 @@ export function registerReconciler(
   CHANNEL_RECONCILERS.set(channel, reconciler);
 }
 
-// ── Public entry point ─────────────────────────────────────────────
-
-/**
- * Run route reconciliation for a specific channel+account.
- *
- * @returns The reconciliation result or an error result.
- */
 export function reconcileRoutesForChannel(
   channel: string,
   accountId: string,
@@ -112,7 +91,6 @@ export function reconcileRoutesForChannel(
     };
   }
 
-  // Look up the channel-specific reconciler
   const reconciler = CHANNEL_RECONCILERS.get(channel);
   if (reconciler) {
     return reconciler(account as DiscordChannelAccount, options);
@@ -129,15 +107,12 @@ export function reconcileRoutesForChannel(
   };
 }
 
-// ── Discord reconciler ─────────────────────────────────────────────
-
 function reconcileDiscord(
   account: DiscordChannelAccount,
   options?: ReconcileOptions,
 ): ReconciliationResult {
   const { allowedChannels, accountId, removeStaleRoutes } = account;
 
-  // Load routes from disk
   loadRoutes("discord");
   const allRoutes = getRoutesForChannel("discord", accountId);
 
@@ -166,7 +141,6 @@ function reconcileDiscord(
       continue;
     }
 
-    // This route is a guild channel route
     const isThread =
       route.chatType === "channel" &&
       route.threadId !== null &&
@@ -206,7 +180,6 @@ function reconcileDiscord(
       };
       staleRoutes.push(staleInfo);
 
-      // Apply phase
       if (options?.apply) {
         if (removeStaleRoutes) {
           const removed = removeRoute(
@@ -242,7 +215,5 @@ function reconcileDiscord(
     policyGateReason,
   };
 }
-
-// ── Register the Discord reconciler ────────────────────────────────
 
 registerReconciler("discord", reconcileDiscord);

@@ -128,7 +128,6 @@ export function useChatGPTRateLimitState(target: ProviderStorageTarget) {
     [target],
   );
 
-  /** Applies the fresh state returned alongside a successful reset. */
   const applyRefreshed = useCallback(
     (
       providerName: string,
@@ -224,7 +223,6 @@ export function useChatGPTRateLimitState(target: ProviderStorageTarget) {
     [creditsByProvider],
   );
 
-  /** Names of the given accounts that have a spendable reset credit. */
   const resettable = useCallback(
     (records: readonly { name: string }[]): string[] =>
       records

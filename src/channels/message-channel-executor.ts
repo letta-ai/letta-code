@@ -528,7 +528,6 @@ export async function executeMessageChannel(
   }
 }
 
-/** Execute MessageChannel and return the canonical external-tool result. */
 export async function executeMessageChannelExternalTool(
   input: MessageChannelInput | Record<string, unknown>,
   options: ExecuteMessageChannelOptions,

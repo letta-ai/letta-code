@@ -105,7 +105,6 @@ function toImagePart(rawUrl: string): UserContentPart | null {
   return null;
 }
 
-/** OpenAI user content → Letta content parts (text and image_url). */
 export function extractUserContentParts(
   content: string | OpenAiChatMessagePart[] | null | undefined,
 ): UserContentPart[] {

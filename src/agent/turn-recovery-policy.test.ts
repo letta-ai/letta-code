@@ -23,8 +23,6 @@ import {
   shouldRetryRunMetadataError,
 } from "@/agent/turn-recovery-policy";
 
-// ── Classifier parity ───────────────────────────────────────────────
-
 describe("isApprovalPendingError", () => {
   test("detects real CONFLICT error", () => {
     expect(
@@ -113,8 +111,6 @@ describe("isInvalidToolCallIdsError", () => {
     expect(isInvalidToolCallIdsError("Connection refused")).toBe(false);
   });
 });
-
-// ── Pre-stream conflict routing ─────────────────────────────────────
 
 describe("classifyPreStreamConflict", () => {
   test("approval pending", () => {
@@ -533,8 +529,6 @@ describe("getTransientRetryDelayMs", () => {
   });
 });
 
-// ── Error text extraction ───────────────────────────────────────────
-
 describe("extractConflictDetail", () => {
   test("nested: e.error.error.detail", () => {
     const err = {
@@ -593,7 +587,6 @@ describe("extractConflictDetail", () => {
     expect(extractConflictDetail("string")).toBe("");
   });
 
-  // Parity: same APIError shape from headless and TUI → same extracted text
   test("end-to-end: extraction feeds into classifier correctly", () => {
     const sdkError = {
       error: {
@@ -742,8 +735,6 @@ describe("rebuildInputWithFreshDenials", () => {
   });
 });
 
-// ── Retry gating ────────────────────────────────────────────────────
-
 describe("shouldAttemptApprovalRecovery", () => {
   test("true when detected and under budget", () => {
     expect(
@@ -795,9 +786,6 @@ describe("shouldAttemptApprovalRecovery", () => {
     ).toBe(false);
   });
 
-  // Parity: TUI uses llmApiErrorRetriesRef.current < LLM_API_ERROR_MAX_RETRIES
-  // headless uses llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES
-  // Both should produce the same result for the same inputs.
   test("parity: same inputs → same decision regardless of caller", () => {
     const tuiResult = shouldAttemptApprovalRecovery({
       approvalPendingDetected: true,

@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-// Helper script to get API key from keychain using Bun's secrets API
 // Used by memory_logger.py to avoid separate keychain authorization
 
 const SERVICE_NAME = "letta-code";

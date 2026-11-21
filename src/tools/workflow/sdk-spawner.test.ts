@@ -38,7 +38,6 @@ function completedQuery(
   };
 }
 
-/** A client that records query options and answers with `messages`. */
 function fakeClient(messages: SdkStreamMessage[]): SdkClient & {
   calls: Array<{ prompt: string; options: Record<string, unknown> }>;
 } {

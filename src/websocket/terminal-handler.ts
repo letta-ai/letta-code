@@ -91,7 +91,6 @@ function sendTerminalMessage(
   }
 }
 
-/** Create a flush-on-size-or-timer output batcher. */
 function makeOutputBatcher(
   onFlush: (data: string) => void,
 ): (chunk: string) => void {
@@ -118,8 +117,6 @@ function makeOutputBatcher(
     }
   };
 }
-
-// ── Bun spawn ──────────────────────────────────────────────────────────────
 
 function spawnBun(
   shell: string,
@@ -198,8 +195,6 @@ function spawnBun(
   };
 }
 
-// ── node-pty spawn (Node.js / Electron) ───────────────────────────────────
-
 function spawnNodePty(
   shell: string,
   cwd: string,
@@ -266,8 +261,6 @@ function spawnNodePty(
   };
 }
 
-// ── Public API ─────────────────────────────────────────────────────────────
-
 export function handleTerminalSpawn(
   msg: { terminal_id: string; cols: number; rows: number },
   socket: WebSocket,
@@ -303,7 +296,6 @@ export function handleTerminalSpawn(
       return;
     }
 
-    // Session dead — fall through to spawn a fresh one
     terminals.delete(terminalKey);
   }
 

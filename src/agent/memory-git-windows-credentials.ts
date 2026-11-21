@@ -1,7 +1,6 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-/** Escape whitespace in an absolute Git credential-helper command path. */
 export function formatGitCredentialHelperPath(path: string): string {
   return path.replace(/\\/g, "/").replace(/\s/g, "\\$&");
 }

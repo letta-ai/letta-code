@@ -433,7 +433,6 @@ export function handleMemoryProtocolCommand(
     return true;
   }
 
-  // ── Enable memfs command ────────────────────────────────────────────
   if (isEnableMemfsCommand(parsed)) {
     runDetachedListenerTask("enable_memfs", async () => {
       try {
@@ -484,7 +483,6 @@ export function handleMemoryProtocolCommand(
     return true;
   }
 
-  // ── Memory history (git log for a specific file) ─────────────────
   if (isMemoryHistoryCommand(parsed)) {
     runDetachedListenerTask("memory_history", async () => {
       const { getScopedMemoryFilesystemRoot } = await import(
@@ -498,7 +496,6 @@ export function handleMemoryProtocolCommand(
       const limit = parsed.limit ?? 50;
 
       const gitArgs = ["log", `--max-count=${limit}`, "--format=%H|%s|%aI|%an"];
-      // When file_path is provided, scope to that file
       if (parsed.file_path) {
         gitArgs.push("--", parsed.file_path);
       }
@@ -538,7 +535,6 @@ export function handleMemoryProtocolCommand(
     return true;
   }
 
-  // ── Memory file at ref (git show for content at a commit) ────────
   if (isMemoryFileAtRefCommand(parsed)) {
     runDetachedListenerTask("memory_file_at_ref", async () => {
       const { getScopedMemoryFilesystemRoot } = await import(
@@ -591,7 +587,6 @@ export function handleMemoryProtocolCommand(
     return true;
   }
 
-  // ── Memory commit diff (git show for full commit patch) ────────────
   if (isMemoryCommitDiffCommand(parsed)) {
     runDetachedListenerTask("memory_commit_diff", async () => {
       const { getScopedMemoryFilesystemRoot } = await import(
@@ -642,7 +637,6 @@ export function handleMemoryProtocolCommand(
     return true;
   }
 
-  // ── Read a file from the MemFS working tree ───────────────────────
   if (isReadMemoryFileCommand(parsed)) {
     runDetachedListenerTask("read_memory_file", async () => {
       const encoding = parsed.encoding ?? "utf8";
@@ -676,7 +670,6 @@ export function handleMemoryProtocolCommand(
           "node:path"
         );
 
-        // Reject absolute paths or escapes outside memory root.
         if (isAbsolute(parsed.path) || parsed.path.length === 0) {
           sendFailure("path must be a non-empty relative path");
           return;
@@ -694,7 +687,6 @@ export function handleMemoryProtocolCommand(
           return;
         }
 
-        // Clone memfs on first read if it isn't local yet.
         if (!existsSync(join(memoryRoot, ".git"))) {
           const enabled = await isMemfsEnabledOnServer(parsed.agent_id);
           if (!enabled) {
@@ -746,7 +738,6 @@ export function handleMemoryProtocolCommand(
     return true;
   }
 
-  // ── Write a file into MemFS (durable agent memory write + commit) ───────
   if (isWriteMemoryFileCommand(parsed)) {
     runDetachedListenerTask("write_memory_file", async () => {
       const encoding = parsed.encoding ?? "utf8";
@@ -778,7 +769,6 @@ export function handleMemoryProtocolCommand(
         const { dirname, isAbsolute, join, normalize, relative, sep } =
           await import("node:path");
 
-        // ── Validate relative path ─────────────────────────────────────
         if (isAbsolute(parsed.path) || parsed.path.length === 0) {
           sendFailure(
             "write_memory_file: path must be a non-empty relative path",
@@ -800,7 +790,6 @@ export function handleMemoryProtocolCommand(
           return;
         }
 
-        // ── Ensure MemFS is enabled and checked out ───────────────────
         if (!existsSync(join(memoryRoot, ".git"))) {
           const enabled = await isMemfsEnabledOnServer(parsed.agent_id);
           if (!enabled) {
@@ -818,7 +807,6 @@ export function handleMemoryProtocolCommand(
           }
         }
 
-        // ── Decode + write bytes (binary-safe for base64) ──────────────
         const buffer =
           encoding === "base64"
             ? Buffer.from(parsed.content, "base64")
@@ -833,7 +821,6 @@ export function handleMemoryProtocolCommand(
             ? "local"
             : undefined;
 
-        // ── Resolve agent identity for the commit author ───────────────
         let agentName = parsed.agent_id;
         try {
           const agent = await backend.retrieveAgent(parsed.agent_id);
@@ -924,7 +911,6 @@ export function handleMemoryProtocolCommand(
     return true;
   }
 
-  // ── Delete a file from MemFS (durable agent memory delete + commit) ──────
   if (isDeleteMemoryFileCommand(parsed)) {
     runDetachedListenerTask("delete_memory_file", async () => {
       const sendFailure = (error: string): void => {
@@ -956,7 +942,6 @@ export function handleMemoryProtocolCommand(
           "node:path"
         );
 
-        // ── Validate relative path ─────────────────────────────────────
         if (isAbsolute(parsed.path) || parsed.path.length === 0) {
           sendFailure(
             "delete_memory_file: path must be a non-empty relative path",
@@ -978,7 +963,6 @@ export function handleMemoryProtocolCommand(
           return;
         }
 
-        // ── Ensure MemFS is enabled and checked out ───────────────────
         if (!existsSync(join(memoryRoot, ".git"))) {
           const enabled = await isMemfsEnabledOnServer(parsed.agent_id);
           if (!enabled) {
@@ -1029,7 +1013,6 @@ export function handleMemoryProtocolCommand(
             ? "local"
             : undefined;
 
-        // ── Resolve agent identity for the commit author ───────────────
         let agentName = parsed.agent_id;
         try {
           const agent = await backend.retrieveAgent(parsed.agent_id);

@@ -94,10 +94,6 @@ afterEach(() => {
   permissionMode.reset();
 });
 
-// ---------------------------------------------------------------------------
-// resolveAllowedAgents
-// ---------------------------------------------------------------------------
-
 describe("resolveAllowedAgents", () => {
   test("self-only when no parent is configured", () => {
     const allowed = resolveAllowedAgents();
@@ -153,10 +149,6 @@ describe("resolveAllowedAgents", () => {
     expect(isMemoryGuardDisabled()).toBe(false);
   });
 });
-
-// ---------------------------------------------------------------------------
-// extractTargetAgentPaths
-// ---------------------------------------------------------------------------
 
 describe("extractTargetAgentPaths", () => {
   test("file-tool targeting own memory", () => {
@@ -256,10 +248,6 @@ describe("extractTargetAgentPaths", () => {
     ).toEqual(new Set([OTHER]));
   });
 });
-
-// ---------------------------------------------------------------------------
-// evaluateCrossAgentGuard
-// ---------------------------------------------------------------------------
 
 describe("evaluateCrossAgentGuard", () => {
   beforeEach(() => {
@@ -391,10 +379,6 @@ describe("evaluateCrossAgentGuard", () => {
     expect(result).toBeNull();
   });
 });
-
-// ---------------------------------------------------------------------------
-// Integration with checkPermission — when enabled, guard is unbypassable by any mode
-// ---------------------------------------------------------------------------
 
 describe("checkPermission integration", () => {
   const permissions = { allow: [], deny: [], ask: [] };
@@ -901,12 +885,6 @@ describe("local-backend memfs tree", () => {
     expect(result?.offendingAgentIds).toContain(OTHER);
   });
 });
-
-// ---------------------------------------------------------------------------
-// Toolset alignment: the guard covers Codex file tools (not just Claude)
-// on BOTH the API and local trees. Tool names are canonicalized; path args
-// converge on file_path / path / notebook_path / patch input.
-// ---------------------------------------------------------------------------
 
 describe("toolset alignment (Codex file tools)", () => {
   const localMemfs = (id: string, rel = ""): string =>

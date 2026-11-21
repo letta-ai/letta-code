@@ -630,14 +630,12 @@ test("teleport accepts re-assert but never create originator token entries (refr
     source: { device_id: "source-device", connection_name: "Source" },
   });
 
-  // Fresh accept: creates a turn but no token owner — refresh-only.
   admitTeleportContinueInput({ ...base, payload: payload() });
   expect(acknowledgements.at(-1)).toMatchObject({
     accepted: true,
     deliveryHandling: "refresh",
   });
 
-  // Duplicate re-ack of the same teleport id: also refresh-only.
   admitTeleportContinueInput({ ...base, payload: payload() });
   expect(acknowledgements.at(-1)).toMatchObject({
     accepted: true,

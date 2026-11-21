@@ -5,9 +5,6 @@ import { DEFAULT_TITLE_SUMMARIZATION_MODEL } from "@/constants";
 import { settingsManager } from "@/settings-manager";
 import { isDebugEnabled } from "@/utils/debug";
 
-/**
- * Maximum characters allowed for an auto-generated conversation title.
- */
 export const CONVERSATION_TITLE_MAX_LENGTH = 100;
 
 export type ConversationTitleMessage = {
@@ -42,9 +39,6 @@ export function setConversationTitleSettings(
  */
 const CONVERSATION_TITLE_TIMEOUT_MS = 30_000;
 
-/**
- * System prompt for server-side title summarization.
- */
 const CONVERSATION_TITLE_SYSTEM_PROMPT = `You are a conversation title generator.
 
 Output ONLY a short, descriptive title for the conversation above.

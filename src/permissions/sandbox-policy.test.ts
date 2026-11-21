@@ -83,7 +83,6 @@ test("memory-subagent policy: writes scoped to ~/.letta, agents tree read-denied
   // Self memory is re-carved writable (it's nested inside the denied tree, where
   // the base ~/.letta carve is overridden by the deny).
   expect(policy.writableRoots).toEqual([canonicalizeRoot(memoryRoot)]);
-  // Cross-agent reads denied: the whole agents tree is walled off...
   expect(policy.deniedRoots).toEqual(getCrossBackendAgentsTreeRoots());
   // ...with the agent's own dir carved back out READ-only (env survival +
   // reading own state) — writes stay denied there by restrictWrites.
@@ -100,10 +99,8 @@ test("memory-subagent policy folds harness roots outside ~/.letta into the base"
     harnessWritableRoots: [extra],
   });
 
-  // ~/.letta is always the base; explicit harness roots fold in alongside it.
   expect(policy.baseWritableRoots).toContain(getLettaHomeRoot());
   expect(policy.baseWritableRoots).toContain(canonicalizeRoot(extra));
-  // No temp dir is auto-granted.
   expect(policy.baseWritableRoots).not.toContain(canonicalizeRoot("/tmp"));
 });
 
@@ -126,11 +123,9 @@ test("memory-subagent policy (local backend): custom tree, ~/.letta base, self m
   });
 
   expect(policy.restrictWrites).toBe(true);
-  // The memfs tree is walled off (read+write) — NOT ~/.letta/agents.
   expect(policy.deniedRoots).toEqual([canonicalizeRoot(memfsTree)]);
   // Self agent dir carved readonly (env survival + own reads).
   expect(policy.readonlyRoots).toEqual([canonicalizeRoot(selfAgentDir)]);
-  // Only self memory in the final writable set (re-carved over the deny).
   expect(policy.writableRoots).toEqual([canonicalizeRoot(memoryRoot)]);
   // The storage dir is in the base (so its persistence dirs stay writable).
   expect(policy.baseWritableRoots).toContain(canonicalizeRoot(storage));
@@ -159,8 +154,6 @@ test("cross-agent policy denies the agents tree and carves out self", () => {
     agentsTreeRoots: [agentsTree],
   });
 
-  // Default-allow writes (the repo/home stay writable); only the agents tree
-  // is walled off, with self carved back out.
   expect(policy.restrictWrites).toBe(false);
   expect(policy.deniedRoots).toEqual([canonicalizeRoot(agentsTree)]);
   expect(policy.writableRoots).toEqual([canonicalizeRoot(selfDir)]);

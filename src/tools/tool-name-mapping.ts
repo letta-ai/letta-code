@@ -5,7 +5,6 @@
 // temporal dead zone when tool-definitions loads first.
 import type { ToolName } from "./tool-definitions";
 
-// Maps internal implementation names to the names shown to the model.
 const TOOL_NAME_MAPPINGS: Partial<Record<ToolName, string>> = {
   // Align subagent-spawning tool with Claude Code: surface internal `Task` as `Agent`.
   // Internal implementation name stays `Task` for backward compat with existing
@@ -14,7 +13,6 @@ const TOOL_NAME_MAPPINGS: Partial<Record<ToolName, string>> = {
   AskUserQuestionAsync: "AskUserQuestion",
 };
 
-/** Get the server-facing name for a tool (maps internal names to what the model sees). */
 export function getServerToolName(internalName: string): string {
   return TOOL_NAME_MAPPINGS[internalName as ToolName] || internalName;
 }
@@ -26,6 +24,5 @@ export function getInternalToolName(serverName: string): string {
       return internal;
     }
   }
-  // If not in mapping, the server name is the internal name
   return serverName;
 }

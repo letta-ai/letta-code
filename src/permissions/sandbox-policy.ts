@@ -131,7 +131,6 @@ export function canonicalizeRoot(input: string): string {
   }
 }
 
-/** Whether a canonical path is the given root or nested inside it. */
 function isWithinRoot(path: string, root: string): boolean {
   return path === root || path.startsWith(`${root}/`);
 }

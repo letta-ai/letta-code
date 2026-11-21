@@ -95,7 +95,6 @@ export async function handleExecuteCommand(
     ? `/${command.command_id} ${trimmedArgs}`
     : `/${command.command_id}`;
 
-  // Emit slash_command_start
   const startDelta: SlashCommandStartMessage = {
     ...createLifecycleMessageBase("slash_command_start"),
     command_id: command.command_id,
@@ -524,7 +523,6 @@ function compactHelpOutput(): string {
   ].join("\n");
 }
 
-/** /compact — Summarize conversation history through the active Backend. */
 async function handleCompactCommand(
   socket: WebSocket,
   conversationRuntime: ConversationRuntime,
@@ -696,7 +694,6 @@ async function handleInitCommand(
   return "Memory initialization completed";
 }
 
-/** /context-limit — Set or reset the active scope's max context window. */
 async function handleSetMaxContextCommand(
   conversationRuntime: ConversationRuntime,
   args: string | undefined,

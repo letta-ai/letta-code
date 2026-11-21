@@ -12,12 +12,7 @@ import { settingsManager } from "./settings-manager";
 import { compareSemver } from "./utils/version";
 import { getVersion } from "./version";
 
-// Map of base version → markdown string
-// Notes are looked up by base version (pre-release suffix stripped)
 export const releaseNotes: Record<string, string> = {
-  // Add release notes for new versions here.
-  // Keep concise - 3-4 bullet points max.
-  // Use → for bullets to match the command hints below.
   "0.25.7": `🔐 **Permissions update in Letta Code 0.25.7**
 → The default permission mode is now **unrestricted**, so Letta Code starts without approval prompts unless you change it
 → Run **/permissions** and choose **standard** if you want the old request-approval behavior back
@@ -33,17 +28,10 @@ export const releaseNotes: Record<string, string> = {
 → Read more: https://docs.letta.com/letta-code/changelog#0130`,
 };
 
-/**
- * Get release notes for a specific base version (or null if none exist).
- */
 export function getReleaseNotes(baseVersion: string): string | null {
   return releaseNotes[baseVersion] ?? null;
 }
 
-/**
- * Strip pre-release suffix from version string.
- * "0.13.0-next.5" → "0.13.0"
- */
 export function getBaseVersion(version: string): string {
   return version.split("-")[0] ?? version;
 }
@@ -116,7 +104,6 @@ export function getPendingReleaseNotes(
  * Debug: Set LETTA_SHOW_RELEASE_NOTES=1 to force display.
  */
 export async function checkReleaseNotes(): Promise<string | null> {
-  // Skip for subagents (background processes)
   if (process.env.LETTA_CODE_AGENT_ROLE === "subagent") {
     return null;
   }
@@ -124,7 +111,6 @@ export async function checkReleaseNotes(): Promise<string | null> {
   const currentVersion = getVersion();
   const baseVersion = getBaseVersion(currentVersion);
 
-  // Debug flag to force show (still respects whether notes exist)
   if (process.env.LETTA_SHOW_RELEASE_NOTES === "1") {
     return getReleaseNotes(baseVersion);
   }

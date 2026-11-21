@@ -27,7 +27,6 @@ type Props = {
   isFocused?: boolean;
 };
 
-// Horizontal line character for Claude Code style
 const SOLID_LINE = "─";
 
 const MARKDOWN_QUESTION_PATTERNS = [
@@ -67,8 +66,6 @@ export const InlineQuestionApproval = memo(
 
     const currentQuestion = questions[currentQuestionIndex];
 
-    // Build options list: regular options + "Type something" (unless allowOther=false)
-    // For multi-select, we also track a separate "Submit" action
     const showOther = currentQuestion?.allowOther !== false;
     const baseOptions = currentQuestion
       ? [
@@ -86,7 +83,6 @@ export const InlineQuestionApproval = memo(
         ]
       : [];
 
-    // For multi-select, add Submit as a separate selectable item
     const optionsWithOther = currentQuestion?.multiSelect
       ? [...baseOptions, { label: "Submit", description: "" }]
       : baseOptions;
@@ -121,13 +117,11 @@ export const InlineQuestionApproval = memo(
       (input, key) => {
         if (!isFocused || !currentQuestion) return;
 
-        // CTRL-C: cancel
         if (key.ctrl && input === "c") {
           onCancel?.();
           return;
         }
 
-        // Arrow navigation always works
         if (key.upArrow) {
           setSelectedOption((prev) => Math.max(0, prev - 1));
           return;
@@ -139,10 +133,8 @@ export const InlineQuestionApproval = memo(
           return;
         }
 
-        // When on custom input option ("Type something")
         if (isOnCustomOption) {
           if (key.return) {
-            // Enter toggles the checkbox (same as other options)
             if (currentQuestion.multiSelect) {
               setSelectedMulti((prev) => {
                 const newSet = new Set(prev);
@@ -154,7 +146,6 @@ export const InlineQuestionApproval = memo(
                 return newSet;
               });
             } else {
-              // Single-select: submit the custom text if any
               if (customText.trim()) {
                 handleSubmitAnswer(customText.trim());
               }
@@ -162,7 +153,6 @@ export const InlineQuestionApproval = memo(
             return;
           }
           if (input === " " && currentQuestion.multiSelect) {
-            // Space in multi-select: toggle checkbox if not checked, then insert space
             if (!selectedMulti.has(customOptionIndex)) {
               setSelectedMulti((prev) => {
                 const newSet = new Set(prev);
@@ -170,7 +160,6 @@ export const InlineQuestionApproval = memo(
                 return newSet;
               });
             }
-            // Insert space at cursor position
             setCustomText(
               (prev) => `${prev.slice(0, cursorPos)} ${prev.slice(cursorPos)}`,
             );
@@ -185,18 +174,14 @@ export const InlineQuestionApproval = memo(
             }
             return;
           }
-          // Handle text input (arrows, backspace, typing)
           if (handleKey(input, key)) return;
         }
 
-        // When on Submit option (multi-select only)
         if (isOnSubmitOption) {
           if (key.return) {
-            // Submit the selected options + custom text if "Type something" is checked
             const selectedLabels: string[] = [];
             for (const i of selectedMulti) {
               if (i === customOptionIndex) {
-                // Include custom text if checkbox is checked and text was entered
                 if (customText.trim()) {
                   selectedLabels.push(customText.trim());
                 }
@@ -219,16 +204,13 @@ export const InlineQuestionApproval = memo(
           return;
         }
 
-        // ESC on regular options: cancel
         if (key.escape) {
           onCancel?.();
           return;
         }
 
-        // Enter behavior depends on single vs multi-select
         if (key.return) {
           if (currentQuestion.multiSelect) {
-            // Multi-select: Enter toggles the checkbox (only for regular options, not custom)
             if (
               selectedOption !== customOptionIndex &&
               selectedOption !== submitOptionIndex
@@ -244,13 +226,11 @@ export const InlineQuestionApproval = memo(
               });
             }
           } else {
-            // Single-select: Enter selects and submits
             handleSubmitAnswer(optionsWithOther[selectedOption]?.label || "");
           }
           return;
         }
 
-        // Space also toggles for multi-select (like Claude Code) - only regular options
         if (input === " " && currentQuestion.multiSelect) {
           if (
             selectedOption !== customOptionIndex &&
@@ -269,7 +249,6 @@ export const InlineQuestionApproval = memo(
           return;
         }
 
-        // Number keys for quick selection
         if (input >= "1" && input <= "9") {
           const optionIndex = Number.parseInt(input, 10) - 1;
           if (
@@ -297,7 +276,6 @@ export const InlineQuestionApproval = memo(
       { isActive: isFocused },
     );
 
-    // Generate horizontal line
     const solidLine = SOLID_LINE.repeat(Math.max(columns, 10));
     const questionText = currentQuestion?.question ?? "";
     const renderQuestionAsMarkdown =
@@ -308,15 +286,12 @@ export const InlineQuestionApproval = memo(
     const memoizedHeaderContent = useMemo(
       () => (
         <>
-          {/* Top solid line */}
           <Text dimColor>{solidLine}</Text>
 
-          {/* Header label */}
           <Text>{currentQuestion?.header}</Text>
 
           <Box height={1} />
 
-          {/* Question */}
           {renderQuestionAsMarkdown ? (
             <MarkdownDisplay text={questionText} />
           ) : (
@@ -325,7 +300,6 @@ export const InlineQuestionApproval = memo(
 
           <Box height={1} />
 
-          {/* Progress indicator for multiple questions */}
           {questions.length > 1 && (
             <Box marginBottom={1}>
               <Text dimColor>
@@ -357,7 +331,6 @@ export const InlineQuestionApproval = memo(
         {/* Static header content - memoized to prevent re-render on keystroke */}
         {memoizedHeaderContent}
 
-        {/* Options - Format: ❯ N. [ ] Label (selector, number, checkbox, label) */}
         <Box flexDirection="column">
           {optionsWithOther.map((option, index) => {
             const isSelected = index === selectedOption;
@@ -371,11 +344,9 @@ export const InlineQuestionApproval = memo(
             const checkboxWidth = currentQuestion.multiSelect ? 4 : 0; // "[ ] " or nothing
             const prefixWidth = selectorAndNumber + checkboxWidth;
 
-            // Submit option renders differently (selector + always bold "Submit")
             if (isSubmitOption) {
               return (
                 <Box key="submit" flexDirection="column">
-                  {/* Extra newline above Submit */}
                   <Box height={1} />
                   <Box flexDirection="row">
                     <Box width={selectorAndNumber} flexShrink={0}>
@@ -401,7 +372,6 @@ export const InlineQuestionApproval = memo(
             return (
               <Fragment key={`${option.label}-${index}`}>
                 <Box flexDirection="row">
-                  {/* Selector and number */}
                   <Box width={selectorAndNumber} flexShrink={0}>
                     <Text color={color}>
                       {isSelected ? "❯" : " "} {index + 1}.
@@ -415,10 +385,8 @@ export const InlineQuestionApproval = memo(
                       </Text>
                     </Box>
                   )}
-                  {/* Label */}
                   <Box flexGrow={1} width={Math.max(0, columns - prefixWidth)}>
                     {isCustomOption ? (
-                      // Custom input option ("Type something")
                       customText ? (
                         <Text wrap="wrap">
                           {customText.slice(0, cursorPos)}
@@ -438,7 +406,6 @@ export const InlineQuestionApproval = memo(
                     )}
                   </Box>
                 </Box>
-                {/* Description - rendered as sibling row */}
                 {hasDescription && (
                   <Box paddingLeft={prefixWidth}>
                     <Text dimColor>{option.description}</Text>

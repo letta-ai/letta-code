@@ -14,13 +14,11 @@ export function expandFilePath(
   env: NodeJS.ProcessEnv = process.env,
   homeDir: string = os.homedir(),
 ): string {
-  // 1. Tilde expansion
   let expanded = filePath;
   if (expanded === "~" || expanded.startsWith("~/")) {
     expanded = path.join(homeDir, expanded.slice(1));
   }
 
-  // 2. Environment-variable expansion ($VAR and ${VAR})
   expanded = expanded.replace(
     /\$\{([^}]+)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g,
     (match, braced?: string, unbraced?: string) => {
@@ -29,6 +27,5 @@ export function expandFilePath(
     },
   );
 
-  // 3. Absolute vs relative
   return path.isAbsolute(expanded) ? expanded : path.resolve(userCwd, expanded);
 }

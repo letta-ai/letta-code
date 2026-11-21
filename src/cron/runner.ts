@@ -32,9 +32,7 @@ export function isManagedCloudSandbox(
 
 export interface ResolveCronRunnerParams {
   managedCloudSandbox: boolean;
-  /** Active backend mode ("api" | "local"). */
   backendMode: "api" | "local";
-  /** Whether the configured server serves the Cloud schedule routes. */
   cloudSchedulesSupported?: boolean;
   listenerDeviceId?: string;
   localSchedulesAllowed?: boolean;
@@ -130,7 +128,6 @@ async function probeCloudScheduleSupport(agentId: string): Promise<boolean> {
   }
 }
 
-/** Resolve schedule ownership from the current execution environment. */
 export async function resolveCronRunnerForAgent(
   agentId: string,
 ): Promise<ResolveCronRunnerResult> {
@@ -169,8 +166,6 @@ export async function resolveCronRunnerForAgent(
     cloudServer,
   });
 }
-
-// ── Target device pre-validation ────────────────────────────────────
 
 /**
  * Synthetic ids the Desktop environment proxy injects into
@@ -351,8 +346,6 @@ export async function resolveCronCreatePlacement(params: {
   if (!validity.ok) return validity;
   return { runner: resolved.runner, targetDeviceId: resolution.deviceId };
 }
-
-// ── Cloud payload mapping ───────────────────────────────────────────
 
 export interface BuildCloudScheduleParams {
   name: string;

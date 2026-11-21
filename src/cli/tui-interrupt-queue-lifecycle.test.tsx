@@ -344,7 +344,6 @@ describe("TUI interrupt queue lifecycle", () => {
     if (!input) throw new Error("Missing first turn");
     const source = await startMonitor(input);
     const diagnose = () => describeQueueState(frames, inputs.length, source);
-    // An event drives another complete turn while the source stays connected.
     source.socket.send("normal monitor event");
     await waitFor(
       () =>
@@ -554,7 +553,6 @@ describe("TUI interrupt queue lifecycle", () => {
         () => executor.inputs.length === 1,
         "the typed initial turn",
       );
-      // A user message queued behind the active turn (source: user).
       addToMessageQueue({ kind: "user", text: "queued while busy" });
 
       addToMessageQueue(

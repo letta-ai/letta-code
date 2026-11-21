@@ -14,10 +14,6 @@ afterEach(() => {
   sessionPermissions.clear();
 });
 
-// ============================================================================
-// Allowed Directory Boundary Tests
-// ============================================================================
-
 const WORKING_DIRECTORY_REASON = "Within working directory";
 
 test("Sibling directories sharing the working directory prefix are not auto-allowed", () => {

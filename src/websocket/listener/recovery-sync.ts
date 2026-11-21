@@ -1,7 +1,3 @@
-// Restart-time approval recovery: when a sync arrives and this process has no
-// live approval state, consult the backend for pending approvals recorded in
-// the conversation and rebuild what can be safely re-presented.
-
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { ApprovalDecision } from "@/agent/approval-execution";
 import {

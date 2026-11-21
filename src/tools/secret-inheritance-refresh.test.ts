@@ -77,7 +77,6 @@ describe("inherited secrets refresh", () => {
 
     parentVault.NEW_SECRET = "new-secret-value";
 
-    // Within the freshness window the cached parent vault is reused.
     const cached = await asSubagent(() =>
       resolveSecretEnvFromCommand(command, CHILD),
     );

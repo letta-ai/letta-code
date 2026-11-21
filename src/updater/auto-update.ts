@@ -30,7 +30,6 @@ import { getVersion } from "@/version";
 
 const execFileAsync = promisify(execFile);
 
-// Debug logging - set LETTA_DEBUG_AUTOUPDATE=1 to enable
 const DEBUG = process.env.LETTA_DEBUG_AUTOUPDATE === "1";
 function debugLog(...args: unknown[]) {
   if (DEBUG) {
@@ -46,7 +45,6 @@ interface UpdateCheckResult {
   checkFailed?: boolean;
 }
 
-// Supported package managers for global install/update
 export type PackageManager = "npm" | "bun" | "pnpm";
 
 const DEFAULT_UPDATE_PACKAGE_NAME = "@letta-ai/letta-code";
@@ -382,9 +380,6 @@ export async function checkForUpdate(
   };
 }
 
-/**
- * Get the npm global prefix path (e.g., /Users/name/.npm-global or ~/.nvm/versions/node/v20/lib)
- */
 async function getNpmGlobalPath(
   runCommand: RunUpdateCommand,
 ): Promise<string | null> {
@@ -409,7 +404,6 @@ async function cleanupOrphanedDirs(globalPath: string): Promise<void> {
   try {
     const entries = await readdir(lettaAiDir);
     for (const entry of entries) {
-      // Match orphaned temp dirs like .letta-code-lnWEqMep
       if (entry.startsWith(".letta-code-")) {
         const orphanPath = join(lettaAiDir, entry);
         debugLog("Cleaning orphaned temp directory:", orphanPath);

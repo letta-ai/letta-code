@@ -1,11 +1,6 @@
-/**
- * LSP-enhanced Read tool - wraps the base Read tool and adds LSP diagnostics
- * This is used when LETTA_ENABLE_LSP is set
- */
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { read as baseRead, type ToolReturnContent } from "./read.js";
 
-// Format a single diagnostic in opencode style: "ERROR [line:col] message"
 function formatDiagnostic(diag: {
   severity?: number;
   range: { start: { line: number; character: number } };
@@ -35,7 +30,6 @@ interface ReadLSPResult {
 }
 
 export async function read_lsp(args: ReadLSPArgs): Promise<ReadLSPResult> {
-  // First, call the base read function
   const result = await baseRead(args);
 
   // Skip LSP if not enabled (shouldn't happen since we only load this when enabled)
@@ -48,7 +42,6 @@ export async function read_lsp(args: ReadLSPArgs): Promise<ReadLSPResult> {
     return result;
   }
 
-  // Determine if we should include diagnostics
   const lineCount = result.content.split("\n").length;
   const shouldInclude =
     args.include_types === true ||
@@ -59,23 +52,19 @@ export async function read_lsp(args: ReadLSPArgs): Promise<ReadLSPResult> {
   }
 
   try {
-    // Import LSP manager dynamically
     const { lspManager } = await import("@/lsp/manager.js");
     const path = await import("node:path");
 
-    // Resolve the path
     const userCwd = getCurrentWorkingDirectory();
     const resolvedPath = path.default.isAbsolute(args.file_path)
       ? args.file_path
       : path.default.resolve(userCwd, args.file_path);
 
-    // Touch the file (opens it in LSP if not already open)
     await lspManager.touchFile(resolvedPath, false);
 
     // Wait briefly for diagnostics (LSP servers are async)
     await new Promise((resolve) => setTimeout(resolve, 100));
 
-    // Get diagnostics
     const diagnostics = lspManager.getDiagnostics(resolvedPath);
 
     if (diagnostics.length > 0) {
@@ -97,7 +86,6 @@ export async function read_lsp(args: ReadLSPArgs): Promise<ReadLSPResult> {
       };
     }
 
-    // No errors - return as-is
     return result;
   } catch (_error) {
     // If LSP fails, silently return the base result

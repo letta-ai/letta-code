@@ -98,7 +98,6 @@ function formatTree(
     );
   });
 
-  // Add truncation notice if applicable
   if (truncated) {
     lines.push("");
     lines.push(

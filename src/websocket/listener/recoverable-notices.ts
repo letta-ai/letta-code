@@ -76,9 +76,7 @@ function mirrorRecoverableNoticeToDesktopDebugPanel(message: string): void {
 
   try {
     process.stderr.write(`${DESKTOP_DEBUG_PANEL_INFO_PREFIX} ${message}\n`);
-  } catch {
-    // Best-effort only.
-  }
+  } catch {}
 }
 
 function toStructuredApiError(

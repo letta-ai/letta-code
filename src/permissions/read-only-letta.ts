@@ -1,6 +1,5 @@
 import { stripShellQuotes } from "./shell-analysis";
 
-// letta CLI read-only subcommands: group -> allowed actions
 const SAFE_LETTA_COMMANDS: Record<string, Set<string>> = {
   memory: new Set(["status", "help", "backups", "export", "tokens"]),
   memfs: new Set(["status", "help", "backups", "export", "tokens"]),

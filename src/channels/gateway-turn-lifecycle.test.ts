@@ -138,7 +138,6 @@ test("requires_approval stop reason does not finish the turn", async () => {
 
   await gateway.submit(makeDelivery({ clientMessageId: "cm-approval" }));
 
-  // Emit a requires_approval stop_reason
   client.emit(
     makeStreamDelta({
       message_type: "stop_reason",

@@ -29,7 +29,6 @@ import {
   tryAcquireRemoteSettingsLockSync,
 } from "./remote-settings-lock";
 
-/** Persisted permission mode state for a single conversation. */
 export interface PersistedPermissionModeState {
   mode: PermissionMode;
   /** Set when the mode was explicitly chosen rather than inherited from a default. */

@@ -2,9 +2,7 @@ import { useInput } from "ink";
 import { useEffect, useRef, useState } from "react";
 
 interface UseAutocompleteNavigationOptions<T> {
-  /** Array of items to navigate through */
   matches: T[];
-  /** Maximum number of visible items (for wrapping navigation) */
   maxVisible?: number;
   /** Callback when an item is selected via Tab (autocomplete only) or Enter (when onAutocomplete is not provided) */
   onSelect?: (item: T) => void;
@@ -14,12 +12,10 @@ interface UseAutocompleteNavigationOptions<T> {
   onActiveChange?: (isActive: boolean) => void;
   /** Skip automatic active state management (for components with async loading) */
   manageActiveState?: boolean;
-  /** Whether navigation is currently disabled (e.g., during loading) */
   disabled?: boolean;
 }
 
 interface UseAutocompleteNavigationResult {
-  /** Currently selected index */
   selectedIndex: number;
 }
 
@@ -40,7 +36,6 @@ export function useAutocompleteNavigation<T>({
   const prevMatchCountRef = useRef(0);
   const prevIsActiveRef = useRef(false);
 
-  // Reset selected index when matches change significantly
   useEffect(() => {
     if (matches.length !== prevMatchCountRef.current) {
       setSelectedIndex(0);
@@ -60,7 +55,6 @@ export function useAutocompleteNavigation<T>({
     }
   }, [matches.length, onActiveChange, manageActiveState]);
 
-  // Handle keyboard navigation
   useInput((_input, key) => {
     if (!matches.length || disabled) return;
 

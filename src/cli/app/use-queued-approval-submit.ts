@@ -1,5 +1,3 @@
-// src/cli/app/useQueuedApprovalSubmit.ts
-
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import { type Dispatch, type MutableRefObject, useCallback } from "react";

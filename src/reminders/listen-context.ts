@@ -11,9 +11,7 @@ interface BuildListenReminderContextParams {
   state: SharedReminderState;
   /** Explicit working directory for session context (overrides process.cwd()). */
   workingDirectory?: string;
-  /** Reason for injecting session context (controls intro text). */
   sessionContextReason?: SessionContextReason;
-  /** Shell context detected at startup, if available. */
   shellContext?: ShellContext;
 }
 

@@ -16,7 +16,6 @@ type ToolArgs = Record<string, unknown>;
  */
 export const MEMORY_FILE_WRITE_TOOLS = new Set(["Write", "Edit", "ApplyPatch"]);
 
-/** Every path a file-write tool touches; a patch may carry several. */
 function writeTargets(canonicalTool: string, toolArgs: ToolArgs): string[] {
   if (canonicalTool === "ApplyPatch") {
     return typeof toolArgs.input === "string"

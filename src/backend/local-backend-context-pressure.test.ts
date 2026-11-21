@@ -340,7 +340,6 @@ describe("LocalBackend context pressure", () => {
       });
       expect(chunks).toContainEqual(summaryMessage);
 
-      // The stored transcript keeps the source, including after a reload.
       const reloaded = new LocalBackend({ storageDir, memfsEnabled: false });
       for (const reader of [backend, reloaded]) {
         const page = await reader.listConversationMessages(conversation.id, {

@@ -225,8 +225,6 @@ export type ChannelTurnLifecycleEvent =
       runId?: string;
     };
 
-// ── Adapter interface ─────────────────────────────────────────────
-
 export type ChannelStartupLogger = (message: string) => void;
 
 export interface ChannelAdapterStartOptions {
@@ -245,12 +243,9 @@ export interface ChannelAdapter {
 
   /** Start receiving messages (e.g. begin long-polling). */
   start(options?: ChannelAdapterStartOptions): Promise<void>;
-  /** Stop receiving messages gracefully. */
   stop(): Promise<void>;
-  /** Whether the adapter is currently running. */
   isRunning(): boolean;
 
-  /** Send a message through this channel. */
   sendMessage(msg: OutboundChannelMessage): Promise<{ messageId: string }>;
   listCustomEmojis?(): Promise<string[]>;
   /**
@@ -335,8 +330,6 @@ export interface ChannelAdapter {
    */
   onMessage?: (msg: InboundChannelMessage) => Promise<void>;
 }
-
-// ── Message types ─────────────────────────────────────────────────
 
 export interface InboundChannelMessage {
   /** Platform identifier, e.g. "telegram". */
@@ -448,8 +441,6 @@ export interface OutboundChannelRichMessageDraft {
   richMessage: ChannelRichMessage;
 }
 
-// ── Routing ───────────────────────────────────────────────────────
-
 export interface ChannelRoute {
   /** Channel account identifier. */
   accountId?: string;
@@ -474,8 +465,6 @@ export interface ChannelRoute {
   /** ISO 8601 update timestamp. */
   updatedAt?: string;
 }
-
-// ── Config ────────────────────────────────────────────────────────
 
 export type DmPolicy = "pairing" | "allowlist" | "open";
 /**
@@ -933,8 +922,6 @@ export function isCustomChannelAccount(
   return !isFirstPartyChannelId(account.channel) && "config" in account;
 }
 
-// ── Pairing ───────────────────────────────────────────────────────
-
 export interface PendingPairing {
   accountId?: string;
   code: string;
@@ -956,8 +943,6 @@ export interface PairingStore {
   pending: PendingPairing[];
   approved: ApprovedUser[];
 }
-
-// ── Discovered bind targets ───────────────────────────────────────
 
 export interface ChannelBindableTarget {
   accountId?: string;

@@ -37,7 +37,6 @@ export const BlinkDot = memo(
       const t = setInterval(() => setOn((v) => !v), 400);
       return () => clearInterval(t);
     }, [shouldAnimate]);
-    // Always show symbol when animation disabled (static indicator)
     return <Text color={color}>{on || !shouldAnimate ? symbol : " "}</Text>;
   },
 );

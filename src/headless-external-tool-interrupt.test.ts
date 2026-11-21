@@ -135,7 +135,6 @@ test("interrupt during an in-flight external tool returns an interruption-shaped
           events.push(event);
 
           if (event.type === "system" && event.subtype === "init") {
-            // Register the external tool before the first turn.
             send({
               type: "control_request",
               request_id: "reg-ext-1",
@@ -169,7 +168,6 @@ test("interrupt during an in-flight external tool returns an interruption-shaped
             event.type === "control_request" &&
             (event.request as { subtype?: string })?.subtype === "can_use_tool"
           ) {
-            // Approve the external tool call.
             send({
               type: "control_response",
               response: {
@@ -218,7 +216,6 @@ test("interrupt during an in-flight external tool returns an interruption-shaped
     expect(toolReturn).toBeDefined();
     expect(String(toolReturn?.tool_return)).toMatch(/interrupted by user/i);
     expect(String(toolReturn?.tool_return)).not.toContain("stdin closed");
-    // The turn unwinds as interrupted and the queued line still runs.
     expect(results).toEqual(["interrupted", "success"]);
     const queuedTurn = events.find(
       (event) =>

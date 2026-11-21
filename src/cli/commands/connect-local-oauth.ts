@@ -24,7 +24,6 @@ import { openOAuthBrowser } from "./connect-oauth-core";
 export interface LocalOAuthConnectCallbacks {
   onStatus: (message: string) => void | Promise<void>;
   onPrompt?: (prompt: OAuthPrompt) => Promise<string>;
-  /** Answer a selection prompt (e.g. OpenAI Codex login method) with an option id. */
   onSelect?: (prompt: OAuthSelectPrompt) => Promise<string | undefined>;
   openBrowser?: (authorizationUrl: string) => Promise<void>;
   signal?: AbortSignal;

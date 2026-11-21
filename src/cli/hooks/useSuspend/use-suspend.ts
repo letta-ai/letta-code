@@ -11,7 +11,6 @@ export function useSuspend() {
   }, []);
 
   useInput((input, key) => {
-    // Handle CTRL-Z for suspend
     if (key.ctrl && input === "z") {
       if (stdin && isRawModeSupported) {
         stdin.setRawMode(false);
@@ -22,14 +21,12 @@ export function useSuspend() {
     }
   });
 
-  // Handle the SIGCONT (fg command) resume
   useEffect(() => {
     const handleResume = () => {
       if (stdin && isRawModeSupported && stdin.setRawMode) {
         stdin.setRawMode(true);
       }
 
-      // clear the console
       process.stdout.write("\x1B[H\x1B[2J");
 
       forceUpdate();

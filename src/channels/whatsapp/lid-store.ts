@@ -37,17 +37,12 @@ import {
   stripDeviceSuffix,
 } from "@/channels/whatsapp/jid";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 export type RecordResult =
   | { status: "recorded" }
   | { status: "idempotent" }
   | { status: "conflict"; existingPhoneJid: string; requestedPhoneJid: string };
 
 export interface LidStore {
-  /** Resolve a LID JID to its canonical phone JID, or `null` if unknown. */
   resolve(lidJid: string): string | null;
   /**
    * Record a LID → phone mapping (in-memory only; does not persist).
@@ -60,10 +55,6 @@ export interface LidStore {
   /** Flush in-memory state to disk atomically. Caller-owned, single-writer. */
   flush(): void;
 }
-
-// ---------------------------------------------------------------------------
-// Persistence helpers
-// ---------------------------------------------------------------------------
 
 type StoreEntry = { lid: string; phone: string };
 
@@ -89,7 +80,6 @@ function parseStoreFile(filePath: string): Map<string, string> {
   const obj = parsed as { entries?: unknown };
   if (!Array.isArray(obj.entries)) return new Map();
 
-  // First pass: collect all normalized pairs per LID key.
   const collected = new Map<string, Set<string>>();
   for (const entry of obj.entries) {
     if (!entry || typeof entry !== "object") continue;
@@ -112,7 +102,6 @@ function parseStoreFile(filePath: string): Map<string, string> {
     phoneSet.add(value);
   }
 
-  // Second pass: keep only unambiguous LIDs (exactly one phone mapping).
   const result = new Map<string, string>();
   for (const [key, phones] of collected) {
     if (phones.size === 1) {
@@ -129,10 +118,6 @@ function serializeStore(map: Map<string, string>): string {
   }
   return JSON.stringify({ entries }, null, 2);
 }
-
-// ---------------------------------------------------------------------------
-// Factory
-// ---------------------------------------------------------------------------
 
 export function createLidStore(filePath: string): LidStore {
   if (!isAbsolute(filePath)) {

@@ -753,7 +753,6 @@ describe("ambient runtime credential redaction", () => {
 
         const text = asText(result.toolReturn);
         expect(result.status).toBe("success");
-        // Prove the hook actually fed back, then prove containment.
         expect(text).toContain("[Hook feedback]:");
         expect(text).not.toContain(AMBIENT_SENTINEL);
         expect(text).toContain(AMBIENT_PLACEHOLDER);
@@ -933,7 +932,6 @@ describe("always-on vault secret redaction", () => {
     expect(scrubbedA).not.toContain(VAULT_VALUE);
     expect(scrubbedA).toContain(`${VAULT_KEY}=<REDACTED>`);
 
-    // Agent B's vault does not redact agent A's value.
     const scrubbedB = scrubSecretsFromString(
       `${VAULT_VALUE} stays`,
       {},
@@ -967,7 +965,6 @@ describe("always-on vault secret redaction", () => {
     ) as Array<{ type?: string; text?: string; url?: string }>;
     expect(partsContent[0]?.text).not.toContain(VAULT_VALUE);
     expect(partsContent[0]?.text).toContain(`${VAULT_KEY}=<REDACTED>`);
-    // Non-text content passes through unchanged.
     expect(partsContent[1]?.url).toBe("https://example.com/img.png");
   });
 });

@@ -27,8 +27,6 @@ export function slugify(name: string): string {
   return slug;
 }
 
-// ── Stub plugin.mjs template ──────────────────────────────────────────────────
-
 function buildStubPlugin(id: string, displayName: string): string {
   // Self-contained webhook forwarder — no imports from letta-code.
   // Mirrors the logic in src/channels/custom/adapter.ts.
@@ -134,8 +132,6 @@ export const channelPlugin = {
 };
 `;
 }
-
-// ── Public API ────────────────────────────────────────────────────────────────
 
 const FIRST_PARTY_SET = new Set<string>(FIRST_PARTY_CHANNEL_IDS);
 

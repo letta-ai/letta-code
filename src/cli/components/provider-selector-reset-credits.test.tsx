@@ -70,7 +70,6 @@ const ENTER = "\r";
 let testIndex = 0;
 let PROVIDER_NAME = "";
 
-/** Fake ChatGPT backend: one banked reset that lifts a reached weekly limit. */
 function fakeChatGPT() {
   const state = { limited: true, credits: 2, consumeBodies: [] as unknown[] };
   const handler = async (

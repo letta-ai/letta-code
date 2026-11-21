@@ -277,7 +277,6 @@ test("keeps the gateway for a resumed runtime and rebuilds for a new runtime", a
   await Promise.all([startGateway(), startGateway()]);
   expect(events).toEqual(["start:A"]);
 
-  // An unrelated runtime replacement still closes and rebuilds the gateway.
   stopRuntime(runtimeA, true);
   const runtimeB = createRuntime();
   runtimes.set(runtimeB, "B");

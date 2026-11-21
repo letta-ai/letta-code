@@ -22,7 +22,6 @@ const runtime = {
   conversation_id: scope.conversationId,
 };
 
-/** A computer connection that accepts one launch and can drop on demand. */
 class DroppableComputer {
   private readonly messageHandlers = new Set<AppServerMessageHandler>();
   private readonly disconnectHandlers = new Set<AppServerDisconnectHandler>();

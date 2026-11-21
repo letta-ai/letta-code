@@ -39,13 +39,6 @@ function getContext(): AgentContext {
 
 const context = getContext();
 
-/**
- * Set the current agent context
- * @param agentId - The agent ID
- * @param skillsDirectory - Optional skills directory path
- * @param skillSources - Enabled skill sources for this session
- * @param agentName - Optional display name for shell/process identity
- */
 export function setAgentContext(
   agentId: string,
   skillsDirectory?: string,
@@ -85,9 +78,6 @@ export function setCurrentAgentId(agentId: string | null): void {
   }
 }
 
-/**
- * Set the current agent name in context when it is available.
- */
 export function setCurrentAgentName(agentName: string | null): void {
   context.agentName = normalizeAgentName(agentName);
   if (getRuntimeContext()) {
@@ -120,9 +110,6 @@ export function getCurrentAgentId(): string {
   return context.agentId;
 }
 
-/**
- * Get the current agent name if runtime context has it.
- */
 export function getCurrentAgentName(): string | null {
   const runtimeContext = getRuntimeContext();
   if (runtimeContext && "agentName" in runtimeContext) {
@@ -132,10 +119,6 @@ export function getCurrentAgentName(): string | null {
   return context.agentName;
 }
 
-/**
- * Get the skills directory path
- * @returns The skills directory path or null if not set
- */
 export function getSkillsDirectory(): string | null {
   const runtimeContext = getRuntimeContext();
   if (runtimeContext && "skillsDirectory" in runtimeContext) {
@@ -153,9 +136,6 @@ export function getBundledSkillAllowlist(): string[] | undefined {
   return bundledSkills ? [...bundledSkills] : undefined;
 }
 
-/**
- * Get enabled skill sources for discovery/injection.
- */
 export function getSkillSources(): SkillSource[] {
   const runtimeContext = getRuntimeContext();
   if (runtimeContext?.skillSources) {
@@ -164,10 +144,6 @@ export function getSkillSources(): SkillSource[] {
   return [...context.skillSources];
 }
 
-/**
- * Set the current conversation ID
- * @param conversationId - The conversation ID, or null to clear
- */
 export function setConversationId(conversationId: string | null): void {
   context.conversationId = conversationId;
   if (getRuntimeContext()) {
@@ -175,10 +151,6 @@ export function setConversationId(conversationId: string | null): void {
   }
 }
 
-/**
- * Get the current conversation ID
- * @returns The conversation ID or null if not set
- */
 export function getConversationId(): string | null {
   const runtimeContext = getRuntimeContext();
   if (runtimeContext && "conversationId" in runtimeContext) {

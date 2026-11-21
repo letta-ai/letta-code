@@ -1,7 +1,4 @@
 // Reusable single-select vertical list picker.
-//
-// Renders a vertical list with cursor navigation (↑↓),
-// Enter to confirm, Escape to cancel.
 // Items are identified by key (string), not index.
 
 import { Box, type Key, useInput } from "ink";
@@ -63,7 +60,6 @@ export const SingleSelectPicker = memo(function SingleSelectPicker({
 }: SingleSelectPickerProps) {
   const [cursor, setCursor] = useState(initialCursorIndex);
 
-  // Clamp cursor when items change
   useEffect(() => {
     if (items.length === 0) return;
     setCursor((c) => Math.min(c, items.length - 1));
@@ -75,12 +71,10 @@ export const SingleSelectPicker = memo(function SingleSelectPicker({
         onCancel();
         return;
       }
-      // Up: arrow or vim-style "k"
       if (key.upArrow || input === "k") {
         setCursor((c) => Math.max(0, c - 1));
         return;
       }
-      // Down: arrow or vim-style "j"
       if (key.downArrow || input === "j") {
         setCursor((c) => Math.min(items.length - 1, c + 1));
         return;
@@ -96,7 +90,6 @@ export const SingleSelectPicker = memo(function SingleSelectPicker({
         onCancel();
         return;
       }
-      // Pass unhandled keys to the wrapper
       if (onUnhandledKey) {
         onUnhandledKey(input, key);
       }
@@ -150,7 +143,6 @@ export const SingleSelectPicker = memo(function SingleSelectPicker({
         );
       })}
 
-      {/* Footer */}
       <Box marginTop={footer ? 0 : 1}>
         {footer ?? (
           <Text dimColor> Enter select · ↑↓/jk navigate · Esc cancel</Text>

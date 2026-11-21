@@ -147,7 +147,6 @@ export async function handleConnectionCommand(
     return { submitted: true };
   }
 
-  // Special handling for /server command (alias: /remote)
   if (
     trimmed === "/server" ||
     trimmed.startsWith("/server ") ||
@@ -193,6 +192,5 @@ export async function handleConnectionCommand(
     return { submitted: true };
   }
 
-  // Special handling for /help command
   return null;
 }

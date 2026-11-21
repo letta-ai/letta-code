@@ -120,9 +120,6 @@ export interface ExperimentSnapshot {
   override: boolean | null;
 }
 
-/**
- * Base envelope shared by all v2 websocket messages.
- */
 export interface RuntimeEnvelope {
   runtime: ConversationRuntimeScope;
   event_seq: number;
@@ -363,7 +360,6 @@ export interface GitContext {
   recent_branches: string[];
 }
 
-/** Bottom-bar and device execution context state. */
 export interface DeviceStatus {
   current_connection_id: string | null;
   connection_name: string | null;
@@ -458,7 +454,6 @@ export interface QueueUpdateMessage extends RuntimeEnvelope {
   removed?: import("./queue-update-protocol").QueueRemovalTransition[];
 }
 
-/** Standard Letta message delta forwarded through the stream channel. */
 export type MessageDelta = { type: "message" } & LettaStreamingResponse;
 
 export interface ClientToolStartMessage extends UmiLifecycleMessageBase {
@@ -571,11 +566,6 @@ export interface SubagentStateUpdateMessage extends RuntimeEnvelope {
   subagents: SubagentSnapshot[];
 }
 
-/**
- * Controller -> execution-environment commands.
- * In v2, the WS server accepts runtime-scoped chat/device commands plus
- * device capability commands (filesystem, memory, cron, terminals).
- */
 export type { ClientPreferences } from "./client-preferences";
 export type {
   ApprovalResponseAllowDecision,
@@ -903,7 +893,6 @@ export interface EditFileCommand {
   file_path: string;
   /** The exact text to find and replace. */
   old_string: string;
-  /** The replacement text. */
   new_string: string;
   /** When true, replace all occurrences. */
   replace_all?: boolean;
@@ -934,7 +923,6 @@ export interface ListMemoryCommand {
   type: "list_memory";
   /** Echoed back in every response chunk for request correlation. */
   request_id: string;
-  /** The agent whose memory to list. */
   agent_id: string;
   /** When true, include parsed file references for graph edges. */
   include_references?: boolean;
@@ -944,7 +932,6 @@ export interface MemoryHistoryCommand {
   type: "memory_history";
   /** Echoed back in the response for request correlation. */
   request_id: string;
-  /** The agent whose memory history to fetch. */
   agent_id: string;
   /** Relative path within the memory directory (e.g. "system/persona.md"). Omit for global history across all files. */
   file_path?: string;
@@ -956,7 +943,6 @@ export interface MemoryFileAtRefCommand {
   type: "memory_file_at_ref";
   /** Echoed back in the response for request correlation. */
   request_id: string;
-  /** The agent whose memory to read. */
   agent_id: string;
   /** Relative path within the memory directory. */
   file_path: string;
@@ -969,7 +955,6 @@ export interface ReadMemoryFileCommand {
   type: "read_memory_file";
   /** Echoed back in the response for request correlation. */
   request_id: string;
-  /** The agent whose memory to read. */
   agent_id: string;
   /** Relative to the memory root. */
   path: string;
@@ -987,7 +972,6 @@ export interface WriteMemoryFileCommand {
   type: "write_memory_file";
   /** Echoed back in the response for request correlation. */
   request_id: string;
-  /** The agent whose memory to write to. */
   agent_id: string;
   /** Relative path within the memory directory (e.g. "profile.png"). */
   path: string;
@@ -1008,7 +992,6 @@ export interface DeleteMemoryFileCommand {
   type: "delete_memory_file";
   /** Echoed back in the response for request correlation. */
   request_id: string;
-  /** The agent whose memory to delete from. */
   agent_id: string;
   /** Relative path within the memory directory. */
   path: string;
@@ -1020,7 +1003,6 @@ export interface MemoryCommitDiffCommand {
   type: "memory_commit_diff";
   /** Echoed back in the response for request correlation. */
   request_id: string;
-  /** The agent whose memory to read. */
   agent_id: string;
   /** Git SHA of the commit to show. */
   sha: string;
@@ -1030,7 +1012,6 @@ export interface EnableMemfsCommand {
   type: "enable_memfs";
   /** Echoed back in the response for request correlation. */
   request_id: string;
-  /** The agent to enable memfs for. */
   agent_id: string;
 }
 
@@ -2079,10 +2060,6 @@ export interface ChannelTargetsUpdatedMessage {
   channel_id: ChannelId;
 }
 
-// ─────────────────────────────────────────────────
-//  Git branch commands
-// ─────────────────────────────────────────────────
-
 export interface GitBranchInfo {
   name: string;
   is_current: boolean;
@@ -2148,7 +2125,6 @@ export interface CheckoutBranchResponse {
 export interface SecretListCommand {
   type: "secret_list";
   request_id: string;
-  /** Agent whose secrets to list. */
   agent_id: string;
 }
 

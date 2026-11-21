@@ -43,7 +43,6 @@ export function parseHexComponent(hex: string): number {
 async function queryTerminalBackground(
   timeoutMs = 100,
 ): Promise<TerminalRgb | null> {
-  // Skip if not a TTY
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     return null;
   }
@@ -61,7 +60,6 @@ async function queryTerminalBackground(
       resolved = true;
       try {
         process.stdin.removeListener("data", onData);
-        // Restore stdin to its original state
         process.stdin.setRawMode?.(wasRaw ?? false);
         if (!wasFlowing) {
           process.stdin.pause();
@@ -79,7 +77,6 @@ async function queryTerminalBackground(
     const onData = (data: Buffer) => {
       response += data.toString();
 
-      // Look for OSC 11 response: ESC]11;rgb:RRRR/GGGG/BBBB followed by ESC\ or BEL
       // Build regex with ESC character to avoid lint warning about control chars in literals
       const ESC = "\x1b";
       const oscPattern = new RegExp(
@@ -99,12 +96,10 @@ async function queryTerminalBackground(
     };
 
     try {
-      // Set raw mode to capture response
       process.stdin.setRawMode?.(true);
       process.stdin.resume();
       process.stdin.on("data", onData);
 
-      // Send OSC 11 query (using ST terminator \x1b\\)
       process.stdout.write("\x1b]11;?\x1b\\");
     } catch {
       clearTimeout(timeout);
@@ -114,13 +109,7 @@ async function queryTerminalBackground(
   });
 }
 
-/**
- * Calculate perceived luminance using relative luminance formula.
- * Returns value between 0 (black) and 1 (white).
- * Using sRGB to linear conversion and ITU-R BT.709 coefficients.
- */
 export function calculateLuminance(r: number, g: number, b: number): number {
-  // Normalize to 0-1
   const toLinear = (c: number): number => {
     const s = c / 255;
     return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
@@ -130,7 +119,6 @@ export function calculateLuminance(r: number, g: number, b: number): number {
   const gLin = toLinear(g);
   const bLin = toLinear(b);
 
-  // ITU-R BT.709 coefficients
   return 0.2126 * rLin + 0.7152 * gLin + 0.0722 * bLin;
 }
 
@@ -139,7 +127,6 @@ export function calculateLuminance(r: number, g: number, b: number): number {
  * Falls back to COLORFGBG env var, then defaults to dark.
  */
 export async function detectTerminalThemeAsync(): Promise<TerminalTheme> {
-  // Try OSC 11 query first
   const bg = await queryTerminalBackground(100);
   if (bg) {
     getTerminalThemeState().cachedBackground = bg;
@@ -157,14 +144,9 @@ export async function detectTerminalThemeAsync(): Promise<TerminalTheme> {
     if (bgIdx === 7 || bgIdx === 15) return "light";
   }
 
-  // Default to dark (most common terminal theme)
   return "dark";
 }
 
-/**
- * Synchronous theme detection using only COLORFGBG.
- * Use detectTerminalThemeAsync() for more accurate OSC 11 detection.
- */
 export function detectTerminalThemeSync(): TerminalTheme {
   const colorfgbg = process.env.COLORFGBG;
   if (colorfgbg) {
@@ -175,10 +157,6 @@ export function detectTerminalThemeSync(): TerminalTheme {
   return "dark";
 }
 
-/**
- * Get the cached terminal theme, or detect synchronously if not yet cached.
- * Call initTerminalTheme() early in app startup for async detection.
- */
 export function getTerminalTheme(): TerminalTheme {
   const state = getTerminalThemeState();
   if (state.cachedTheme) return state.cachedTheme;
@@ -186,10 +164,6 @@ export function getTerminalTheme(): TerminalTheme {
   return state.cachedTheme;
 }
 
-/**
- * Get the cached terminal background color from the OSC 11 query, if available.
- * Returns null when the terminal did not respond or async detection has not run.
- */
 export function getTerminalBackgroundColor(): TerminalRgb | null {
   return getTerminalThemeState().cachedBackground;
 }

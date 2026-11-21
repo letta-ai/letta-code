@@ -1,10 +1,5 @@
 #!/usr/bin/env bun
 
-/**
- * Build script for Letta Code CLI
- * Bundles TypeScript source into a single JavaScript file
- */
-
 import {
   cpSync,
   existsSync,
@@ -61,7 +56,6 @@ function rewriteDeclarationAliases(typesRoot) {
   }
 }
 
-// Read version from package.json
 const pkg = JSON.parse(readFileSync(join(__dirname, "package.json"), "utf-8"));
 const version = pkg.version;
 const useMagick = Bun.env.USE_MAGICK;
@@ -88,7 +82,6 @@ await Bun.build({
     BUILD_TIME: JSON.stringify(new Date().toISOString()),
     __USE_MAGICK__: useMagick ? "true" : "false",
   },
-  // Load text files as strings (for markdown, etc.)
   loader: {
     ".md": "text",
     ".mdx": "text",
@@ -166,11 +159,9 @@ await Bun.build({
   external: ["@cursor/sdk"],
 });
 
-// Add shebang to output file
 const outputPath = join(__dirname, "letta.js");
 let content = readFileSync(outputPath, "utf-8");
 
-// Remove any existing shebang first
 if (content.startsWith("#!")) {
   content = content.slice(content.indexOf("\n") + 1);
 }
@@ -185,7 +176,6 @@ const withShebang = `#!/usr/bin/env node
 ${content}`;
 await Bun.write(outputPath, withShebang);
 
-// Make executable
 if (process.platform !== "win32") {
   await Bun.$`chmod +x letta.js`;
 }
@@ -375,12 +365,10 @@ await Bun.build({
   },
 });
 
-// Copy bundled skills to skills/ directory for shipping
 const bundledSkillsSrc = join(__dirname, "src/skills/builtin");
 const bundledSkillsDst = join(__dirname, "skills");
 
 if (existsSync(bundledSkillsSrc)) {
-  // Clean and copy
   if (existsSync(bundledSkillsDst)) {
     rmSync(bundledSkillsDst, { recursive: true });
   }
@@ -388,7 +376,6 @@ if (existsSync(bundledSkillsSrc)) {
   console.log("📂 Copied bundled skills to skills/");
 }
 
-// Generate type declarations for wire types export
 console.log("📝 Generating type declarations...");
 await Bun.$`bunx tsc -p tsconfig.types.json`;
 rewriteDeclarationAliases(join(__dirname, "dist/types"));

@@ -67,7 +67,6 @@ export function splitMessageText(text: string, maxLength: number): string[] {
       chunks.push(remaining);
       break;
     }
-    // Try to split at a newline boundary
     let splitAt = remaining.lastIndexOf("\n", maxLength);
     if (splitAt <= 0) {
       splitAt = remaining.lastIndexOf(" ", maxLength);

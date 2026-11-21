@@ -33,7 +33,6 @@ export const InlineMarkdown: React.FC<InlineMarkdownProps> = ({
   let match: RegExpExecArray | null = inlineRegex.exec(text);
 
   while (match !== null) {
-    // Add text before the match
     if (match.index > lastIndex) {
       nodes.push(text.slice(lastIndex, match.index));
     }
@@ -41,13 +40,11 @@ export const InlineMarkdown: React.FC<InlineMarkdownProps> = ({
     const fullMatch = match[0];
     const key = `m-${match.index}`;
 
-    // Handle different markdown patterns
     if (
       fullMatch.startsWith("**") &&
       fullMatch.endsWith("**") &&
       fullMatch.length > 4
     ) {
-      // Bold
       nodes.push(
         <Text
           key={key}
@@ -63,7 +60,6 @@ export const InlineMarkdown: React.FC<InlineMarkdownProps> = ({
       fullMatch.startsWith("*") &&
       fullMatch.endsWith("*")
     ) {
-      // Italic
       nodes.push(
         <Text
           key={key}
@@ -79,7 +75,6 @@ export const InlineMarkdown: React.FC<InlineMarkdownProps> = ({
       fullMatch.endsWith("~~") &&
       fullMatch.length > 4
     ) {
-      // Strikethrough
       nodes.push(
         <Text
           key={key}
@@ -91,7 +86,6 @@ export const InlineMarkdown: React.FC<InlineMarkdownProps> = ({
         </Text>,
       );
     } else if (fullMatch.startsWith("`") && fullMatch.endsWith("`")) {
-      // Inline code
       nodes.push(
         <Text
           key={key}
@@ -106,7 +100,6 @@ export const InlineMarkdown: React.FC<InlineMarkdownProps> = ({
       fullMatch.includes("](") &&
       fullMatch.endsWith(")")
     ) {
-      // Link [text](url)
       const linkMatch = fullMatch.match(/\[(.*?)\]\((.*?)\)/);
       if (linkMatch) {
         const linkText = linkMatch[1];
@@ -125,7 +118,6 @@ export const InlineMarkdown: React.FC<InlineMarkdownProps> = ({
         nodes.push(fullMatch);
       }
     } else {
-      // Unknown pattern, render as-is
       nodes.push(fullMatch);
     }
 
@@ -133,13 +125,9 @@ export const InlineMarkdown: React.FC<InlineMarkdownProps> = ({
     match = inlineRegex.exec(text);
   }
 
-  // Add remaining text after last match
   if (lastIndex < text.length) {
     nodes.push(text.slice(lastIndex));
   }
 
   return <>{nodes}</>;
 };
-
-// Test helper: expose the tokenizer logic for simple unit validation without rendering.
-// This mirrors the logic above; keep it in sync with InlineMarkdown for tests.

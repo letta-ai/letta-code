@@ -24,14 +24,12 @@ interface ReadArgs {
   limit?: number;
 }
 
-// Tool return content types - either a string or array of content parts
 export type ToolReturnContent = string | Array<TextContent | ImageContent>;
 
 interface ReadResult {
   content: ToolReturnContent;
 }
 
-// Supported image extensions
 const IMAGE_EXTENSIONS = new Set([
   ".png",
   ".jpg",
@@ -69,7 +67,6 @@ async function readImageFile(
   const ext = path.extname(filePath).toLowerCase();
   const mediaType = getMediaType(ext);
 
-  // Use shared image resize utility
   let result: Awaited<ReturnType<typeof resizeImageIfNeeded>>;
   try {
     result = await resizeImageIfNeeded(buffer, mediaType);
@@ -118,7 +115,6 @@ async function isBinaryFile(filePath: string): Promise<boolean> {
         if (buffer[i] === 0) return true;
       }
 
-      // Count control characters (excluding whitespace)
       // This catches files that are mostly control characters but lack null bytes
       const text = buffer.slice(0, bytesRead).toString("utf-8");
       let controlCharCount = 0;
@@ -148,14 +144,12 @@ function formatWithLineNumbers(
   const originalLineCount = lines.length;
   const startLine = offset || 0;
 
-  // Apply default limit if not specified (Claude Code: 2000 lines)
   const effectiveLimit = limit ?? LIMITS.READ_MAX_LINES;
   const endLine = Math.min(startLine + effectiveLimit, lines.length);
   const actualStartLine = Math.min(startLine, lines.length);
   const actualEndLine = Math.min(endLine, lines.length);
   const selectedLines = lines.slice(actualStartLine, actualEndLine);
 
-  // Apply per-line character limit (Claude Code: 2000 chars/line)
   let linesWereTruncatedInLength = false;
   const formattedLines = selectedLines.map((line, index) => {
     // `cat -n`-style prefix: flush-left line number + tab, matching Claude
@@ -163,7 +157,6 @@ function formatWithLineNumbers(
     // documented "line number + tab" prefix contract holds.
     const lineNumber = actualStartLine + index + 1;
 
-    // Truncate long lines
     if (line.length > LIMITS.READ_MAX_CHARS_PER_LINE) {
       linesWereTruncatedInLength = true;
       const truncated = line.slice(0, LIMITS.READ_MAX_CHARS_PER_LINE);
@@ -186,11 +179,9 @@ function formatWithLineNumbers(
     result = truncateByChars(result, LIMITS.READ_OUTPUT_CHARS, "Read").content;
   }
 
-  // Add truncation notices if applicable
   const notices: string[] = [];
   const wasTruncatedByLineCount = actualEndLine < originalLineCount;
 
-  // Write to overflow file if content was truncated and overflow is enabled
   let overflowPath: string | undefined;
   if (
     (wasTruncatedByLineCount ||
@@ -208,7 +199,6 @@ function formatWithLineNumbers(
   }
 
   if (wasTruncatedByLineCount && !limit) {
-    // Only show this notice if user didn't explicitly set a limit
     notices.push(
       `\n\n[File truncated: showing lines ${actualStartLine + 1}-${actualEndLine} of ${originalLineCount} total lines. Use offset and limit parameters to read other sections.]`,
     );
@@ -247,7 +237,6 @@ export async function read(args: ReadArgs): Promise<ReadResult> {
     if (stats.isDirectory())
       throw new Error(`Path is a directory, not a file: ${resolvedPath}`);
 
-    // Check if this is an image file
     if (isImageFile(resolvedPath)) {
       // Images have a higher size limit (20MB raw, will be resized if needed)
       const maxImageSize = 20 * 1024 * 1024;
@@ -260,7 +249,6 @@ export async function read(args: ReadArgs): Promise<ReadResult> {
       return { content: imageContent };
     }
 
-    // Regular text file handling
     const maxSize = 10 * 1024 * 1024; // 10MB
     if (stats.size > maxSize)
       throw new Error(

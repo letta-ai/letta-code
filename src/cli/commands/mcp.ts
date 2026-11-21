@@ -1,18 +1,13 @@
-// src/cli/commands/mcp.ts
-// MCP server command handlers
-
 import type { Buffers, Line } from "@/cli/helpers/accumulator";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import type { McpServerConfig } from "@/mcp-client";
 import { replaceClientMcpServers } from "@/mcp-runtime";
 import { settingsManager } from "@/settings-manager";
 
-// tiny helper for unique ids
 function uid(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-// Helper type for command result
 type CommandLine = Extract<Line, { kind: "command" }>;
 
 let activeCommandId: string | null = null;
@@ -21,7 +16,6 @@ export function setActiveCommandId(id: string | null): void {
   activeCommandId = id;
 }
 
-// Context passed to MCP handlers
 export interface McpCommandContext {
   agentId: string;
   buffersRef: { current: Buffers };
@@ -29,7 +23,6 @@ export interface McpCommandContext {
   setCommandRunning: (running: boolean) => void;
 }
 
-// Helper to add a command result to buffers
 export function addCommandResult(
   buffersRef: { current: Buffers },
   refreshDerived: () => void,
@@ -58,7 +51,6 @@ export function addCommandResult(
   return cmdId;
 }
 
-// Helper to update an existing command result
 export function updateCommandResult(
   buffersRef: { current: Buffers },
   refreshDerived: () => void,
@@ -83,7 +75,6 @@ export function updateCommandResult(
   refreshDerived();
 }
 
-// Helper to parse command line arguments respecting quoted strings
 function parseCommandArgs(commandStr: string): string[] {
   const args: string[] = [];
   let current = "";
@@ -95,26 +86,21 @@ function parseCommandArgs(commandStr: string): string[] {
     if (!char) continue; // Skip if undefined (shouldn't happen but type safety)
 
     if ((char === '"' || char === "'") && !inQuotes) {
-      // Start of quoted string
       inQuotes = true;
       quoteChar = char;
     } else if (char === quoteChar && inQuotes) {
-      // End of quoted string
       inQuotes = false;
       quoteChar = "";
     } else if (/\s/.test(char) && !inQuotes) {
-      // Whitespace outside quotes - end of argument
       if (current) {
         args.push(current);
         current = "";
       }
     } else {
-      // Regular character or whitespace inside quotes
       current += char;
     }
   }
 
-  // Add final argument if any
   if (current) {
     args.push(current);
   }
@@ -122,7 +108,6 @@ function parseCommandArgs(commandStr: string): string[] {
   return args;
 }
 
-// Parse /mcp add args
 interface McpAddArgs {
   transport: "http" | "sse" | "stdio";
   name: string;
@@ -136,7 +121,6 @@ interface McpAddArgs {
 }
 
 function parseMcpAddArgs(parts: string[]): McpAddArgs | null {
-  // Expected format: add --transport <type> <name> <url/command> [--header "key: value"]
   let transport: "http" | "sse" | "stdio" | null = null;
   let name: string | null = null;
   let url: string | null = null;
@@ -178,7 +162,6 @@ function parseMcpAddArgs(parts: string[]): McpAddArgs | null {
       i++;
       const headerValue = parts[i];
       if (headerValue) {
-        // Parse "key: value" or "key=value"
         const colonMatch = headerValue.match(/^([^:]+):\s*(.+)$/);
         const equalsMatch = headerValue.match(/^([^=]+)=(.+)$/);
         if (colonMatch?.[1] && colonMatch[2]) {
@@ -202,7 +185,6 @@ function parseMcpAddArgs(parts: string[]): McpAddArgs | null {
       command = part || null;
       i++;
     } else if (transport === "stdio" && part) {
-      // Collect remaining parts as args for stdio
       args.push(part);
       i++;
     } else {
@@ -235,13 +217,11 @@ function parseMcpAddArgs(parts: string[]): McpAddArgs | null {
   };
 }
 
-// /mcp add --transport <type> <name> <url/command> [options]
 export async function handleMcpAdd(
   ctx: McpCommandContext,
   msg: string,
   commandStr: string,
 ): Promise<void> {
-  // Parse the full command string respecting quotes
   const parts = parseCommandArgs(commandStr);
   const args = parseMcpAddArgs(parts);
 

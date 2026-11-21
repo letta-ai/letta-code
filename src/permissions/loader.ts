@@ -1,6 +1,3 @@
-// src/permissions/loader.ts
-// Load and merge permission settings from hierarchical sources
-
 import { createHash } from "node:crypto";
 import { type FSWatcher, readFileSync, statSync, watch } from "node:fs";
 import { homedir } from "node:os";
@@ -295,9 +292,6 @@ export async function loadPermissionMode(
   return permissions.mode ?? null;
 }
 
-/**
- * Merge permission rules by concatenating arrays
- */
 function mergePermissions(
   target: PermissionRules,
   source: SettingsPermissions,
@@ -341,9 +335,6 @@ function mergeRuleList(
   return merged;
 }
 
-/**
- * Save a permission rule to a specific scope
- */
 export async function savePermissionRule(
   rule: string,
   ruleType: PermissionRuleType,
@@ -362,7 +353,6 @@ export async function savePermissionRule(
 
   const normalizedWorkingDirectory = resolve(workingDirectory);
 
-  // Determine settings file path based on scope
   let settingsPath: string;
   switch (scope) {
     case "user":
@@ -384,18 +374,14 @@ export async function savePermissionRule(
       break;
   }
 
-  // Load existing settings
   let settings: SettingsFile = {};
   try {
     if (exists(settingsPath)) {
       const content = await readFile(settingsPath);
       settings = JSON.parse(content) as SettingsFile;
     }
-  } catch (_error) {
-    // Start with empty settings if file doesn't exist or is invalid
-  }
+  } catch (_error) {}
 
-  // Initialize permissions if needed
   if (!settings.permissions) {
     settings.permissions = {};
   }
@@ -414,7 +400,6 @@ export async function savePermissionRule(
     settings.permissions[ruleType].push(normalizedRule);
   }
 
-  // Save settings
   await writeFile(
     settingsPath,
     JSON.stringify(settings, null, 2),
@@ -422,15 +407,11 @@ export async function savePermissionRule(
   );
   invalidatePermissionSource(settingsPath);
 
-  // If saving to .letta/settings.local.json, ensure it's gitignored
   if (scope === "local") {
     await ensureLocalSettingsIgnored(normalizedWorkingDirectory);
   }
 }
 
-/**
- * Ensure .letta/settings.local.json is in .gitignore
- */
 async function ensureLocalSettingsIgnored(
   workingDirectory: string,
 ): Promise<void> {
@@ -443,9 +424,7 @@ async function ensureLocalSettingsIgnored(
       content = await readFile(gitignorePath);
     }
 
-    // Check if pattern already exists
     if (!content.includes(pattern)) {
-      // Add pattern to gitignore
       const newContent = `${
         content + (content.endsWith("\n") ? "" : "\n") + pattern
       }\n`;

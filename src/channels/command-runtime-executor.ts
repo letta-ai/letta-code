@@ -23,11 +23,6 @@ import {
   defaultChannelDisplayName,
 } from "./command-surface";
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Injected client
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** Runtime identity the protocol commands target. */
 export interface RuntimeCommandScope {
   agent_id: string;
   conversation_id: string;
@@ -36,7 +31,6 @@ export interface RuntimeCommandScope {
 /** App-server `execute_command` ids reachable from channel slash commands. */
 export type RuntimeExecuteCommandId = "reflect" | "reload";
 
-/** Result of a `list_models` round trip. */
 export interface RuntimeCommandListModelsResult {
   success: boolean;
   entries: ListModelsResponseModelEntry[];
@@ -49,7 +43,6 @@ export interface RuntimeCommandListModelsResult {
   error?: string;
 }
 
-/** Result of an `update_model` round trip. */
 export interface RuntimeCommandUpdateModelResult {
   success: boolean;
   /** Canonical handle the server applied (may differ from the request). */
@@ -58,14 +51,12 @@ export interface RuntimeCommandUpdateModelResult {
   error?: string;
 }
 
-/** Result of an `abort_message` round trip. */
 export interface RuntimeCommandAbortResult {
   success: boolean;
   aborted: boolean;
   error?: string;
 }
 
-/** Result of an `execute_command` round trip. */
 export interface RuntimeCommandExecuteResult {
   success: boolean;
   output: string;
@@ -96,10 +87,6 @@ export interface RuntimeCommandClient {
     args?: string;
   }): Promise<RuntimeCommandExecuteResult>;
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-//  Model entry helpers (pure)
-// ─────────────────────────────────────────────────────────────────────────────
 
 export type ChannelModelListEntry = Pick<
   ListModelsResponseModelEntry,
@@ -182,10 +169,6 @@ export function getFallbackModelEntries(
   );
   return preferred.length > 0 ? preferred : Array.from(byHandle.values());
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-//  Reply rendering (pure; display name injected)
-// ─────────────────────────────────────────────────────────────────────────────
 
 function modelCommandPrefix(channelId: string): "/model" | "@agent /model" {
   return channelId === "slack" ? "@agent /model" : "/model";
@@ -379,11 +362,6 @@ export function buildChannelCancelNoActiveTurnMessage(
   return `${displayName} received /cancel, but there is no in-progress agent turn to cancel for this chat.`;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Command executors
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** Rendered reply from a shared runtime-command executor. */
 export interface RuntimeCommandReply {
   handled: true;
   text: string;

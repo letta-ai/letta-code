@@ -18,10 +18,8 @@
 import { debugLog, debugWarn } from "@/utils/debug";
 import type { ListenerRuntime } from "./types";
 
-/** Default freshness window in milliseconds. */
 const DEFAULT_FRESHNESS_MS = 60_000;
 
-/** Test-only override for the freshness window. */
 let _testFreshnessMsOverride: number | null = null;
 
 /** @internal */
@@ -55,14 +53,6 @@ export function invalidateSecretsCacheForAgent(
   debugLog("secrets-sync", `Marked secrets cache dirty for agent ${agentId}`);
 }
 
-/**
- * Check whether an agent's cached secrets are still fresh.
- *
- * Returns true when:
- *  - the agent has been hydrated before, AND
- *  - the last hydration time is within the freshness window, AND
- *  - the agent is not marked dirty.
- */
 function isSecretsCacheFresh(
   listener: ListenerRuntime,
   agentId: string,
@@ -95,7 +85,6 @@ export async function ensureSecretsHydratedForAgent(
   agentId: string,
 ): Promise<void> {
   while (true) {
-    // Fast path: cache is still fresh and not dirty.
     if (isSecretsCacheFresh(listener, agentId)) {
       debugLog(
         "secrets-sync",
@@ -124,7 +113,6 @@ export async function ensureSecretsHydratedForAgent(
 
     const promise = refreshSecretsForAgent(agentId)
       .then(() => {
-        // Record freshness timestamp on successful hydration.
         listener.secretsHydrationFreshnessByAgent.set(agentId, Date.now());
       })
       .catch((err) => {

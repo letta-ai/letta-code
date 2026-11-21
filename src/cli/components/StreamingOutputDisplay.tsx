@@ -76,7 +76,6 @@ export const StreamingOutputDisplay = memo(
             {clipToWidth(line.text)}
           </Text>
         ))}
-        {/* Hidden count + elapsed time */}
         {hiddenCount > 0 && (
           <Text dimColor>
             {"     "}… +{hiddenCount} more lines ({elapsed}s){interruptHint}

@@ -2,7 +2,6 @@ import { getRuntimeContext } from "@/runtime-context";
 
 /** Default wait before a long-running tool call is returned as a background task. */
 export const DEFAULT_FOREGROUND_YIELD_MS = 10_000;
-/** Bounds for a controller-supplied foreground yield. */
 export const MIN_FOREGROUND_YIELD_MS = 1_000;
 export const MAX_FOREGROUND_YIELD_MS = 30_000;
 

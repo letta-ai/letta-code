@@ -17,35 +17,21 @@ import { resolveGlobalStateDir } from "@/utils/settings-path";
 import { isLocalAgentId } from "./agent-id";
 import { ALL_SKILL_SOURCES, type SkillSource } from "./skill-sources";
 
-/**
- * Get the bundled skills directory path
- * This is where skills ship with the package (skills/ directory next to letta.js)
- */
 function getBundledSkillsPath(): string {
-  // In dev mode (running from src/), look in src/skills/builtin/
-  // In production (running from letta.js), look in skills/ next to letta.js
   const thisDir = dirname(fileURLToPath(import.meta.url));
 
-  // Check if we're in dev mode (thisDir contains 'src/agent')
   if (thisDir.includes("src/agent") || thisDir.includes("src\\agent")) {
     return join(thisDir, "../skills/builtin");
   }
 
-  // Production mode - skills/ is next to the bundled letta.js
   return join(thisDir, "skills");
 }
 
 export type { SkillSource } from "./skill-sources";
 
-/**
- * Represents a skill that can be used by the agent
- */
 export interface Skill {
-  /** Unique identifier for the skill */
   id: string;
-  /** Human-readable name of the skill */
   name: string;
-  /** Description of what the skill does and when to use it */
   description: string;
   /** Optional additional trigger guidance from `when_to_use` frontmatter */
   whenToUse?: string;
@@ -55,25 +41,17 @@ export interface Skill {
   disableModelInvocation?: boolean;
   /** If false, hide from slash-command user invocation */
   userInvocable?: boolean;
-  /** Optional category for organizing skills */
   category?: string;
-  /** Optional tags for filtering/searching skills */
   tags?: string[];
   /** Path to the skill file (empty for bundled skills) */
   path: string;
-  /** Source of the skill */
   source: SkillSource;
   /** Raw content of the skill (for bundled skills) */
   content?: string;
 }
 
-/**
- * Represents the result of skill discovery
- */
 export interface SkillDiscoveryResult {
-  /** List of discovered skills */
   skills: Skill[];
-  /** Any errors encountered during discovery */
   errors: SkillDiscoveryError[];
 }
 
@@ -82,13 +60,8 @@ export interface SkillDiscoveryOptions {
   sources?: SkillSource[];
 }
 
-/**
- * Represents an error that occurred during skill discovery
- */
 export interface SkillDiscoveryError {
-  /** Path where the error occurred */
   path: string;
-  /** Error message */
   message: string;
 }
 
@@ -179,9 +152,6 @@ export function isSkillAvailableForAgent(
   return true;
 }
 
-/**
- * Canonical directory where project skills are stored.
- */
 export const PROJECT_SKILLS_DIR = join(".agents", "skills");
 
 /**
@@ -189,9 +159,6 @@ export const PROJECT_SKILLS_DIR = join(".agents", "skills");
  */
 export const SKILLS_DIR = ".skills";
 
-/**
- * Global skills directory for the active product config root.
- */
 export function getGlobalSkillsDir(
   env: NodeJS.ProcessEnv = process.env,
 ): string {
@@ -221,19 +188,12 @@ export async function getBundledSkills(): Promise<Skill[]> {
   return result.skills;
 }
 
-/**
- * Discovers skills from a single directory
- * @param skillsPath - The directory to search for skills
- * @param source - The source type for skills in this directory
- * @returns A result containing discovered skills and any errors
- */
 async function discoverSkillsFromDir(
   skillsPath: string,
   source: SkillSource,
 ): Promise<SkillDiscoveryResult> {
   const errors: SkillDiscoveryError[] = [];
 
-  // Check if skills directory exists
   if (!existsSync(skillsPath)) {
     return { skills: [], errors: [] };
   }
@@ -241,7 +201,6 @@ async function discoverSkillsFromDir(
   const skills: Skill[] = [];
 
   try {
-    // Recursively find all SKILL.MD files
     await findSkillFiles(skillsPath, skillsPath, skills, errors, source);
   } catch (error) {
     errors.push({
@@ -277,7 +236,6 @@ export async function discoverSkills(
   const sourceSet = new Set(options?.sources ?? ALL_SKILL_SOURCES);
   const includeSource = (source: SkillSource) => sourceSet.has(source);
 
-  // 1. Start with bundled skills (lowest priority)
   if (includeSource("bundled") && !options?.skipBundled) {
     const bundledSkills = await getBundledSkills();
     for (const skill of bundledSkills) {
@@ -285,7 +243,6 @@ export async function discoverSkills(
     }
   }
 
-  // 2. Add global skills (override bundled)
   if (includeSource("global")) {
     const globalResult = await discoverSkillsFromDir(
       getGlobalSkillsDir(),
@@ -297,7 +254,6 @@ export async function discoverSkills(
     }
   }
 
-  // 3. Add agent skills if agentId provided (override global)
   if (agentId && includeSource("agent")) {
     const agentSkillsDir = getAgentSkillsDir(agentId);
     const agentResult = await discoverSkillsFromDir(agentSkillsDir, "agent");
@@ -307,7 +263,6 @@ export async function discoverSkills(
     }
   }
 
-  // 4. Add project skills (override all - highest priority)
   if (includeSource("project")) {
     const projectResult = await discoverSkillsFromDir(
       projectSkillsPath,
@@ -327,14 +282,6 @@ export async function discoverSkills(
   };
 }
 
-/**
- * Recursively searches for SKILL.MD files in a directory
- * @param currentPath - The current directory being searched
- * @param rootPath - The root skills directory
- * @param skills - Array to collect found skills
- * @param errors - Array to collect errors
- * @param source - The source type for skills in this directory
- */
 async function findSkillFiles(
   currentPath: string,
   rootPath: string,
@@ -375,7 +322,6 @@ async function findSkillFiles(
         }
 
         if (isDirectory) {
-          // Recursively search subdirectories.
           await findSkillFiles(
             fullPath,
             rootPath,
@@ -385,7 +331,6 @@ async function findSkillFiles(
             visitedRealPaths,
           );
         } else if (isFile && entry.name.toUpperCase() === "SKILL.MD") {
-          // Found a SKILL.MD file
           try {
             const skill = await parseSkillFile(fullPath, rootPath, source);
             if (skill) {
@@ -413,13 +358,6 @@ async function findSkillFiles(
   }
 }
 
-/**
- * Parses a skill file and extracts metadata
- * @param filePath - Path to the skill file
- * @param rootPath - Root skills directory to derive relative path
- * @param source - The source type for this skill
- * @returns A Skill object or null if parsing fails
- */
 async function parseSkillFile(
   filePath: string,
   rootPath: string,
@@ -427,7 +365,6 @@ async function parseSkillFile(
 ): Promise<Skill | null> {
   const content = await readFile(filePath, "utf-8");
 
-  // Parse frontmatter
   const { frontmatter, body } = parseFrontmatter(content);
 
   // Derive the legacy fallback ID from the directory structure relative to root.
@@ -445,7 +382,6 @@ async function parseSkillFile(
   const id =
     getFrontmatterString(frontmatter, "id") || frontmatterName || defaultId;
 
-  // Use name from frontmatter or derive from ID
   const name =
     frontmatterName ||
     (typeof frontmatter.title === "string" ? frontmatter.title : null) ||
@@ -453,10 +389,8 @@ async function parseSkillFile(
       .replace(/-/g, " ")
       .replace(/\b\w/g, (l) => l.toUpperCase());
 
-  // Description is required - either from frontmatter or first paragraph of content
   let description = getFrontmatterString(frontmatter, "description") ?? null;
   if (!description) {
-    // Extract first paragraph from content as description
     const firstParagraph = body.trim().split("\n\n")[0];
     description = firstParagraph || "No description available";
   }
@@ -467,7 +401,6 @@ async function parseSkillFile(
     ? `${description}\n\nWhen to use: ${whenToUse}`
     : description;
 
-  // Extract tags (handle both string and array)
   const tags = getFrontmatterStringList(frontmatter, "tags");
 
   return {

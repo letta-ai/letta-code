@@ -29,10 +29,6 @@ import urllib.request
 import urllib.error
 
 
-# =============================================================================
-# Configuration
-# =============================================================================
-
 def get_logs_dir(working_dir: Optional[str] = None) -> Path:
     """Get the memory logs directory."""
     if working_dir:
@@ -107,10 +103,6 @@ def get_base_url() -> str:
     return env_settings.get("LETTA_BASE_URL", "https://api.letta.com").rstrip("/")
 
 
-# =============================================================================
-# Letta API
-# =============================================================================
-
 def fetch_all_memory_blocks(agent_id: str, verbose: bool = False) -> list[dict]:
     """Fetch all memory blocks for an agent from the Letta API."""
     api_key = get_api_key()
@@ -157,10 +149,6 @@ def fetch_all_memory_blocks(agent_id: str, verbose: bool = False) -> list[dict]:
         return []
 
 
-# =============================================================================
-# Diff Operations
-# =============================================================================
-
 def create_unified_diff(old_content: str, new_content: str, block_name: str) -> str:
     """Create a unified diff between old and new content."""
     old_lines = old_content.splitlines(keepends=True)
@@ -186,7 +174,6 @@ def apply_diff(content: str, diff_text: str, reverse: bool = False) -> str:
     lines = content.splitlines()
     diff_lines = diff_text.splitlines()
 
-    # Parse hunks from diff
     hunks = []
     current_hunk = None
 
@@ -218,12 +205,10 @@ def apply_diff(content: str, diff_text: str, reverse: bool = False) -> str:
 
     for hunk in reversed(hunks):
         if reverse:
-            # Reverse: swap + and -
             start = hunk['new_start'] - 1
         else:
             start = hunk['old_start'] - 1
 
-        # Calculate changes
         new_lines = []
         for op, text in hunk['changes']:
             if reverse:
@@ -237,18 +222,12 @@ def apply_diff(content: str, diff_text: str, reverse: bool = False) -> str:
             elif op == '+':
                 new_lines.append(text)
 
-        # Calculate how many lines to replace
         old_count = sum(1 for op, _ in hunk['changes'] if (op == '-' if not reverse else op == '+') or op == ' ')
 
-        # Replace lines
         result[start:start + old_count] = new_lines
 
     return '\n'.join(result)
 
-
-# =============================================================================
-# State Management
-# =============================================================================
 
 def load_current_state(logs_dir: Path, block_name: str) -> Optional[str]:
     """Load the current state of a memory block from local storage."""
@@ -310,17 +289,12 @@ def load_diff_history(logs_dir: Path, block_name: str) -> list[dict]:
     return history
 
 
-# =============================================================================
-# Hook Handler
-# =============================================================================
-
 def handle_hook(data: dict) -> None:
     """Handle a PostToolUse hook event for memory operations."""
     agent_id = data.get("agent_id", "")
     working_dir = data.get("working_directory")
     tool_result = data.get("tool_result", {})
 
-    # Only process successful operations
     if tool_result.get("status") != "success":
         return
 
@@ -329,13 +303,11 @@ def handle_hook(data: dict) -> None:
 
     logs_dir = get_logs_dir(working_dir)
 
-    # Fetch all memory blocks from the server
     blocks = fetch_all_memory_blocks(agent_id)
 
     if not blocks:
         return
 
-    # Compare each block with local state and log diffs
     for block in blocks:
         block_name = block.get("label", "")
         server_content = block.get("value", "")
@@ -343,17 +315,14 @@ def handle_hook(data: dict) -> None:
         if not block_name:
             continue
 
-        # Load local state
         local_content = load_current_state(logs_dir, block_name)
 
-        # If no local state, initialize it
         if local_content is None:
             save_current_state(logs_dir, block_name, server_content, {
                 "description": block.get("description", ""),
             })
             continue
 
-        # If content changed, create diff and log it
         if local_content != server_content:
             diff_text = create_unified_diff(local_content, server_content, block_name)
 
@@ -362,15 +331,10 @@ def handle_hook(data: dict) -> None:
                     "agent_id": agent_id,
                 })
 
-            # Update local state
             save_current_state(logs_dir, block_name, server_content, {
                 "description": block.get("description", ""),
             })
 
-
-# =============================================================================
-# CLI Commands
-# =============================================================================
 
 def cmd_list(logs_dir: Path):
     """List all tracked memory blocks."""
@@ -386,7 +350,6 @@ def cmd_list(logs_dir: Path):
             content = data.get("content", "")
             updated_at = data.get("updated_at", "unknown")
 
-            # Count history entries
             log_file = logs_dir / f"{block_name}.jsonl"
             history_count = 0
             if log_file.exists():
@@ -432,7 +395,6 @@ def cmd_debug(agent_id: str):
     """Debug command to test API connectivity."""
     print("=== Memory Logger Debug ===\n")
 
-    # Check API key sources
     keychain_key = get_api_key_from_keychain()
     env_key = os.environ.get("LETTA_API_KEY")
     settings = get_letta_settings()
@@ -450,11 +412,9 @@ def cmd_debug(agent_id: str):
         print("  - Settings file: ~/.letta/settings.json -> env.LETTA_API_KEY")
         return
 
-    # Check base URL
     base_url = get_base_url()
     print(f"Base URL: {base_url}")
 
-    # Test API call
     print(f"\nFetching memory blocks for agent: {agent_id}")
     blocks = fetch_all_memory_blocks(agent_id, verbose=True)
 
@@ -481,7 +441,6 @@ def cmd_history(logs_dir: Path, block_name: str):
         print(f"Memory block '{block_name}' not found.")
         return
 
-    # Load current state and history
     try:
         data = json.loads(state_file.read_text())
         current_content = data.get("content", "")
@@ -497,12 +456,10 @@ def cmd_history(logs_dir: Path, block_name: str):
         print(current_content)
         return
 
-    # Build version list by applying diffs in reverse from current state
     # versions[0] = oldest, versions[-1] = current
     versions = [{"content": current_content, "timestamp": "current", "diff": None}]
     content = current_content
 
-    # Apply diffs in reverse order to reconstruct previous versions
     for entry in reversed(history):
         diff_text = entry.get("diff", "")
         if diff_text:
@@ -513,7 +470,6 @@ def cmd_history(logs_dir: Path, block_name: str):
                 "diff": diff_text,
             })
 
-    # Interactive navigation with instant key response
     import tty
     import termios
 
@@ -524,7 +480,6 @@ def cmd_history(logs_dir: Path, block_name: str):
         try:
             tty.setraw(fd)
             ch = sys.stdin.read(1)
-            # Handle escape sequences (arrow keys)
             if ch == '\x1b':
                 ch2 = sys.stdin.read(1)
                 if ch2 == '[':
@@ -581,10 +536,6 @@ def cmd_history(logs_dir: Path, block_name: str):
         sys.stdout.flush()
 
 
-# =============================================================================
-# Main
-# =============================================================================
-
 def main():
     """Main entry point."""
     args = sys.argv[1:]
@@ -598,7 +549,6 @@ def main():
             pass
         return
 
-    # CLI commands
     logs_dir = get_logs_dir()
     command = args[0].lower()
 

@@ -1,7 +1,3 @@
-/**
- * Secret handling for shell tool arguments and output.
- */
-
 import stripAnsi from "strip-ansi";
 import { getDesktopAccessToken } from "@/auth/desktop-credentials";
 import { peekOrgAccessToken } from "@/auth/org-credentials-session";

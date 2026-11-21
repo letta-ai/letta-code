@@ -21,7 +21,6 @@ import { OPENAI_CODEX_PROVIDER_NAME } from "./openai-codex-constants";
 
 export { listProviders };
 
-// Provider name constant for letta-code's ChatGPT OAuth provider
 export { OPENAI_CODEX_PROVIDER_NAME };
 
 const CHATGPT_OAUTH_PROVIDER_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
@@ -60,9 +59,6 @@ function encodeOAuthConfig(config: ChatGPTOAuthConfig): string {
   });
 }
 
-/**
- * Get the chatgpt-plus-pro provider if it exists
- */
 export async function getOpenAICodexProvider(
   options: ProviderOperationOptions = {},
   providerName: string = OPENAI_CODEX_PROVIDER_NAME,
@@ -157,7 +153,6 @@ export async function checkOpenAICodexEligibility(): Promise<EligibilityCheckRes
     const balance = await getBalanceMetadata();
     const billingTier = balance.billing_tier.toLowerCase();
 
-    // OAuth is available for pro and enterprise tiers
     if (billingTier === "pro" || billingTier === "enterprise") {
       return {
         eligible: true,

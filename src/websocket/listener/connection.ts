@@ -449,7 +449,6 @@ export function suspendListenerConnection(
   return closed;
 }
 
-/** Move the relay's suspended subscriptions to its newly registered identity. */
 export function resumeListenerConnectionIdentity(
   runtime: ListenerRuntime,
   previousId: string,

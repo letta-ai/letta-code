@@ -1,10 +1,3 @@
-/**
- * Input-frame routing: acknowledgement, the pre-commit originator admission
- * gate, teleport-continue admission, approval responses, queue/dispatch, and
- * the durable input ledger. Split out of message-router.ts so both modules
- * stay under the source-file size limit; the router itself only dispatches.
- */
-
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import { gateMcpOriginatorDeliveryAdmission } from "@/agent/mcp-originator-tokens";
 import type { InputCommand } from "@/types/protocol_v2";

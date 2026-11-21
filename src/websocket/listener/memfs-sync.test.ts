@@ -131,7 +131,6 @@ test("listener sync preserves MemFS guards and detects refusals at the guarded G
   );
   const listener = { memfsSyncedAgents: new Map() } as ListenerRuntime;
   try {
-    // Tagged agents still respect the backend capability guard.
     expect(await ensureMemfsSyncedForAgent(listener, "guard-no-remote")).toBe(
       true,
     );

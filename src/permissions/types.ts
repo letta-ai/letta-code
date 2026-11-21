@@ -15,16 +15,10 @@ export interface PermissionRules {
   additionalDirectories?: string[];
 }
 
-/**
- * Permission decision for a tool execution
- */
 export type PermissionDecision = "allow" | "deny" | "ask" | "alwaysAsk";
 
 export type PermissionRuleType = PermissionDecision;
 
-/**
- * Scope for saving permission rules
- */
 export type PermissionScope = "project" | "local" | "user";
 
 export type PermissionEngine = "v1" | "v2";
@@ -51,9 +45,6 @@ export interface PermissionCheckTrace {
   shadow?: PermissionShadowComparison;
 }
 
-/**
- * Result of a permission check
- */
 export interface PermissionCheckResult {
   decision: PermissionDecision;
   matchedRule?: string;

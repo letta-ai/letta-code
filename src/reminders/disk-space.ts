@@ -13,11 +13,8 @@ import {
 } from "@/utils/message-queue-bridge";
 import { resolveNotificationScope } from "@/utils/task-notifications";
 
-/** Warn when at least this fraction of the volume is used... */
 export const LOW_DISK_USED_FRACTION = 0.9;
-/** ...or when less than this many bytes remain available. */
 export const LOW_DISK_AVAILABLE_BYTES = 1024 ** 3;
-/** Minimum time between disk measurements. */
 export const DISK_SPACE_CHECK_INTERVAL_MS = 60_000;
 
 export interface DiskSpaceSample {
@@ -116,9 +113,7 @@ Before continuing with disk-heavy work, free space: use \`du -xh --max-depth=2 <
 ${SYSTEM_REMINDER_CLOSE}`;
 }
 
-/** Escalate a second time once the volume is this full. */
 export const CRITICAL_DISK_USED_FRACTION = 0.95;
-/** How often to re-check the disk while a tool batch is running. */
 export const DISK_SPACE_POLL_INTERVAL_MS = 30_000;
 
 type AlertLevel = 0 | 1 | 2;

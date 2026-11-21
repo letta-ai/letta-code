@@ -1,10 +1,3 @@
-/**
- * Shared frontmatter parsing utility for Markdown files with YAML frontmatter
- */
-
-/**
- * Parse a comma-separated string into an array of trimmed, non-empty strings
- */
 export function parseCommaSeparatedList(str: string | undefined): string[] {
   if (!str || str.trim() === "") return [];
   return str
@@ -13,9 +6,6 @@ export function parseCommaSeparatedList(str: string | undefined): string[] {
     .filter((s) => s.length > 0);
 }
 
-/**
- * Get a string field from a frontmatter object, or undefined if not a string
- */
 export function getStringField(
   obj: Record<string, string | string[]>,
   field: string,
@@ -67,9 +57,6 @@ function parseBlockScalar(
     : `${withoutTrailingNewlines}\n`;
 }
 
-/**
- * Parse frontmatter and content from a markdown file
- */
 export function parseFrontmatter(content: string): {
   frontmatter: Record<string, string | string[]>;
   body: string;
@@ -94,7 +81,6 @@ export function parseFrontmatter(content: string): {
   const body = match[2] ?? "";
   const frontmatter: Record<string, string | string[]> = {};
 
-  // Parse YAML-like frontmatter (simple key: value pairs and arrays)
   const lines = frontmatterText.split("\n");
   let currentKey: string | null = null;
   let currentArray: string[] = [];
@@ -147,11 +133,8 @@ export function parseFrontmatter(content: string): {
       }
 
       if (value) {
-        // Simple key: value pair
         frontmatter[key] = value;
       } else {
-        // Might be starting an array. If no array items follow, this is an
-        // explicit empty scalar field.
         currentKey = key;
         currentArray = [];
       }
@@ -163,9 +146,6 @@ export function parseFrontmatter(content: string): {
   return { frontmatter, body: body.trim() };
 }
 
-/**
- * Generate frontmatter string from an object
- */
 export function generateFrontmatter(
   data: Record<string, string | string[] | undefined>,
 ): string {

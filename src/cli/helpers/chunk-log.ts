@@ -29,10 +29,6 @@ const CONTENT_TRUNCATE_LEN = 200;
 const MAX_SESSION_FILES = 5;
 const LOG_BASE_DIR = join(resolveGlobalConfigDir(), "logs", "chunk-logs");
 
-// ---------------------------------------------------------------------------
-// Truncation helpers
-// ---------------------------------------------------------------------------
-
 function truncateStr(value: unknown, maxLen: number): string {
   if (value === null || value === undefined) return "";
   const s = typeof value === "string" ? value : JSON.stringify(value);
@@ -62,7 +58,6 @@ function truncateChunk(chunk: LettaStreamingResponse): Record<string, unknown> {
       };
 
     case "tool_call_message": {
-      // Truncate arguments inside tool_call / tool_calls
       const truncateToolCall = (tc: Record<string, unknown>) => ({
         ...tc,
         arguments: truncateStr(tc.arguments, CONTENT_TRUNCATE_LEN),
@@ -96,7 +91,6 @@ function truncateChunk(chunk: LettaStreamingResponse): Record<string, unknown> {
     case "usage_statistics":
       return raw;
 
-    // Unknown types -- shallow copy, truncate any "content" field
     default: {
       const result = { ...raw };
       if (typeof result.content === "string" || Array.isArray(result.content)) {
@@ -106,10 +100,6 @@ function truncateChunk(chunk: LettaStreamingResponse): Record<string, unknown> {
     }
   }
 }
-
-// ---------------------------------------------------------------------------
-// ChunkLog class
-// ---------------------------------------------------------------------------
 
 class ChunkLog {
   private buffer: Record<string, unknown>[] = [];
@@ -130,18 +120,12 @@ class ChunkLog {
     this.dirty = false;
     this.dirCreated = false;
 
-    // GC old session files for this agent (keep last N)
     this.pruneOldSessions();
   }
 
-  /**
-   * Append a chunk to the in-memory log. Does NOT write to disk.
-   * Call flush() after a stream completes to persist.
-   */
   append(chunk: LettaStreamingResponse): void {
     this.buffer.push(truncateChunk(chunk));
 
-    // Drop oldest entry if over capacity
     if (this.buffer.length > MAX_ENTRIES) {
       this.buffer.shift();
     }
@@ -149,9 +133,6 @@ class ChunkLog {
     this.dirty = true;
   }
 
-  /**
-   * Flush buffered entries to disk. Call once per stream drain, not per chunk.
-   */
   flush(): void {
     if (this.dirty && this.logPath) {
       this.writeToDisk();
@@ -159,23 +140,13 @@ class ChunkLog {
     }
   }
 
-  /**
-   * Get all entries as an array of objects (for sending in feedback payload).
-   */
   getEntries(): Record<string, unknown>[] {
     return this.buffer;
   }
 
-  /**
-   * Number of entries currently in the log.
-   */
   get size(): number {
     return this.buffer.length;
   }
-
-  // -----------------------------------------------------------------------
-  // Disk I/O
-  // -----------------------------------------------------------------------
 
   private ensureDir(): void {
     if (this.dirCreated || !this.agentDir) return;
@@ -246,5 +217,4 @@ class ChunkLog {
   }
 }
 
-// Singleton instance
 export const chunkLog = new ChunkLog();

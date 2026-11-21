@@ -17,7 +17,6 @@ import { MarkdownDisplay } from "./MarkdownDisplay";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
 import { Text } from "./Text";
 
-// Horizontal line character (matches approval dialogs)
 const SOLID_LINE = "─";
 
 interface ConversationSelectorProps {
@@ -35,13 +34,11 @@ interface ConversationSelectorProps {
   onCancel: () => void;
 }
 
-// Preview line with role prefix
 interface PreviewLine {
   role: "user" | "assistant";
   text: string;
 }
 
-// Enriched conversation with message data
 interface EnrichedConversation {
   conversation: Conversation;
   previewLines: PreviewLine[] | null; // null = not yet loaded
@@ -68,9 +65,6 @@ function paginatedItems<T>(value: T[] | { getPaginatedItems(): T[] }): T[] {
   return Array.isArray(value) ? value : value.getPaginatedItems();
 }
 
-/**
- * Format a relative time string from a date
- */
 function formatRelativeTime(dateStr: string | null | undefined): string {
   if (!dateStr) return "Never";
 
@@ -128,12 +122,7 @@ function getMessageTimestamp(message: Message | undefined): string | null {
   );
 }
 
-/**
- * Extract preview text from a user message
- * Content can be a string or an array of content parts like [{ type: "text", text: "..." }]
- */
 function extractUserMessagePreview(message: Message): string | null {
-  // User messages have a 'content' field
   const content = (
     message as Message & {
       content?: string | Array<{ type?: string; text?: string }>;
@@ -152,7 +141,6 @@ function extractUserMessagePreview(message: Message): string | null {
     for (let i = content.length - 1; i >= 0; i--) {
       const part = content[i];
       if (part?.type === "text" && part.text) {
-        // Skip system-reminder blocks
         if (
           part.text.startsWith(SYSTEM_REMINDER_OPEN) ||
           part.text.startsWith(SYSTEM_ALERT_OPEN)
@@ -167,10 +155,8 @@ function extractUserMessagePreview(message: Message): string | null {
 
   if (!textToShow) return null;
 
-  // Strip newlines and collapse whitespace
   textToShow = textToShow.replace(/\s+/g, " ").trim();
 
-  // Truncate to a reasonable preview length
   const maxLen = 60;
   if (textToShow.length > maxLen) {
     return `${textToShow.slice(0, maxLen - 3)}...`;
@@ -178,12 +164,7 @@ function extractUserMessagePreview(message: Message): string | null {
   return textToShow;
 }
 
-/**
- * Extract preview text from an assistant message
- * Content can be a string or array of content parts (text, images, etc.)
- */
 function extractAssistantMessagePreview(message: Message): string | null {
-  // Assistant messages have content field directly on message
   const content = (
     message as Message & {
       content?: string | Array<{ type?: string; text?: string }>;
@@ -197,7 +178,6 @@ function extractAssistantMessagePreview(message: Message): string | null {
   if (typeof content === "string") {
     textToShow = content.trim();
   } else if (Array.isArray(content)) {
-    // Find the first text part
     for (const part of content) {
       if (part?.type === "text" && part.text) {
         textToShow = part.text.trim();
@@ -208,10 +188,8 @@ function extractAssistantMessagePreview(message: Message): string | null {
 
   if (!textToShow) return null;
 
-  // Strip newlines and collapse whitespace
   textToShow = textToShow.replace(/\s+/g, " ").trim();
 
-  // Truncate to a reasonable preview length
   const maxLen = 60;
   if (textToShow.length > maxLen) {
     return `${textToShow.slice(0, maxLen - 3)}...`;
@@ -219,9 +197,6 @@ function extractAssistantMessagePreview(message: Message): string | null {
   return textToShow;
 }
 
-/**
- * Get preview lines and stats from messages
- */
 function getMessageStats(messages: Message[]): {
   previewLines: PreviewLine[];
   lastActiveAt: string | null;
@@ -231,7 +206,6 @@ function getMessageStats(messages: Message[]): {
     return { previewLines: [], lastActiveAt: null, messageCount: 0 };
   }
 
-  // Find last 3 user/assistant messages with actual content (searching from end)
   const previewLines: PreviewLine[] = [];
   for (let i = messages.length - 1; i >= 0 && previewLines.length < 3; i--) {
     const msg = messages[i];
@@ -250,7 +224,6 @@ function getMessageStats(messages: Message[]): {
     }
   }
 
-  // Last activity is the timestamp of the last message
   const lastMessage = messages[messages.length - 1];
   const lastActiveAt = getMessageTimestamp(lastMessage);
 
@@ -294,7 +267,6 @@ export function ConversationSelector({
     return backend;
   }, []);
 
-  // Conversation list state (enriched with message data)
   const [conversations, setConversations] = useState<EnrichedConversation[]>(
     [],
   );
@@ -305,7 +277,6 @@ export function ConversationSelector({
   const [error, setError] = useState<string | null>(null);
   const [, setEnriching] = useState(false);
 
-  // Selection state
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [searchInput, setSearchInput] = useState("");
   const [searchResults, setSearchResults] = useState<
@@ -313,7 +284,6 @@ export function ConversationSelector({
   >(null);
   const [searching, setSearching] = useState(false);
 
-  // Enrich a single conversation with message data, updating state in-place
   const enrichConversation = useCallback(
     async (backend: Backend, convId: string) => {
       try {
@@ -376,7 +346,6 @@ export function ConversationSelector({
     [agentId],
   );
 
-  // Load conversations — shows list immediately, enriches progressively
   const loadConversations = useCallback(
     async (afterCursor?: string | null) => {
       const isLoadingMore = !!afterCursor;
@@ -390,7 +359,6 @@ export function ConversationSelector({
       try {
         const backend = selectorBackend();
 
-        // Phase 1: Fetch conversation list + default messages in parallel
         const conversationListPromise = backend.listConversations({
           agent_id: agentId,
           limit: FETCH_PAGE_SIZE,
@@ -399,7 +367,6 @@ export function ConversationSelector({
           order_by: "last_run_completion",
         });
 
-        // Fetch default conversation in parallel (not sequentially before)
         const defaultPromise: Promise<EnrichedConversation | null> =
           !afterCursor
             ? Promise.all([
@@ -434,7 +401,6 @@ export function ConversationSelector({
           defaultPromise,
         ]);
 
-        // Build unenriched conversation list using data already on the object
         const unenrichedList: EnrichedConversation[] = result.map((conv) => ({
           conversation: conv,
           previewLines: null, // Not loaded yet
@@ -451,7 +417,6 @@ export function ConversationSelector({
             ? (result[result.length - 1]?.id ?? null)
             : null;
 
-        // Phase 1 render: show conversation list immediately
         if (isLoadingMore) {
           setConversations((prev) => [...prev, ...nonEmptyList]);
         } else {
@@ -477,14 +442,12 @@ export function ConversationSelector({
         const firstPageItems = toEnrich.slice(0, MAX_DISPLAY_PAGE_SIZE);
         const restItems = toEnrich.slice(MAX_DISPLAY_PAGE_SIZE);
 
-        // Enrich first page in parallel
         const firstPageResults = await Promise.all(
           firstPageItems.map((c) =>
             enrichConversation(backend, c.conversation.id),
           ),
         );
 
-        // Remove conversations that turned out empty after enrichment
         const emptyConvIds = new Set(
           firstPageItems
             .filter((_, i) => firstPageResults[i] === 0)
@@ -496,7 +459,6 @@ export function ConversationSelector({
           );
         }
 
-        // Enrich remaining conversations one by one in background
         for (const item of restItems) {
           const count = await enrichConversation(backend, item.conversation.id);
           if (count === 0) {
@@ -517,7 +479,6 @@ export function ConversationSelector({
     [agentId, enrichConversation, selectorBackend],
   );
 
-  // Initial load
   useEffect(() => {
     loadConversations();
   }, [loadConversations]);
@@ -619,7 +580,6 @@ export function ConversationSelector({
       })()
     : conversations;
 
-  // Sliding window calculations (same interaction model as /search).
   const startIndex = Math.max(
     0,
     Math.min(
@@ -632,7 +592,6 @@ export function ConversationSelector({
     startIndex + listPageSize,
   );
 
-  // Re-enrich when visible conversations change (including search results).
   useEffect(() => {
     const backend = backendRef.current;
     if (!backend || loading) return;
@@ -645,14 +604,12 @@ export function ConversationSelector({
     }
   }, [loading, visibleConversations, enrichConversation]);
 
-  // Fetch more when needed
   const fetchMore = useCallback(async () => {
     if (loadingMore || !hasMore || !cursor) return;
     await loadConversations(cursor);
   }, [loadingMore, hasMore, cursor, loadConversations]);
 
   useInput((input, key) => {
-    // CTRL-C: immediately cancel
     if (key.ctrl && input === "c") {
       onCancel();
       return;
@@ -693,7 +650,6 @@ export function ConversationSelector({
     }
   });
 
-  // Render conversation item
   const renderConversationItem = (
     enrichedConv: EnrichedConversation,
     _index: number,
@@ -718,7 +674,6 @@ export function ConversationSelector({
       const bracket = <Text dimColor>{`${CLI_GLYPHS.result}  `}</Text>;
       const indent = "   "; // Same width as "└  " for alignment
 
-      // Still loading message data
       if (previewLines === null) {
         if (enrichedConv.searchPreview) {
           return (
@@ -740,7 +695,6 @@ export function ConversationSelector({
         );
       }
 
-      // Has preview lines from messages
       if (previewLines.length > 0) {
         return (
           <>
@@ -827,13 +781,11 @@ export function ConversationSelector({
 
   return (
     <Box flexDirection="column">
-      {/* Command header */}
       <Text dimColor>{"> /resume"}</Text>
       <Text dimColor>{solidLine}</Text>
 
       <Box height={1} />
 
-      {/* Title */}
       <Box marginBottom={1}>
         <Text bold color={colors.selector.title}>
           Resume a previous conversation
@@ -853,7 +805,6 @@ export function ConversationSelector({
         />
       </Box>
 
-      {/* Error state */}
       {error && (
         <Box flexDirection="column">
           <Text color="red">Error: {error}</Text>
@@ -861,14 +812,12 @@ export function ConversationSelector({
         </Box>
       )}
 
-      {/* Loading state */}
       {loading && (
         <Box>
           <Text dimColor>Loading conversations...</Text>
         </Box>
       )}
 
-      {/* Search indicator */}
       {!loading && searching && (
         <Box marginBottom={1}>
           <Text dimColor italic>
@@ -877,7 +826,6 @@ export function ConversationSelector({
         </Box>
       )}
 
-      {/* Empty state */}
       {!loading && !error && filteredConversations.length === 0 && (
         <Box flexDirection="column">
           <Text dimColor>
@@ -889,7 +837,6 @@ export function ConversationSelector({
         </Box>
       )}
 
-      {/* Conversation list */}
       {!loading && !error && filteredConversations.length > 0 && (
         <Box flexDirection="column">
           {visibleConversations.map((conv, index) =>
@@ -902,7 +849,6 @@ export function ConversationSelector({
         </Box>
       )}
 
-      {/* Footer */}
       {!loading &&
         !error &&
         filteredConversations.length > 0 &&

@@ -28,7 +28,6 @@ import type {
 } from "@/websocket/listener/types";
 
 const EXTERNAL_TOOL_CALL_TIMEOUT_MS = 5 * 60 * 1000;
-/** One connection's tools and tool policy for one conversation. */
 interface RuntimeToolRegistration {
   connectionId: ListenerConnectionId;
   runtimeKey: string;
@@ -425,7 +424,6 @@ export function registerRuntimeExternalTools(
   }
 }
 
-/** Remember which connection last submitted input on a runtime. */
 export function recordRuntimeSubmittingConnection(
   runtime: ListenerRuntime,
   runtimeScope: RuntimeScope<string | null>,

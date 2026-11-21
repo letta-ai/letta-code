@@ -12,7 +12,6 @@ import {
   subscribeToThinkingDisplay,
 } from "./transcript-display-state";
 
-// Helper function to normalize text - copied from old codebase
 // NOTE: Less aggressive than before to preserve spacing when content is split across chunks
 const normalize = (s: string) =>
   s

@@ -26,17 +26,14 @@ export const BashPreview = memo(({ command, description }: Props) => {
 
   return (
     <>
-      {/* Top solid line */}
       <Text dimColor>{solidLine}</Text>
 
-      {/* Header */}
       <Text bold color={colors.approval.header}>
         Run this command?
       </Text>
 
       <Box height={1} />
 
-      {/* Command preview */}
       <Box paddingLeft={2} flexDirection="column">
         <SyntaxHighlightedCommand
           command={command}
