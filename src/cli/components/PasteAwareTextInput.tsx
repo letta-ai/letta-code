@@ -1,6 +1,6 @@
 // Paste-aware text input wrapper that:
 // 1. Detects large pastes (>5 lines or >500 chars) and replaces with placeholders
-// 2. Supports image pasting (iTerm2 inline, data URLs, file paths, macOS clipboard)
+// 2. Supports image pasting (iTerm2 inline, data URLs, file paths, system clipboard)
 // 3. Maintains separate display value (with placeholders) vs actual value (full content)
 // 4. Resolves placeholders on submit
 
@@ -10,7 +10,7 @@ import RawTextInput from "ink-text-input";
 import { useEffect, useRef, useState } from "react";
 import {
   translatePasteForImages,
-  tryImportClipboardImageMac,
+  tryImportClipboardImage,
 } from "@/cli/helpers/clipboard";
 import {
   allocatePaste,
@@ -202,7 +202,7 @@ export function PasteAwareTextInput({
     }
   }, [value, displayValue]);
 
-  // Intercept paste events and macOS fallback for image clipboard imports
+  // Intercept paste events and fallback for image clipboard imports
   useInput(
     (input, key) => {
       // Handle Shift/Option/Ctrl + Enter to insert newline
@@ -234,7 +234,7 @@ export function PasteAwareTextInput({
       if (key.ctrl && input === "v") {
         // Fire async handler (can't await in useInput callback)
         (async () => {
-          const result = await tryImportClipboardImageMac();
+          const result = await tryImportClipboardImage();
           if (result) {
             if ("error" in result) {
               // Report the error via callback
@@ -307,11 +307,11 @@ export function PasteAwareTextInput({
           }
         };
 
-        // If paste event carried no text (common for image-only clipboard), try macOS import
+        // If paste event carried no text (common for image-only clipboard), try clipboard import
         if ((!translated || translated.length === 0) && payload.length === 0) {
           // Fire async handler
           (async () => {
-            const clipResult = await tryImportClipboardImageMac();
+            const clipResult = await tryImportClipboardImage();
             if (clipResult) {
               if ("error" in clipResult) {
                 onPasteErrorRef.current?.(clipResult.error);
@@ -336,7 +336,7 @@ export function PasteAwareTextInput({
       ) {
         // Fire async handler
         (async () => {
-          const result = await tryImportClipboardImageMac();
+          const result = await tryImportClipboardImage();
           if (result) {
             if ("error" in result) {
               onPasteErrorRef.current?.(result.error);
