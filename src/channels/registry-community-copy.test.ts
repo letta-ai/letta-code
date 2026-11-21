@@ -67,6 +67,18 @@ describe("registry copy: first-party channels", () => {
     expect(text).not.toContain("letta channels route add");
   });
 
+  test("first-party feishu pairing uses Feishu / Lark display name", () => {
+    const text = buildPairingInstructions("feishu", "OU123", {
+      agentId: "agent-feishu",
+    });
+    expect(text).toContain("In Letta Code: open Channels > Feishu / Lark");
+    expect(text).toContain("Feishu / Lark");
+    expect(text).toContain(
+      "letta channels pair --channel feishu --code OU123 --agent agent-feishu",
+    );
+    expect(text).not.toContain("(community channel)");
+  });
+
   test("first-party copy uses 'Letta agent' consistently", () => {
     expect(buildPairingInstructions("telegram", "X")).toContain("Letta agent");
     expect(buildUnboundRouteInstructions("slack", "Y")).toContain(
