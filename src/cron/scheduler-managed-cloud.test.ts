@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { addTask, getTask } from "@/cron/cron-file";
@@ -31,6 +31,23 @@ afterEach(() => {
   else delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
 });
 
+function startListenerScheduler(): void {
+  startScheduler(
+    {} as ListenerTransport,
+    {
+      connectionId: "conn-cloud",
+      wsUrl: "wss://example.test/ws",
+      deviceId: "unregistered-device",
+      connectionName: "managed-cloud",
+      onConnected: () => {},
+      onDisconnected: () => {},
+      onError: () => {},
+      onLog: () => {},
+    },
+    async () => {},
+  );
+}
+
 test("managed Cloud sandbox neither starts nor manually runs local schedules", async () => {
   const task = addTask({
     agent_id: "agent-cloud",
@@ -43,19 +60,18 @@ test("managed Cloud sandbox neither starts nor manually runs local schedules", a
     scheduled_for: new Date(Date.now() + 60_000),
   }).task;
 
-  startScheduler(
-    {} as ListenerTransport,
-    {
-      connectionId: "conn-cloud",
-      wsUrl: "wss://example.test/ws",
-      deviceId: "unregistered-device",
-      connectionName: "managed-cloud",
-      onConnected: () => {},
-      onDisconnected: () => {},
-      onError: () => {},
-    },
-    async () => {},
-  );
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    startListenerScheduler();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("Wake or letta cron"),
+    );
+    expect(warn.mock.calls.flat().join(" ")).not.toContain(
+      "registered computer",
+    );
+  } finally {
+    warn.mockRestore();
+  }
 
   expect(isSchedulerRunning()).toBe(false);
   expect(await runCronTaskNow(task.id)).toEqual({
@@ -65,4 +81,54 @@ test("managed Cloud sandbox neither starts nor manually runs local schedules", a
       "This schedule cannot run here. Create a replacement with Wake or letta cron.",
   });
   expect(getTask(task.id)?.status).toBe("active");
+});
+
+test("a Cloud listener warns about a persisted recurring local schedule", () => {
+  const env = {
+    LETTA_MANAGED_CLOUD_RUNTIME: undefined,
+    LETTA_DESKTOP_MODE: undefined,
+    LETTA_RUNTIME_SESSION_SOURCE: "listen",
+    LETTA_BASE_URL: "https://api.letta.com",
+    LETTA_LOCAL_BACKEND_EXPERIMENTAL: undefined,
+  };
+  const previous = Object.entries(env).map(
+    ([key]) => [key, process.env[key]] as const,
+  );
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    for (const [key, value] of Object.entries(env)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    startListenerScheduler();
+    expect(warn).not.toHaveBeenCalled();
+    expect(isSchedulerRunning()).toBe(false);
+
+    const { task } = addTask({
+      agent_id: "agent-test",
+      conversation_id: "conversation-test",
+      name: "daily reminder",
+      description: "daily reminder",
+      cron: "0 9 * * *",
+      recurring: true,
+      prompt: "remind me",
+      scheduled_for: new Date(Date.now() + 60_000),
+    });
+    const before = getTask(task.id);
+    expect(before?.status).toBe("active");
+    startListenerScheduler();
+    expect(isSchedulerRunning()).toBe(false);
+    expect(getTask(task.id)).toEqual(before);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /legacy local schedules.*cannot run here.*Wake or letta cron.*Cloud schedule.*registered computer/i,
+      ),
+    );
+  } finally {
+    warn.mockRestore();
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
 });
