@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { Stream } from "@letta-ai/letta-client/core/streaming";
+import { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { createBuffers } from "@/cli/helpers/accumulator";
 import { drainStream } from "@/cli/helpers/stream";
@@ -58,6 +58,37 @@ afterEach(() => {
 });
 
 describe("drainStream terminal-EOF guard", () => {
+  test("settles a completed SDK stream even when abort does not close the body", async () => {
+    process.env.LETTA_STREAM_TERMINAL_EOF_GRACE_MS = "30";
+    const body = new TransformStream<Uint8Array, Uint8Array>();
+    const writer = body.writable.getWriter();
+    const controller = new AbortController();
+    const stream = Stream.fromSSEResponse<LettaStreamingResponse>(
+      new Response(body.readable),
+      controller,
+    );
+    const buffers = createBuffers("agent-test");
+    const drain = drainStream(stream, buffers, () => {});
+    try {
+      await writer.write(
+        new TextEncoder().encode(
+          [
+            'data: {"message_type":"stop_reason","stop_reason":"end_turn"}',
+            'data: {"message_type":"usage_statistics","total_tokens":12}',
+            "data: [DONE]",
+            "",
+          ].join("\n\n"),
+        ),
+      );
+      const result = await drain;
+      expect(controller.signal.aborted).toBe(true);
+      expect(result.stopReason).toBe("end_turn");
+      expect(buffers.usage.totalTokens).toBe(12);
+    } finally {
+      await writer.close();
+    }
+  });
+
   test("returns requires_approval when body never ends after terminal sequence", async () => {
     process.env.LETTA_STREAM_TERMINAL_EOF_GRACE_MS = "50";
 

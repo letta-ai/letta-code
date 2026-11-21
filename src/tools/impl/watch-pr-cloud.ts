@@ -74,12 +74,9 @@ export async function startCloudPullRequestWatch(args: Args, deps: Deps = {}) {
   }
   if (typeof args.url !== "string") throw new Error("WatchPR url is required");
   const ref = parseGitHubPullRequestUrl(args.url);
-  let created: { id: string; initial_snapshot: CloudPullRequestSnapshot };
+  let created: { id: string; initial_snapshot?: CloudPullRequestSnapshot };
   try {
-    created = await request<{
-      id: string;
-      initial_snapshot: CloudPullRequestSnapshot;
-    }>(
+    created = await request<typeof created>(
       "POST",
       path,
       {
@@ -112,17 +109,22 @@ export async function startCloudPullRequestWatch(args: Args, deps: Deps = {}) {
     }
     throw error;
   }
-  const initial = toClientSnapshot(ref, created.initial_snapshot);
+  const initial = created.initial_snapshot
+    ? toClientSnapshot(ref, created.initial_snapshot)
+    : undefined;
+  const currentState = initial
+    ? `Current state:\n${describeGitHubPullRequestSnapshot(initial)}`
+    : "The current PR state will arrive with the first event.";
   return {
     content: [
       {
         type: "text" as const,
-        text: `WatchPR started (task ${created.id}). You will be notified on PR events. It stops when the PR merges/closes, on TaskStop, or at its timeout. Keep working — do not poll or sleep.\n\nCurrent state:\n${describeGitHubPullRequestSnapshot(initial)}`,
+        text: `WatchPR started (task ${created.id}). You will be notified on PR events. It stops when the PR merges/closes, on TaskStop, or at its timeout. Keep working — do not poll or sleep.\n\n${currentState}`,
       },
     ],
     taskId: created.id,
     url: ref.url,
-    headSha: initial.headSha,
+    headSha: initial?.headSha ?? "",
     persistent: false,
   };
 }

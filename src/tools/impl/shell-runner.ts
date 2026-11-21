@@ -35,6 +35,8 @@ export type ShellSpawnOptions = {
   /** Command before launcher and sandbox wrapping, used for completion metadata. */
   sourceCommand?: ShellSourceCommand;
   signal?: AbortSignal;
+  /** Keep the TERM grace period after the launcher closes if its group survives. */
+  waitForProcessGroupOnClose?: boolean;
   onOutput?: (chunk: string, stream: ShellOutputStream) => void;
   tty?: boolean;
   /** Disable when the caller already keeps its own bounded output buffer. */
@@ -87,7 +89,11 @@ type NodePtyModule = {
 type ProcessEvents = {
   output(data: Buffer | string, stream: ShellOutputStream): void;
   error(error: NodeJS.ErrnoException): void;
-  close(code: number | null, signal?: string | number | null): void;
+  close(
+    code: number | null,
+    signal?: string | number | null,
+    processGroup?: number,
+  ): void;
 };
 
 const NODE_PTY_BRIDGE_SCRIPT = `
@@ -108,7 +114,7 @@ process.on("SIGTERM", () => child.kill("SIGTERM"));
 process.on("SIGINT", () => child.kill("SIGINT"));
 `;
 
-const FORCE_KILL_GRACE_MS = 2000;
+export const FORCE_KILL_GRACE_MS = 2000;
 
 function buildSpawnError(
   err: NodeJS.ErrnoException,
@@ -285,7 +291,13 @@ function spawnPipeProcess(
     events.output(chunk, "stderr");
   });
   childProcess.on("error", events.error);
-  childProcess.on("close", events.close);
+  childProcess.on("close", (code, signal) => {
+    events.close(
+      code,
+      signal,
+      process.platform === "win32" ? undefined : childProcess.pid,
+    );
+  });
 
   return {
     kill: createPipeProcessKiller(childProcess),
@@ -507,20 +519,21 @@ export function startShellProcess(
   };
 
   let processHandle: ShellProcessHandle;
+  let forceKillIssued = false;
+  let finishGroupClose: (() => void) | undefined;
   const terminateProcess = () => {
+    if (completed || forceKillTimer) return;
     if (process.platform === "win32") {
       processHandle.kill("SIGKILL");
       return;
     }
 
     processHandle.kill("SIGTERM");
-    if (!forceKillTimer) {
-      forceKillTimer = setTimeout(() => {
-        if (!completed) {
-          processHandle.kill("SIGKILL");
-        }
-      }, FORCE_KILL_GRACE_MS);
-    }
+    forceKillTimer = setTimeout(() => {
+      forceKillIssued = true;
+      processHandle.kill("SIGKILL");
+      finishGroupClose?.();
+    }, FORCE_KILL_GRACE_MS);
   };
 
   const abortHandler = () => {
@@ -566,8 +579,27 @@ export function startShellProcess(
       void pullRequestTracker?.finish();
       rejectCompletion(buildSpawnError(error, executable, options.cwd));
     },
-    close(code, signal) {
+    close(code, signal, processGroup) {
       if (completed) return;
+      // A redirected descendant can still be cleaning up after its launcher and
+      // pipes have closed. Keep the original TERM deadline for that group.
+      if (
+        launchOptions.waitForProcessGroupOnClose &&
+        forceKillTimer &&
+        !forceKillIssued &&
+        processGroup !== undefined
+      ) {
+        let groupExists = true;
+        try {
+          process.kill(-processGroup, 0);
+        } catch (error) {
+          groupExists = (error as NodeJS.ErrnoException).code !== "ESRCH";
+        }
+        if (groupExists) {
+          finishGroupClose = () => events.close(code, signal);
+          return;
+        }
+      }
       completed = true;
       cleanup();
       flushOutputDecoders();
