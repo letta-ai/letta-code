@@ -17,7 +17,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { execSync } from "node:child_process";
 import {
-  chmodSync,
   existsSync,
   mkdtempSync,
   readFileSync,
@@ -27,7 +26,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { POST_COMMIT_HOOK_SCRIPT } from "@/agent/memory-git-hooks";
+import { installPostCommitHook } from "@/agent/memory-git-hooks";
 
 let sourceDir: string;
 let remoteDir: string;
@@ -75,9 +74,18 @@ async function waitUntil(
 }
 
 function installHook(dir: string): void {
-  const hookPath = join(dir, ".git", "hooks", "post-commit");
-  writeFileSync(hookPath, POST_COMMIT_HOOK_SCRIPT, "utf-8");
-  chmodSync(hookPath, 0o755);
+  installPostCommitHook(dir);
+}
+
+function waitForMirrorMain(): Promise<boolean> {
+  const sourceSha = git(sourceDir, "rev-parse main").trim();
+  return waitUntil(() => {
+    try {
+      return gitQuiet(remoteDir, "rev-parse main").trim() === sourceSha;
+    } catch {
+      return false;
+    }
+  });
 }
 
 beforeEach(() => {
@@ -145,6 +153,51 @@ describe("post-commit memory-repository hook", () => {
 
     const log = readFileSync(logPath, "utf-8");
     expect(log).toContain("exit=0");
+  });
+
+  test("pushes main after merges and fast-forwards", async () => {
+    // Commit on a side branch before the mirror is configured, as a
+    // reflection worktree would.
+    git(sourceDir, "checkout -q -b side");
+    writeFileSync(join(sourceDir, "side.txt"), "side");
+    git(sourceDir, "add side.txt");
+    git(sourceDir, 'commit -m "side commit"');
+    git(sourceDir, "checkout -q main");
+    git(sourceDir, `config --local letta.memoryRepository.url ${remoteDir}`);
+
+    // Fast-forward: fires post-merge only, no post-commit.
+    git(sourceDir, "merge --ff-only side");
+    expect(await waitForMirrorMain()).toBe(true);
+
+    // True merge commit.
+    git(sourceDir, "checkout -q side");
+    writeFileSync(join(sourceDir, "side2.txt"), "side 2");
+    git(sourceDir, "add side2.txt");
+    git(sourceDir, 'commit -m "side commit 2"');
+    git(sourceDir, "checkout -q main");
+    git(sourceDir, "config --local --unset letta.memoryRepository.url");
+    writeFileSync(join(sourceDir, "main.txt"), "main");
+    git(sourceDir, "add main.txt");
+    git(sourceDir, 'commit -m "main commit"');
+    git(sourceDir, `config --local letta.memoryRepository.url ${remoteDir}`);
+    git(sourceDir, 'merge --no-ff -m "merge side" side');
+    expect(await waitForMirrorMain()).toBe(true);
+  });
+
+  test("pushes main after a rebase", async () => {
+    git(sourceDir, "checkout -q -b upstream");
+    writeFileSync(join(sourceDir, "upstream.txt"), "upstream");
+    git(sourceDir, "add upstream.txt");
+    git(sourceDir, 'commit -m "upstream commit"');
+    git(sourceDir, "checkout -q main");
+    writeFileSync(join(sourceDir, "local.txt"), "local");
+    git(sourceDir, "add local.txt");
+    git(sourceDir, 'commit -m "local commit"');
+
+    // Rebase fires post-rewrite (with stdin), not post-commit, on main.
+    git(sourceDir, `config --local letta.memoryRepository.url ${remoteDir}`);
+    gitQuiet(sourceDir, "rebase upstream");
+    expect(await waitForMirrorMain()).toBe(true);
   });
 
   test("does not push temporary non-main worktree branches", async () => {

@@ -419,7 +419,7 @@ export async function maybeUpdateMemoryRemoteOrigin(
  * causing later `git push` calls to fail even after origin.url is repaired.
  *
  * For memfs repos, origin should always push to origin.url; mirrors are managed
- * separately through `letta.memoryRepository.url` and the post-commit hook.
+ * separately through `letta.memoryRepository.url` and the push hooks.
  */
 async function clearOriginPushUrl(
   repoDir: string,
@@ -880,8 +880,8 @@ export async function ensureLocalMemfsGitConfig(
  * Memory repository (/memory-repository slash command helpers)
  *
  * The remote URL lives in each repo's local `.git/config` under
- * `letta.memoryRepository.url`. The post-commit hook reads that key and
- * pushes to it in the background after every commit.
+ * `letta.memoryRepository.url`. The post-commit/merge/rewrite hooks read that
+ * key and push `main` to it in the background whenever it advances.
  * See `POST_COMMIT_HOOK_SCRIPT` in memory-git-hooks.ts.
  * ------------------------------------------------------------------ */
 
@@ -901,7 +901,7 @@ export async function getMemoryRepositoryUrl(
 
 /**
  * Configure a memory-repository URL for this agent's memfs repo.
- * Re-installs the post-commit hook defensively so that prior manual edits
+ * Re-installs the push hooks defensively so that prior manual edits
  * or stale state don't cause silent push drops.
  */
 export async function setMemoryRepositoryUrl(
@@ -1565,7 +1565,7 @@ export async function cloneMemoryRepo(agentId: string): Promise<void> {
         getMemoryRepoDir(agentId),
       );
 
-      // Install commit hooks (pre-commit validates frontmatter; post-commit mirrors)
+      // Install hooks (pre-commit validates frontmatter; post-* hooks mirror)
       installMemoryGitHooks(dir);
 
       // Set canonical local git identity (letta.agentId, user.email, user.name)
