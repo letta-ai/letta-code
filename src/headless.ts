@@ -157,6 +157,7 @@ import {
   type HeadlessPermissionResult,
   waitForHeadlessPermissionResponse,
 } from "./headless-permission";
+import { prepareHeadlessToolExecutionContext } from "./headless-tool-context";
 import {
   emitLocalToolCalls,
   emitLocalToolReturns,
@@ -191,7 +192,8 @@ import {
   registerExternalTools,
   setExternalToolExecutor,
 } from "./tools/manager";
-import { prepareToolExecutionContextForScope } from "./tools/toolset";
+import { isToolsetPreference } from "./tools/toolset-catalog";
+import type { ToolsetPreference } from "./tools/toolset-types";
 import type {
   BootstrapSessionStateRequest,
   CanUseToolControlRequest,
@@ -356,37 +358,6 @@ export const __headlessTestUtils = {
   prepareHeadlessToolExecutionContext,
 };
 
-async function prepareHeadlessToolExecutionContext(params: {
-  agentId: string;
-  conversationId: string;
-  overrideModel?: string | null;
-  cachedAgent?: AgentState | null;
-  modContext?: ModContext;
-  modEvents?: ModAdapter["events"];
-}): Promise<{
-  preparedToolContext: Awaited<
-    ReturnType<typeof prepareToolExecutionContextForScope>
-  >;
-  availableTools: string[];
-}> {
-  const preparedToolContext = await prepareToolExecutionContextForScope({
-    agentId: params.agentId,
-    conversationId: params.conversationId,
-    overrideModel: params.overrideModel,
-    workingDirectory: getCurrentWorkingDirectory(),
-    cachedAgent: params.cachedAgent,
-    modContext: params.modContext,
-    modEvents: params.modEvents,
-  });
-
-  return {
-    preparedToolContext,
-    availableTools: preparedToolContext.preparedToolContext.clientTools.map(
-      (tool) => tool.name,
-    ),
-  };
-}
-
 function isTurnInputArray(
   value: unknown,
 ): value is Array<MessageCreate | ApprovalCreate> {
@@ -546,6 +517,7 @@ async function emitHeadlessTurnEnd(options: {
 async function sendScopedApprovalMessages(params: {
   agentId: string;
   conversationId: string;
+  toolsetPreference?: ToolsetPreference;
   approvalMessages: Array<MessageCreate | ApprovalCreate>;
   modContext?: ModContext;
   modEvents?: ModAdapter["events"];
@@ -553,6 +525,7 @@ async function sendScopedApprovalMessages(params: {
   const approvalToolContext = await prepareHeadlessToolExecutionContext({
     agentId: params.agentId,
     conversationId: params.conversationId,
+    toolsetPreference: params.toolsetPreference,
     modContext: params.modContext,
     modEvents: params.modEvents,
   });
@@ -606,6 +579,9 @@ export async function handleHeadlessCommand(
   startupOptions: { requestedBackendMode?: BackendMode } = {},
 ) {
   const { values, positionals } = parsedArgs;
+  const toolsetPreference = isToolsetPreference(values.toolset)
+    ? values.toolset
+    : undefined;
   const isAgentLaunch = consumeSubagentLaunch(process.env);
   const senderReminder = buildHeadlessSenderReminder(
     isAgentLaunch,
@@ -1512,6 +1488,7 @@ export async function handleHeadlessCommand(
     const initialToolContext = await prepareHeadlessToolExecutionContext({
       agentId: agent.id,
       conversationId,
+      toolsetPreference,
       cachedAgent: agent as AgentState,
       modContext: initialHeadlessModContext,
       modEvents: headlessModAdapter.events,
@@ -1538,6 +1515,7 @@ export async function handleHeadlessCommand(
       systemInfoReminderEnabled,
       effectiveReflectionSettings,
       headlessModAdapter,
+      toolsetPreference,
     );
     return;
   }
@@ -1677,6 +1655,7 @@ export async function handleHeadlessCommand(
       }
 
       const approvalStream = await sendScopedApprovalMessages({
+        toolsetPreference,
         agentId: agent.id,
         conversationId,
         approvalMessages,
@@ -2035,6 +2014,7 @@ export async function handleHeadlessCommand(
         const turnToolContext = await prepareHeadlessToolExecutionContext({
           agentId: agent.id,
           conversationId,
+          toolsetPreference,
           overrideModel: preparedEffectiveModel,
           cachedAgent,
           modContext: createHeadlessModContext({
@@ -3000,6 +2980,7 @@ async function runBidirectionalMode(
   systemInfoReminderEnabled: boolean,
   reflectionSettings: ReflectionSettings,
   headlessModAdapter: ModAdapter,
+  toolsetPreference?: ToolsetPreference,
 ): Promise<void> {
   const sessionId = agent.id;
   const backend = getBackend();
@@ -3140,6 +3121,7 @@ async function runBidirectionalMode(
       }
 
       const approvalStream = await sendScopedApprovalMessages({
+        toolsetPreference,
         agentId: agent.id,
         conversationId,
         approvalMessages,
@@ -3501,6 +3483,7 @@ async function runBidirectionalMode(
         otid: randomUUID(),
       };
       const approvalStream = await sendScopedApprovalMessages({
+        toolsetPreference,
         agentId: agent.id,
         conversationId: targetConversationId,
         approvalMessages: [approvalInput],
@@ -3998,6 +3981,7 @@ async function runBidirectionalMode(
           let turnToolContextId: string | null = null;
           try {
             const turnToolContext = await prepareHeadlessToolExecutionContext({
+              toolsetPreference,
               agentId: agent.id,
               conversationId,
               modContext: createHeadlessModContext({
