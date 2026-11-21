@@ -57,7 +57,13 @@ export const DISABLED_MOD_CAPABILITIES: ModCapabilities = {
 
 export const PROVIDERS_ONLY_MOD_CAPABILITIES: ModCapabilities = {
   ...DISABLED_MOD_CAPABILITIES,
-  events: { ...DISABLED_MOD_CAPABILITIES.events },
+  // Providers-only sessions (reflection and memory subagents) still expose
+  // passive turn_start events: turn-event mods observe and annotate input,
+  // which cannot mutate agent state. Suppressing events.turns here leaves
+  // reflection sessions without e.g. user timestamps, which changes how the
+  // subagent reasons about time. Everything that could act on the agent
+  // (tools, commands, permissions, events.tools) stays disabled.
+  events: { ...DISABLED_MOD_CAPABILITIES.events, turns: true },
   providers: true,
   ui: { ...DISABLED_MOD_CAPABILITIES.ui },
 };
