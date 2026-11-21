@@ -1,4 +1,6 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import type { QueueItem } from "@/queue/queue-runtime";
+import { ordinaryInputIdentity } from "./input-disposition";
 import type { ConversationRuntime, IncomingMessage } from "./types";
 
 export function getInboundClientMessageId(
@@ -59,4 +61,20 @@ export function enqueueInboundUserMessage(
 
   runtime.queuedMessagesByItemId.set(enqueuedItem.id, incoming);
   return true;
+}
+
+export function getQueuedInputIdentities(
+  runtime: ConversationRuntime,
+  items: readonly QueueItem[],
+) {
+  return items.flatMap((item) => {
+    const incoming = runtime.queuedMessagesByItemId.get(item.id);
+    const identities = incoming?.durableInputIdentities;
+    if (identities?.length) return [...identities];
+    // Queue-generated display IDs are not durable acceptance identities.
+    const fallback = ordinaryInputIdentity(
+      incoming ? getInboundClientMessageId(incoming) : item.clientMessageId,
+    );
+    return fallback ? [fallback] : [];
+  });
 }

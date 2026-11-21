@@ -828,18 +828,17 @@ export function forgetQueuedInputDispositions(
       return durableTransaction(ledger.persistentPath, (store) => {
         for (const key of keys) {
           const entry = store.entries[key];
-          if (
-            entry &&
-            entry.disposition !== "queued" &&
-            !(entry.disposition === "started" && entry.queuedInput)
-          ) {
+          const completed =
+            entry?.disposition === "started" && entry.replayCompleted === true;
+          if (!entry || (!entry.queuedInput && !completed)) {
             syncMemoryFromDurable(ledger, store);
             return { result: false, changed: false };
           }
         }
         let changed = false;
         for (const key of keys) {
-          if (store.entries[key]) {
+          // Completed tombstones must continue to suppress duplicate delivery.
+          if (store.entries[key]?.queuedInput) {
             delete store.entries[key];
             changed = true;
           }
