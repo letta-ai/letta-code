@@ -15,7 +15,10 @@ import { createSubagentConversation } from "@/agent/subagents/subagent-conversat
 import { shouldLaunchThroughListener } from "@/agent/subagents/subagent-launcher";
 import { disableLocalBackendMemfsForProcess } from "@/backend/local/paths";
 import { INTERRUPTED_BY_USER } from "@/constants";
-import { exitInterruptedHeadless } from "@/headless-interrupt";
+import {
+  createHeadlessInterrupt,
+  waitForTerminationOutput,
+} from "@/headless-interrupt";
 import { buildHeadlessSenderReminder } from "@/headless-message-sender";
 import { createHeadlessResponseState } from "@/headless-response-state";
 import { createStartupBackend } from "@/headless-startup-backend";
@@ -32,7 +35,6 @@ import {
   setMessageQueueAdder,
 } from "@/utils/message-queue-bridge";
 import { detectShellContext } from "@/utils/shell-context";
-import { createProcessAbortSignal } from "@/utils/sigint-abort";
 import {
   consumeSubagentLaunch,
   LISTENER_CONNECTION_ENV,
@@ -596,10 +598,12 @@ async function flushAndExit(code: number): Promise<never> {
     });
 
   await closeClientMcpServers();
-  await Promise.allSettled([
+  const flushed = Promise.allSettled([
     flushWritable(process.stdout),
     flushWritable(process.stderr),
   ]);
+  if (code === 143) await waitForTerminationOutput(flushed);
+  else await flushed;
 
   process.exit(code);
 }
@@ -2088,17 +2092,11 @@ export async function handleHeadlessCommand(
     }
   };
 
-  const { signal: interruptSignal, dispose } = createProcessAbortSignal([
-    "SIGINT",
-    "SIGTERM",
-  ]);
-  const exitInterrupted = () =>
-    exitInterruptedHeadless(
-      interruptSignal,
-      outputFormat,
-      sessionId,
-      exitHeadless,
-    );
+  const {
+    signal: interruptSignal,
+    dispose,
+    exitInterrupted,
+  } = createHeadlessInterrupt(outputFormat, sessionId, exitHeadless);
 
   try {
     while (true) {
