@@ -274,6 +274,26 @@ function checkPermissionForEngine(
         workingDirectory,
         engine,
       ));
+  // Deny and --disallowedTools rules must fire on any member of a compound
+  // command, so they evaluate every segment rather than just the primary one.
+  const matchesRuleAllSegments = (pattern: string): boolean =>
+    matchesPattern(
+      permissionToolName,
+      query,
+      pattern,
+      workingDirectory,
+      engine,
+      { checkAllSegments: true },
+    ) ||
+    (permissionToolName !== toolName &&
+      matchesPattern(
+        toolName,
+        originalQuery,
+        pattern,
+        workingDirectory,
+        engine,
+        { checkAllSegments: true },
+      ));
   const trace = createTrace(engine, toolName, canonicalTool, query);
   const sessionRules = sessionPermissions.getRules();
 
@@ -318,7 +338,7 @@ function checkPermissionForEngine(
 
   if (permissions.deny) {
     for (const pattern of permissions.deny) {
-      const matched = matchesRule(pattern, true);
+      const matched = matchesRuleAllSegments(pattern);
       traceEvent(trace, "deny-rule", undefined, pattern, matched);
       if (matched) {
         return {
@@ -335,7 +355,7 @@ function checkPermissionForEngine(
 
   const disallowedTools = cliPermissions.getDisallowedTools();
   for (const pattern of disallowedTools) {
-    const matched = matchesRule(pattern, true);
+    const matched = matchesRuleAllSegments(pattern);
     traceEvent(trace, "cli-disallow-rule", undefined, pattern, matched);
     if (matched) {
       return {
@@ -740,6 +760,7 @@ function matchesPattern(
   pattern: string,
   workingDirectory: string,
   engine: PermissionEngine,
+  extraMatcherOptions: MatcherOptions = {},
 ): boolean {
   const matcherOptions: MatcherOptions =
     engine === "v2"
@@ -754,7 +775,10 @@ function matchesPattern(
   // Bash uses prefix matching
   const v2ShellTool = engine === "v2" && isShellToolName(toolName);
   if (toolForMatch === "Bash" || v2ShellTool) {
-    return matchesBashPattern(query, pattern, matcherOptions);
+    return matchesBashPattern(query, pattern, {
+      ...matcherOptions,
+      ...extraMatcherOptions,
+    });
   }
 
   // Other tools use simple name matching

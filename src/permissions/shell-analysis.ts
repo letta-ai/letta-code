@@ -59,7 +59,7 @@ function tryConsumeSafeRedirect(input: string, pos: number): number {
 }
 
 /**
- * Split a shell command into segments on unquoted separators: |, &&, ||, ;
+ * Split a shell command into segments on unquoted separators: |, &, &&, ||, ;
  * Returns null if dangerous operators are found:
  * - redirects (>, >>) outside quotes (unless targeting /dev/null or fd duplication)
  * - command substitution ($(), backticks) outside single quotes
@@ -159,7 +159,20 @@ export function splitShellSegments(input: string): string[] | null {
       continue;
     }
 
-    if (ch === ";") {
+    // Input fd duplication (`<&3`, `<&-`) is not a command separator.
+    if (ch === "&" && /<$/.test(current)) {
+      const fd = input.slice(i + 1).match(/^(?:\d+|-)/);
+      if (fd) {
+        current += ch + fd[0];
+        i += 1 + fd[0].length;
+        continue;
+      }
+    }
+
+    // A lone `&` (background operator) starts a new command, like `;`.
+    // `&&` is handled above; `>&N`/`&>` redirects are consumed or rejected
+    // before we get here.
+    if (ch === ";" || ch === "&") {
       segments.push(current);
       current = "";
       i += 1;
@@ -342,7 +355,20 @@ export function splitShellSegmentsAllowCommandSubstitution(
       continue;
     }
 
-    if (ch === ";") {
+    // Input fd duplication (`<&3`, `<&-`) is not a command separator.
+    if (ch === "&" && /<$/.test(current)) {
+      const fd = input.slice(i + 1).match(/^(?:\d+|-)/);
+      if (fd) {
+        current += ch + fd[0];
+        i += 1 + fd[0].length;
+        continue;
+      }
+    }
+
+    // A lone `&` (background operator) starts a new command, like `;`.
+    // `&&` is handled above; `>&N`/`&>` redirects are consumed or rejected
+    // before we get here.
+    if (ch === ";" || ch === "&") {
       segments.push(current);
       current = "";
       i += 1;

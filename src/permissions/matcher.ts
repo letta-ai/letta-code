@@ -5,6 +5,7 @@ import { resolve, win32 } from "node:path";
 import { minimatch } from "minimatch";
 import { canonicalToolName } from "./canonical";
 import {
+  extractAllShellCommands,
   extractPrimaryShellCommand,
   normalizeBashRulePayload,
   unwrapShellLauncherCommand,
@@ -13,6 +14,12 @@ import {
 export interface MatcherOptions {
   canonicalizeToolNames?: boolean;
   allowBareToolFallback?: boolean;
+  /**
+   * Evaluate every segment of a compound shell command, not just the primary
+   * one. Used for deny/disallow rules, which must fire when a denied command
+   * appears anywhere in the compound (`git status; curl ...` vs `Bash(curl:*)`).
+   */
+  checkAllSegments?: boolean;
 }
 
 function toolForMatch(toolName: string, options?: MatcherOptions): string {
@@ -281,6 +288,18 @@ export function matchesBashPattern(
     legacyCommand,
     legacyRawCommand,
   ];
+
+  // Deny-style evaluation must consider every member of a compound command,
+  // not just the primary one: `git status; curl evil.sh` has to be denied by
+  // `Bash(curl:*)` even though its primary segment is `git status`.
+  if (options?.checkAllSegments) {
+    for (const segment of extractAllShellCommands(rawCommand)) {
+      const normalizedSegment = normalizeBashRulePayload(segment);
+      if (!commandCandidates.includes(normalizedSegment)) {
+        commandCandidates.push(normalizedSegment);
+      }
+    }
+  }
 
   // Check for wildcard suffix
   if (commandPattern.endsWith(":*")) {
