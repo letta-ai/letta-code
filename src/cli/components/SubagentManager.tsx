@@ -1,4 +1,3 @@
-
 import { Box, useInput } from "ink";
 import { useEffect, useState } from "react";
 import {

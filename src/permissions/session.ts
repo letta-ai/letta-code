@@ -1,4 +1,3 @@
-
 import type { PermissionRules, PermissionRuleType } from "./types";
 
 /**

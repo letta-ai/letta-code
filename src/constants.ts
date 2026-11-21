@@ -1,4 +1,3 @@
-
 export const DEFAULT_TITLE_SUMMARIZATION_MODEL = "openai/gpt-6-luna";
 
 export const DEFAULT_AGENT_NAME = "Letta Code";

@@ -294,8 +294,7 @@ async function runDenyLifecycleScenario(): Promise<HeadlessEvent[]> {
         if (!line) continue;
         try {
           onEvent(JSON.parse(line) as HeadlessEvent);
-        } catch {
-        }
+        } catch {}
       }
     });
     child.stderr.on("data", (chunk) => {

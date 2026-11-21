@@ -1,4 +1,3 @@
-
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import {
@@ -456,7 +455,6 @@ function markAsFinished(b: Buffers, id: string) {
 }
 
 function handleOtidTransition(b: Buffers, newOtid: string | undefined) {
-
   // If transitioning to a different otid (including null/undefined), finish only assistant/reasoning lines.
   // Tool calls should finish exclusively when a tool_return arrives (merged by toolCallId).
   if (b.lastOtid && b.lastOtid !== newOtid) {
@@ -1204,8 +1202,7 @@ export function onChunk(
               if (serverToolInfo.toolArgs) {
                 parsedArgs = JSON.parse(serverToolInfo.toolArgs);
               }
-            } catch {
-            }
+            } catch {}
 
             const precedingReasoning = b.lastReasoning;
             const precedingAssistantMessage = b.lastAssistantMessage;

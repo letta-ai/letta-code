@@ -1,4 +1,3 @@
-
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { type BackendCapabilities, getBackend } from "@/backend";
 import { apiRequest, getApiRequestConfig } from "@/backend/api/request";

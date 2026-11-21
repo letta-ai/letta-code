@@ -51,12 +51,10 @@ function pruneOldLogs(dir: string, maxFiles: number): void {
       for (const file of toDelete) {
         try {
           unlinkSync(join(dir, file));
-        } catch {
-        }
+        } catch {}
       }
     }
-  } catch {
-  }
+  } catch {}
 }
 
 interface RemoteSessionLogOptions {
@@ -139,8 +137,7 @@ export class RemoteSessionLog {
     try {
       appendFileSync(this.path, line, { encoding: "utf8" });
       this.bytesWritten += Buffer.byteLength(line, "utf8");
-    } catch {
-    }
+    } catch {}
   }
 
   private ensureDir(): void {
@@ -150,7 +147,6 @@ export class RemoteSessionLog {
         mkdirSync(this.dir, { recursive: true });
       }
       this.dirCreated = true;
-    } catch {
-    }
+    } catch {}
   }
 }

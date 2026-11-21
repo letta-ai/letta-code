@@ -143,8 +143,7 @@ function enableKittyKeyboardProtocol() {
     // See: .notes/csi-u-release-events-fix.md for full analysis.
     fs.writeSync(process.stdout.fd, "\x1b[>1u");
     kittyEnabled = true;
-  } catch {
-  }
+  } catch {}
 }
 
 function disableKittyKeyboardProtocol() {
@@ -153,6 +152,5 @@ function disableKittyKeyboardProtocol() {
       fs.writeSync(process.stdout.fd, "\x1b[<u");
       kittyEnabled = false;
     }
-  } catch {
-  }
+  } catch {}
 }

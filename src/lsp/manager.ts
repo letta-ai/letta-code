@@ -1,4 +1,3 @@
-
 import * as path from "node:path";
 import { LSPClient } from "./client.js";
 import type { Diagnostic, LSPServerInfo } from "./types.js";
@@ -17,8 +16,7 @@ export class LSPManager {
   private serverDefinitions: LSPServerInfo[] = [];
   private enabled = false;
 
-  private constructor() {
-  }
+  private constructor() {}
 
   static getInstance(): LSPManager {
     if (!LSPManager.instance) {

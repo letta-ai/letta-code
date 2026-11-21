@@ -1,4 +1,3 @@
-
 export function isTimingsEnabled(): boolean {
   const val = process.env.LETTA_DEBUG_TIMINGS;
   return val === "1" || val === "true";

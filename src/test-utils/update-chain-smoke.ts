@@ -126,8 +126,7 @@ async function waitForVerdaccio(timeoutMs = 45000) {
         signal: AbortSignal.timeout(2500),
       });
       if (response.ok) return;
-    } catch {
-    }
+    } catch {}
     await sleep(500);
   }
   throw new Error(`Timed out waiting for Verdaccio at ${REGISTRY_URL}`);

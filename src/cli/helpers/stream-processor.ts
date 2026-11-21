@@ -156,7 +156,6 @@ export class StreamProcessor {
     // tool_call_message = auto-executed server-side (e.g., web_search)
     // approval_request_message = needs user approval (e.g., Bash)
     if (chunk.message_type === "approval_request_message") {
-
       // Normalize tool calls: support both legacy tool_call and new tool_calls array
       const toolCalls = Array.isArray(chunk.tool_calls)
         ? chunk.tool_calls

@@ -1,4 +1,3 @@
-
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ChannelUserMention } from "@/channels/message-references";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";

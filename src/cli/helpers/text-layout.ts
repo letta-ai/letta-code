@@ -1,4 +1,3 @@
-
 export interface VisualLine {
   start: number; // Start index in text
   end: number; // End index (exclusive, not including \n)

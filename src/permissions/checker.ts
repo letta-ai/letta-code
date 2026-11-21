@@ -1,4 +1,3 @@
-
 import { posix, resolve, win32 } from "node:path";
 import { getCurrentAgentId } from "@/agent/context";
 import { runPermissionRequestHooks } from "@/hooks";

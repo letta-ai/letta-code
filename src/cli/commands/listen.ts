@@ -1,4 +1,3 @@
-
 import { hostname } from "node:os";
 import type { Buffers, Line } from "@/cli/helpers/accumulator";
 import { buildAgentReference } from "@/cli/helpers/app-urls";

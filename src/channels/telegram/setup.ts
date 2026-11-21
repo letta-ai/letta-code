@@ -1,4 +1,3 @@
-
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline/promises";
 import { upsertChannelAccountWithSecrets } from "@/channels/accounts";

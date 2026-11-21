@@ -265,8 +265,7 @@ async function runLazyRecoveryTest(timeoutMs = 300000): Promise<{
             finish(true);
           }
         }
-      } catch {
-      }
+      } catch {}
     };
 
     proc.stdout?.on("data", (data) => {

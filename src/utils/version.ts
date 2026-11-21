@@ -1,4 +1,3 @@
-
 export function parseSemver(version: string): [number, number, number] | null {
   const match = version.match(/^(\d+)\.(\d+)\.(\d+)/);
   if (!match) return null;

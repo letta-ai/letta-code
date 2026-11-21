@@ -1,4 +1,3 @@
-
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { buildParentMemoryNote } from "@/agent/parent-memory-note";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";

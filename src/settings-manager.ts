@@ -832,8 +832,7 @@ class SettingsManager {
         try {
           const content = await readFile(settingsPath);
           existingSettings = JSON.parse(content) as Record<string, unknown>;
-        } catch {
-        }
+        } catch {}
       }
 
       // Hard-deprecate legacy fields (now fully ignored). Always strip from disk.
@@ -1040,8 +1039,7 @@ class SettingsManager {
         try {
           const content = await readFile(settingsPath);
           existingSettings = JSON.parse(content) as Record<string, unknown>;
-        } catch {
-        }
+        } catch {}
       }
 
       // Hard-deprecate legacy fields (now fully ignored). Always strip from disk.

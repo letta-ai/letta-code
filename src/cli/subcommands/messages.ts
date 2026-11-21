@@ -560,7 +560,6 @@ export async function runMessagesSubcommand(
       );
       return 0;
     }
-
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     return 1;

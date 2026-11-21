@@ -1,4 +1,3 @@
-
 import { platform } from "node:os";
 import { basename } from "node:path";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
@@ -145,20 +144,17 @@ export function buildSessionContext(
     let version = "unknown";
     try {
       version = getVersion();
-    } catch {
-    }
+    } catch {}
 
     let deviceType = "unknown";
     try {
       deviceType = getDeviceType(currentPlatform);
-    } catch {
-    }
+    } catch {}
 
     let localTime = "unknown";
     try {
       localTime = getLocalTime();
-    } catch {
-    }
+    } catch {}
 
     let unixShellLine = "";
     if (currentPlatform !== "win32") {
@@ -167,8 +163,7 @@ export function buildSessionContext(
           options?.shellContext ??
             detectShellContext(process.env, currentPlatform),
         );
-      } catch {
-      }
+      } catch {}
     }
 
     const gitInfo = getGitInfo(cwd);

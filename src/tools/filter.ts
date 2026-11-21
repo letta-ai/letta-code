@@ -1,4 +1,3 @@
-
 /**
  * Tool filter manager to control which tools are enabled for the session.
  * Set via CLI --tools flag.

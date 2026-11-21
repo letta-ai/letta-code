@@ -290,8 +290,7 @@ async function collectParentMemoryFiles(
           content,
           description,
         });
-      } catch {
-      }
+      } catch {}
     }
   };
 

@@ -95,8 +95,7 @@ function parseCloudflareEdgeError(
         host: obj.zone || undefined,
         rayId: obj.ray_id || undefined,
       };
-    } catch {
-    }
+    } catch {}
   }
 
   if (!isCloudflareEdge52xHtmlError(text)) return undefined;
@@ -635,8 +634,7 @@ function checkEncryptedContentError(e: unknown): string | undefined {
         ].join("\n");
       }
     }
-  } catch {
-  }
+  } catch {}
 
   return (
     "OpenAI error: Encrypted content could not be verified — organization mismatch." +

@@ -1,4 +1,3 @@
-
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import { gateMcpOriginatorDeliveryAdmission } from "@/agent/mcp-originator-tokens";
 import type { InputCommand } from "@/types/protocol_v2";

@@ -137,8 +137,7 @@ async function runBidirectionalOnce(
           closing = true;
           setTimeout(() => proc.stdin?.end(), 500);
         }
-      } catch {
-      }
+      } catch {}
     };
 
     const sendNextInput = () => {

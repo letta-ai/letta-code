@@ -500,8 +500,7 @@ function extractCommandFailureMessage(
     };
     const message = parsed.error?.error?.detail ?? parsed.error?.error?.message;
     if (typeof message === "string" && message.trim()) return message.trim();
-  } catch {
-  }
+  } catch {}
   return (
     trimmed
       .split("\n")

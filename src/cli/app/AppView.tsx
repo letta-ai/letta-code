@@ -1,4 +1,3 @@
-
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { Box } from "ink";
@@ -1668,7 +1667,6 @@ export function AppView(props: AppViewProps) {
                 onCancel={closeOverlay}
               />
             )}
-
           </>
         )}
       </Box>

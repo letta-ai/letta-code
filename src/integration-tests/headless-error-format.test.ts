@@ -65,9 +65,7 @@ describe("headless error format types", () => {
 });
 
 describe("headless error format expectations", () => {
-
   test("error result should have subtype 'error', not 'success'", () => {
-
     const mockErrorResult: ResultMessage = {
       type: "result",
       subtype: "error", // NOT "success"
@@ -90,7 +88,6 @@ describe("headless error format expectations", () => {
   });
 
   test("409 conflict error should include detail in message", () => {
-
     const conflictDetail =
       "CONFLICT: Cannot send a new message: Another request is currently being processed for this conversation.";
 
@@ -108,7 +105,6 @@ describe("headless error format expectations", () => {
   });
 
   test("approval pending error should include detail", () => {
-
     const approvalDetail =
       "CONFLICT: Cannot send a new message: The agent is waiting for approval on a tool call.";
 

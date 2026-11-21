@@ -1,4 +1,3 @@
-
 import { randomUUID } from "node:crypto";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type {
@@ -1118,8 +1117,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                     continue;
                   }
                   // Otherwise fall through to error handling below
-                } catch {
-                }
+                } catch {}
               }
             }
 
@@ -2182,8 +2180,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 continue;
               }
               // Otherwise fall through to error handling below
-            } catch {
-            }
+            } catch {}
           }
 
           // Check for approval pending error (sent user message while approval waiting).

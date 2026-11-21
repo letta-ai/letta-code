@@ -119,7 +119,6 @@ async function runWatchLoop(params: {
     }
 
     await waitForDirectoryCreation(lettaDir, "worktrees", abort.signal);
-
   }
 
   // Snapshot existing entries so we only react to *new* ones.

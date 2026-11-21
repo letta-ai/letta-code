@@ -1,4 +1,3 @@
-
 import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
@@ -98,12 +97,10 @@ async function findCommandFiles(
           if (cmd) {
             commands.push(cmd);
           }
-        } catch (_error) {
-        }
+        } catch (_error) {}
       }
     }
-  } catch (_error) {
-  }
+  } catch (_error) {}
 }
 
 async function parseCommandFile(

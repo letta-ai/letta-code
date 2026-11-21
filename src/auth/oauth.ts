@@ -1,4 +1,3 @@
-
 import Letta from "@letta-ai/letta-client";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import { trackBoundaryError } from "@/telemetry/error-reporting";

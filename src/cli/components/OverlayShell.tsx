@@ -1,4 +1,3 @@
-
 import { Box } from "ink";
 import type { ReactNode } from "react";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";

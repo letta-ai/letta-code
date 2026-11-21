@@ -1,4 +1,3 @@
-
 /**
  * Checks if a given character index is inside a fenced code block (```).
  * Counts fence markers before the index - odd count means inside a block.

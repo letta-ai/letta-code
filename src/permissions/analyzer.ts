@@ -1,4 +1,3 @@
-
 import { homedir } from "node:os";
 import { dirname, relative, resolve, win32 } from "node:path";
 import { resolveGlobalConfigDir } from "@/utils/settings-path";

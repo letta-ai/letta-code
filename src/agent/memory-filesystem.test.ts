@@ -1,4 +1,3 @@
-
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import {
@@ -500,7 +499,6 @@ describe("syncMemoryFilesystem", () => {
 
 describe("memory filesystem sync - rename handling", () => {
   test("detects file rename as delete + create", () => {
-
     // This is more of a documentation test - the actual behavior depends on
     // the sync state (lastFileHash, lastBlockHash) and whether things changed
 
@@ -701,7 +699,6 @@ describe("block tagging", () => {
 
 describe("sync behavior - location mismatch handling", () => {
   test("file move from system/ to root/ should detach block, not create duplicate", () => {
-
     const scenario = {
       before: {
         systemFile: "persona.md",
@@ -718,7 +715,6 @@ describe("sync behavior - location mismatch handling", () => {
   });
 
   test("file deletion should remove owner tag, not resurrect", () => {
-
     const scenario = {
       before: {
         detachedFile: "notes.md",
@@ -792,7 +788,6 @@ describe("FS wins all policy", () => {
   });
 
   test("explicit resolution=block can override FS wins policy", () => {
-
     const scenario = {
       fileChanged: true,
       blockChanged: true,
@@ -830,7 +825,6 @@ describe("location mismatch auto-sync", () => {
   });
 
   test("content differs AND location mismatches → sync both in one pass", () => {
-
     const scenario = {
       fileLocation: "root",
       blockAttached: true,

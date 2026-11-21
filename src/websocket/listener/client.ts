@@ -1,4 +1,3 @@
-
 import type WebSocket from "ws";
 import {
   clearPendingApprovalBatchIds,

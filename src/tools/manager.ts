@@ -1413,7 +1413,6 @@ function flattenToolResponse(result: unknown): ToolReturnContent {
   }
 
   if (typeof result.message === "string") {
-
     const keys = Object.keys(result);
     if (keys.length > 1) {
       return JSON.stringify(result);

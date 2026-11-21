@@ -164,8 +164,7 @@ async function startPendingApprovalSession(
       for (const line of lines) {
         try {
           onMessage(JSON.parse(line));
-        } catch {
-        }
+        } catch {}
       }
     });
 

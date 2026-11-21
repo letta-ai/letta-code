@@ -1,4 +1,3 @@
-
 import { resolve, win32 } from "node:path";
 import { minimatch } from "minimatch";
 import { canonicalToolName } from "./canonical";

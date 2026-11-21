@@ -1,4 +1,3 @@
-
 import { Box, useInput } from "ink";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { getBackend } from "@/backend";

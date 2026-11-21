@@ -660,8 +660,7 @@ export function ProviderSelector({
           setConnectedProvidersForTarget(selectedTarget, providers);
           setViewState({ type: "list" });
         }
-      } catch {
-      }
+      } catch {}
     },
     [
       viewState,

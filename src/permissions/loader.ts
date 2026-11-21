@@ -1,4 +1,3 @@
-
 import { createHash } from "node:crypto";
 import { type FSWatcher, readFileSync, statSync, watch } from "node:fs";
 import { homedir } from "node:os";
@@ -381,8 +380,7 @@ export async function savePermissionRule(
       const content = await readFile(settingsPath);
       settings = JSON.parse(content) as SettingsFile;
     }
-  } catch (_error) {
-  }
+  } catch (_error) {}
 
   if (!settings.permissions) {
     settings.permissions = {};

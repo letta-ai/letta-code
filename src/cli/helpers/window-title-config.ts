@@ -1,4 +1,3 @@
-
 import { homedir } from "node:os";
 import { basename, resolve } from "node:path";
 import { formatCompact } from "@/cli/helpers/format";

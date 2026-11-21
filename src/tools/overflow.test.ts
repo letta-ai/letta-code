@@ -27,8 +27,7 @@ describe("overflow utilities", () => {
       }
       try {
         fs.rmdirSync(overflowDir);
-      } catch {
-      }
+      } catch {}
     }
   });
 

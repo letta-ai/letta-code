@@ -1,4 +1,3 @@
-
 export interface ModCommandAutocompleteItem {
   id: string;
   description: string;

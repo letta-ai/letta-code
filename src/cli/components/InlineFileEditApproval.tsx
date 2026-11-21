@@ -84,8 +84,7 @@ function getHeaderText(fileEdit: FileEditInfo): string {
       if (existsSync(fileEdit.filePath)) {
         return `Overwrite ${displayPath}?`;
       }
-    } catch {
-    }
+    } catch {}
     return `Write to ${displayPath}?`;
   }
 

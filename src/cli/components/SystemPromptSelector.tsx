@@ -1,4 +1,3 @@
-
 import { memo, useCallback, useMemo, useState } from "react";
 import { SYSTEM_PROMPTS } from "@/agent/prompt-assets";
 import { OverlayShell } from "./OverlayShell";

@@ -22,8 +22,7 @@ describeIntegration("memory prompt integration", () => {
     for (const agentId of createdAgentIds) {
       try {
         await client.agents.delete(agentId);
-      } catch {
-      }
+      } catch {}
     }
   });
 

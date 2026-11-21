@@ -1,4 +1,3 @@
-
 import { getCurrentAgentId } from "@/agent/context";
 import {
   getMemoryRepositoryUrl,
@@ -21,8 +20,7 @@ function resolveAgentId(): string | null {
     if (scoped) {
       return scoped;
     }
-  } catch {
-  }
+  } catch {}
   const fromEnv = (
     process.env.LETTA_AGENT_ID ||
     process.env.AGENT_ID ||

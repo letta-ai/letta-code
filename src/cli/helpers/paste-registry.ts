@@ -1,4 +1,3 @@
-
 export interface ImageEntry {
   data: string; // base64
   mediaType: string;

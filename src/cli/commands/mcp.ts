@@ -1,4 +1,3 @@
-
 import type { Buffers, Line } from "@/cli/helpers/accumulator";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import type { McpServerConfig } from "@/mcp-client";

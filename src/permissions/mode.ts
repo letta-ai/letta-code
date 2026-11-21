@@ -1,4 +1,3 @@
-
 export type PermissionMode =
   | "standard"
   | "acceptEdits"

@@ -965,8 +965,7 @@ export function App({
         if (tier) {
           setBillingTier(tier);
         }
-      } catch {
-      }
+      } catch {}
     })();
   }, []);
 
@@ -1094,8 +1093,7 @@ export function App({
             sessionStartFeedbackRef.current = result.feedback;
           }
         })
-        .catch(() => {
-        });
+        .catch(() => {});
     }
   }, [agentId, agentName, initialConversationId]);
 
@@ -1110,8 +1108,7 @@ export function App({
           agentIdRef.current ?? undefined,
           conversationIdRef.current ?? undefined,
         );
-      } catch {
-      }
+      } catch {}
 
       const modAdapter = modAdapterRef.current;
       if (modAdapter) {
@@ -1128,8 +1125,7 @@ export function App({
             },
             modAdapter.context,
           );
-        } catch {
-        }
+        } catch {}
       }
     },
     [],

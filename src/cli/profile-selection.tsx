@@ -1,4 +1,3 @@
-
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { Box, useInput } from "ink";
 import React, { useCallback, useEffect, useState } from "react";

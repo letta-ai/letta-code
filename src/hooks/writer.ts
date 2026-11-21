@@ -1,4 +1,3 @@
-
 import { settingsManager } from "@/settings-manager";
 import { debugLog } from "@/utils/debug";
 import { isProjectSettingsPathGlobal } from "@/utils/settings-path";

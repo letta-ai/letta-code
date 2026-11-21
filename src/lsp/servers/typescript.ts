@@ -1,4 +1,3 @@
-
 import type { LSPServerInfo } from "@/lsp/types.js";
 
 export const TypeScriptServer: LSPServerInfo = {

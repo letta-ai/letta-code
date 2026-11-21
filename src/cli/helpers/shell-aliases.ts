@@ -1,4 +1,3 @@
-
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -102,8 +101,7 @@ function parseAliasesFromFile(filePath: string): Map<string, string> {
         }
       }
     }
-  } catch (_error) {
-  }
+  } catch (_error) {}
 
   return aliases;
 }

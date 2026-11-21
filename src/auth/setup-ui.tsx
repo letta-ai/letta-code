@@ -1,4 +1,3 @@
-
 import { Box, useInput } from "ink";
 import { useState } from "react";
 import { configureBackendMode } from "@/backend";

@@ -30,7 +30,6 @@ interface ZipEntry {
 }
 
 function createZip(entries: ZipEntry[]): Buffer {
-
   const localHeaders: Buffer[] = [];
   const centralHeaders: Buffer[] = [];
   let offset = 0;

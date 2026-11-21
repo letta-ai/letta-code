@@ -1,4 +1,3 @@
-
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -60,6 +59,5 @@ export async function removeTestDir(path: string): Promise<void> {
       maxRetries: 3,
       retryDelay: 50,
     });
-  } catch {
-  }
+  } catch {}
 }
