@@ -719,7 +719,7 @@ export function startScheduler(
         ? ""
         : " Pin the replacement Cloud schedule to your registered computer.";
       console.warn(
-        `[Cron] Legacy local schedules are disabled. ${executionError}${target}`,
+        `[Cron] Legacy local schedules are disabled. ${executionError}${target} Verify the replacement before deleting the old schedule.`,
       );
     }
     return;

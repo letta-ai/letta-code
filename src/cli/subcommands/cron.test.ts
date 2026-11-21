@@ -593,7 +593,7 @@ describe("cron add execution targeting", () => {
             runCronSubcommand(addArgs),
           ),
         ).toBe(1);
-        expect(errors.join("\n")).toContain("Register this computer");
+        expect(errors.join("\n")).toContain("no runtime device ID");
         expect(requests.some((request) => request.method === "POST")).toBe(
           false,
         );
@@ -612,6 +612,35 @@ describe("cron add execution targeting", () => {
       rmSync(home, { recursive: true, force: true });
     }
   });
+
+  test.each([
+    [undefined, "no runtime device ID"],
+    ["unknown-device", "could not verify"],
+    ["local-only", "could not verify"],
+  ] as const)(
+    "explicit target still requires a qualified caller (%s)",
+    async (caller, diagnostic) => {
+      const requests = installScheduleApi({
+        environments: {
+          target: environment("target"),
+          "local-only": {
+            ...environment("local-only"),
+            organizationId: "local",
+          },
+        },
+      });
+      const errors: string[] = [];
+      console.error = mock((line: string) => errors.push(String(line)));
+      expect(
+        await runWithRuntimeContext(
+          { sessionSource: "listen", environmentDeviceId: caller },
+          () => runCronSubcommand([...addArgs, "--computer", "target"]),
+        ),
+      ).toBe(1);
+      expect(errors.join("\n")).toContain(diagnostic);
+      expect(requests.some(({ method }) => method === "POST")).toBe(false);
+    },
+  );
 
   test("Desktop execution still creates a local schedule", async () => {
     const originalTimezone = process.env.TZ;

@@ -64,7 +64,9 @@ test("managed Cloud sandbox neither starts nor manually runs local schedules", a
   try {
     startListenerScheduler();
     expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining("Wake or letta cron"),
+      expect.stringContaining(
+        "Verify the replacement before deleting the old schedule.",
+      ),
     );
     expect(warn.mock.calls.flat().join(" ")).not.toContain(
       "registered computer",
@@ -121,7 +123,7 @@ test("a Cloud listener warns about a persisted recurring local schedule", () => 
     expect(getTask(task.id)).toEqual(before);
     expect(warn).toHaveBeenCalledWith(
       expect.stringMatching(
-        /legacy local schedules.*cannot run here.*Wake or letta cron.*Cloud schedule.*registered computer/i,
+        /legacy local schedules.*cannot run here.*Wake or letta cron.*Cloud schedule.*registered computer.*Verify the replacement before deleting the old schedule/i,
       ),
     );
   } finally {
