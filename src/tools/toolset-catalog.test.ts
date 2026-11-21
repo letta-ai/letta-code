@@ -22,6 +22,7 @@ test("advertises the supported toolset choices", () => {
     "letta",
     "none",
     "default",
+    "codemode",
     "codex",
   ]);
 });

@@ -50,6 +50,7 @@ export function serializeClientTools(
   externalTools: ReadonlyMap<string, NamedToolShape>,
   modTools: ReadonlyMap<string, NamedToolShape>,
   getServerToolName: (name: string) => string,
+  codeModeOnly = false,
 ): ClientToolShape[] {
   const builtInTools = Array.from(registry.entries())
     .filter(([name]) => !externalTools.has(name) && !modTools.has(name))
@@ -68,11 +69,16 @@ export function serializeClientTools(
   const externalClientTools = Array.from(externalTools.values()).filter(
     (tool) => !modTools.has(tool.name),
   );
-  return [...builtInTools, ...externalClientTools, ...modTools.values()].map(
-    (tool) => ({
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.parameters,
-    }),
-  );
+  const clientTools = [
+    ...builtInTools,
+    ...externalClientTools,
+    ...modTools.values(),
+  ];
+  return clientTools
+    .filter(({ name }) => !codeModeOnly || name === "CodeMode")
+    .map(({ name, description, parameters }) => ({
+      name,
+      description,
+      parameters,
+    }));
 }
