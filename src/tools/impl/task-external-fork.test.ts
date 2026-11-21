@@ -79,14 +79,26 @@ mock.module("@/agent/subagents/manager", () => ({ spawnSubagent: spawn }));
 // External workers: keep the real module, replace only the process launch and
 // the remote hand-off so the prompt each would receive can be observed.
 const workerPrompts: string[] = [];
+const workerReminders: Array<string | undefined> = [];
+let inventoryError: Error | undefined;
+const realReminders = await import("@/reminders/engine");
+mock.module("@/reminders/engine", () => ({
+  ...realReminders,
+  listMcpServersForAgent: async () => {
+    if (inventoryError) throw inventoryError;
+    return { entries: [], serverSideAvailable: true };
+  },
+}));
 const realExternal = await import("./external-coding-agent");
 mock.module("./external-coding-agent", () => ({
   ...realExternal,
   runExternalCodingAgent: async (options: {
     prompt: string;
+    mcpReminder?: string;
     onStarted?: (agentId: string) => void;
   }) => {
     workerPrompts.push(options.prompt);
+    workerReminders.push(options.mcpReminder);
     options.onStarted?.("codex_00000000-0000-0000-0000-000000000000");
     return new Promise<SubagentResult>(() => {});
   },
@@ -95,6 +107,7 @@ const remoteLaunches: Array<{
   prompt: string;
   forkContext?: boolean;
   computer: string;
+  parentScope: { agentId: string; conversationId: string };
 }> = [];
 const realRemote = await import("./remote-external-coding-agent");
 mock.module("./remote-external-coding-agent", () => ({
@@ -103,6 +116,7 @@ mock.module("./remote-external-coding-agent", () => ({
     prompt: string;
     forkContext?: boolean;
     computer: string;
+    parentScope: { agentId: string; conversationId: string };
   }) => {
     remoteLaunches.push(launch);
     return { success: true, task_id: "t", output_file: "o", agent_id: null };
@@ -141,6 +155,8 @@ beforeEach(async () => {
   forkConversation.mockClear();
   listConversationMessages.mockClear();
   workerPrompts.length = 0;
+  workerReminders.length = 0;
+  inventoryError = undefined;
   remoteLaunches.length = 0;
   __testSetBackend({
     capabilities: { environmentRouting: true },
@@ -203,10 +219,12 @@ describe("fork_context for external coding workers", () => {
     expect(metadata.shown).toBe(3);
     expect(metadata).not.toHaveProperty("full_history_path");
     expect(prompt).toContain("Use Postgres.");
-    expect(prompt).toEndWith("Task:\nDo the work");
+    expect(prompt).toContain(
+      "Task:\nDo the work\n\nWhen you open a pull request",
+    );
   });
 
-  test("an unforked codex worker gets the prompt verbatim", async () => {
+  test("an unforked codex worker gets the prompt and the report-back line", async () => {
     await task({
       ...brief,
       harness: "codex",
@@ -215,7 +233,13 @@ describe("fork_context for external coding workers", () => {
     });
 
     expect(listConversationMessages).not.toHaveBeenCalled();
-    expect(workerPrompts).toEqual(["Do the work"]);
+    expect(workerPrompts).toHaveLength(1);
+    expect(workerPrompts[0]).toStartWith(
+      "Do the work\n\nWhen you open a pull request",
+    );
+    expect(workerPrompts[0]).toContain(
+      "letta -p --agent agent-parent --conversation default --no-wait",
+    );
   });
 
   test("a remote worker forks by default and prepares history at the destination, not the caller", async () => {
@@ -229,6 +253,37 @@ describe("fork_context for external coding workers", () => {
     expect(remoteLaunches[0]?.prompt).toBe(brief.prompt);
     expect(remoteLaunches[0]?.forkContext).toBe(true);
     expect(listConversationMessages).not.toHaveBeenCalled();
+  });
+
+  test("a detached subagent launches a remote worker with the parent agent identity", async () => {
+    const previousRole = process.env.LETTA_CODE_AGENT_ROLE;
+    const previousParent = process.env.LETTA_PARENT_AGENT_ID;
+    process.env.LETTA_CODE_AGENT_ROLE = "subagent";
+    process.env.LETTA_PARENT_AGENT_ID = "agent-parent";
+    try {
+      const result = await launchSubagent({
+        ...brief,
+        harness: "codex",
+        computer: "cloud",
+        parentScope: {
+          agentId: "conv-detached-child",
+          conversationId: "conv-detached-child",
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(remoteLaunches).toHaveLength(1);
+      expect(remoteLaunches[0]?.parentScope).toMatchObject({
+        agentId: "agent-parent",
+        conversationId: "conv-detached-child",
+      });
+    } finally {
+      if (previousRole === undefined) delete process.env.LETTA_CODE_AGENT_ROLE;
+      else process.env.LETTA_CODE_AGENT_ROLE = previousRole;
+      if (previousParent === undefined)
+        delete process.env.LETTA_PARENT_AGENT_ID;
+      else process.env.LETTA_PARENT_AGENT_ID = previousParent;
+    }
   });
 
   test("a forked external worker uses the default computer", async () => {
@@ -341,5 +396,46 @@ describe("fork prompt limit", () => {
     });
     expect(result.success).toBe(true);
     expect(forkConversation).not.toHaveBeenCalled();
+  });
+});
+
+describe("external worker MCP discovery", () => {
+  test("a timed-out inventory read still launches with discovery instructions", async () => {
+    inventoryError = new Error(
+      "Listing agent MCP servers timed out after 5000ms",
+    );
+    const result = await launchSubagent({ ...brief, harness: "codex" });
+    expect(result.success).toBe(true);
+    expect(workerPrompts).toHaveLength(1);
+    expect(workerReminders[0]).toContain("MCP server list could not be loaded");
+    expect(workerReminders[0]).toContain("letta mcp search");
+    expect(workerReminders[0]).toContain("Do not automatically store results");
+  });
+
+  test("unknown requested servers reject the launch", async () => {
+    const result = await launchSubagent({
+      ...brief,
+      harness: "codex",
+      mcp: { inherit: true, servers: ["missing"] },
+    });
+    expect(result).toMatchObject({
+      success: false,
+      error:
+        "Requested MCP server is not available to the parent agent: missing",
+    });
+    expect(workerPrompts).toHaveLength(0);
+  });
+
+  test("invalid MCP options still reject the launch", async () => {
+    const result = await launchSubagent({
+      ...brief,
+      harness: "codex",
+      mcp: { inherit: false, servers: ["example"] },
+    });
+    expect(result).toMatchObject({
+      success: false,
+      error: "mcp.servers requires mcp.inherit to be true",
+    });
+    expect(workerPrompts).toHaveLength(0);
   });
 });

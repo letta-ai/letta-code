@@ -7,10 +7,10 @@ import type {
 } from "@earendil-works/pi-ai";
 import { isContextOverflow } from "@earendil-works/pi-ai";
 
-import type { LocalCompactionStats } from "@/backend/local/compaction";
 import {
   emptyLocalUsage,
   type LocalAssistantMessage,
+  type LocalCompactionStats,
   type LocalMessage,
 } from "@/backend/local/local-message";
 import { resolveAvailableLocalModelForTurn } from "@/backend/local/local-model-config";

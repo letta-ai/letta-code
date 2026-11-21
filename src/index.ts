@@ -71,7 +71,7 @@ import {
   validateConversationDefaultRequiresAgent,
   validatePrimaryStartupFlagConflicts,
 } from "./cli/startup-flag-validation";
-import { isHeadlessStartup } from "./cli/startup-mode";
+import { hideHeadlessPrompt, isHeadlessStartup } from "./cli/startup-mode";
 import * as startupReflection from "./cli/startup-reflection-settings";
 import {
   runSubcommand,
@@ -182,7 +182,7 @@ USAGE
   letta memory ...      Memory filesystem subcommands
   letta agents ...      Agents subcommands (JSON-only)
   letta model ...       Get, list, or set models and reasoning (JSON-only)
-  letta usage           Show account credits and Letta quota (Markdown)
+  letta usage           Show account plan and remaining credits (Markdown)
   letta computers ...   List available remote computers (JSON-only)
   letta teleport ...    Move the current conversation between computers
   letta messages ...    Messages subcommands (JSON-only)
@@ -682,7 +682,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Check for subcommands
+  hideHeadlessPrompt(values, process.stdin.isTTY, positionals);
   const command = positionals[2]; // First positional after node and script
 
   // Handle help flag first

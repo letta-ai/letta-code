@@ -15,8 +15,8 @@ import {
   type AppServerClient,
   createAppServerClient,
 } from "@/app-server-client";
-import { getClient } from "@/backend/api/client";
 import {
+  type AgentSandboxOptions,
   ComputerResolutionError,
   type EnvironmentConnection,
   getEnvironmentConnection,
@@ -40,7 +40,6 @@ import { compareSemver } from "@/utils/version";
 import {
   CLAUDE_INTERRUPT_ACK_TIMEOUT_ERROR,
   CLAUDE_TURN_START_TIMEOUT_ERROR,
-  REMOTE_SUBAGENT_MESSAGE_TIMEOUT_MS,
 } from "./claude-steer-timeouts";
 import {
   createExternalCodingAgentConfig,
@@ -49,8 +48,14 @@ import {
   formatExternalCodingAgentId,
   parseExternalCodingAgentId,
 } from "./external-coding-agent";
+import { connectRemoteWorkerWithRetry } from "./remote-connect-retry";
+import { resolveExternalWorkerComputer } from "./remote-external-worker-computer";
+import {
+  RemoteFollowUpSocketClosedError,
+  RemoteFollowUpTimeoutError,
+  sendRemoteFollowUpWithReconnect,
+} from "./remote-follow-up-retry";
 import { followRemoteSubagentEvents } from "./remote-subagent-events";
-
 export const REMOTE_EXTERNAL_WORKER_STOPPED = Symbol(
   "remote external worker stopped",
 );
@@ -76,6 +81,7 @@ export type SpawnRemoteFollowTask = (args: {
 export interface RemoteExternalCodingAgentLaunch {
   type: ExternalCodingAgentType;
   computer: string;
+  cloudOptions?: AgentSandboxOptions;
   prompt: string;
   /** The destination reads the parent history and writes its own transcript file. */
   forkContext?: boolean;
@@ -92,6 +98,7 @@ export interface RemoteExternalCodingAgentDeps {
   resolveComputer?: (
     computer: string,
     parentScope: ParentScope,
+    cloudOptions?: AgentSandboxOptions,
   ) => Promise<{ connectionId: string; environment: EnvironmentConnection }>;
   connect?: (
     connectionId: string,
@@ -128,43 +135,6 @@ export function formatOutdatedComputerError(
 
 function formatOutdatedSteeringError(computer: string): string {
   return `${computer} is running an older Letta Code that can't steer Claude Code subagents remotely. Update Letta Code on ${computer}.`;
-}
-
-async function defaultResolveComputer(computer: string, scope: ParentScope) {
-  if (!isCloudEnvironmentSelector(computer))
-    return resolveEnvironmentConnectionId(computer);
-
-  const client = await getClient();
-  const parentConversationId =
-    scope.conversationId && scope.conversationId !== "default"
-      ? scope.conversationId
-      : undefined;
-  // The SDK forwards extra request fields until its types include ancestry.
-  const createParams = {
-    agent_id: scope.agentId,
-    hidden: true,
-    ...(parentConversationId
-      ? { parent_conversation_id: parentConversationId }
-      : {}),
-  };
-  const conversation = await client.conversations
-    .create(createParams)
-    .catch((error: unknown) => {
-      if (
-        !parentConversationId ||
-        !error ||
-        typeof error !== "object" ||
-        !("status" in error) ||
-        error.status !== 403
-      ) {
-        throw error;
-      }
-      const fallbackParams = { agent_id: scope.agentId, hidden: true };
-      return client.conversations.create(fallbackParams);
-    });
-  return resolveAgentSandboxConnectionId(scope.agentId, {
-    conversationId: conversation.id,
-  });
 }
 
 async function defaultConnect(connectionId: string, scope: ParentScope) {
@@ -230,10 +200,6 @@ function errorMessage(error: unknown): string {
 class RemoteWorkerLostError extends Error {}
 
 class OutdatedRemoteWorkerError extends Error {}
-
-/** No answer to a follow-up in time; the listener may still deliver it. */
-class RemoteFollowUpTimeoutError extends Error {}
-
 /** Fixed telemetry categories; never include error text in the returned code. */
 export function classifyRemoteExternalWorkerControlError(
   error: unknown,
@@ -246,7 +212,10 @@ export function classifyRemoteExternalWorkerControlError(
   }
   if (error instanceof OutdatedRemoteWorkerError) return "outdated_computer";
   if (error instanceof RemoteFollowUpTimeoutError) return "steer_timeout";
+  if (error instanceof RemoteFollowUpSocketClosedError) return "socket_closed";
   const message = errorMessage(error);
+  if (/no active turn to steer/i.test(message)) return "turn_ended";
+  if (message === "App-server socket closed") return "socket_closed";
   if (
     message === CLAUDE_TURN_START_TIMEOUT_ERROR ||
     message === CLAUDE_INTERRUPT_ACK_TIMEOUT_ERROR
@@ -514,7 +483,7 @@ export async function launchRemoteExternalCodingAgent(
   let deviceId = "";
   let supportsSteering = false;
   let sendsForkContext = false;
-  const resolveComputer = deps.resolveComputer ?? defaultResolveComputer;
+  const resolveComputer = deps.resolveComputer ?? resolveExternalWorkerComputer;
   function configureComputer(resolved: {
     connectionId: string;
     environment: EnvironmentConnection;
@@ -537,7 +506,7 @@ export async function launchRemoteExternalCodingAgent(
   }
   try {
     const outdated = configureComputer(
-      await resolveComputer(computer, parentScope),
+      await resolveComputer(computer, parentScope, params.cloudOptions),
     );
     if (outdated) return fail("outdated_computer", outdated);
   } catch (error) {
@@ -554,7 +523,7 @@ export async function launchRemoteExternalCodingAgent(
   const toolCallId = params.toolCallId ?? `remote-${randomUUID()}`;
   let client: AppServerClient;
   try {
-    client = await connect();
+    client = await connectRemoteWorkerWithRetry(connect, params.signal);
   } catch (error) {
     return fail("connect", `Can't reach ${computer}: ${errorMessage(error)}`);
   }
@@ -592,6 +561,11 @@ export async function launchRemoteExternalCodingAgent(
         description: params.description,
         ...(params.model ? { model: params.model } : {}),
         ...(params.mcp ? { mcp: params.mcp } : {}),
+        ...((type === "claude-code" || type === "codex") &&
+          params.cloudOptions?.githubRepositories?.length && {
+            cloud_skill_repositories:
+              params.cloudOptions.githubRepositories.map(({ repo }) => repo),
+          }),
       },
       tool_call_id: toolCallId,
       notify: "caller",
@@ -889,7 +863,8 @@ async function deliverRemoteExternalCodingAgentMessage(
   );
   let response: Awaited<ReturnType<AppServerClient["sendSubagentMessage"]>>;
   try {
-    response = await client.sendSubagentMessage(
+    response = await sendRemoteFollowUpWithReconnect(
+      client,
       {
         request_id: requestId,
         runtime: {
@@ -903,15 +878,12 @@ async function deliverRemoteExternalCodingAgentMessage(
         message: params.message,
         tool_call_id: toolCallId,
       },
-      { timeoutMs: REMOTE_SUBAGENT_MESSAGE_TIMEOUT_MS },
+      connect,
+      (reconnected) => follower.attach(reconnected),
+      target.computer as string,
     );
   } catch (error) {
     follower.close();
-    if (errorMessage(error) === `Timed out waiting for ${requestId}`) {
-      throw new RemoteFollowUpTimeoutError(
-        `${target.computer} didn't confirm the follow-up within ${Math.round(REMOTE_SUBAGENT_MESSAGE_TIMEOUT_MS / 1000)}s. The message may not have been delivered; check the worker's output, or send it again.`,
-      );
-    }
     throw error;
   }
   if (!response.success) {

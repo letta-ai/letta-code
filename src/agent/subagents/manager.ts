@@ -1,3 +1,7 @@
+import {
+  type AgentSandboxOptions,
+  SUBAGENT_CLOUD_OPTIONS_ENV,
+} from "@/backend/api/environments";
 /**
  * Subagent manager for spawning and coordinating subagents
  *
@@ -298,6 +302,7 @@ async function executeSubagent(
   parentAgentName?: string | null,
   parentConversationId?: string,
   clientMessageId?: string,
+  cloudOptions?: AgentSandboxOptions,
 ): Promise<SubagentResult> {
   const withModel = (result: SubagentResult): SubagentResult =>
     model ? { ...result, model } : result;
@@ -425,6 +430,10 @@ async function executeSubagent(
           ? undefined
           : allocateSubagentName(parentAgentName),
     });
+
+    delete childEnv[SUBAGENT_CLOUD_OPTIONS_ENV];
+    if (cloudOptions)
+      childEnv[SUBAGENT_CLOUD_OPTIONS_ENV] = JSON.stringify(cloudOptions);
 
     // Optionally confine subagents with the memory-subagent profile to an OS filesystem sandbox.
     // Returns null (spawn unchanged) when disabled, not applicable, or no
@@ -586,6 +595,7 @@ async function executeSubagent(
             parentAgentName,
             parentConversationId,
             clientMessageId,
+            cloudOptions,
           );
         }
       }
@@ -618,6 +628,7 @@ async function executeSubagent(
           parentAgentName,
           parentConversationId,
           clientMessageId,
+          cloudOptions,
         );
       }
 
@@ -737,6 +748,7 @@ async function executeSubagent(
           parentAgentName,
           parentConversationId,
           clientMessageId,
+          cloudOptions,
         );
       }
     }
@@ -785,6 +797,7 @@ async function spawnSubagentInContext(
   actingUserId?: string | null,
   resolvedConfig?: SubagentConfig,
   clientMessageId?: string,
+  cloudOptions?: AgentSandboxOptions,
 ): Promise<SubagentResult> {
   const launchActingUserId =
     actingUserId !== undefined
@@ -936,6 +949,7 @@ async function spawnSubagentInContext(
     parentAgent?.name,
     resolvedParentConversationId,
     clientMessageId,
+    cloudOptions,
   );
 }
 

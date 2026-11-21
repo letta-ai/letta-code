@@ -58,7 +58,10 @@ export type SubagentLaunchNotify = "caller";
  * `toSubagentLaunchArgs`. Listeners that predate `harness` accept only
  * `subagent_type`, so remote external launches keep sending it.
  */
-export type LaunchSubagentWireArgs = SubagentLaunchArgs;
+export type LaunchSubagentWireArgs = SubagentLaunchArgs & {
+  /** Repository names provisioned by the caller on this Cloud sandbox. */
+  cloud_skill_repositories?: string[];
+};
 
 export interface LaunchSubagentCommand {
   type: "launch_subagent";

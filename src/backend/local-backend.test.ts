@@ -840,7 +840,7 @@ describe("local backend pi transcript", () => {
       } as ConversationMessageCreateBody),
     );
 
-    expect(systemPrompts[1]).toContain("- 1 previous messages");
+    expect(systemPrompts[1]).toContain("- 2 previous messages");
     expect(systemPrompts[1]).not.toBe(systemPrompts[0]);
   });
 

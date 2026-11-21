@@ -6,8 +6,10 @@ import {
   type RunningSubagentProcess,
   spawnManagedWorkloadProcess,
 } from "@/agent/subagents/subagent-process";
+import { cloudRepositoryRoots } from "@/utils/cloud-repository-roots";
 import { confirmProcessExit } from "@/utils/confirm-process-exit";
 import { withNativeCliPath } from "@/utils/native-cli-env";
+import { stageClaudeRepositorySkills } from "./claude-repository-skills";
 import {
   CLAUDE_CONTROL_RESPONSE_TIMEOUT_MS,
   CLAUDE_INTERRUPT_ACK_TIMEOUT_ERROR,
@@ -36,6 +38,7 @@ export type {
 } from "./claude-stream-session-types";
 
 const sessions = new Map<string, ClaudeSession>();
+const pendingResumes = new Map<string, Promise<ClaudeSession>>();
 /**
  * How long to keep waiting after a result while background tasks are still
  * listed. Claude Code's own background-task limit is 30 minutes.
@@ -57,6 +60,7 @@ export function buildClaudeStreamArgs(options: {
   mcpReminder?: string;
   resumeSessionId?: string;
   sessionId?: string;
+  skillDirectories?: string[];
 }): string[] {
   const args = [
     "--print",
@@ -79,6 +83,8 @@ export function buildClaudeStreamArgs(options: {
   else if (options.sessionId) args.push("--session-id", options.sessionId);
   if (options.mcpReminder)
     args.push("--append-system-prompt", options.mcpReminder);
+  if (options.skillDirectories?.length)
+    args.push("--add-dir", ...options.skillDirectories);
   return args;
 }
 
@@ -491,14 +497,21 @@ async function launchSession(
   const trace = deps.createTransport
     ? undefined
     : await traceClaudeLaunch(options.traceContext, env, sessionId);
+  let skills:
+    | Awaited<ReturnType<typeof stageClaudeRepositorySkills>>
+    | undefined;
   let transport: ClaudeSessionTransport;
   try {
+    skills = await stageClaudeRepositorySkills(
+      cloudRepositoryRoots(options.cloudSkillRepositories),
+    );
     transport = (deps.createTransport ?? createTransport)({
       args: buildClaudeStreamArgs({
         model: options.model,
         mcpReminder: options.mcpReminder,
         resumeSessionId: options.resumeSessionId,
         sessionId,
+        skillDirectories: skills.directories,
       }),
       cwd: options.cwd,
       env,
@@ -506,6 +519,7 @@ async function launchSession(
     });
   } catch (error) {
     void trace?.close();
+    await skills?.cleanup().catch(() => undefined);
     removeUpstreamAbort();
     throw new Error(`Failed to start Claude Code: ${errorMessage(error)}`);
   }
@@ -601,7 +615,7 @@ async function launchSession(
     }
   });
   void transport.completion
-    .finally(() => trace?.close())
+    .finally(() => Promise.allSettled([trace?.close(), skills?.cleanup()]))
     .catch(() => undefined);
   transport.completion
     .then(({ exitCode, exitSignal }) => {
@@ -864,8 +878,7 @@ async function queueSteerPrompt(
 
 /**
  * Steers the live process for this session, waiting out a settled one that
- * hasn't exited yet. With no process left, calls `launch` in the same
- * continuation so concurrent senders can't both start a `claude --resume`.
+ * hasn't exited yet. Reserve the next process while its options are prepared.
  */
 async function deliverClaudeMessage(
   options: { sessionId: string; prompt: string; signal?: AbortSignal },
@@ -876,6 +889,12 @@ async function deliverClaudeMessage(
   | undefined
 > {
   for (;;) {
+    options.signal?.throwIfAborted();
+    const pending = pendingResumes.get(options.sessionId);
+    if (pending) {
+      await pending;
+      continue;
+    }
     const existing = sessions.get(options.sessionId);
     if (!existing) break;
     if (existing.settled) {
@@ -900,7 +919,11 @@ async function deliverClaudeMessage(
     }
   }
   if (!launch) return undefined;
-  const session = await launch();
+  const pending = launch().finally(() =>
+    pendingResumes.delete(options.sessionId),
+  );
+  pendingResumes.set(options.sessionId, pending);
+  const session = await pending;
   if (session.sessionId !== options.sessionId) {
     throw new Error("Claude Code resumed with an unexpected session ID");
   }

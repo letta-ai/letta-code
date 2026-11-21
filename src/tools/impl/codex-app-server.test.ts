@@ -108,6 +108,7 @@ class FakeCodexTransport {
       if (this.account) this.reply(request.id, this.account);
       else this.send({ id: request.id, error: { message: "unknown method" } });
     }
+    if (method === "skills/extraRoots/set") this.reply(request.id, {});
     if (method === "thread/start" || method === "thread/resume") {
       const params = request.params as Record<string, unknown>;
       if (typeof params.threadId === "string") this.threadId = params.threadId;
@@ -199,6 +200,22 @@ class FakeCodexTransport {
 
 afterEach(() => __resetCodexSessionsForTests());
 
+test("registers Codex repository skills before thread startup", async () => {
+  const fake = new FakeCodexTransport();
+  const options = {
+    prompt: "Work",
+    parentAgentId: "p",
+    cwd: "/",
+    cloudSkillRepositories: ["api"],
+  };
+  await startCodexTurn(options, { createTransport: () => fake.transport() });
+  const [roots, thread] = fake.requests.slice(-3, -1);
+  expect(roots?.method).toBe("skills/extraRoots/set");
+  expect(roots?.params).toEqual({
+    extraRoots: [join("/root/workspace", "api", ".agents", "skills")],
+  });
+  expect(thread?.method).toBe("thread/start");
+});
 describe("Codex app-server lifecycle", () => {
   test("starts a native thread and turn, then resolves completion", async () => {
     const fake = new FakeCodexTransport();

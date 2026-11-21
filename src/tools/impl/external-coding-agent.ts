@@ -28,6 +28,7 @@ import {
   scrubSecretsFromString,
 } from "@/tools/secret-substitution";
 import type { SubagentStartupErrorCode } from "@/types/subagent-protocol";
+import { debugLog } from "@/utils/debug";
 import { withNativeCliPath } from "@/utils/native-cli-env";
 import { SUBAGENT_DEPTH_ENV } from "@/utils/subagent-depth-env";
 import { runClaudeTurn } from "./claude-stream-session";
@@ -73,6 +74,7 @@ export interface ExternalCodingAgentRunOptions extends ExternalWorkerListeners {
   actingUserId?: string | null;
   resumeSessionId?: string;
   cwd?: string;
+  cloudSkillRepositories?: string[];
   mcpReminder?: string;
   signal?: AbortSignal;
   onStarted?: (agentId: string) => void;
@@ -227,7 +229,7 @@ export function buildExternalCodingAgentMcpReminder(
 /**
  * Resolve the parent agent's MCP servers into the discovery reminder passed to
  * an external coding agent. Inherits by default; explicit false disables the
- * reminder. Throws when the inventory cannot be read.
+ * reminder. Falls back to discovery instructions when the inventory cannot be read.
  */
 export async function resolveExternalCodingAgentMcpReminder(
   parentAgentId: string,
@@ -235,11 +237,23 @@ export async function resolveExternalCodingAgentMcpReminder(
   deps: McpServersReminderDependencies = {},
 ): Promise<string | undefined> {
   if (mcp?.inherit === false) return undefined;
-  const inventory = await listMcpServersForAgent(
-    await getMcpScopeAgentId(parentAgentId, undefined, deps.lookupParentAgent),
-    createSharedReminderState(),
-    deps,
+  const scopeAgentId = await getMcpScopeAgentId(
+    parentAgentId,
+    undefined,
+    deps.lookupParentAgent,
   );
+  let inventory: ExternalCodingAgentMcpEntry[];
+  try {
+    ({ entries: inventory } = await listMcpServersForAgent(
+      scopeAgentId,
+      createSharedReminderState(),
+      deps,
+      5_000,
+    ));
+  } catch (error) {
+    debugLog("mcp", "Failed to load worker MCP inventory: %s", error);
+    return buildMcpServersReminderText(null);
+  }
   return buildExternalCodingAgentMcpReminder(
     selectExternalCodingAgentMcpEntries(inventory, mcp?.servers),
   );
@@ -627,6 +641,7 @@ export async function runExternalCodingAgent(
         agentId: options.parentAgentId,
         conversationId: options.parentConversationId,
         actingUserId: captureActingUserId,
+        cloudSkillRepositories: options.cloudSkillRepositories,
       }
     : undefined;
   const source = options.type === "claude-code" ? "claude_code" : "codex";
@@ -734,6 +749,7 @@ export async function runExternalCodingAgent(
             prompt: options.prompt,
             parentAgentId: options.parentAgentId,
             cwd,
+            cloudSkillRepositories: options.cloudSkillRepositories,
             model: options.model,
             mcpReminder: options.mcpReminder,
             signal: options.signal,
@@ -801,6 +817,7 @@ export async function runExternalCodingAgent(
             prompt: options.prompt,
             parentAgentId: options.parentAgentId,
             cwd,
+            cloudSkillRepositories: options.cloudSkillRepositories,
             model: options.model,
             mcpReminder: options.mcpReminder,
             signal: options.signal,

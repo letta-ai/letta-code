@@ -1,11 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { createServer, request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
+import { isDeepStrictEqual } from "node:util";
 import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
 import {
   assembleTraceResponse,
-  MAX_TRACE_PAYLOAD_BYTES,
+  compactTracePayload,
+  MAX_TRACE_BUFFER_BYTES,
   sanitizeTraceJson,
+  TRUNCATED_TRACE_JSON,
+  tracePayloadFits,
 } from "./external-llm-trace-payload";
 
 export interface ExternalTraceScope {
@@ -44,7 +48,10 @@ export async function startTraceProxy(options: {
   harness: ExternalTraceRow["harness"];
   scope: ExternalTraceScope;
   secrets: string[];
-  emit: (row: ExternalTraceRow) => void;
+  emit: (
+    row: ExternalTraceRow,
+    delta?: { baseId: string; fallbackJson: string },
+  ) => void;
 }) {
   const upstream = new URL(options.upstream);
   if (
@@ -54,6 +61,8 @@ export async function startTraceProxy(options: {
   )
     throw new Error("Unsupported trace upstream");
   const prefix = `/${randomUUID()}`;
+  const historyKey = options.harness === "claude_code" ? "messages" : "input";
+  let previous: { id: string; sessionId: string; items: unknown[] } | undefined;
   let activeCaptures = 0;
   const pending = new Set<Promise<void>>();
   const server = createServer((req, res) => {
@@ -110,13 +119,11 @@ export async function startTraceProxy(options: {
       void work.finally(() => pending.delete(work));
     };
     const processCapture = (transportError: boolean) => {
-      let oversized =
-        !captureBody ||
-        requestBytes > MAX_TRACE_PAYLOAD_BYTES ||
-        responseBytes > MAX_TRACE_PAYLOAD_BYTES;
-      const requestRaw = oversized
-        ? "{}"
-        : Buffer.concat(requestChunks).toString("utf8");
+      const id = randomUUID();
+      const requestBuffered =
+        captureBody && requestBytes <= MAX_TRACE_BUFFER_BYTES;
+      let responseBuffered =
+        captureBody && responseBytes <= MAX_TRACE_BUFFER_BYTES;
       let responseRaw = Buffer.concat(responseChunks);
       try {
         const decoder =
@@ -127,48 +134,71 @@ export async function startTraceProxy(options: {
               : encoding === "br"
                 ? brotliDecompressSync
                 : undefined;
-        if (decoder)
+        if (decoder && responseBuffered)
           responseRaw = decoder(responseRaw, {
-            maxOutputLength: MAX_TRACE_PAYLOAD_BYTES,
+            maxOutputLength: MAX_TRACE_BUFFER_BYTES,
           });
       } catch {
-        oversized = true;
+        responseBuffered = false;
       }
-      const responseText = oversized ? "" : responseRaw.toString("utf8");
+      const responseText = responseBuffered ? responseRaw.toString("utf8") : "";
       // Some Responses endpoints omit or mislabel the SSE content type.
       streaming ||= /(?:^|\r?\n)data:/.test(responseText);
       const assembled = assembleTraceResponse(responseText, streaming);
-      let responseJson = sanitizeTraceJson(
-        JSON.stringify(
-          oversized
-            ? { omitted: "size_limit" }
-            : streaming
-              ? assembled
-              : assembled.response,
-        ),
-        credentials,
-      );
-      if (Buffer.byteLength(responseJson) > MAX_TRACE_PAYLOAD_BYTES) {
-        oversized = true;
-        responseJson = '{"omitted":"size_limit"}';
-      }
+      let responseJson = responseBuffered
+        ? sanitizeTraceJson(
+            JSON.stringify(streaming ? assembled : assembled.response),
+            credentials,
+          )
+        : TRUNCATED_TRACE_JSON;
+      const responseTruncated =
+        !responseBuffered || !tracePayloadFits(responseJson);
+      if (responseBuffered && responseTruncated)
+        responseJson = compactTracePayload(responseJson);
 
-      let requestJson = sanitizeTraceJson(
-        oversized ? '{"omitted":"size_limit"}' : requestRaw,
-        credentials,
-      );
-      if (Buffer.byteLength(requestJson) > MAX_TRACE_PAYLOAD_BYTES) {
-        oversized = true;
-        requestJson = '{"omitted":"size_limit"}';
+      let requestJson = requestBuffered
+        ? sanitizeTraceJson(
+            Buffer.concat(requestChunks).toString("utf8"),
+            credentials,
+          )
+        : TRUNCATED_TRACE_JSON;
+      const request = JSON.parse(requestJson) as Record<string, unknown> | null;
+      const items = request?.[historyKey];
+      const requestTruncated =
+        !requestBuffered || !tracePayloadFits(requestJson);
+      let delta: { baseId: string; fallbackJson: string } | undefined;
+      if (requestBuffered && requestTruncated) {
+        const fallbackJson = compactTracePayload(requestJson);
+        requestJson = fallbackJson;
+        if (
+          previous?.sessionId === scope.worker_session_id &&
+          Array.isArray(items)
+        ) {
+          const prefixItems = previous.items.length;
+          if (
+            prefixItems > 0 &&
+            items.length > prefixItems &&
+            previous.items.every((item, index) =>
+              isDeepStrictEqual(item, items[index]),
+            )
+          ) {
+            const deltaJson = JSON.stringify({
+              ...request,
+              [historyKey]: items.slice(prefixItems),
+              base_trace_id: previous.id,
+              prefix_items: prefixItems,
+            });
+            if (tracePayloadFits(deltaJson)) {
+              requestJson = deltaJson;
+              delta = { baseId: previous.id, fallbackJson };
+            }
+          }
+        }
       }
-      let request: Record<string, unknown> = {};
-      try {
-        const parsed = JSON.parse(requestRaw);
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
-          request = parsed;
-      } catch {
-        /* mark incomplete below */
-      }
+      previous =
+        Array.isArray(items) && (!requestTruncated || delta)
+          ? { id, sessionId: scope.worker_session_id, items }
+          : undefined;
       const response = assembled.response;
       const usage = response.usage ?? {};
       const token = (value: unknown): number | null =>
@@ -189,44 +219,51 @@ export async function startTraceProxy(options: {
         status >= 400 ||
         Boolean(response.error) ||
         response.status === "failed";
-      options.emit({
-        ...scope,
-        id: randomUUID(),
-        harness: options.harness,
-        model: JSON.parse(
-          sanitizeTraceJson(
-            JSON.stringify(String(response.model ?? request.model ?? "")),
-            credentials,
+      options.emit(
+        {
+          ...scope,
+          id,
+          harness: options.harness,
+          model: JSON.parse(
+            sanitizeTraceJson(
+              JSON.stringify(String(response.model ?? request?.model ?? "")),
+              credentials,
+            ),
+          ).slice(0, 255),
+          request_json: requestJson,
+          response_json: responseJson,
+          request_size_bytes: Math.min(requestBytes, 0xffffffff),
+          response_size_bytes: Math.min(responseBytes, 0xffffffff),
+          prompt_tokens: input,
+          completion_tokens: output,
+          total_tokens:
+            input !== null && output !== null ? token(input + output) : null,
+          cached_input_tokens: cached,
+          cache_write_tokens: written,
+          reasoning_tokens: token(
+            usage.output_tokens_details?.reasoning_tokens,
           ),
-        ).slice(0, 255),
-        request_json: requestJson,
-        response_json: responseJson,
-        request_size_bytes: Math.min(requestBytes, 0xffffffff),
-        response_size_bytes: Math.min(responseBytes, 0xffffffff),
-        prompt_tokens: input,
-        completion_tokens: output,
-        total_tokens:
-          input !== null && output !== null ? token(input + output) : null,
-        cached_input_tokens: cached,
-        cache_write_tokens: written,
-        reasoning_tokens: token(usage.output_tokens_details?.reasoning_tokens),
-        cost_usd: null,
-        latency_ms: Math.min(Date.now() - started, 0xffffffff),
-        status,
-        is_error: error ? 1 : 0,
-        error_type: transportError
-          ? "transport_error"
-          : error
-            ? "provider_error"
-            : "",
-        error_message: "",
-        capture_status: oversized
-          ? "size_limit"
-          : transportError || !assembled.complete
-            ? "incomplete"
-            : "complete",
-        created_at: created,
-      });
+          cost_usd: null,
+          latency_ms: Math.min(Date.now() - started, 0xffffffff),
+          status,
+          is_error: error ? 1 : 0,
+          error_type: transportError
+            ? "transport_error"
+            : error
+              ? "provider_error"
+              : "",
+          error_message: "",
+          capture_status: delta
+            ? "delta"
+            : requestTruncated || responseTruncated
+              ? "size_limit"
+              : transportError || !assembled.complete
+                ? "incomplete"
+                : "complete",
+          created_at: created,
+        },
+        delta,
+      );
     };
     const headers = {
       ...req.headers,
@@ -253,7 +290,7 @@ export async function startTraceProxy(options: {
         reply.on("data", (chunk: Buffer) => {
           if (!capture) return;
           responseBytes += chunk.length;
-          if (captureBody && responseBytes <= MAX_TRACE_PAYLOAD_BYTES)
+          if (captureBody && responseBytes <= MAX_TRACE_BUFFER_BYTES)
             responseChunks.push(Buffer.from(chunk));
           else responseChunks.length = 0;
         });
@@ -273,7 +310,7 @@ export async function startTraceProxy(options: {
     req.on("data", (chunk: Buffer) => {
       if (!capture) return;
       requestBytes += chunk.length;
-      if (captureBody && requestBytes <= MAX_TRACE_PAYLOAD_BYTES)
+      if (captureBody && requestBytes <= MAX_TRACE_BUFFER_BYTES)
         requestChunks.push(Buffer.from(chunk));
       else requestChunks.length = 0;
     });

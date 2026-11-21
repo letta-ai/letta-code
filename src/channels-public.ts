@@ -116,3 +116,4 @@ export type {
   InboundChannelMessage,
   OutboundChannelMessage,
 } from "./channels/types";
+export { escapeXmlText } from "./channels/xml";

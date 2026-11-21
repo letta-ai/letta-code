@@ -46,6 +46,7 @@ import {
   withStrictShellPrelude,
 } from "./shell-launchers.js";
 import {
+  FORCE_KILL_GRACE_MS,
   type ShellExecutionError,
   spawnWithLauncher,
   startShellProcess,
@@ -57,6 +58,13 @@ import { assertSafeWindowsCommand } from "./windows-command-safety.js";
 
 // Cache the working shell launcher after first successful spawn
 let cachedWorkingLauncher: string[] | null = null;
+
+/**
+ * Timeout for a foreground command that cannot yield to a background task.
+ * Without it, a command that never exits blocks the turn forever.
+ */
+const NON_YIELDING_DEFAULT_TIMEOUT_MS = 120_000;
+const MAX_FOREGROUND_TIMEOUT_MS = 600_000;
 
 type ShellProcessStarter = typeof startShellProcess;
 let shellProcessStarter: ShellProcessStarter = startShellProcess;
@@ -450,19 +458,30 @@ export async function bash(args: BashArgs): Promise<BashResult> {
   let bgProcess: BackgroundProcess;
   let outputWriteFailed = false;
   const foregroundOutput = { stdout: "", stderr: "" };
+  // A yielded command reports back only through a task notification. One-shot
+  // headless runs, including every subagent, have no queue consumer, and they
+  // are already background work that nobody waits on interactively, so there
+  // the command blocks until it exits or times out. Decide once, at launch,
+  // because the timeout must be set before the command starts.
+  const canYield = !run_in_background && isQueueBridgeConnected();
+  // A command that can yield may become a background task, which runs until
+  // it exits, so it gets no default timeout. One that blocks the turn does.
   const effectiveTimeout = run_in_background
     ? timeout !== undefined && timeout > 0
       ? timeout
       : 0
-    : timeout === undefined
-      ? 0
-      : Math.min(Math.max(timeout, 1), 600000);
+    : timeout !== undefined
+      ? Math.min(Math.max(timeout, 1), MAX_FOREGROUND_TIMEOUT_MS)
+      : canYield
+        ? 0
+        : NON_YIELDING_DEFAULT_TIMEOUT_MS;
   const runningProcess = shellProcessStarter(sandboxed.launcher, {
     cwd: userCwd,
     env: sandboxed.env,
     timeoutMs: effectiveTimeout,
     sourceCommand: command,
     signal: run_in_background ? undefined : signal,
+    waitForProcessGroupOnClose: !run_in_background,
     captureOutput: false,
     onOutput(text, stream) {
       const sanitizedText = streamScrubbers[stream].push(text);
@@ -496,6 +515,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     process: runningProcess.process,
     completion: runningProcess.completion,
     terminate: runningProcess.terminate,
+    foregroundBash: !run_in_background,
     command,
     stdout: [],
     stderr: [],
@@ -603,11 +623,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       type: "settled" as const,
       result,
     }));
-    // A yielded command reports back only through a task notification. One-shot
-    // headless runs, including every subagent, have no queue consumer, and they
-    // are already background work that nobody waits on interactively, so there
-    // the command simply blocks until it exits or times out.
-    const outcome = isQueueBridgeConnected()
+    const outcome = canYield
       ? await Promise.race([
           settledOutcome,
           new Promise<{ type: "yield" }>((resolve) => {
@@ -675,7 +691,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       };
     }
 
-    backgroundProcesses.set(bashId, bgProcess);
+    bgProcess.foregroundBash = false;
     notifyWhenSettled();
     return {
       content: [
@@ -698,4 +714,24 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     ],
     status: "success",
   };
+}
+
+/** Keep one-shot shutdown alive through the runner's TERM-to-KILL escalation. */
+export async function waitForForegroundBashCleanup(): Promise<void> {
+  const active = [...backgroundProcesses.values()].filter(
+    (entry) => entry.foregroundBash,
+  );
+  if (active.length === 0) return;
+  for (const entry of active) entry.terminate?.();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      Promise.allSettled(active.map((entry) => entry.completion)),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, FORCE_KILL_GRACE_MS + 250);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }

@@ -131,7 +131,8 @@ describe("external coding agent MCP metadata", () => {
         expect(id).toBe("parent");
         return ["filesystem"];
       },
-      listServerSideServers: async (id: string) => {
+      listServerSideServers: async (id: string, timeoutMs?: number) => {
+        expect(timeoutMs).toBe(5_000);
         expect(id).toBe("parent");
         return inventory;
       },

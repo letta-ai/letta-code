@@ -156,6 +156,7 @@ test("real caller busy branches recover before reporting final exhaustion", asyn
         BUSY_WAIT_MS: 300000,
         signal: undefined,
         sigintSignal: undefined,
+        interruptSignal: undefined,
         resumeConversationBusyRequest: async () =>
           outcome === "replayed" ? {} : null,
         resumeBusy: async () => (outcome === "replayed" ? {} : null),

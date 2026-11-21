@@ -410,6 +410,15 @@ describe("Cloud snapshot fetcher", () => {
       inaccessible: true,
       snapshot: null,
     });
+    expect(
+      await createGitHubPullRequestSnapshotFetcher({
+        isCloud: () => true,
+        allowInaccessibleFallback: true,
+        fetchGh,
+        request: async () => inaccessible,
+      })(ref, options),
+    ).toBe(expected);
+    fetchGh.mockClear();
     const missing = { status: 200 as const, body: { snapshots: [] } };
     for (const result of [inaccessible, missing]) {
       await expect(

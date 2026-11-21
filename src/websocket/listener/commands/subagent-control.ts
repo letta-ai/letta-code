@@ -4,6 +4,7 @@ import {
   runOutsideRuntimeContext,
   runWithRuntimeContext,
 } from "@/runtime-context";
+import { REMOTE_SUBAGENT_MESSAGE_DEDUPE_PENDING_TTL_MS } from "@/tools/impl/claude-steer-timeouts";
 import {
   sendClaudeMessage,
   stopClaudeSession,
@@ -178,6 +179,9 @@ export async function handleSubagentMessageCommand(
       if (!target.sessionId)
         throw new Error("External coding agent ID has no session ID");
       const sessionId = target.sessionId;
+      const cloudSkillRepositories = nativeSessionOwner(
+        command.agent_id,
+      )?.cloudSkillRepositories;
       const traceContext = {
         parent_agent_id: parent.agentId,
         parent_conversation_id: parent.conversationId,
@@ -228,6 +232,7 @@ export async function handleSubagentMessageCommand(
                     parentAgentId: command.runtime.agent_id,
                     cwd: getCurrentWorkingDirectory(),
                     mcpReminder: worker?.mcpReminder,
+                    cloudSkillRepositories,
                     beforeStart: async () => {
                       captureReservation = await (
                         deps.reserveCapture ?? reserveNativeSessionCapture
@@ -251,6 +256,7 @@ export async function handleSubagentMessageCommand(
                     parentAgentId: command.runtime.agent_id,
                     cwd: getCurrentWorkingDirectory(),
                     mcpReminder: worker?.mcpReminder,
+                    cloudSkillRepositories,
                     beforeStart: async () => {
                       captureReservation = await (
                         deps.reserveCapture ?? reserveNativeSessionCapture
@@ -326,12 +332,19 @@ export async function handleSubagentMessageCommand(
     }
   })();
   responses.set(key, {
-    expiresAt: now + DEDUPE_TTL_MS,
+    // Keep retries deduplicated, but let a stuck steer expire eventually.
+    expiresAt: now + REMOTE_SUBAGENT_MESSAGE_DEDUPE_PENDING_TTL_MS,
     response,
   });
   const result = await response;
-  if (!result.success && responses.get(key)?.response === response)
-    responses.delete(key);
+  if (responses.get(key)?.response === response) {
+    if (!result.success) responses.delete(key);
+    else
+      responses.set(key, {
+        expiresAt: (deps.now ?? Date.now)() + DEDUPE_TTL_MS,
+        response,
+      });
+  }
   return result;
 }
 

@@ -4,7 +4,12 @@
  * long image-heavy history is not pinned in memory. The file is never written.
  */
 import { isRecord } from "@/utils/type-guards";
-import { forEachJsonlRow } from "./local-transcript";
+import {
+  forEachJsonlRow,
+  isLocalTranscriptAppendEntry,
+  LOCAL_TRANSCRIPT_LEGACY_MESSAGE_FORMAT,
+  type LocalTranscriptMessageFormat,
+} from "./local-transcript";
 
 export const LOCAL_OMITTED_IMAGE_PLACEHOLDER =
   "[image omitted: not in context]";
@@ -60,4 +65,36 @@ export function readLocalTranscriptRowsForHistory(
     }
   });
   return rows;
+}
+
+/**
+ * Count the distinct messages in a transcript that are not in
+ * `inContextMessageIds`: the messages compaction has taken out of context.
+ * Streams messages.jsonl and keeps only ids. An empty id list means every
+ * message is in context.
+ */
+export function countLocalTranscriptMessagesOutsideContext(
+  path: string,
+  messageFormat: LocalTranscriptMessageFormat,
+  inContextMessageIds: readonly string[],
+): number {
+  if (inContextMessageIds.length === 0) return 0;
+  const inContextIds = new Set(inContextMessageIds);
+  const outsideContextIds = new Set<string>();
+  forEachJsonlRow<unknown>(path, (row) => {
+    const message =
+      messageFormat === LOCAL_TRANSCRIPT_LEGACY_MESSAGE_FORMAT
+        ? row
+        : isLocalTranscriptAppendEntry(row)
+          ? row.message
+          : undefined;
+    if (
+      isRecord(message) &&
+      typeof message.id === "string" &&
+      !inContextIds.has(message.id)
+    ) {
+      outsideContextIds.add(message.id);
+    }
+  });
+  return outsideContextIds.size;
 }
