@@ -104,3 +104,38 @@ test("falls back to the snapshot lists from an older computer or failed reads", 
       `[${at}] text: Suite 3 failed.\n`,
   );
 });
+
+test("queued snapshots cannot erase consecutive event-read failures", async () => {
+  const file = open();
+  const pending: ReturnType<typeof Promise.withResolvers<never>>[] = [];
+  const progress = followRemoteSubagentEvents(SUBAGENT, () => {
+    const read = Promise.withResolvers<never>();
+    pending.push(read);
+    return read.promise;
+  });
+  const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+  progress.recordSnapshot(snapshot({ event_seq: 1 }));
+  await flush();
+  // More progress arrives while the first request is waiting to time out.
+  progress.recordSnapshot(snapshot({ event_seq: 2 }));
+  progress.recordSnapshot(snapshot({ event_seq: 3 }));
+  pending[0]?.reject(new Error("request timed out"));
+  await flush();
+  expect(pending).toHaveLength(1);
+  expect(readFileSync(file, "utf8")).toBe("");
+
+  progress.recordSnapshot(snapshot({ event_seq: 3 }));
+  await flush();
+  expect(pending).toHaveLength(2);
+  pending[1]?.reject(new Error("request timed out"));
+  await flush();
+  // The worker is still running: fallback must not wait for finish().
+  progress.recordSnapshot(snapshot({ event_seq: 4 }));
+  expect(readFileSync(file, "utf8")).toBe(
+    "[1970-01-01T00:00:00.000Z] tool: Bash {}\n" +
+      `[${at}] text: Suite 3 failed.\n`,
+  );
+  await flush();
+  expect(pending).toHaveLength(2);
+});
