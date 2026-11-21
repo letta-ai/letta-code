@@ -49,6 +49,8 @@ export function supportsPublishedResume(version: string | undefined): boolean {
 export interface LoadedSdk {
   /** A local SDK client whose spawned harness uses the selected state backend. */
   createLocalClient(harnessBackend: "api" | "local"): SdkClient;
+  /** Connect to an already-running App Server without changing its state backend. */
+  createRemoteClient(url: string): SdkClient;
   /** Explicit opt-in until SDK #322 is released and the package is upgraded. */
   supportsAgentFreeResume: boolean;
 }
@@ -172,12 +174,29 @@ export async function loadAgentSdk(): Promise<LoadedSdk> {
         LettaAgentClient: new (options: {
           backend: string;
           appServer?: { harnessBackend: "api" | "local" };
+          url?: string;
         }) => SdkClient;
       };
       if (typeof sdk.LettaAgentClient !== "function") {
         attempts.push(`${specifier}: module has no LettaAgentClient export`);
         continue;
       }
+      const wrapClient = (client: SdkClient): SdkClient => ({
+        query(params) {
+          const query = client.query(params);
+          // Queries are lazy. Verify identity before any worker can start.
+          if (!("conversationId" in query) || !("agentId" in query)) {
+            query.close();
+            throw new Error(
+              "Workflow requires an Agent SDK with ephemeral worker lineage and query identity support. Upgrade the Agent SDK.",
+            );
+          }
+          return query;
+        },
+        async [Symbol.asyncDispose]() {
+          await client[Symbol.asyncDispose]?.();
+        },
+      });
       return {
         // A source build of SDK #322 can be tested deliberately. This must
         // never be inferred from query identity: 0.8.17 has that identity but
@@ -188,29 +207,15 @@ export async function loadAgentSdk(): Promise<LoadedSdk> {
             specifier === specifiers[0]) ||
           (specifier.startsWith("file:") &&
             supportsPublishedResume(packageVersion(fileURLToPath(specifier)))),
-        createLocalClient: (harnessBackend) => {
-          const client = new sdk.LettaAgentClient({
-            backend: "local",
-            appServer: { harnessBackend },
-          });
-          return {
-            query(params) {
-              const query = client.query(params);
-              // Queries are lazy. Reject older SDKs before they can create a
-              // parentless worker whose identity cannot be verified.
-              if (!("conversationId" in query) || !("agentId" in query)) {
-                query.close();
-                throw new Error(
-                  "Workflow requires an Agent SDK with ephemeral worker lineage and query identity support. Upgrade the Agent SDK.",
-                );
-              }
-              return query;
-            },
-            async [Symbol.asyncDispose]() {
-              await client[Symbol.asyncDispose]?.();
-            },
-          };
-        },
+        createLocalClient: (harnessBackend) =>
+          wrapClient(
+            new sdk.LettaAgentClient({
+              backend: "local",
+              appServer: { harnessBackend },
+            }),
+          ),
+        createRemoteClient: (url) =>
+          wrapClient(new sdk.LettaAgentClient({ backend: "remote", url })),
       };
     } catch (error) {
       attempts.push(`${specifier}: ${String(error)}`);
