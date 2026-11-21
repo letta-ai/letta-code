@@ -2,6 +2,7 @@ import {
   splitShellSegmentsAllowCommandSubstitution,
   tokenizeShellWords,
 } from "./shell-analysis";
+import { splitShellSegmentsForDenyMatching } from "./shell-segments";
 
 const SHELL_EXECUTORS = new Set(["bash", "sh", "zsh", "dash", "ksh"]);
 
@@ -253,6 +254,58 @@ export function extractPrimaryShellCommand(command: string): string {
   }
 
   return unwrapped.trim();
+}
+
+// Words that can precede a command in a segment without being the command.
+const LEADING_CONTROL_WORDS = new Set([
+  "!",
+  "(",
+  "{",
+  "if",
+  "then",
+  "else",
+  "elif",
+  "do",
+  "while",
+  "until",
+]);
+
+function stripLeadingControlWords(segment: string): string {
+  let rest = segment.trim();
+  for (;;) {
+    const match = rest.match(/^(\S+)\s*/);
+    const word = match?.[1];
+    if (word && LEADING_CONTROL_WORDS.has(word)) {
+      rest = rest.slice(match[0].length);
+    } else if (rest.startsWith("(") || rest.startsWith("{")) {
+      rest = rest.slice(1).trimStart();
+    } else {
+      return rest;
+    }
+  }
+}
+
+/**
+ * Every command a shell string may run, with launcher wrappers (`bash -c`)
+ * unwrapped and env prefixes stripped. Used for deny rules, which must fire
+ * on any member of a compound command, not just the primary one.
+ */
+export function extractAllShellCommands(command: string, depth = 0): string[] {
+  const commands: string[] = [];
+  const unwrapped = unwrapShellLauncherCommand(command);
+  for (const segment of splitShellSegmentsForDenyMatching(unwrapped)) {
+    const primary = extractCommandAfterEnvPrefixes(
+      stripLeadingControlWords(segment),
+    );
+    if (!primary) continue;
+    const inner = unwrapShellLauncherCommand(primary);
+    if (inner !== primary.trim() && depth < 5) {
+      commands.push(...extractAllShellCommands(inner, depth + 1));
+    } else {
+      commands.push(primary);
+    }
+  }
+  return commands;
 }
 
 export function normalizeBashRulePayload(payload: string): string {

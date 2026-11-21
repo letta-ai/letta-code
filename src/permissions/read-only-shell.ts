@@ -14,6 +14,7 @@ import {
   substituteShellVariable,
   tokenizeShellWords,
 } from "./shell-analysis";
+import { splitShellSegmentsAllowUnsafeRedirects } from "./shell-segments";
 
 const ALWAYS_SAFE_COMMANDS = new Set([
   "cat",
@@ -724,103 +725,6 @@ function rewriteScopedMemoryRedirects(
   }
 
   return rewritten;
-}
-
-function splitShellSegmentsAllowUnsafeRedirects(
-  input: string,
-): string[] | null {
-  const segments: string[] = [];
-  let current = "";
-  let i = 0;
-  let quote: "single" | "double" | null = null;
-
-  while (i < input.length) {
-    const ch = input[i];
-
-    if (!ch) {
-      i += 1;
-      continue;
-    }
-
-    if (quote === "single") {
-      current += ch;
-      if (ch === "'") {
-        quote = null;
-      }
-      i += 1;
-      continue;
-    }
-
-    if (quote === "double") {
-      if (ch === "\\" && i + 1 < input.length) {
-        current += input.slice(i, i + 2);
-        i += 2;
-        continue;
-      }
-      if (ch === "`" || input.startsWith("$(", i)) {
-        return null;
-      }
-      current += ch;
-      if (ch === '"') {
-        quote = null;
-      }
-      i += 1;
-      continue;
-    }
-
-    if (ch === "'") {
-      quote = "single";
-      current += ch;
-      i += 1;
-      continue;
-    }
-
-    if (ch === '"') {
-      quote = "double";
-      current += ch;
-      i += 1;
-      continue;
-    }
-
-    if (ch === "\\" && i + 1 < input.length) {
-      current += input.slice(i, i + 2);
-      i += 2;
-      continue;
-    }
-
-    if (ch === "`" || input.startsWith("$(", i)) {
-      return null;
-    }
-
-    if (input.startsWith("&&", i) || input.startsWith("||", i)) {
-      segments.push(current);
-      current = "";
-      i += 2;
-      continue;
-    }
-
-    // A lone `&` starts a new command. Keep `>&N` / `<&N` fd duplication
-    // intact, since redirects are not consumed by this splitter.
-    const isFdDuplication = ch === "&" && /[<>]$/.test(current);
-    if (
-      ch === ";" ||
-      ch === "|" ||
-      ch === "\n" ||
-      ch === "\r" ||
-      (ch === "&" && !isFdDuplication)
-    ) {
-      segments.push(current);
-      current = "";
-      i += 1;
-      continue;
-    }
-
-    current += ch;
-    i += 1;
-  }
-
-  segments.push(current);
-  return segments.map((segment) => segment.trim()).filter(Boolean);
 }
 
 function extractHeredocWrite(segment: string): {
