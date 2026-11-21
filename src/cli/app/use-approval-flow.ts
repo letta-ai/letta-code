@@ -348,6 +348,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
     startupApprovals,
   ]);
 
+  // Helper to send all approval results when done
   // biome-ignore lint/correctness/useExhaustiveDependencies: approval refs are stable objects; .current is read dynamically during the approval send.
   const sendAllResults = useCallback(
     async (

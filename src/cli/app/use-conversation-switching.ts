@@ -561,6 +561,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
 
         const targetConversationId = opts?.conversationId ?? "default";
 
+        // Update project settings with new agent
         await updateProjectSettings({ lastAgent: targetAgentId });
 
         settingsManager.persistSession(targetAgentId, targetConversationId);
@@ -738,6 +739,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         // without blocking the new-agent UX on the initial clone.
         void enableMemfsIfCloud(agent.id);
 
+        // Update project settings with new agent
         await updateProjectSettings({ lastAgent: agent.id });
 
         // New agents always start on their default conversation route.

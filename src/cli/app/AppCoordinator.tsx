@@ -2769,6 +2769,7 @@ export function App({
     messageHistory,
   ]);
 
+  // Fetch llmConfig when agent is ready
   useEffect(() => {
     if (loadingState === "ready" && agentId && agentId !== "loading") {
       let cancelled = false;
@@ -4079,6 +4080,7 @@ export function App({
     onSubmitRef.current = onSubmit;
   }, [onSubmit]);
 
+  // Process queued messages when streaming ends.
   useEffect(() => {
     void dequeueEpoch; // explicit dep to satisfy exhaustive-deps lint
 
@@ -4351,6 +4353,7 @@ export function App({
     queuedOverlayAction,
   ]);
 
+  // Handle escape when profile confirmation is pending
   const { handleFeedbackSubmit } = useFeedbackHandler({
     agentDescription,
     agentId,

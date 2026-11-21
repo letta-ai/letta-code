@@ -970,6 +970,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 }
               }
             }
+            // Retry pre-stream transient errors (429/5xx/network) with shared LLM retry budget
             if (preStreamAction === "retry_transient") {
               llmApiErrorRetriesRef.current += 1;
               const attempt = llmApiErrorRetriesRef.current;
