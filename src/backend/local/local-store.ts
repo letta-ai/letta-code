@@ -27,6 +27,7 @@ import type {
 } from "@/backend/backend";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { isRecord } from "@/utils/type-guards";
+import { readCompiledSystemPromptFile } from "./compiled-system-prompt";
 import {
   createDefaultAgentRecord,
   createLocalAgentRecord,
@@ -1040,7 +1041,14 @@ export class LocalStore {
   ): LocalCompiledSystemPrompt | undefined {
     this.findConversation(conversationId, agentId);
     const key = this.conversationKey(conversationId, agentId);
-    return this.compiledSystemPromptByConversationKey.get(key);
+    const cached = this.compiledSystemPromptByConversationKey.get(key);
+    if (cached) return cached;
+    const dir =
+      this.transcriptMetadataByConversationKey.get(key)?.conversationDir ??
+      this.conversationDirForKey(key);
+    const prompt = dir ? readCompiledSystemPromptFile(dir) : undefined;
+    if (prompt) this.compiledSystemPromptByConversationKey.set(key, prompt);
+    return prompt;
   }
 
   setCompiledSystemPrompt(
@@ -2593,22 +2601,14 @@ export class LocalStore {
     const conversation = requiresFullTimestampRepair
       ? normalizedInput
       : repairSyntheticConversationTimestamps(normalizedInput, [], timing);
-    let compiledSystemPrompt: LocalCompiledSystemPrompt | undefined;
-    try {
-      compiledSystemPrompt = readJsonFile<LocalCompiledSystemPrompt>(
-        join(conversationDir, "system-prompt.json"),
-      );
-    } catch {
-      compiledSystemPrompt = undefined;
-    }
 
     this.conversations.set(key, conversation);
     this.conversationRecordJsonByKey.set(key, options.recordJson);
     this.transcriptMetadataRecord(key, conversationDir, {
       requiresFullTimestampRepair,
     });
-    if (compiledSystemPrompt?.content) {
-      this.compiledSystemPromptByConversationKey.set(key, compiledSystemPrompt);
+    if (options.forceRefresh === true) {
+      this.compiledSystemPromptByConversationKey.delete(key);
     }
     this.updateConversationSequences(conversation);
     return conversation;
