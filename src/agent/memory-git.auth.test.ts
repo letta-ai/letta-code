@@ -874,16 +874,13 @@ describe("syncPendingMemoryCommitsAfterTurn", () => {
 describe("attached repository mount depth", () => {
   test("uses shallow clones and normal fast-forward refreshes", () => {
     const source = readFileSync(
-      new URL("./memory-git.ts", import.meta.url),
+      new URL("./attached-repository-checkout.ts", import.meta.url),
       "utf8",
     );
-    const mountSync = source.slice(
-      source.indexOf("async function syncRepoMount("),
-      source.indexOf("export async function maybeUpdateMemoryRemoteOrigin("),
+    expect(source).toContain(
+      '["clone", "--depth", "1", "--no-checkout", args.remoteUrl, "."]',
     );
-    expect(mountSync).toContain(
-      '["clone", "--depth", "1", args.remoteUrl, "."]',
-    );
-    expect(mountSync).toContain('["pull", "--ff-only"]');
+    expect(source).toContain('["fetch", "origin", "main"]');
+    expect(source).toContain('["merge", "--ff-only", "FETCH_HEAD"]');
   });
 });
