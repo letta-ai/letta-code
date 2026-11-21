@@ -5,6 +5,12 @@
  */
 
 import {
+  clearPlaceholdersInText,
+  extractTextPlaceholderIds,
+  getPaste,
+  resolvePlaceholders,
+} from "@/cli/helpers/paste-registry";
+import {
   deleteSecretOnServer,
   refreshAndListSecrets,
   setSecretOnServer,
@@ -23,16 +29,20 @@ export interface SecretCommandResult {
  *   /secret unset KEY      - Unset a secret
  */
 export async function handleSecretCommand(
-  args: string[],
+  input: string,
 ): Promise<SecretCommandResult> {
-  const [subcommand, key, value] = args;
+  const [, subcommand, key] = input.trimStart().split(/\s+/, 3);
 
   switch (subcommand) {
     case "set": {
       if (!key) {
         return { output: "Usage: /secret set KEY value" };
       }
-      if (!value) {
+      // 只解析命令前缀，凭据的剩余内容不能按空白拆分或裁掉尾部空白。
+      const valueInput = input.match(
+        /^\s*\/secret\s+set\s+\S+\s+([\s\S]*)$/,
+      )?.[1];
+      if (!valueInput) {
         return {
           output:
             "Usage: /secret set KEY value\nProvide a value for the secret.",
@@ -48,8 +58,22 @@ export async function handleSecretCommand(
         };
       }
 
+      // 先检查原始引用，不能把过期占位符保存为凭据或重复解析粘贴内容。
+      for (const id of extractTextPlaceholderIds(valueInput)) {
+        if (getPaste(id) === undefined) {
+          throw new Error(
+            "Pasted text is no longer available. Paste the value again.",
+          );
+        }
+      }
+      const value = resolvePlaceholders(valueInput);
+      if (!value) {
+        return { output: "Provide a value for the secret." };
+      }
+
       try {
         await setSecretOnServer(normalizedKey, value);
+        clearPlaceholdersInText(valueInput);
         return {
           output: `Secret '$${normalizedKey}' set.`,
           refreshSecretsInfo: true,

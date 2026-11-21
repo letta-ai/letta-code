@@ -101,7 +101,7 @@ describe("/secret command", () => {
       { key: "CLOUDFLARE_API_TOKEN", value: "cf-token" },
     ]);
 
-    const result = await handleSecretCommand(["list"]);
+    const result = await handleSecretCommand("/secret list");
 
     expect(listAgentSecretsMock).toHaveBeenCalledWith(AGENT_ID);
     expect(retrieveAgentMock).not.toHaveBeenCalled();
@@ -118,7 +118,7 @@ describe("/secret command", () => {
       { key: "CLOUDFLARE_API_TOKEN", value: "cf-token" },
     ]);
 
-    const result = await handleSecretCommand(["set", "new_token", "new-value"]);
+    const result = await handleSecretCommand("/secret set new_token new-value");
 
     expect(result.output).toBe("Secret '$NEW_TOKEN' set.");
     expect(result.refreshSecretsInfo).toBe(true);
@@ -135,7 +135,9 @@ describe("/secret command", () => {
       { key: "CLOUDFLARE_API_TOKEN", value: "cf-token" },
     ]);
 
-    const result = await handleSecretCommand(["unset", "CLOUDFLARE_API_TOKEN"]);
+    const result = await handleSecretCommand(
+      "/secret unset CLOUDFLARE_API_TOKEN",
+    );
 
     expect(result.output).toBe("Secret '$CLOUDFLARE_API_TOKEN' unset.");
     expect(result.refreshSecretsInfo).toBe(true);
@@ -143,9 +145,11 @@ describe("/secret command", () => {
   });
 
   test("unchanged or invalid commands do not request a secrets reminder refresh", async () => {
-    const invalidSet = await handleSecretCommand(["set", "1bad", "value"]);
-    const missingValue = await handleSecretCommand(["set", "TOKEN"]);
-    const missingUnset = await handleSecretCommand(["unset", "MISSING_TOKEN"]);
+    const invalidSet = await handleSecretCommand("/secret set 1bad value");
+    const missingValue = await handleSecretCommand("/secret set TOKEN");
+    const missingUnset = await handleSecretCommand(
+      "/secret unset MISSING_TOKEN",
+    );
 
     expect(invalidSet.refreshSecretsInfo).toBeUndefined();
     expect(missingValue.refreshSecretsInfo).toBeUndefined();
@@ -158,11 +162,9 @@ describe("/secret command", () => {
     setCurrentAgentId(localAgentId);
     clearSecretsCache(localAgentId);
 
-    const setResult = await handleSecretCommand([
-      "set",
-      "exa_api_key",
-      "local-secret-value",
-    ]);
+    const setResult = await handleSecretCommand(
+      "/secret set exa_api_key local-secret-value",
+    );
 
     expect(setResult.output).toBe("Secret '$EXA_API_KEY' set.");
     expect(setResult.refreshSecretsInfo).toBe(true);
@@ -172,7 +174,7 @@ describe("/secret command", () => {
     });
 
     clearSecretsCache(localAgentId);
-    const listResult = await handleSecretCommand(["list"]);
+    const listResult = await handleSecretCommand("/secret list");
 
     expect(listResult.output).toContain("Available secrets (1):");
     expect(listResult.output).toContain("$EXA_API_KEY");
@@ -184,13 +186,13 @@ describe("/secret command", () => {
       '["EXA_API_KEY"]',
     );
 
-    const unsetResult = await handleSecretCommand(["unset", "EXA_API_KEY"]);
+    const unsetResult = await handleSecretCommand("/secret unset EXA_API_KEY");
 
     expect(unsetResult.output).toBe("Secret '$EXA_API_KEY' unset.");
     expect(unsetResult.refreshSecretsInfo).toBe(true);
     expect(loadSecrets(localAgentId)).toEqual({});
 
-    const emptyListResult = await handleSecretCommand(["list"]);
+    const emptyListResult = await handleSecretCommand("/secret list");
     expect(emptyListResult.output).toContain("No secrets stored.");
   });
 
@@ -200,11 +202,11 @@ describe("/secret command", () => {
     installLocalSecretStorage();
 
     setCurrentAgentId(firstAgentId);
-    await handleSecretCommand(["set", "api_token", "first-secret"]);
+    await handleSecretCommand("/secret set api_token first-secret");
 
     setCurrentAgentId(secondAgentId);
     clearSecretsCache(secondAgentId);
-    const secondList = await handleSecretCommand(["list"]);
+    const secondList = await handleSecretCommand("/secret list");
 
     expect(secondList.output).toContain("No secrets stored.");
     expect(
@@ -213,7 +215,7 @@ describe("/secret command", () => {
 
     setCurrentAgentId(firstAgentId);
     clearSecretsCache(firstAgentId);
-    const firstList = await handleSecretCommand(["list"]);
+    const firstList = await handleSecretCommand("/secret list");
 
     expect(firstList.output).toContain("$API_TOKEN");
     expect(
@@ -235,11 +237,9 @@ describe("/secret command", () => {
     setCurrentAgentId(localAgentId);
     clearSecretsCache(localAgentId);
 
-    const setResult = await handleSecretCommand([
-      "set",
-      "node_test_secret",
-      "node-secret-value",
-    ]);
+    const setResult = await handleSecretCommand(
+      "/secret set node_test_secret node-secret-value",
+    );
 
     expect(setResult.output).toBe("Secret '$NODE_TEST_SECRET' set.");
     expect(loadSecrets(localAgentId)).toEqual({
@@ -266,10 +266,9 @@ describe("/secret command", () => {
       { key: "NODE_TEST_SECRET", value: "node-secret-value" },
     ]);
 
-    const unsetResult = await handleSecretCommand([
-      "unset",
-      "NODE_TEST_SECRET",
-    ]);
+    const unsetResult = await handleSecretCommand(
+      "/secret unset NODE_TEST_SECRET",
+    );
 
     expect(unsetResult.output).toBe("Secret '$NODE_TEST_SECRET' unset.");
     expect(await refreshAndListSecrets(localAgentId)).toEqual([]);

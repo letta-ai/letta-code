@@ -23,6 +23,10 @@ export function allocatePaste(content: string): number {
   return id;
 }
 
+export function getPaste(id: number): string | undefined {
+  return textRegistry.get(id);
+}
+
 export function resolvePlaceholders(text: string): string {
   if (!text) return text;
   // First resolve text placeholders

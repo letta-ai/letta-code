@@ -6,6 +6,7 @@ import {
   clearPlaceholdersInText,
   extractImagePlaceholderIds,
   extractTextPlaceholderIds,
+  getPaste,
   releaseDiscardedPlaceholders,
   resolvePlaceholders,
 } from "@/cli/helpers/paste-registry";
@@ -13,6 +14,13 @@ import {
 test("allocatePaste creates a placeholder", () => {
   const id = allocatePaste("Hello World");
   expect(id).toBeGreaterThan(0);
+});
+
+test("getPaste distinguishes an empty registered paste from a released entry", () => {
+  const id = allocatePaste("");
+  expect(getPaste(id)).toBe("");
+  clearPlaceholdersInText(`[Pasted text #${id} +1 lines]`);
+  expect(getPaste(id)).toBeUndefined();
 });
 
 test("resolvePlaceholders resolves text placeholders", () => {

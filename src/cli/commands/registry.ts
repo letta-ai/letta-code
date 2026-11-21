@@ -21,7 +21,8 @@ type CommandHandlerResult =
 
 type CommandHandler = (
   args: string[],
-  scope?: DreamCommandScope,
+  scope: DreamCommandScope | undefined,
+  input: string,
 ) => Promise<CommandHandlerResult> | CommandHandlerResult;
 
 interface Command {
@@ -386,7 +387,7 @@ export const commands: Record<string, Command> = {
     desc: "Manage secrets for shell commands",
     order: 33,
     args: "<set|list|unset> [key] [value]",
-    handler: (args: string[]) => handleSecretCommand(args),
+    handler: (_args, _scope, input) => handleSecretCommand(input),
   },
   "/memory-repository": {
     desc: "Push this agent's memory repo to an additional git remote",
@@ -732,7 +733,7 @@ export async function executeCommand(
 
   try {
     const result = normalizeCommandHandlerResult(
-      await handler.handler(args, scope),
+      await handler.handler(args, scope, input),
     );
     return { success: true, ...result };
   } catch (error) {
