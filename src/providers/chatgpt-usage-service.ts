@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { TokenResponse } from "@/auth/oauth";
 import type { ProviderStorageTarget } from "@/providers/byok-providers";
 import {
@@ -87,6 +88,23 @@ type CachedUsage = {
 };
 
 const usageCache = new Map<string, CachedUsage>();
+
+/**
+ * Stable fingerprint of the credential a cloud usage request will authenticate
+ * with. Mirrors resolveCloudApiKey's identity selection (explicit env key,
+ * settings key, then OAuth refresh token) without resolving, so cache hits
+ * never trigger token refreshes. Cache keys embed only this fingerprint, never
+ * the credential itself.
+ */
+function cloudCredentialFingerprint(settings: CloudCredentialSettings): string {
+  const material = [
+    process.env.LETTA_API_KEY ?? "",
+    settings.env?.LETTA_API_KEY ?? "",
+    settings.refreshToken ?? "",
+  ].join("\u0000");
+  if (!material.trim()) return "";
+  return createHash("sha256").update(material).digest("hex").slice(0, 16);
+}
 
 function getRecord(
   record: JsonRecord | undefined,
@@ -602,7 +620,7 @@ async function readCloudChatGPTUsage(
   const { settings } = credentialSettings;
 
   const baseUrl = cloudBaseUrl(settings);
-  const cacheKey = `api:${baseUrl}:${providerName}`;
+  const cacheKey = `api:${baseUrl}:${providerName}:${cloudCredentialFingerprint(settings)}`;
   const cached = usageCache.get(cacheKey);
   if (!input.forceRefresh && cached && cached.expiresAt > now) {
     return cached.result;
@@ -787,7 +805,7 @@ export async function readChatGPTUsage(
     );
   }
 
-  const cacheKey = `${target}:${record.name}`;
+  const cacheKey = `${target}:${record.name}:${input.storageDir ?? ""}:${record.auth.accountId ?? ""}`;
   const cached = usageCache.get(cacheKey);
   if (!input.forceRefresh && cached && cached.expiresAt > now) {
     return cached.result;

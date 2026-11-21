@@ -450,4 +450,128 @@ describe("ChatGPT usage service", () => {
       await rm(storageDir, { recursive: true, force: true });
     }
   });
+
+  test("does not reuse a cached local usage snapshot across storage directories", async () => {
+    const dirA = await mkdtemp(join(tmpdir(), "chatgpt-usage-cache-a-"));
+    const dirB = await mkdtemp(join(tmpdir(), "chatgpt-usage-cache-b-"));
+    try {
+      const now = Date.now();
+      for (const [storageDir, accountId] of [
+        [dirA, "account-a"],
+        [dirB, "account-b"],
+      ] as const) {
+        setLocalOAuthProvider({
+          storageDir,
+          providerName: "chatgpt-cache-scope",
+          providerType: "chatgpt_oauth",
+          auth: {
+            type: "oauth",
+            access: `access-${accountId}`,
+            refresh: `refresh-${accountId}`,
+            expires: now + 3_600_000,
+            accountId,
+          },
+        });
+      }
+
+      const calls: Array<string | null> = [];
+      const fetchMock = mock(
+        async (_url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+          const accountId = new Headers(init?.headers).get(
+            "chatgpt-account-id",
+          );
+          calls.push(accountId);
+          return Response.json({
+            plan_type: accountId === "account-b" ? "pro" : "plus",
+            rate_limit: {
+              limit_reached: false,
+              primary_window: {
+                used_percent: 10,
+                limit_window_seconds: 300,
+                reset_after_seconds: 0,
+              },
+            },
+          });
+        },
+      ) as unknown as typeof fetch;
+
+      const first = await readChatGPTUsage({
+        target: "local",
+        providerName: "chatgpt-cache-scope",
+        storageDir: dirA,
+        fetch: fetchMock,
+        now: () => now,
+      });
+      expect(first.success).toBe(true);
+      if (!first.success) throw new Error(first.error.message);
+      expect(first.usage.planType).toBe("plus");
+
+      const second = await readChatGPTUsage({
+        target: "local",
+        providerName: "chatgpt-cache-scope",
+        storageDir: dirB,
+        fetch: fetchMock,
+        now: () => now,
+      });
+      expect(second.success).toBe(true);
+      if (!second.success) throw new Error(second.error.message);
+      expect(second.usage.planType).toBe("pro");
+      expect(calls).toEqual(["account-a", "account-b"]);
+    } finally {
+      await rm(dirA, { recursive: true, force: true });
+      await rm(dirB, { recursive: true, force: true });
+    }
+  });
+
+  test("does not reuse a cached api usage snapshot across credentials", async () => {
+    const calls: Array<string | null> = [];
+    const fetchMock = mock(
+      async (_url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+        calls.push(new Headers(init?.headers).get("authorization"));
+        return Response.json({
+          providerName: "chatgpt-cache-scope",
+          planType: calls.length === 1 ? "plus" : "pro",
+          primary: {
+            label: "primary",
+            usedPercent: 30,
+            windowDurationMins: 300,
+            resetsAt: 1_781_791_200,
+          },
+        });
+      },
+    ) as unknown as typeof fetch;
+
+    const read = (apiKey: string) =>
+      readChatGPTUsage({
+        target: "api",
+        providerName: "chatgpt-cache-scope",
+        fetch: fetchMock,
+        now: () => Date.parse("2026-06-18T12:00:00Z"),
+        getSettings: async () => ({
+          env: {
+            LETTA_API_KEY: apiKey,
+            LETTA_BASE_URL: "https://api.test.letta.com",
+          },
+          refreshToken: undefined,
+          tokenExpiresAt: undefined,
+        }),
+      });
+
+    const first = await withEnv(
+      { LETTA_API_KEY: undefined, LETTA_BASE_URL: undefined },
+      () => read("token-a"),
+    );
+    expect(first.success).toBe(true);
+    if (!first.success) throw new Error(first.error.message);
+    expect(first.usage.planType).toBe("plus");
+
+    const second = await withEnv(
+      { LETTA_API_KEY: undefined, LETTA_BASE_URL: undefined },
+      () => read("token-b"),
+    );
+    expect(second.success).toBe(true);
+    if (!second.success) throw new Error(second.error.message);
+    expect(second.usage.planType).toBe("pro");
+    expect(calls).toEqual(["Bearer token-a", "Bearer token-b"]);
+  });
 });
