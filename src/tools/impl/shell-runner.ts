@@ -35,6 +35,8 @@ export type ShellSpawnOptions = {
   /** Command before launcher and sandbox wrapping, used for completion metadata. */
   sourceCommand?: ShellSourceCommand;
   signal?: AbortSignal;
+  /** Keep the TERM grace period after the launcher closes if its group survives. */
+  waitForProcessGroupOnClose?: boolean;
   onOutput?: (chunk: string, stream: ShellOutputStream) => void;
   tty?: boolean;
   /** Disable when the caller already keeps its own bounded output buffer. */
@@ -581,7 +583,12 @@ export function startShellProcess(
       if (completed) return;
       // A redirected descendant can still be cleaning up after its launcher and
       // pipes have closed. Keep the original TERM deadline for that group.
-      if (forceKillTimer && !forceKillIssued && processGroup !== undefined) {
+      if (
+        launchOptions.waitForProcessGroupOnClose &&
+        forceKillTimer &&
+        !forceKillIssued &&
+        processGroup !== undefined
+      ) {
         let groupExists = true;
         try {
           process.kill(-processGroup, 0);

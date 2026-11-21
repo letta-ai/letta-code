@@ -464,6 +464,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     timeoutMs: effectiveTimeout,
     sourceCommand: command,
     signal: run_in_background ? undefined : signal,
+    waitForProcessGroupOnClose: !run_in_background,
     captureOutput: false,
     onOutput(text, stream) {
       const sanitizedText = streamScrubbers[stream].push(text);
