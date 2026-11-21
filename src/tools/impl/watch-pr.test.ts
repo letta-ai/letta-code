@@ -436,6 +436,50 @@ describe("WatchPR background lifecycle", () => {
     });
   }
 
+  test("logs the first fresh read after a pending poll without notifying", async () => {
+    const queued: string[] = [];
+    setMessageQueueAdder((message) => queued.push(message.text));
+    let now = 0;
+    let pollCount = 0;
+    const { promise: finished, resolve: finish } =
+      Promise.withResolvers<void>();
+    const result = await watch_pr(
+      { url },
+      {
+        now: () => now,
+        fetchSnapshot: async () => {
+          if (pollCount === 1) {
+            throw new GitHubPullRequestSnapshotPending();
+          }
+          return snapshot({ isDraft: true });
+        },
+        wait: async (signal, milliseconds) => {
+          if (pollCount === 4) {
+            finish();
+            await new Promise<void>((_resolve, reject) => {
+              signal.addEventListener("abort", () => reject(signal.reason), {
+                once: true,
+              });
+            });
+          }
+          pollCount++;
+          now += milliseconds;
+        },
+      },
+    );
+    await finished;
+    await task_stop({ task_id: result.taskId });
+    const output = readFileSync(
+      backgroundProcesses.get(result.taskId)?.outputFile ?? "",
+      "utf8",
+    );
+    expect(output).toContain("[poll pending] Waiting for fresh PR data");
+    expect(
+      output.split("\n").filter((line) => line.includes("[poll ok]")),
+    ).toEqual(["1970-01-01T00:01:00.000Z [poll ok] Fresh PR data received"]);
+    expect(queued).toEqual([]);
+  });
+
   for (const failedPollCount of [5, 12]) {
     test(`${failedPollCount} failed polls only notify about prolonged stale data`, async () => {
       let now = 0;
