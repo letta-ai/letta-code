@@ -32,6 +32,11 @@ function escapeXmlAttribute(text: string): string {
   return escapeXmlText(text).replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
 
+function formatChannelMessageTimestamp(timestamp: number): string | null {
+  const date = new Date(timestamp);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
 function sanitizeMentionDisplayName(mention: ChannelUserMention): string {
   const name = mention.displayName
     .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/gu, " ")
@@ -344,7 +349,7 @@ function buildThreadContextXml(msg: InboundChannelMessage): string | null {
  *
  * Example output:
  * ```xml
- * <channel-notification source="telegram" chat_id="12345" sender_id="67890" sender_name="John">
+ * <channel-notification source="telegram" chat_id="12345" sender_id="67890" sender_name="John" sent_at="2025-01-09T00:00:00.000Z">
  * Hello from Telegram!
  * </channel-notification>
  * ```
@@ -357,6 +362,11 @@ export function buildChannelNotificationXml(
     `chat_id="${escapeXmlAttribute(msg.chatId)}"`,
     `sender_id="${escapeXmlAttribute(msg.senderId)}"`,
   ];
+
+  const sentAt = formatChannelMessageTimestamp(msg.timestamp);
+  if (sentAt) {
+    attrs.push(`sent_at="${sentAt}"`);
+  }
 
   if (msg.accountId) {
     attrs.push(`account_id="${escapeXmlAttribute(msg.accountId)}"`);
