@@ -3134,7 +3134,7 @@ Grep returns this dict shape in each output mode. Which optional keys are presen
     "bytes": int,  # Size of the fetched content in bytes
     "code": int,  # HTTP response code
     "codeText": str,  # HTTP response code text
-    "result": str,  # Processed result from applying the prompt to the content
+    "result": str,  # Answer to the prompt, or page text
     "durationMs": int,  # Time to fetch and process the content, in milliseconds
     "url": str,  # URL that was fetched
 }

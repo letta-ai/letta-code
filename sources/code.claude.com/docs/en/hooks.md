@@ -2596,9 +2596,9 @@ In terminal sessions, `permission_prompt` for a sandboxed command's network requ
 >
 > * Expect `permission_prompt` once you haven't typed for about six seconds. The timer starts when the permission prompt appears, and each keystroke defers it. To run a hook immediately when Claude asks for permission to use a tool, use [PermissionRequest](#permissionrequest) instead.
 > * Expect `idle_prompt` about 60 seconds after Claude finishes responding, and only if you haven't typed since and no background agent, such as a background [subagent](https://code.claude.com/docs/en/sub-agents.md), is still running. Claude Code doesn't send `idle_prompt` while it waits for a claude.ai usage limit to reset. When the wait ends on its own, one of the `quota_auto_resume_*` types fires instead.
-> * Expect `elicitation_dialog` for an elicitation form, or `elicitation_url_dialog` for a browser URL request, once you haven't typed for about six seconds. Both share the same six-second gate as `permission_prompt`: the timer starts when the dialog appears, and each keystroke defers it.
+> * Expect `elicitation_dialog` for an elicitation form, or `elicitation_url_dialog` for a browser URL request, once you haven't typed for about six seconds.
 >
-> A permission request or elicitation that arrives while another dialog is on screen keeps the same six-second gate, timed from when the request arrives. Its notification can reach you while the request still waits behind the open dialog.
+> A permission request or elicitation that arrives while another dialog is on screen keeps the same six-second timing, timed from when the request arrives. Its notification can reach you while the request still waits behind the open dialog.
 
 Claude Code times `permission_prompt` differently in sessions where it sends permission requests to the Agent SDK's [`canUseTool` callback](https://code.claude.com/docs/en/agent-sdk/user-input), which is how Claude Desktop and the VS Code extension host Claude Code:
 
@@ -2652,13 +2652,17 @@ In addition to the [common input fields](#common-input-fields), Notification hoo
 }
 ```
 
-Notification hooks can't block or modify notifications. Claude Code discards their `systemMessage` and `continue` fields but still emits [`terminalSequence`](#emit-terminal-notifications), which is what the desktop notification example relies on. Notification hooks are intended for side effects such as forwarding the notification to an external service.
+Notification hooks can't block or modify notifications. Claude Code discards their `systemMessage` and `continue` fields but still emits [`terminalSequence`](#emit-terminal-notifications).
 
 ### SubagentStart
 
 Runs when Claude spawns a subagent with the Agent tool, when Claude [resumes a subagent](https://code.claude.com/docs/en/sub-agents.md#resume-subagents), and each time an in-process [agent team](https://code.claude.com/docs/en/agent-teams.md) teammate handles a new message. Supports matchers to filter by agent type name. For built-in agents, this is the agent name like `general-purpose`, `Explore`, or `Plan`. For [custom subagents](https://code.claude.com/docs/en/sub-agents.md), this is the `name` field from the agent's frontmatter, not the filename.
 
 For subagents shipped by a [plugin](https://code.claude.com/docs/en/plugins/overview.md), the agent type is the plugin-scoped identifier such as `my-plugin:reviewer`, not the bare frontmatter name. The colon places a plugin-scoped name on the regular-expression path, so anchor the matcher with `^` and `$` for an exact match: `^my-plugin:reviewer$`.
+
+> [!NOTE]
+>
+> For the built-in [`web-fetch` subagent](https://code.claude.com/docs/en/tools-reference#web-fetch-subagent), Claude Code runs `SubagentStart` hooks from managed settings only. For a hook set anywhere else, match `WebFetch` in a `PreToolUse` hook instead.
 
 #### SubagentStart input
 
@@ -2690,17 +2694,21 @@ SubagentStart hooks can't block subagent creation, but they can inject context i
 }
 ```
 
-When the hook runs again for the same subagent, Claude Code injects the returned context only when the subagent's context doesn't already hold the copy from an earlier run. The copy injected at launch stays in place, leaving the subagent's [prompt cache](https://code.claude.com/docs/en/prompt-caching.md#subagents-and-the-cache) intact. After [auto-compaction](https://code.claude.com/docs/en/sub-agents.md#auto-compaction) discards that copy, Claude Code injects the next run's context again.
+When the hook runs again for the same subagent, Claude Code injects the returned context only when the subagent's context doesn't already hold the copy from an earlier run. After [auto-compaction](https://code.claude.com/docs/en/sub-agents.md#auto-compaction) discards that copy, Claude Code injects the next run's context again.
 
 ### SubagentStop
 
 Runs when a Claude Code subagent has finished responding. Matches on agent type, same values as SubagentStart.
 
+> [!NOTE]
+>
+> For the built-in [`web-fetch` subagent](https://code.claude.com/docs/en/tools-reference#web-fetch-subagent), Claude Code runs `SubagentStop` hooks from managed settings only. For a hook set anywhere else, match `WebFetch` in a `PostToolUse` hook instead.
+
 #### SubagentStop input
 
-In addition to the [common input fields](#common-input-fields), SubagentStop hooks receive `stop_hook_active`, `agent_id`, `agent_type`, `agent_transcript_path`, and `last_assistant_message`. The `agent_type` field is the value used for matcher filtering. The `transcript_path` is the main session's transcript, while `agent_transcript_path` is the subagent's own transcript stored in a nested `subagents/` folder. The `last_assistant_message` field contains the text content of the subagent's final response, so hooks can access it without parsing the transcript file.
+In addition to the [common input fields](#common-input-fields), SubagentStop hooks receive `stop_hook_active`, `agent_id`, `agent_type`, `agent_transcript_path`, and `last_assistant_message`. The `transcript_path` is the main session's transcript, while `agent_transcript_path` is the subagent's own transcript stored in a nested `subagents/` folder. The `last_assistant_message` field contains the text content of the subagent's final response.
 
-Not every SubagentStop event comes from a subagent Claude spawned. Claude Code also runs internal agents for some of its own features, such as [prompt suggestions](https://code.claude.com/docs/en/interactive-mode.md#prompt-suggestions) and [`/btw` side questions](https://code.claude.com/docs/en/interactive-mode#side-questions-with-%2Fbtw), and SubagentStop fires when one of those finishes too. For those events, `agent_type` is the agent name the session itself runs as, such as one set with [`--agent`](https://code.claude.com/docs/en/cli-reference#cli-flags) or the [`agent` setting](https://code.claude.com/docs/en/settings-reference#agent), and an empty string when the session runs without one.
+Claude Code runs internal agents for some of its own features, such as [prompt suggestions](https://code.claude.com/docs/en/interactive-mode.md#prompt-suggestions) and [`/btw` side questions](https://code.claude.com/docs/en/interactive-mode#side-questions-with-%2Fbtw), and SubagentStop fires when one of those finishes too. For those events, `agent_type` is the agent name the session itself runs as, such as one set with [`--agent`](https://code.claude.com/docs/en/cli-reference#cli-flags) or the [`agent` setting](https://code.claude.com/docs/en/settings-reference#agent), and an empty string when the session runs without one.
 
 A `matcher` that names agent types doesn't match an empty `agent_type`. A hook whose matcher is omitted, `""`, or `"*"`, or is a regular expression that matches an empty string, runs for events with an empty `agent_type` too.
 
@@ -2725,7 +2733,7 @@ SubagentStop hooks also receive the `background_tasks` and `session_crons` array
 }
 ```
 
-SubagentStop hooks use the same decision control format as [Stop hooks](#stop-decision-control), including `hookSpecificOutput.additionalContext` with `hookEventName` set to `"SubagentStop"`, for non-error feedback that keeps the subagent running. Returning `decision: "block"` with a `reason` keeps the subagent running and delivers `reason` to the subagent as its next instruction. A hook that blocks by exiting 2 delivers its stderr message the same way. To inject context into the parent session after a subagent returns, use a [`PostToolUse`](#posttooluse) hook on the `Agent` tool instead.
+SubagentStop hooks use the same decision control format as [Stop hooks](#stop-decision-control), including `hookSpecificOutput.additionalContext` with `hookEventName` set to `"SubagentStop"`, for non-error feedback that keeps the subagent running. Returning `decision: "block"` with a `reason` keeps the subagent running and delivers `reason` to the subagent as its next instruction. To inject context into the parent session after a subagent returns, use a [`PostToolUse`](#posttooluse) hook on the `Agent` tool instead.
 
 ### TaskCreated
 
@@ -2946,7 +2954,7 @@ Use `additionalContext` when the hook is working as designed and giving Claude g
 
 ### StopFailure
 
-Runs instead of [Stop](#stop) when the turn ends due to an API error. Claude Code ignores the hook's output and exit code, apart from [`terminalSequence`](#emit-terminal-notifications). Use this to log failures, send alerts, or take recovery actions when Claude can't complete a response due to rate limits, authentication problems, or other API errors.
+Runs instead of [Stop](#stop) when the turn ends due to an API error. Claude Code ignores the hook's output and exit code, apart from [`terminalSequence`](#emit-terminal-notifications). Use this to log failures, send alerts, or take recovery actions.
 
 #### StopFailure input
 
@@ -2970,7 +2978,7 @@ In addition to the [common input fields](#common-input-fields), StopFailure hook
 }
 ```
 
-StopFailure hooks have no decision control. They run for notification and logging purposes only.
+StopFailure hooks have no decision control.
 
 ### TeammateIdle
 
@@ -3456,7 +3464,7 @@ In addition to the [common input fields](#common-input-fields), PostCompact hook
 }
 ```
 
-PostCompact hooks have no decision control. They can't affect the compaction result but can perform follow-up tasks.
+PostCompact hooks have no decision control.
 
 ### PreModelSwitch
 

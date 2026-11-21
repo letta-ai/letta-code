@@ -110,7 +110,7 @@ The Agent tool spawns a subagent in a separate context window. The subagent work
 * **Teammate**: with [agent teams](https://code.claude.com/docs/en/agent-teams.md) enabled, a call that carries a `name` can launch a [teammate](https://code.claude.com/docs/en/agent-teams.md#how-claude-starts-agent-teams) instead, which reports back through team messages rather than by returning a result
 * **Fork**: wherever [fork mode](https://code.claude.com/docs/en/sub-agents.md#turn-fork-mode-on-or-off) is on, the tool can launch a [forked subagent](https://code.claude.com/docs/en/sub-agents.md#fork-the-current-conversation), which inherits the full parent conversation instead of starting fresh
 
-To cap how many turns a subagent runs, set `maxTurns` in the [subagent definition](https://code.claude.com/docs/en/sub-agents.md#supported-frontmatter-fields). When the subagent reaches the limit, Claude Code marks the returned result as partial output, and Claude can [resume the subagent](https://code.claude.com/docs/en/sub-agents.md#resume-subagents) to continue.
+To cap how many turns a subagent runs, set `maxTurns` in the [subagent definition](https://code.claude.com/docs/en/sub-agents.md#supported-frontmatter-fields).
 
 Which tools a non-fork subagent can use depends on the `tools` and `disallowedTools` fields in the [subagent definition](https://code.claude.com/docs/en/sub-agents.md):
 
@@ -219,7 +219,7 @@ Two [environment variables](https://code.claude.com/docs/en/env-vars.md) raise t
 
 #### Foreground commands that move to the background
 
-When a foreground command reaches its timeout without finishing, Claude Code moves it to the background instead of stopping it, unless the command starts with `sleep`. A moved command's [time limit](#time-limit-for-background-commands) counts from the move, and a foreground subagent's moved command still stops when that subagent's run ends.
+When a foreground command reaches its timeout without finishing, Claude Code moves it to the background instead of stopping it, unless the command starts with `sleep`.
 
 Setting [`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`](https://code.claude.com/docs/en/env-vars#variables) or running in [bare mode](https://code.claude.com/docs/en/headless.md#start-faster-with-bare-mode) disables auto-backgrounding, so a command that reaches its timeout stops instead.
 
@@ -390,8 +390,6 @@ The Monitor tool lets Claude watch something in the background and react when it
 * Connect to a WebSocket feed and report each message as it arrives
 
 For most watches, Claude writes a small script, runs it in the background, and receives each output line as it arrives. For a server that already pushes events, Claude can open a [WebSocket](#websocket-source) instead of running a script.
-
-You keep working in the same session and Claude interjects when an event arrives.
 
 Every watch Claude starts has a deadline: 5 minutes by default, at most 30 minutes, and at most 10 minutes in a [non-interactive](https://code.claude.com/docs/en/headless.md) run given a single prompt with `-p`.
 
@@ -657,49 +655,122 @@ Without the Task tools, an agent coordinates with its team through messages inst
 
 ## WebFetch tool behavior
 
-WebFetch takes a URL and a prompt describing what to extract. It fetches the page and converts the response to Markdown when the server returns HTML. For most fetches, it then runs the prompt against the content in a separate model call, and Claude receives the result of that call rather than the raw page. The conversion step is not configurable.
+Claude uses WebFetch to look something up on a web page. The URL can come from you or from Claude, for example from a [WebSearch](#websearch-tool-behavior) result. For most pages, Claude doesn't see the full text. It asks a question about the page, and a separate model call reads the page and returns an answer.
 
-This makes WebFetch lossy by design. The extraction prompt determines what reaches Claude, so a result that says a page doesn't mention something may only mean the prompt didn't ask about it. Ask Claude to fetch again with a more specific prompt, or use `curl` via Bash for the unprocessed page.
+### Allow a domain
 
-A few behaviors shape the response Claude receives:
+Terminal and VS Code sessions [start in auto mode by default](https://code.claude.com/docs/en/permission-modes.md#which-mode-a-session-starts-in). In auto mode, you don't see a prompt before a fetch, except for a domain that an `ask` rule matches. The [classifier](https://code.claude.com/docs/en/permission-modes.md#eliminate-prompts-with-auto-mode) reviews the fetch instead and can block it. In Manual and `acceptEdits` modes, Claude Code asks for your permission.
 
-* WebFetch refuses `localhost` and any other hostname without a dot, such as a bare intranet name, before making a request. The [error it returns](https://code.claude.com/docs/en/errors.md#webfetch-cannot-fetch-localhost) tells Claude to reach local servers with `curl` through Bash instead.
-* HTTP URLs are automatically upgraded to HTTPS.
-* WebFetch reads up to 100,000 characters of a page's content per call. On Claude Code v2.1.290 or later, the result for a longer page tells Claude how much went unread, so Claude can fetch the next part.
-* WebFetch caches each response for 15 minutes by default, so repeated fetches of the same URL return quickly. On Claude Code v2.1.233 or later, set [`CLAUDE_CODE_WEBFETCH_CACHE_TTL_MS`](https://code.claude.com/docs/en/env-vars#variables) to change how long WebFetch keeps each response.
-* A page that hasn't finished downloading within five minutes, including any redirects WebFetch follows, fails with a deadline error. On Claude Code v2.1.268 or later, set [`CLAUDE_CODE_WEBFETCH_DEADLINE_MS`](https://code.claude.com/docs/en/env-vars#variables) to change the limit, or to `0` to remove it.
-* When a URL redirects to a different host, WebFetch returns a text result that names the original URL and the redirect target instead of following it. Claude then fetches the new URL with a second WebFetch call.
-* When the extraction step hits an overloaded API, Claude Code retries it with backoff; a fetch that still fails returns an error result.
+To approve a domain ahead of time, add an allow rule to a [settings file](https://code.claude.com/docs/en/settings.md), or select **Yes, and don't ask again for `<domain>`** when a prompt offers it. This example allows `example.com`:
 
-In Manual and `acceptEdits` [permission modes](https://code.claude.com/docs/en/permission-modes.md), WebFetch prompts before fetching, except for domains your [permission rules](https://code.claude.com/docs/en/permissions.md#manage-permissions) already allow or deny and a built-in set of preapproved documentation domains that fetch without a prompt. Whatever your rules allow, a fetch also passes the [WebFetch domain safety check](https://code.claude.com/docs/en/data-usage.md#webfetch-domain-safety-check) first; that section covers what the check sends and the setting that skips it. The prompt offers three options:
+```json theme={null}
+{
+  "permissions": {
+    "allow": ["WebFetch(domain:example.com)"]
+  }
+}
+```
 
-* **Yes**: approves this fetch only. The next WebFetch call prompts again, even for the same domain.
-* **Yes, and don't ask again for `<domain>`**: approves the fetch and saves a `WebFetch(domain:...)` allow rule for that domain to `.claude/settings.local.json` for that repository. See [how saved approvals persist](https://code.claude.com/docs/en/permissions.md#permission-system). When your organization sets [`allowManagedPermissionRulesOnly`](https://code.claude.com/docs/en/permissions#managed-only-settings), Claude Code hides this option.
-* **No, and tell Claude what to do differently**: rejects the fetch.
+To confirm, run `/permissions` in a session. The dialog lists the rule. Select it to see which settings it comes from.
 
-To allow a domain in advance without a prompt, add an allow rule like `WebFetch(domain:example.com)`; `WebFetch(domain:*)` allows every domain. The `auto` and `bypassPermissions` [permission modes](https://code.claude.com/docs/en/permissions.md#permission-modes) skip the prompt, except for a domain an explicit `ask` rule matches.
+| To allow | Use this rule |
+| :- | :- |
+| One domain | `WebFetch(domain:example.com)` |
+| Its subdomains | `WebFetch(domain:*.example.com)` |
+| Every site | `WebFetch` or `WebFetch(domain:*)`. See [how the two differ](https://code.claude.com/docs/en/permissions.md#allow-or-deny-every-fetch). |
 
-An explicit `WebFetch(domain:...)` rule in `deny`, `ask`, or `allow` takes precedence over the preapproved set, so you can block a preapproved domain or require a prompt for it.
+With a `domain:` allow rule, [sandboxed Bash commands](https://code.claude.com/docs/en/sandboxing.md#network-isolation) can also reach the domain, unless a [sandbox lock](https://code.claude.com/docs/en/sandboxing.md#keep-developers-from-widening-the-policy) makes the sandbox ignore the rule.
 
-When the URL is a claude.ai [artifact](https://code.claude.com/docs/en/artifacts.md) link, Claude Code can also ask for approval to read the artifact itself. For the cases where it asks, see [Read an artifact shared with you](https://code.claude.com/docs/en/artifacts.md#read-an-artifact-shared-with-you).
+### Block a site or turn WebFetch off
+
+| To | Do this |
+| :- | :- |
+| Block a domain | Add a `WebFetch(domain:...)` rule for it to `deny` |
+| Require a prompt for a domain | Add a `WebFetch(domain:...)` rule for it to `ask` |
+| Turn WebFetch off | Add `WebFetch` to `deny`, or set [`CLAUDE_CODE_DISABLE_WEB_FETCH`](https://code.claude.com/docs/en/env-vars#variables) to `1` |
+| Do any of these for your organization | Put the rule in [managed settings](https://code.claude.com/docs/en/managed-settings.md) |
+
+Outside the sandbox, if Bash is allowed, Claude can still use `curl`, `wget`, or other tools to reach any URL. See [Tool-specific permission rules](https://code.claude.com/docs/en/permissions.md#tool-specific-permission-rules).
+
+### When a fetch prompts, fails, or WebFetch is missing
+
+Claude's reply can leave out anything on the page that Claude didn't ask about. In the terminal, press `Ctrl+O` to see what Claude asked and the answer it received.
+
+| What you notice | What to do |
+| :- | :- |
+| Claude says a page doesn't cover something you know is there | Ask Claude to fetch the page again and tell it what to look for. For the raw page, ask it to run `curl` on the URL through the Bash tool. |
+| Claude leaves out the end of a long page, or says part of it wasn't read | Ask Claude to fetch the next part of the page. This requires Claude Code v2.1.290 or later. The [`web-fetch` subagent](#web-fetch-subagent) reads pages of up to about 48,000 characters in full, and WebFetch reads the first 100,000 when Claude calls it. |
+| Claude describes a page as it was before a recent change | WebFetch reuses its copy of a page for 15 minutes. To change how long, set [`CLAUDE_CODE_WEBFETCH_CACHE_TTL_MS`](https://code.claude.com/docs/en/env-vars#variables). |
+| Claude says the download ran out of time | A download fails after five minutes. To change the limit, set [`CLAUDE_CODE_WEBFETCH_DEADLINE_MS`](https://code.claude.com/docs/en/env-vars#variables). |
+| Claude reports a redirect and stops there | Ask Claude to fetch the new URL. When a redirect changes the host by more than adding or dropping `www.`, WebFetch returns the new URL and no page content. |
+| Claude can't fetch a local or intranet server | WebFetch [refuses `localhost`](https://code.claude.com/docs/en/errors#webfetch-cannot-fetch-localhost) and any other hostname without a dot. Ask Claude to reach the server with `curl` through the Bash tool. |
+| In a cloud session, Claude says the network blocks the domain | An allow rule isn't enough there. Also [add the domain](https://code.claude.com/docs/en/cloud-environments.md#allow-specific-domains) to the cloud environment's network access. |
+| In auto mode, a fetch is blocked and you see no prompt | Add an allow rule for the domain. If the classifier blocked the fetch, you can also open `/permissions` in the terminal and [approve the fetch](https://code.claude.com/docs/en/auto-mode-config.md#review-denials) under the **Recently blocked** tab so Claude can retry. |
+| In `claude -p` or the Agent SDK, a fetch is denied | These runs [start in Manual mode](https://code.claude.com/docs/en/permission-modes.md#which-mode-a-non-interactive-run-starts-in), and a call that needs approval is denied. Add an allow rule or start in auto mode. |
+| A fetch fails for a domain you allowed | The URL also has to pass the [WebFetch domain safety check](https://code.claude.com/docs/en/data-usage.md#webfetch-domain-safety-check), unless you turn the check off with [`skipWebFetchPreflight`](https://code.claude.com/docs/en/settings-reference#skipwebfetchpreflight). See [WebFetch domain safety check failed](https://code.claude.com/docs/en/errors.md#webfetch-domain-safety-check-failed). |
+| A rule in your own settings file has no effect | If your organization sets [`allowManagedPermissionRulesOnly`](https://code.claude.com/docs/en/settings-reference#allowmanagedpermissionrulesonly), Claude Code ignores the rule. Ask your administrator to add it to managed settings. |
+| Prompts continue after you add the domain to the sandbox's [`allowedDomains`](https://code.claude.com/docs/en/settings-reference#sandbox-network-alloweddomains) | WebFetch doesn't read that list, so add a WebFetch allow rule |
+| No prompt for a domain you didn't allow | Claude Code skips the prompt for a built-in set of preapproved documentation domains, and in `auto` and `bypassPermissions` modes. To require the prompt anyway, add an `ask` rule for the domain. Sandboxed Bash commands don't inherit the preapproved set. |
+| A claude.ai artifact link brings another prompt | See [Read an artifact shared with you](https://code.claude.com/docs/en/artifacts.md#read-an-artifact-shared-with-you) |
+| Claude can't fetch any page | Run `/status` in the session. If the `Organization configuration` line lists `HIPAA`, WebFetch is off: see [What developers see in Claude Code](https://code.claude.com/docs/en/hipaa-setup.md#what-developers-see-in-claude-code). If the `Organization policy` line reports that the policy didn't load and names web fetch, follow any fix the line names. WebFetch becomes available again without a restart once a policy that allows it loads. |
+
+### The web-fetch subagent
+
+`web-fetch` is the [subagent](https://code.claude.com/docs/en/sub-agents.md#built-in-subagents) built into Claude Code that reads web pages for Claude. When Claude needs a page, it calls the [Agent tool](#agent-tool-behavior) to pass `web-fetch` the URL and a question about the page. The subagent calls WebFetch, reads the page, and sends Claude the answer.
+
+Your session can use the subagent when you're signed in with a claude.ai account on Claude Code v2.1.287 or later. Without it, Claude calls WebFetch itself, and the model that Claude Code uses for [background tasks](https://code.claude.com/docs/en/model-config.md#environment-variables) reads the page. The subagent is off in setups such as these:
+
+* You [turned the subagent off](#turn-off-the-web-fetch-subagent)
+* You connect through an [LLM gateway](https://code.claude.com/docs/en/llm-gateway) on Claude Code v2.1.330 or later
+* Claude Code [doesn't fetch feature flags](https://code.claude.com/docs/en/env-vars.md#features-that-need-feature-flag-fetching), such as on Amazon Bedrock or with `DISABLE_TELEMETRY` set
+
+These signs mean the subagent fetched a page:
+
+* **Terminal**: the permission prompt's title is `Fetch · from the web-fetch agent`. The line that starts with `Received` shows only a size, such as `Received 87 bytes`.
+* **VS Code**: the fetch appears as an **Agent** row
+* **Desktop app or claude.ai/code**: the fetch appears as a row that opens a subagent pane
+* **`claude -p` or the Agent SDK**: in the [`system/init` event](https://code.claude.com/docs/en/headless#read-session-metadata), `agents` lists `web-fetch` and `tools` doesn't list `WebFetch`
+
+#### Which model the web-fetch subagent runs on
+
+By default, the `web-fetch` subagent runs on the model that the `haiku` [model alias](https://code.claude.com/docs/en/model-config.md#model-aliases) points to. If the subagent can't use that model, such as when your [`availableModels`](https://code.claude.com/docs/en/model-config#restrict-model-selection) allowlist leaves it out, it runs on the same model as the conversation that started it. To choose the model yourself, [run every subagent on one model](https://code.claude.com/docs/en/sub-agents.md#run-every-subagent-on-one-model).
+
+#### Rules, hooks, and CLAUDE.md with the web-fetch subagent
+
+Your `WebFetch` [permission rules](https://code.claude.com/docs/en/permissions.md#webfetch) apply to the pages the `web-fetch` subagent fetches, and so do the `PreToolUse` and `PostToolUse` [hooks](https://code.claude.com/docs/en/hooks.md) that match `WebFetch`.
+
+| If you rely on | With the subagent | What to do |
+| :- | :- | :- |
+| CLAUDE.md instructions about which pages to fetch | The subagent starts without your CLAUDE.md files, including your organization's managed one | Restrict fetches with `WebFetch` permission rules |
+| `SubagentStart` or `SubagentStop` hooks | Only the hooks defined in [managed settings](https://code.claude.com/docs/en/managed-settings.md) run for this subagent | In any other settings file, use a `PreToolUse` or `PostToolUse` hook that matches `WebFetch` |
+| A `PostToolUse` hook that parses the `WebFetch` result | The result is the page text. When Claude calls WebFetch itself, the result is an answer to Claude's question. | Handle both page text and answers in the hook |
+| A `PreToolUse` hook that blocks `Agent` calls | Claude starts the subagent with the `Agent` tool, so the page isn't fetched | [Turn the subagent off](#turn-off-the-web-fetch-subagent) |
+
+#### Turn off the web-fetch subagent
+
+Turn the `web-fetch` subagent off when your setup depends on Claude calling WebFetch itself, for example when a `PreToolUse` hook blocks every `Agent` call. Add this [deny rule](https://code.claude.com/docs/en/sub-agents.md#disable-specific-subagents) to a [settings file](https://code.claude.com/docs/en/settings.md), or to managed settings to cover your organization:
+
+```json theme={null}
+{
+  "permissions": {
+    "deny": ["Agent(web-fetch)"]
+  }
+}
+```
+
+To confirm, start a new session, ask Claude to fetch a page, and check that the [signs of the subagent](#web-fetch-subagent) don't appear. In the `system/init` event, `tools` lists `WebFetch` again and `agents` still lists `web-fetch`.
+
+If your organization sets [`allowManagedPermissionRulesOnly`](https://code.claude.com/docs/en/settings-reference#allowmanagedpermissionrulesonly), Claude Code ignores the deny rule in your own settings files, so ask your administrator to add it to managed settings.
+
+### Identify WebFetch requests to your site
 
 WebFetch sets a `User-Agent` header beginning with `Claude-User`, and an `Accept` header that prefers Markdown over HTML so servers that support content negotiation can return Markdown directly.
-
-Sandboxed commands don't inherit WebFetch's built-in set of preapproved documentation domains. To let a sandboxed command reach a domain without a prompt, add the domain to [`allowedDomains`](https://code.claude.com/docs/en/settings-reference#sandbox-network-alloweddomains) or allow it with a `WebFetch(domain:...)` rule, which the [sandbox also honors](https://code.claude.com/docs/en/sandboxing.md#network-isolation). WebFetch never reads the sandbox allowlist in return, so adding a domain to a sandbox or organization network allowlist doesn't stop WebFetch from prompting for it.
-
-### WebFetch availability
-
-On Claude Code v2.1.285 or later, set [`CLAUDE_CODE_DISABLE_WEB_FETCH`](https://code.claude.com/docs/en/env-vars#variables) to `1` to turn WebFetch off.
-
-If you sign in with a Team or Enterprise claude.ai account and don't connect through an [LLM gateway](https://code.claude.com/docs/en/llm-gateway), WebFetch also depends on your organization's policy, which Claude Code requests from `api.anthropic.com` when a session starts. The same goes for a session whose plan Claude Code can't determine, such as one running under a claude.ai token that another app supplied.
-
-If WebFetch is missing from a session, run `/status` in the session. If its `Organization policy` line reports that the policy didn't load and names web fetch among the features that wait for it, Claude Code is withholding WebFetch until it can confirm that your organization allows it. Outside a session, `claude doctor` makes its own request and prints the same line. Once a policy that allows WebFetch loads, the tool returns without a restart.
 
 ## WebSearch tool behavior
 
 WebSearch runs a query against Anthropic's [web search](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool) backend and returns result titles and URLs. It doesn't fetch the result pages. To read a page Claude finds in search results, it follows up with [WebFetch](#webfetch-tool-behavior).
 
-The tool may issue up to eight backend searches per call, refining the search internally before returning results. Claude can scope results with `allowed_domains` to include only certain hosts, or `blocked_domains` to exclude them. The two lists can't be combined in a single call.
+The tool may issue up to eight backend searches per call. Claude can scope results with `allowed_domains` to include only certain hosts, or `blocked_domains` to exclude them. The two lists can't be combined in a single call.
 
 When the search request hits an overloaded API, Claude Code retries it with backoff; a call that still fails returns an error result.
 
