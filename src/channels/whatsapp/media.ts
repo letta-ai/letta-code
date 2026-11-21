@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, unlink, writeFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import { getChannelDir } from "@/channels/config";
 import { transcribeAudioFile } from "@/channels/transcription";
@@ -269,6 +269,47 @@ export async function collectWhatsAppAttachments(params: {
   }
 
   return { attachments: [attachment] };
+}
+
+/**
+ * True when the message carries any media at all.
+ *
+ * Used to skip the sender access lookup for text-only messages: without
+ * media there is nothing to download, so the decision cannot change what
+ * happens on disk.
+ */
+export function hasWhatsAppMedia(message: unknown): boolean {
+  return getMediaCandidate(message) !== null;
+}
+
+/**
+ * True when the message is a push-to-talk voice note, the only inbound
+ * media whose text only exists after transcription.
+ */
+export function isWhatsAppVoiceNote(message: unknown): boolean {
+  const candidate = getMediaCandidate(message);
+  if (!candidate) return false;
+  return candidate.mediaKind === "audio" && candidate.mediaMessage.ptt === true;
+}
+
+/**
+ * Remove media files that were materialized for a message that is never
+ * delivered. Without this a dropped inbound message leaves its download
+ * behind on disk forever.
+ */
+export async function discardWhatsAppAttachmentFiles(
+  attachments: ChannelMessageAttachment[] | undefined,
+): Promise<void> {
+  await Promise.all(
+    (attachments ?? []).map(async (attachment) => {
+      if (!attachment.localPath) return;
+      try {
+        await unlink(attachment.localPath);
+      } catch {
+        // Best effort: a missing file is already the desired state.
+      }
+    }),
+  );
 }
 
 export function buildWhatsAppOutboundPayload(
