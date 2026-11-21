@@ -29,6 +29,11 @@ show_permissions() {
   echo -e "${DIM}$file${RESET}"
 
   if [ -f "$file" ]; then
+    if ! jq empty "$file" >/dev/null 2>&1; then
+      echo -e "  ${RED}(malformed JSON - rules cannot be read)${RESET}"
+      echo ""
+      return
+    fi
     local allow=$(jq -r '.permissions.allow // [] | .[]' "$file" 2>/dev/null)
     local deny=$(jq -r '.permissions.deny // [] | .[]' "$file" 2>/dev/null)
     local ask=$(jq -r '.permissions.ask // [] | .[]' "$file" 2>/dev/null)
