@@ -2,6 +2,14 @@ import {
   type AgentSandboxOptions,
   SUBAGENT_CLOUD_OPTIONS_ENV,
 } from "@/backend/api/environments";
+/**
+ * Subagent manager for spawning and coordinating subagents
+ *
+ * This module handles:
+ * - Spawning subagents via letta CLI in headless mode
+ * - Executing subagents and collecting final reports
+ * - Managing parallel subagent execution
+ */
 
 import { rmSync } from "node:fs";
 import { platform } from "node:os";
