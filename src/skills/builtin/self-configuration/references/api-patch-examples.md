@@ -7,26 +7,26 @@ Raw curl and SDK calls bypass the helper guardrails. They are useful for recover
 Use `scripts/update-agent-settings.ts` for dry-runable patches.
 
 ```bash
-npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts --help
+node <SKILL_DIR>/scripts/update-agent-settings.ts --help
 ```
 
 Examples:
 
 ```bash
 # Agent context window
-npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
+node <SKILL_DIR>/scripts/update-agent-settings.ts \
   --target agent \
   --context-window-limit 64000 \
   --dry-run
 
 # Conversation context window
-npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
+node <SKILL_DIR>/scripts/update-agent-settings.ts \
   --target conversation \
   --conversation-id "$CONVERSATION_ID" \
   --context-window-limit 64000
 
 # Agent rename and description update; values must be non-empty
-npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
+node <SKILL_DIR>/scripts/update-agent-settings.ts \
   --target agent \
   --agent-id "$AGENT_ID" \
   --name "repo-maintainer" \
@@ -41,14 +41,14 @@ cat >/tmp/model-settings.json <<'JSON'
   "reasoning": { "reasoning_effort": "medium" }
 }
 JSON
-npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
+node <SKILL_DIR>/scripts/update-agent-settings.ts \
   --target agent \
   --model openai/gpt-5.2 \
   --model-settings-file /tmp/model-settings.json \
   --merge-model-settings
 
 # System prompt replacement from file; can self-brick the agent
-npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
+node <SKILL_DIR>/scripts/update-agent-settings.ts \
   --target agent \
   --system-file /tmp/new-system-prompt.txt \
   --confirm-system-replacement

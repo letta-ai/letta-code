@@ -1,12 +1,12 @@
-#!/usr/bin/env -S npx tsx
+#!/usr/bin/env node
 /**
  * Skill Validator - Validates skill structure and frontmatter
  *
  * Usage:
- *   npx tsx validate-skill.ts <skill-directory>
+ *   node validate-skill.ts <skill-directory>
  *
  * Example:
- *   npx tsx validate-skill.ts .skills/my-skill
+ *   node validate-skill.ts .skills/my-skill
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -297,7 +297,7 @@ function isMainModule(): boolean {
 if (isMainModule()) {
   const args = process.argv.slice(2);
   if (args.length !== 1) {
-    console.log("Usage: npx tsx validate-skill.ts <skill-directory>");
+    console.log("Usage: node validate-skill.ts <skill-directory>");
     process.exit(1);
   }
 
