@@ -170,7 +170,7 @@ USAGE
   # interactive TUI
   letta                 Resume last conversation for this project
   letta --new           Create a new conversation (for concurrent sessions)
-  letta --resume        Open agent selector UI to pick agent/conversation
+  letta --resume        Pick a conversation for the last-used agent (/agents to switch)
   letta --new-agent     Create a new agent directly (skip profile selector)
   letta --agent <id>    Open a specific agent by ID
 
@@ -710,7 +710,7 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  // --resume: Open agent selector UI after loading
+  // --resume: Open conversation selector for the last-used agent
   const shouldResume = values.resume ?? false;
   let specifiedConversationId = values.conversation ?? null; // Specific conversation to resume
   const forceNew = values["new-agent"] ?? false;
