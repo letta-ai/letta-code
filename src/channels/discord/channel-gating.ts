@@ -14,6 +14,7 @@
 
 import type { DiscordChannelMode } from "@/channels/types";
 
+/** Resolved channel ID for gating purposes (thread → parent fallback). */
 function resolveGateChannelId(
   channelId: string,
   parentChannelId: string | null,
@@ -22,6 +23,9 @@ function resolveGateChannelId(
   return isThread ? (parentChannelId ?? channelId) : channelId;
 }
 
+/**
+ * Returns true when `allowedChannels` looks like the legacy `string[]` format.
+ */
 function isLegacyStringArray(
   allowedChannels: unknown,
 ): allowedChannels is string[] {
@@ -40,6 +44,7 @@ function isModeMap(
 
 export interface DiscordChannelGateParams {
   channelId: string;
+  /** Parent channel ID when the message is in a thread; null otherwise. */
   parentChannelId: string | null;
   isThread: boolean;
   allowedChannels?: string[] | Record<string, DiscordChannelMode>;

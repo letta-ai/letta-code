@@ -114,6 +114,7 @@ export const InlineMarkdown: React.FC<InlineMarkdownProps> = ({
           </Text>,
         );
       } else {
+        // Fallback if link parsing fails
         nodes.push(fullMatch);
       }
     } else {

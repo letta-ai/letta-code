@@ -181,6 +181,7 @@ export async function resizeImageIfNeeded(
 
   try {
     if (needsResize) {
+      // Resize preserving aspect ratio
       // ImageMagick's -resize with geometry like "2000x2000>" preserves aspect ratio
       // and only shrinks (doesn't enlarge) - equivalent to 'inside' fit
       const tempOutput = join(
@@ -192,6 +193,7 @@ export async function resizeImageIfNeeded(
       let outputMediaType: string;
 
       if (format === "jpeg" || format === "jpg") {
+        // Preserve JPEG format with good quality (Codex uses 85)
         execSync(
           `magick "${tempInput}" -resize ${MAX_IMAGE_WIDTH}x${MAX_IMAGE_HEIGHT}> -quality 85 "${tempOutput}.jpg"`,
           {

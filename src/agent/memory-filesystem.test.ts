@@ -309,6 +309,7 @@ describe("renderMemoryFilesystemTree", () => {
     expect(tree).toContain("persona.md");
     expect(tree).toContain("notes/");
     expect(tree).toContain("project-ideas.md");
+    // Should NOT have user/ directory anymore
     expect(tree).not.toContain("user/");
   });
 
@@ -511,6 +512,7 @@ describe("memory filesystem sync - rename handling", () => {
 
     expect(fileExists[oldLabel]).toBe(false);
     expect(blockExists[oldLabel]).toBe(true);
+    // -> Should delete old block (file deleted, assuming block unchanged)
 
     expect(fileExists[newLabel]).toBe(true);
     expect(blockExists[newLabel]).toBe(false);
@@ -689,6 +691,7 @@ describe("block tagging", () => {
       }
     }
 
+    // Should have updated block-1 and block-3, but not block-2
     expect(updatedBlocks.length).toBe(2);
     expect(updatedBlocks.map((u) => u.blockId)).toContain("block-1");
     expect(updatedBlocks.map((u) => u.blockId)).toContain("block-3");
@@ -724,6 +727,7 @@ describe("sync behavior - location mismatch handling", () => {
       action: "rm root/notes.md",
       after: {
         expectedTags: [],
+        // File should NOT resurrect
         fileExists: false,
       },
     };
@@ -735,7 +739,22 @@ describe("sync behavior - location mismatch handling", () => {
 
 describe("sync state migration", () => {
   test("legacy state format is migrated to unified format", () => {
+    // The new SyncState uses blockHashes/fileHashes instead of
+    // systemBlocks/systemFiles/detachedBlocks/detachedFiles
+    //
+    // loadSyncState should detect and migrate the legacy format
 
+    // Legacy format (what old state files look like):
+    // {
+    //   systemBlocks: { persona: "hash1" },
+    //   systemFiles: { persona: "hash1" },
+    //   detachedBlocks: { notes: "hash2" },
+    //   detachedFiles: { notes: "hash2" },
+    //   detachedBlockIds: { notes: "block-123" },
+    //   lastSync: "2024-01-01T00:00:00.000Z",
+    // }
+
+    // After migration, should be unified:
     const expectedMigratedState = {
       blockHashes: { persona: "hash1", notes: "hash2" },
       fileHashes: { persona: "hash1", notes: "hash2" },
@@ -750,6 +769,14 @@ describe("sync state migration", () => {
 
 describe("FS wins all policy", () => {
   test("when both file and block changed, file wins (no conflict)", () => {
+    // "FS wins all" policy: if file was touched (moved or edited), file version wins
+    //
+    // Before this policy:
+    // - Both changed → CONFLICT (agent must resolve)
+    //
+    // After this policy:
+    // - Both changed → file wins, block is updated from file (no conflict)
+    //
     // Rationale: if someone is actively working with memfs locally,
     // they're in "local mode" and FS state is their intent
 

@@ -339,6 +339,7 @@ export function AdvancedDiffRenderer(
   const showHeader = props.showHeader !== false; // default to true
 
   if (result.mode === "fallback") {
+    // Render simple arg-based fallback for readability
     const filePathForFallback = (props as { filePath: string }).filePath;
     if (props.kind === "write") {
       return (

@@ -697,6 +697,7 @@ async function main(): Promise<void> {
   let specifiedConversationId = values.conversation ?? null; // Specific conversation to resume
   const forceNew = values["new-agent"] ?? false;
 
+  // --new: Create a new conversation (for concurrent sessions)
   const forceNewConversation = values.new ?? false;
 
   const baseToolsRaw = values["base-tools"];
@@ -1008,6 +1009,8 @@ async function main(): Promise<void> {
       process.exit(1);
     }
 
+    // Check if refresh token is missing for Letta Cloud (only when not using env var)
+    // Skip this check if we already have an API key from env
     if (
       !isHeadless &&
       baseURL === LETTA_CLOUD_API_URL &&
@@ -1526,6 +1529,11 @@ async function main(): Promise<void> {
           modelPrefetchTimer.unref?.();
         }
 
+        // =====================================================================
+        // TOP-LEVEL PATH: --conversation <id>
+        // Conversation ID is unique, so we can derive the agent from it
+        // (except for "default" which requires --agent flag, validated above)
+        // =====================================================================
         if (specifiedConversationId) {
           if (specifiedConversationId === "default") {
             // "default" requires --agent (validated in flag preprocessing above)
@@ -1559,6 +1567,10 @@ async function main(): Promise<void> {
           return;
         }
 
+        // =====================================================================
+        // TOP-LEVEL PATH: --resume
+        // Show conversation selector for last-used agent (local → global fallback)
+        // =====================================================================
         if (shouldResume) {
           const localSession = settingsManager.getLocalLastSession(
             process.cwd(),
@@ -1684,6 +1696,7 @@ async function main(): Promise<void> {
           : false;
         markMilestone("STARTUP_LRU_FETCH_DONE");
 
+        // Resolve the remaining fallback target.
         const fallbackSession =
           startupBackendMode === "local" && !globalAgentExists
             ? await getLocalBackendStartupFallbackSession(backend)
@@ -2198,6 +2211,7 @@ async function main(): Promise<void> {
             }
           }
         } else if (forceNewConversation) {
+          // --new flag: create a new conversation (for concurrent sessions)
           const conversation = await backend.createConversation({
             agent_id: agent.id,
           });

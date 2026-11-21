@@ -82,6 +82,7 @@ describe("inherited secrets refresh", () => {
     );
     expect(cached.NEW_SECRET).toBeUndefined();
 
+    // Once the entry is stale, the next lookup re-fetches the parent vault.
     __testSetSecretsMaxAgeMs(0);
     const refreshed = await asSubagent(() =>
       resolveSecretEnvFromCommand(command, CHILD),

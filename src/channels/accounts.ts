@@ -624,6 +624,7 @@ function saveChannelAccounts(channelId: string): void {
     for (const [snakeKey, camelKey] of Object.entries(SNAKE_TO_CAMEL)) {
       const value = (cloned as unknown as Record<string, unknown>)[camelKey];
       delete (cloned as unknown as Record<string, unknown>)[camelKey];
+      // Set snake_case key (only if value is not undefined — omit absent fields)
       if (value !== undefined) {
         (cloned as unknown as Record<string, unknown>)[snakeKey] = value;
       }

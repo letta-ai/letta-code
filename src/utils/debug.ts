@@ -187,6 +187,7 @@ function writeDebugLine(
 
   debugLogFile.appendLine(line);
 
+  // Screen output only when LETTA_DEBUG is on
   if (isDebugEnabled()) {
     printDebugLine(line, level);
   }

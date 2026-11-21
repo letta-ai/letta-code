@@ -498,6 +498,7 @@ export interface BootstrapSessionStatePayload {
 
 export interface ListMessagesControlRequest {
   subtype: "list_messages";
+  /** Explicit conversation ID (e.g. "conv-123"). */
   conversation_id?: string;
   agent_id?: string;
   /** Cursor: return messages before this message ID. */

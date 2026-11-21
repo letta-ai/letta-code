@@ -606,6 +606,7 @@ export async function drainStreamWithResume(
         streamOtid,
       );
     } else {
+      // Fallback: timestamp-based run discovery.
       try {
         debugLog(
           "stream",

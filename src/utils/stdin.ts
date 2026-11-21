@@ -1,3 +1,4 @@
+/** Read all of the process's stdin as UTF-8 text. */
 export function readStdin(): Promise<string> {
   return new Promise((resolve, reject) => {
     let value = "";

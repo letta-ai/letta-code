@@ -556,6 +556,7 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
       setLlmConfig((prev: LlmConfig | null) =>
         prev ? ({ ...prev, reasoning_effort: next.effort } as LlmConfig) : prev,
       );
+      // Patch agentState.model_settings only when operating on agent defaults.
       if (!hasConversationModelOverrideRef.current) {
         reasoningCyclePatchedAgentStateRef.current = true;
         setAgentState((prev: AgentState | null | undefined) => {

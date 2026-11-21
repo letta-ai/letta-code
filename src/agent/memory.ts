@@ -3,8 +3,17 @@ import type { CreateBlock } from "@letta-ai/letta-client/resources/blocks/blocks
 import { READ_ONLY_BLOCK_LABELS } from "./memory-constants";
 import { MEMORY_PROMPTS } from "./prompt-assets";
 
+/**
+ * The memory block labels every standard (non-MemFS) agent is created with.
+ * Each maps to a `<label>.mdx` file in src/agent/prompts. Per-project blocks
+ * (skills/loaded_skills) were removed in LET-7353 — skills are now injected
+ * via system reminders, leaving only these defaults.
+ */
 export const MEMORY_BLOCK_LABELS = ["persona", "human"] as const;
 
+/**
+ * Block labels that should be read-only (agent cannot modify via memory tools).
+ */
 export { READ_ONLY_BLOCK_LABELS };
 
 export function parseMdxFrontmatter(content: string): {

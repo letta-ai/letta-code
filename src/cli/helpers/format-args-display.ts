@@ -1,3 +1,5 @@
+// Utility to format tool argument JSON strings into a concise display label
+// Copied from old letta-code repo to preserve exact formatting behavior
 
 import { relative } from "node:path";
 import { isRecord } from "@/utils/type-guards";
@@ -213,6 +215,7 @@ export function formatArgsDisplay(
               display = formatDisplayPath(patchInfo.path);
               return { display, parsed };
             }
+            // Fallback if parsing fails
             display = "…";
             return { display, parsed };
           }

@@ -1,3 +1,5 @@
+// src/permissions/types.ts
+// Types for Claude Code-compatible permission system
 
 import type { PermissionMode } from "./mode";
 

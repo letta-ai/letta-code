@@ -48,6 +48,7 @@ class MultiReadStdin extends EventEmitter {
     return this.queue.length > 0 ? (this.queue.shift() as string) : null;
   }
 
+  /** Deliver `chunks` so that `read()` yields them one at a time in one tick. */
   pushReads(chunks: string[]): void {
     this.queue.push(...chunks);
     this.emit("readable");

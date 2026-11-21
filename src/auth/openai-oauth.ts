@@ -120,6 +120,9 @@ export function generateCodeVerifier(): string {
   return base64UrlEncode(array);
 }
 
+/**
+ * Generate PKCE code challenge from verifier using SHA-256
+ */
 export async function generateCodeChallenge(verifier: string): Promise<string> {
   const encoder = new TextEncoder();
   const data = encoder.encode(verifier);

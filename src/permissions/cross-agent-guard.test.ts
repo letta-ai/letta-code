@@ -483,6 +483,15 @@ describe("checkPermission integration", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Regression tests: Grep / Glob ancestor-path bypass.
+//
+// The classifier used to require `<home>/.letta/agents/<id>/memory` to
+// match, so pointing Grep or Glob at `.letta/agents` (the tree root)
+// slipped through entirely — leaking file contents and enumerating every
+// agent on disk.
+// ---------------------------------------------------------------------------
+
 describe("Grep/Glob ancestor-path regression tests", () => {
   const agentsTreeRoot = join(HOME, ".letta", "agents");
 

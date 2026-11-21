@@ -1,3 +1,16 @@
+/**
+ * ChunkLog - Rolling log of the last N streaming chunks received by the client.
+ *
+ * Stores truncated chunks as JSONL on disk, organized per agent per session:
+ *   ~/.letta/logs/chunk-logs/{agent_id}/{session_id}.jsonl
+ *
+ * Metadata (message_type, ids, timestamps) is preserved fully;
+ * large content fields (reasoning, tool_return, arguments, etc.) are
+ * truncated to keep the file compact.
+ *
+ * Old session logs are garbage-collected: only the most recent N sessions
+ * per agent are kept on disk.
+ */
 
 import {
   existsSync,
@@ -23,6 +36,10 @@ function truncateStr(value: unknown, maxLen: number): string {
   return `${s.slice(0, maxLen)}...[truncated, was ${s.length}b]`;
 }
 
+/**
+ * Build a compact representation of a chunk, preserving all metadata but
+ * truncating large content fields.
+ */
 function truncateChunk(chunk: LettaStreamingResponse): Record<string, unknown> {
   const raw = chunk as Record<string, unknown>;
   const type = raw.message_type as string | undefined;
@@ -91,6 +108,11 @@ class ChunkLog {
   private agentDir: string | null = null;
   private dirCreated = false;
 
+  /**
+   * Initialize the chunk log for a specific agent + session.
+   * Must be called before append/flush will write to disk.
+   * Clears in-memory buffer and garbage-collects old session files.
+   */
   init(agentId: string, sessionId: string): void {
     this.agentDir = join(LOG_BASE_DIR, agentId);
     this.logPath = join(this.agentDir, `${sessionId}.jsonl`);

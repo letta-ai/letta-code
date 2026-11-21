@@ -77,14 +77,17 @@ def get_api_key_from_keychain() -> Optional[str]:
 
 def get_api_key() -> Optional[str]:
     """Get the Letta API key from keychain, environment, or settings."""
+    # Try macOS keychain first
     api_key = get_api_key_from_keychain()
     if api_key:
         return api_key
 
+    # Fall back to environment variable
     api_key = os.environ.get("LETTA_API_KEY")
     if api_key:
         return api_key
 
+    # Fall back to settings file
     settings = get_letta_settings()
     env_settings = settings.get("env", {})
     return env_settings.get("LETTA_API_KEY")

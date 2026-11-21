@@ -67,6 +67,7 @@ describe("auto-update ENOTEMPTY handling", () => {
       fs.mkdirSync(orphan1);
       fs.mkdirSync(orphan2);
 
+      // Create legitimate dirs (should NOT be removed)
       const legitimate = path.join(lettaAiDir, "letta-code");
       const otherPackage = path.join(lettaAiDir, "other-package");
       fs.mkdirSync(legitimate);
@@ -93,6 +94,7 @@ describe("auto-update ENOTEMPTY handling", () => {
       const nonExistent = path.join(testDir, "does/not/exist");
       const { readdir } = await import("node:fs/promises");
 
+      // This should not throw
       let error: NodeJS.ErrnoException | null = null;
       try {
         await readdir(nonExistent);

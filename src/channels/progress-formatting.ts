@@ -622,6 +622,7 @@ export function formatToolProgressDetails(
     return undefined;
   }
 
+  // Fallback: extract known preview fields from fragmented/incomplete JSON.
   if (isShellTool(summary.name)) {
     return formatFragmentedShellProgressDetails(summary);
   }

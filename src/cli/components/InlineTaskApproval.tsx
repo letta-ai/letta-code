@@ -226,6 +226,7 @@ export const InlineTaskApproval = memo(
             </Box>
           </Box>
 
+          {/* Option 2: Yes, always (only if persistence allowed) */}
           {allowPersistence && (
             <Box flexDirection="row">
               <Box width={5} flexShrink={0}>

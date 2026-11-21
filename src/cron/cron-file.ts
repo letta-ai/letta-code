@@ -1,3 +1,11 @@
+/**
+ * Persistent cron task storage backed by ~/.letta/crons.json.
+ * Provides CRUD operations with:
+ * - Atomic writes (temp file + rename)
+ * - mkdir-based advisory locking for read-modify-write cycles
+ * - Scheduler ownership lease (PID + random token)
+ * - Garbage collection for terminal tasks older than 24 hours
+ */
 
 import { randomBytes } from "node:crypto";
 import {
@@ -209,6 +217,7 @@ function writeLockOwner(lockDir: string, owner: LockOwner): void {
 function isLockStale(lockDir: string): boolean {
   const owner = readLockOwner(lockDir);
   if (!owner) {
+    // No owner file → consider stale if dir exists and is old
     try {
       const stat = statSync(lockDir);
       return Date.now() - stat.mtimeMs > LOCK_STALE_AGE_MS;
@@ -217,6 +226,7 @@ function isLockStale(lockDir: string): boolean {
     }
   }
 
+  // Steal only if PID is dead AND lock is older than threshold
   const pidDead = !isProcessAlive(owner.pid, owner);
   const isOld = Date.now() - owner.acquired_at > LOCK_STALE_AGE_MS;
   return pidDead && isOld;
@@ -268,6 +278,7 @@ export function acquireLock(): LockHandle {
     } catch (err: unknown) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === "EEXIST") {
+        // Lock held — check if stale
         if (isLockStale(lockDir)) {
           stealLock(lockDir);
           continue; // Retry immediately
@@ -350,6 +361,7 @@ export function computeJitter(
   const min = scheduledFor.getMinutes();
   if (min === 0 || min === 30) {
     const offset = -(simpleHash(taskId) % 90_000);
+    // Don't fire before creation time
     if (scheduledFor.getTime() + offset < createdAt.getTime()) return 0;
     return offset;
   }
@@ -419,6 +431,8 @@ export function addTask(input: AddTaskInput): AddTaskResult {
       prompt: input.prompt,
       status: "active",
       created_at: now.toISOString(),
+      // Recurring tasks do not auto-expire (expires_at: null)
+      // One-shot tasks also use null (handled by scheduled_for)
       expires_at: null,
       last_fired_at: null,
       fire_count: 0,

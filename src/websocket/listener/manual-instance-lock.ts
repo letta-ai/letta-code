@@ -49,6 +49,7 @@ interface ManualListenerLockDeps {
   isProcessAlive: (pid: number) => boolean;
   /** Epoch ms of the current OS boot, used to spot pids reused after reboot. */
   bootTimeMs: number;
+  /** Returns the pid's command line, or null when it cannot be determined. */
   getProcessCommand: (pid: number) => string | null;
   getOwnProcessStartTime: () => Promise<string | null>;
   getProcessStartTime: (pid: number) => Promise<string | null>;

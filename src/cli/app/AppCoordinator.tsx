@@ -841,6 +841,7 @@ export function App({
       tempModelOverrideRef.current = null;
     }
   }
+  // Full model handle for API calls (e.g., "anthropic/claude-sonnet-4-5-20251101")
   const [currentModelHandle, setCurrentModelHandle] = useState<string | null>(
     null,
   );
@@ -851,6 +852,8 @@ export function App({
   const agentName = agentState?.name ?? null;
   const [agentDescription, setAgentDescription] = useState<string | null>(null);
   const [agentLastRunAt, setAgentLastRunAt] = useState<string | null>(null);
+  // Prefer the currently-active model handle, then fall back to agent.model
+  // (canonical handle) and finally llm_config reconstruction.
   const currentModelLabel =
     tempModelOverride ||
     currentModelHandle ||
@@ -1054,6 +1057,7 @@ export function App({
       sessionStatsRef.current.getSnapshot(),
     );
 
+    // Cleanup on unmount (defensive, prevents potential memory leak)
     return () => {
       telemetry.setSessionStatsGetter(undefined);
     };
@@ -1312,6 +1316,7 @@ export function App({
     return () => clearTimeout(timer);
   }, [updateNotification]);
 
+  // Track committed ids to avoid duplicates
   const emittedIdsRef = useRef<Set<string>>(new Set());
 
   const welcomeCommittedRef = useRef(false);
@@ -1333,6 +1338,7 @@ export function App({
     tuiQueueRef.current = createTuiQueueRuntime(setQueueDisplay);
   }
 
+  // Override content parts for queued submissions (to preserve part boundaries)
   const overrideContentPartsRef = useRef<MessageCreate["content"] | null>(null);
 
   useEffect(() => {
@@ -1525,6 +1531,8 @@ export function App({
     },
     [currentModelHandle, currentToolsetPreference],
   );
+  // Non-null only when the previous turn was explicitly interrupted by the user.
+  // Used to gate recovery alert injection to true user-interrupt retries.
   const pendingInterruptRecoveryConversationIdRef = useRef<string | null>(null);
 
   // Epoch counter to force dequeue effect re-run when refs change but state doesn't.
@@ -2015,6 +2023,8 @@ export function App({
           }
           continue;
         }
+        // Handle Task tool_calls specially - track position but don't add individually
+        // (unless there's no subagent data, in which case commit as regular tool call)
         if (ln.kind === "tool_call" && ln.name && isTaskTool(ln.name)) {
           if (hasInProgress && ln.toolCallId) {
             const subagent = getSubagentByToolCallId(ln.toolCallId);
@@ -2203,6 +2213,8 @@ export function App({
     new Map(),
   );
 
+  // Track which approval tool call IDs have had their previews eagerly committed
+  // This prevents double-committing when the approval changes
   const eagerCommittedPreviewsRef = useRef<Set<string>>(new Set());
 
   const estimateApprovalPreviewLines = useCallback(
@@ -2767,6 +2779,7 @@ export function App({
 
       const fetchConfig = async () => {
         try {
+          // Use pre-loaded agent state if available, otherwise fetch
           const backend = getBackend();
           let agent: AgentState;
           if (initialAgentState && initialAgentState.id === agentId) {
@@ -3378,6 +3391,7 @@ export function App({
         const errMsg = err instanceof Error ? err.message : String(err);
         debugWarn("memfs-git", `Startup sync failed: ${errMsg}`);
         appendError(`Memory git sync failed: ${errMsg}`);
+        // Inject reminder so the agent also knows memory isn't synced
         pendingGitReminderRef.current = {
           dirty: false,
           aheadOfRemote: false,
@@ -3689,6 +3703,7 @@ export function App({
         },
       );
     } catch {
+      // Non-critical, don't fail the exit
     }
 
     await closeMcp();
@@ -3707,6 +3722,8 @@ export function App({
     currentModelProvider,
   ]);
 
+  // Queue edit: load all queued user messages into the input (joined with newlines),
+  // then clear them from the queue so the user can edit and re-submit as one message.
   const handleQueueEdit = useCallback((): string => {
     const userMessages = queueDisplay.filter((m) => m.kind === "user");
     if (userMessages.length === 0) return "";

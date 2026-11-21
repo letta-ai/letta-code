@@ -181,6 +181,7 @@ test("a fast retry that fails re-notifies without any render observing the in-fl
   expect(refailed.failures).toEqual([FAILURE("deploy check")]);
   expect(refailed.stops).toEqual([]);
 
+  // Same attempt never re-notifies.
   const stable = selectStopFailedNotifications(
     [
       {
@@ -322,15 +323,18 @@ test("scope switches never replay a failure and never drop a landed correction",
     stopOutcome: { attempt: 1, kind: "failed" as const },
   };
 
+  // Failure surfaces in conv-1.
   expect(
     selectStopFailedNotifications([liveFailure], seen, scopeA).failures,
   ).toEqual([FAILURE("deploy check")]);
 
+  // Switch to conv-2 and back: the still-live failure must not replay.
   selectStopFailedNotifications([liveFailure], seen, scopeB);
   expect(
     selectStopFailedNotifications([liveFailure], seen, scopeA).failures,
   ).toEqual([]);
 
+  // The retry lands while conv-2 is active: nothing is written there...
   const landedRow = {
     ...base,
     status: "error",
@@ -339,6 +343,7 @@ test("scope switches never replay a failure and never drop a landed correction",
   expect(
     selectStopFailedNotifications([landedRow], seen, scopeB).stops,
   ).toEqual([]);
+  // ...and returning to conv-1 emits the retained correction.
   expect(
     selectStopFailedNotifications([landedRow], seen, scopeA).stops,
   ).toEqual([STOPPED("deploy check")]);

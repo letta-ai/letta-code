@@ -289,6 +289,7 @@ export function ModelSelector({
       setError(err instanceof Error ? err.message : "Failed to load models");
       setIsLoading(false);
       setRefreshing(false);
+      // Fallback: show all models if API fails
       setAvailableHandles(null);
       setAllApiHandles([]);
       setProviderTypesByHandle(new Map());
@@ -476,6 +477,9 @@ export function ModelSelector({
     ],
   );
 
+  // Supported models: runtime catalog entries that are available
+  // Featured models first, then non-featured, preserving catalog order within each group
+  // If filterProvider is set, only show models from that provider
   const supportedModels = useMemo(() => {
     if (availableHandles === undefined) return [];
     let available = filterModelsByAvailabilityForSelector(
@@ -644,6 +648,7 @@ export function ModelSelector({
   // Discoverable local endpoint providers (Ollama, LM Studio, llama.cpp) may
   // not have preset entries, so include their live-discovered
   // handles here instead of hiding them until the user switches to "All".
+  // Filter out letta/letta-free legacy model
   const serverRecommendedModels = useMemo(() => {
     if (!backendModelCatalog || availableHandles === undefined) return [];
     let available = allApiHandles
@@ -683,6 +688,8 @@ export function ModelSelector({
     serviceTierForModel,
   ]);
 
+  // Server-all models: ALL handles from the server (for self-hosted)
+  // Filter out letta/letta-free legacy model
   const serverAllModels = useMemo(() => {
     if (!backendModelCatalog) return [];
     const handles = allApiHandles.filter((h) => h !== "letta/letta-free");
@@ -908,6 +915,7 @@ export function ModelSelector({
         return;
       }
 
+      // Handle ESC: clear search first if active, otherwise cancel
       if (key.escape) {
         if (searchQuery) {
           setSearchQuery("");

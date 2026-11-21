@@ -20,6 +20,10 @@ export type ClipboardImageResult =
   | { error: string }
   | null;
 
+/**
+ * Copy text to system clipboard
+ * Returns true if successful, false otherwise
+ */
 export function copyToClipboard(text: string): boolean {
   try {
     if (process.platform === "darwin") {

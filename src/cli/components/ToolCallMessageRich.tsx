@@ -91,6 +91,16 @@ type ToolCallLine = {
   streaming?: StreamingState;
 };
 
+/**
+ * ToolCallMessageRich - Rich formatting version with old layout logic
+ * This preserves the exact wrapping and spacing logic from the old codebase
+ *
+ * Features:
+ * - Two-column layout for tool calls (2 chars for dot)
+ * - Smart wrapping that keeps function name and args together when possible
+ * - Blinking dots for pending/running states
+ * - Result shown with └ prefix underneath
+ */
 export const ToolCallMessage = memo(
   ({
     line,
@@ -556,6 +566,8 @@ export const ToolCallMessage = memo(
               );
             }
 
+            // Fallback to simple renderers when no precomputed diff
+            // Single edit: has old_string/new_string
             if (parsedArgs.old_string !== undefined) {
               return (
                 <EditRenderer

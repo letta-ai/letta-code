@@ -347,6 +347,7 @@ export function addToolCall(
   const agent = store.agents.get(subagentId);
   if (!agent) return;
 
+  // Don't add duplicates
   if (agent.toolCalls.some((tc) => tc.id === toolCallId)) return;
 
   // Create a new object to ensure React.memo detects the change
@@ -700,6 +701,13 @@ export function hasStopFailedSubagents(scope?: {
   return false;
 }
 
+// ============================================================================
+// React Integration (useSyncExternalStore compatible)
+// ============================================================================
+
+/**
+ * Subscribe to store changes
+ */
 export function subscribe(listener: () => void): () => void {
   store.listeners.add(listener);
   return () => {

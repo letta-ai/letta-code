@@ -122,6 +122,10 @@ export function calculateLuminance(r: number, g: number, b: number): number {
   return 0.2126 * rLin + 0.7152 * gLin + 0.0722 * bLin;
 }
 
+/**
+ * Detect terminal theme using OSC 11 query.
+ * Falls back to COLORFGBG env var, then defaults to dark.
+ */
 export async function detectTerminalThemeAsync(): Promise<TerminalTheme> {
   const bg = await queryTerminalBackground(100);
   if (bg) {
@@ -132,6 +136,7 @@ export async function detectTerminalThemeAsync(): Promise<TerminalTheme> {
     return luminance > 0.4 ? "light" : "dark";
   }
 
+  // Fall back to COLORFGBG env var
   const colorfgbg = process.env.COLORFGBG;
   if (colorfgbg) {
     const parts = colorfgbg.split(";");

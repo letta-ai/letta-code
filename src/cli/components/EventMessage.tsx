@@ -79,6 +79,7 @@ export const EventMessage = memo(({ line }: { line: EventLine }) => {
         </Box>
       </Box>
 
+      {/* Result section (only when finished and LETTA_DEBUG is enabled) */}
       {/* By default, hide the verbose summary to avoid overwhelming users */}
       {!isRunning &&
         line.summary &&

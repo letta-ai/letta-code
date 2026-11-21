@@ -38,6 +38,7 @@ export function findCursorLine(
       return { lineIndex: i, column: cursorPos - line.start };
     }
   }
+  // Fallback to last line
   const lastLine = visualLines[visualLines.length - 1];
   return {
     lineIndex: visualLines.length - 1,

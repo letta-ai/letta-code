@@ -10,6 +10,7 @@ export interface CreateSlackMessageActionAdapterOptions {
   uploadFile?: boolean;
   resolveMessageTarget?: ChannelMessageActionAdapter["resolveMessageTarget"];
   downloadFile?: (context: ChannelMessageActionContext) => Promise<string>;
+  /** Advertise binding actions only when the executor's host provides them. */
   bindings?: boolean;
 }
 

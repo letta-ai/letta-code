@@ -1115,6 +1115,7 @@ export function Input({
     [releaseDiscardedDraftPlaceholders],
   );
 
+  // Restore input from error (only if current value is empty)
   useEffect(() => {
     if (restoredInput && value === "") {
       setValue(restoredInput);
@@ -1290,6 +1291,7 @@ export function Input({
     if (onEscapeCancel) return;
 
     if (key.escape) {
+      // When bash command running, use Esc to interrupt (LET-7199)
       if (bashRunning && onBashInterrupt) {
         onBashInterrupt();
         return;
@@ -1427,6 +1429,7 @@ export function Input({
         visualLines,
       );
 
+      // Use preferred column if set (for sticky column behavior), otherwise current column
       const targetColumn = preferredColumn ?? column;
 
       if (key.upArrow) {
@@ -1470,6 +1473,7 @@ export function Input({
           return;
         }
 
+        // Otherwise, trigger history navigation
         if (history.length === 0) return;
 
         setAtStartBoundary(false); // Reset for next time
@@ -1560,6 +1564,7 @@ export function Input({
   }, []);
 
   const handleSubmit = useCallback(async () => {
+    // Don't submit if autocomplete is active with matches
     if (isAutocompleteActive) {
       return;
     }
@@ -1569,6 +1574,7 @@ export function Input({
     if (isBashMode) {
       if (!previousValue.trim()) return;
 
+      // Input locking - don't accept new commands while one is running (LET-7199)
       if (bashRunning) return;
 
       setHistory((prev) => appendInputHistory(prev, previousValue));

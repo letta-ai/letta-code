@@ -223,6 +223,7 @@ export async function buildCreateAgentRequest(
   };
 }
 
+/** Compatibility wrapper for callers that create a personality agent. */
 export async function buildCreateAgentRequestForPersonality(params: {
   personalityId: PersonalityId;
   name?: string;

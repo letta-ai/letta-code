@@ -21,6 +21,10 @@ interface JsonSchema {
   [key: string]: unknown;
 }
 
+/**
+ * Validates that parameter values match their expected types from the JSON schema.
+ * Throws a clear error if types don't match.
+ */
 export function validateParamTypes(
   args: Record<string, unknown>,
   schema: JsonSchema,

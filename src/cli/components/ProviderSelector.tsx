@@ -556,6 +556,7 @@ export function ProviderSelector({
     if (viewState.type !== "multiInput") return;
 
     const { provider, authMethod } = viewState;
+    // Get fields from authMethod if present, otherwise from provider
     const fields: ProviderField[] | undefined =
       authMethod?.fields ||
       ("fields" in provider ? (provider.fields as ProviderField[]) : undefined);
@@ -817,6 +818,7 @@ export function ProviderSelector({
         }
       }
     } else if (viewState.type === "multiInput") {
+      // Get fields from authMethod if present, otherwise from provider
       const fields: ProviderField[] | undefined =
         viewState.authMethod?.fields ||
         ("fields" in viewState.provider
@@ -827,6 +829,7 @@ export function ProviderSelector({
       if (!currentField) return;
 
       if (key.escape) {
+        // Back to method select if provider has authMethods, otherwise back to list
         if (
           "authMethods" in viewState.provider &&
           viewState.provider.authMethods
@@ -1296,6 +1299,7 @@ export function ProviderSelector({
     if (viewState.type !== "multiInput") return null;
 
     const { provider, authMethod } = viewState;
+    // Get fields from authMethod if present, otherwise from provider
     const fields: ProviderField[] | undefined =
       authMethod?.fields ||
       ("fields" in provider ? (provider.fields as ProviderField[]) : undefined);

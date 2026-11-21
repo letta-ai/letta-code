@@ -390,6 +390,8 @@ export function getShellEnv(): NodeJS.ProcessEnv {
     delete env[ACTING_USER_ID_ENV];
   }
 
+  // Add Letta context for skill scripts.
+  // Prefer explicit agent context, but fall back to inherited env values.
   let agentId: string | undefined;
   try {
     const resolvedAgentId = getCurrentAgentId();

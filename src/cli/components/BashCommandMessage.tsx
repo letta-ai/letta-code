@@ -61,6 +61,7 @@ export const BashCommandMessage = memo(
         {line.phase === "finished" &&
           line.output &&
           (line.output === INTERRUPTED_BY_USER ? (
+            // Red styling for interrupted commands (LET-7199)
             <Box flexDirection="row">
               <Box width={5} flexShrink={0}>
                 <Text>{`  ${CLI_GLYPHS.result}  `}</Text>
@@ -71,6 +72,7 @@ export const BashCommandMessage = memo(
             <CollapsedOutputDisplay output={line.output} maxLines={Infinity} />
           ))}
 
+        {/* Fallback: show output when phase is undefined (legacy bash commands before streaming) */}
         {!line.phase && line.output && (
           <Box flexDirection="row">
             <Box width={5} flexShrink={0}>

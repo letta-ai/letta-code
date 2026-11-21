@@ -436,6 +436,7 @@ export function ConversationSelector({
           setLoading(false);
         }
 
+        // Phase 2: enrich visible page first, then rest in background
         const toEnrich = nonEmptyList.filter((c) => !c.enriched);
         setEnriching(toEnrich.length > 0);
         const firstPageItems = toEnrich.slice(0, MAX_DISPLAY_PAGE_SIZE);
@@ -667,6 +668,8 @@ export function ConversationSelector({
       createdAt: conv.created_at,
     });
 
+    // Build preview content: (1) summary if exists, (2) preview lines, (3) message count fallback
+    // Uses L-bracket indentation style for visual hierarchy
     const renderPreview = () => {
       const bracket = <Text dimColor>{`${CLI_GLYPHS.result}  `}</Text>;
       const indent = "   "; // Same width as "└  " for alignment
@@ -714,6 +717,7 @@ export function ConversationSelector({
         );
       }
 
+      // Priority 3: Message count fallback
       if (messageCount > 0) {
         return (
           <Box flexDirection="row" marginLeft={2}>

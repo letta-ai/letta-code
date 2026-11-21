@@ -324,6 +324,7 @@ describe("cronMatchesTime", () => {
     expect(cronMatchesTime("30 22 * * *", utcDate, "UTC")).toBe(true);
     expect(cronMatchesTime("30 15 * * *", utcDate, "UTC")).toBe(false);
 
+    // In America/Los_Angeles (PDT, UTC-7), 22:30 UTC = 15:30 local
     expect(cronMatchesTime("30 15 * * *", utcDate, "America/Los_Angeles")).toBe(
       true,
     );
@@ -370,6 +371,7 @@ describe("cronMatchesTime", () => {
 
   test("invalid timezone falls back to local time", () => {
     const date = new Date("2026-03-26T14:30:00");
+    // Invalid timezone should not throw, should match same as no timezone
     expect(cronMatchesTime("30 14 * * *", date, "Invalid/Timezone")).toBe(
       cronMatchesTime("30 14 * * *", date),
     );

@@ -653,6 +653,8 @@ describe("FakeHeadlessBackend", () => {
       agent_id: "agent-fake-headless",
     });
 
+    // Run a turn that ends with a tool call (requires_approval), then do NOT
+    // send a tool result — leave the tool call orphaned.
     await collect(
       await backend.createConversationMessageStream(conversation.id, {
         agent_id: "agent-fake-headless",

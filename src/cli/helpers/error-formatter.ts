@@ -171,6 +171,7 @@ function getErrorReasons(e: APIError): string[] {
     }
   }
 
+  // Fallback: infer known reasons from message text.
   const message = e.message?.toLowerCase() ?? "";
   for (const knownReason of [
     "not-enough-credits",
@@ -222,6 +223,10 @@ function getReasonText(e: APIError): string | undefined {
   return undefined;
 }
 
+/**
+ * Check if the error is a rate limit error (429 with exceeded-quota)
+ * Returns the timeToQuotaResetMs if it's a rate limit error, undefined otherwise
+ */
 function getRateLimitResetMs(e: APIError): number | undefined {
   if (e.status !== 429) return undefined;
 
@@ -398,6 +403,10 @@ function formatResetTime(ms: number): string {
   return `Resets at ${timeStr} (${durationStr})`;
 }
 
+/**
+ * Check if the error is a resource limit error (402 with "You have reached your limit for X")
+ * Returns the error message if it matches, undefined otherwise
+ */
 function getResourceLimitMessage(e: APIError): string | undefined {
   if (e.status !== 402) return undefined;
 
@@ -814,6 +823,7 @@ export function formatErrorDetails(
         : baseError;
     }
 
+    // Fallback for APIError with just message
     return fallback(e.message);
   }
 
@@ -821,6 +831,7 @@ export function formatErrorDetails(
     return fallback(e.message);
   }
 
+  // Fallback for any other type (e.g., plain objects thrown by SDK or other code)
   if (typeof e === "object" && e !== null) {
     const obj = e as Record<string, unknown>;
 

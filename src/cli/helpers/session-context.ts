@@ -203,6 +203,7 @@ ${gitInfo.status}
 `;
     }
 
+    // Add Windows-specific shell guidance
     if (currentPlatform === "win32") {
       context += buildWindowsShellNotes(options?.shellContext);
     }

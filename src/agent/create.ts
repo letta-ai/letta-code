@@ -279,6 +279,12 @@ export async function createAgent(
   // NOT attached to the agent. This is the new pattern - no more stub tool registration.
   const toolNames = options.baseTools;
 
+  // Determine which memory blocks to use:
+  // 1. If options.memoryBlocks is provided, use those (custom blocks and/or block references)
+  // 2. Subagents are ephemeral and get no memory blocks.
+  // 3. Otherwise, use the default blocks.
+
+  // Separate block references from blocks to create
   const referencedBlockIds: string[] = [];
   let filteredMemoryBlocks: Array<{
     label: string;

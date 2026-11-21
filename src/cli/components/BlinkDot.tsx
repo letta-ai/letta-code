@@ -27,6 +27,7 @@ export const BlinkDot = memo(
   }) => {
     const { shouldAnimate: shouldAnimateContext } = useAnimation();
 
+    // Prop takes precedence if explicitly set to false, otherwise use context
     const shouldAnimate =
       shouldAnimateProp === false ? false : shouldAnimateContext;
 

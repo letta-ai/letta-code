@@ -134,6 +134,7 @@ export function matchesFilePattern(
     return false;
   }
   const queryTool = toolForMatch(queryMatch[1], options);
+  // Normalize path separators for cross-platform compatibility
   const filePath = normalizePath(queryMatch[2]);
 
   const patternMatch = pattern.match(/^([^(]+)\(([\s\S]+)\)$/);
@@ -148,8 +149,10 @@ export function matchesFilePattern(
   if (!patternTool) {
     return false;
   }
+  // Normalize path separators for cross-platform compatibility
   let globPattern = normalizePath(patternMatch[2]);
 
+  // Tool names must match
   if (queryTool !== patternTool) {
     return false;
   }
@@ -276,6 +279,7 @@ export function matchesBashPattern(
     );
   }
 
+  // Exact match (try both raw and extracted, canonicalized and legacy)
   return commandCandidates.some(
     (candidate) =>
       candidate === commandPattern || candidate === legacyCommandPattern,

@@ -1,3 +1,11 @@
+// Parsing of a subagent's headless `--output-format stream-json` output: the
+// per-line event handlers, the streaming state they mutate, and the final
+// result parsed from stdout.
+//
+// Extracted from `manager.ts`. `executeSubagent` owns an `ExecutionState`,
+// feeds each stdout line to `processStreamEvent`, and falls back to
+// `parseResultFromStdout`. These helpers depend only on lower-level state/URL
+// helpers and the shared `SubagentResult` type — never back on the manager.
 
 import {
   addToolCall,

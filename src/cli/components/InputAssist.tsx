@@ -24,6 +24,12 @@ interface InputAssistProps {
   modCommands?: Record<string, ModCommandAutocompleteItem>;
 }
 
+/**
+ * Shows contextual assistance below the input:
+ * - File autocomplete when "@" is detected
+ * - Slash command autocomplete when "/" is detected
+ * - Nothing otherwise
+ */
 export function InputAssist({
   currentInput,
   cursorPosition,

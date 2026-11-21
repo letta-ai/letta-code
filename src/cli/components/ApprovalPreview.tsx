@@ -258,6 +258,7 @@ export const ApprovalPreview = memo(
       }
     }
 
+    // Generic fallback
     return (
       <Box flexDirection="column">
         <Text dimColor>{solidLine}</Text>

@@ -24,6 +24,7 @@ function getRipgrepPath(): string {
     const rgPackage = require("@vscode/ripgrep");
     return rgPackage.rgPath;
   } catch (_error) {
+    // Fallback to a system ripgrep in PATH.
     return "rg";
   }
 }

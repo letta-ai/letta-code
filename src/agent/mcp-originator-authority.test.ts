@@ -212,6 +212,7 @@ describe("durability", () => {
       resetMcpOriginatorAuthority();
       expect(mcpOriginatorAuthorityAllows("run-old", undefined)).toBe(true);
       expect(readMcpOriginatorAuthorityForTests("run-old")).toBeUndefined();
+      // A pruned file is rewritten without the stale record on next touch.
       noteMcpOriginatorDelivery("run-new", 1);
       const file = JSON.parse(readFileSync(path, "utf8")) as {
         records: Record<string, unknown>;
@@ -655,6 +656,7 @@ describe("durable retirement retry (evil-shub round-8 P1)", () => {
       expect(disk.records["run-a"]?.state).toBe("headerless");
       expect(disk.records["run-a"]?.floor).toBe(1);
 
+      // A reload (process restart) preserves the boundary fail-closed.
       resetMcpOriginatorAuthority();
       expect(admitMcpOriginatorDelivery("run-a", 2)).toEqual({
         admitted: false,

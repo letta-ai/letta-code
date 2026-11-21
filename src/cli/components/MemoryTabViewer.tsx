@@ -56,6 +56,7 @@ export function MemoryTabViewer({
         setFreshBlocks(agent.memory?.blocks || []);
       } catch (error) {
         debugLog("memory-tab", "Failed to fetch memory blocks: %O", error);
+        // Fall back to passed-in blocks if fetch fails
         setFreshBlocks(blocks);
       } finally {
         setIsLoading(false);
@@ -65,6 +66,7 @@ export function MemoryTabViewer({
     fetchBlocks();
   }, [agentId, blocks]);
 
+  // Use fresh blocks if available, otherwise fall back to passed-in blocks
   const displayBlocks = freshBlocks ?? blocks;
 
   const currentBlock = displayBlocks[selectedTabIndex];

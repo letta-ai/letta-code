@@ -119,6 +119,7 @@ export function loadRemoteSettings(): RemoteSettings {
       loaded = parsed;
     }
   } catch {
+    // Silently fall back to empty settings.
   }
 
   let repairedCwdMap = false;
@@ -141,6 +142,7 @@ export function loadRemoteSettings(): RemoteSettings {
     loaded.cwdMap = validCwdMap;
   }
 
+  // One-time migration: load legacy cwd-cache.json if cwdMap not present.
   if (!loaded.cwdMap) {
     loaded.cwdMap = loadLegacyCwdCache();
     migratedLegacyCwdMap = true;

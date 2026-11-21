@@ -43,6 +43,9 @@ import type {
 } from "./types";
 import { evaluateWorkspaceSandboxGuard } from "./workspace-sandbox";
 
+/**
+ * Tools that don't require approval within working directory
+ */
 const WORKING_DIRECTORY_TOOLS = [
   "Read",
   "Glob",

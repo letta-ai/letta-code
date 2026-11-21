@@ -194,6 +194,10 @@ async function runLazyRecoveryTest(timeoutMs = 300000): Promise<{
           return;
         }
 
+        // Step 2: A tool_call_message signals a tool was invoked. Approval-flow
+        // chunks are no longer emitted, so this is the canonical point to inject
+        // the concurrent user message. A real pending approval (control_request)
+        // is handled separately above.
         if (
           msg.type === "message" &&
           msg.message_type === "tool_call_message" &&
@@ -209,6 +213,7 @@ async function runLazyRecoveryTest(timeoutMs = 300000): Promise<{
               ? (toolCall as { tool_call_id?: string }).tool_call_id
               : undefined;
 
+          // Send the concurrent user message now (mid-turn).
           if (!interruptSent) {
             interruptSent = true;
             const userMsg = JSON.stringify({
@@ -250,6 +255,8 @@ async function runLazyRecoveryTest(timeoutMs = 300000): Promise<{
             return;
           }
 
+          // One completed turn is enough once we have confirmed
+          // approval flow + concurrent user message injection.
           if (
             resultCount >= 1 &&
             approvalSeen &&

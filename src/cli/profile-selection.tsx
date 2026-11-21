@@ -181,6 +181,7 @@ function ProfileSelectionUI({
         }
       }
 
+      // Fresh repo / invalid pins fallback: show recent agents from the active backend(s)
       if (fetchedOptions.length === 0) {
         const recentAgents = await getRecentAgentOptions({
           includeLocal: false,
@@ -213,6 +214,7 @@ function ProfileSelectionUI({
   const hasMore = options.length > MAX_DISPLAY;
   const totalItems = displayOptions.length + 1 + (hasMore && !showAll ? 1 : 0);
 
+  // Model selection - filter out legacy models and apply search
   const allServerModels =
     serverModelsForNewAgent?.filter((h) => h !== "letta/letta-free") ?? [];
   const showModelSearch = allServerModels.length > MODEL_SEARCH_THRESHOLD;

@@ -61,6 +61,9 @@ export function setAgentContext(
   }
 }
 
+/**
+ * Set the current agent ID in context (simplified version for compatibility)
+ */
 export function setCurrentAgentId(agentId: string | null): void {
   const agentChanged = context.agentId !== agentId;
   context.agentId = agentId;

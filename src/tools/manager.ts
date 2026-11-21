@@ -1261,6 +1261,7 @@ function injectSubagentsIntoTaskDescription(
   const usageIndex = baseDescription.indexOf(usageMarker);
 
   if (usageIndex === -1) {
+    // Fallback: append at the end
     return `${baseDescription}\n\n## Available Agents\n\n${agentsSection}`;
   }
 
@@ -1283,6 +1284,7 @@ export function clipToolReturn(
     return text;
   }
 
+  // First apply character limit to avoid extremely long text
   let clipped = text;
   if (text.length > maxChars) {
     clipped = text.slice(0, maxChars);

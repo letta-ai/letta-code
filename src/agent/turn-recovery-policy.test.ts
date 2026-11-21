@@ -193,6 +193,8 @@ describe("getPreStreamErrorAction", () => {
     ).toBe("rethrow");
   });
 
+  // Parity: TUI and headless both pass the same (detail, retries, max) triple
+  // to this function — verifying the action is deterministic from those inputs.
   test("same inputs always produce same action (determinism)", () => {
     const detail =
       "CONFLICT: Cannot send a new message: The agent is waiting for approval on a tool call.";
@@ -390,6 +392,7 @@ describe("provider detail retry helpers", () => {
         detail: "rate limited",
       }),
     ).toBe(true);
+    // Non-recoverable 429: agents-limit-exceeded should NOT retry
     expect(
       shouldRetryPreStreamTransientError({
         status: 429,
@@ -619,6 +622,8 @@ describe("extractConflictDetail", () => {
   });
 });
 
+// ── Stale approval payload rewrite ──────────────────────────────────
+
 describe("rebuildInputWithFreshDenials", () => {
   const userMsg = {
     type: "message" as const,
@@ -795,6 +800,8 @@ describe("shouldAttemptApprovalRecovery", () => {
     expect(tuiResult).toBe(headlessResult);
   });
 });
+
+// ── Empty response error detection (LET-7679) ────────────────────────
 
 describe("isEmptyResponseError", () => {
   test("detects empty content in response", () => {

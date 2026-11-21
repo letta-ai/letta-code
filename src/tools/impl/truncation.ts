@@ -1,3 +1,8 @@
+/**
+ * Centralized truncation utilities for tool outputs.
+ * Implements limits similar to Claude Code to prevent excessive token usage.
+ * When outputs exceed limits, full content can be written to overflow files.
+ */
 
 import { debugLog } from "@/utils/debug.js";
 import { OVERFLOW_CONFIG, writeOverflowFile } from "./overflow.js";

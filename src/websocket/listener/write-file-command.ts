@@ -85,5 +85,6 @@ export async function writeUtf8FileViaTools(
         new_string: content,
       });
     }
+    // else: content unchanged -- no-op, still respond success below
   }
 }

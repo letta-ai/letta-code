@@ -399,6 +399,7 @@ export function MessageSearch({
     [fetchAndCacheSearchResults, getCacheKey, prefetchSearchResults],
   );
 
+  // Submit search (only when query changes)
   const submitSearch = useCallback(() => {
     if (searchInput.trim() && searchInput !== activeQuery) {
       setActiveQuery(searchInput);
@@ -479,6 +480,7 @@ export function MessageSearch({
       if (searchInput.trim() && searchInput !== activeQuery) {
         submitSearch();
       } else if (results.length > 0 && results[selectedIndex]) {
+        // Otherwise expand the selected result
         setExpandedMessage(results[selectedIndex]);
       }
     } else if (key.backspace || key.delete) {
@@ -690,6 +692,7 @@ export function MessageSearch({
                 availableWidth,
               );
 
+              // Show conversation_id if exists, otherwise agent_id
               const idToShow = conversationIdFromMsg || agentIdFromMsg;
 
               // Use message id + index for guaranteed uniqueness (search can return same message multiple times)

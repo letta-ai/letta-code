@@ -71,6 +71,7 @@ async function copyToResolved(srcRel, targetSpecifier) {
           const itRoot = dirname(itPkgPath);
           dest = join(itRoot, "build", "index.js");
         } catch {
+          // Final fallback
           dest = join(
             pkgRoot,
             "node_modules",

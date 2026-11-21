@@ -1,3 +1,12 @@
+/**
+ * Tests for pending approval recovery semantics (reconnect scenario).
+ *
+ * Covers:
+ * 1. Cold-start recovery: empty batch map → synthetic batch ID generated.
+ * 2. Warm recovery: existing batch map entries → resolved to single batch ID.
+ * 3. Ambiguous mapping: conflicting batch IDs → fail-closed (null).
+ * 4. Idempotency: repeated resolve calls with same state → same behavior.
+ */
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   __testOverrideLoadPendingControlRequestStore,
@@ -101,6 +110,7 @@ describe("resolveRecoveryBatchId warm path", () => {
       "batch-1",
     );
 
+    // call-2 has no mapping
     const batchId = resolveRecoveryBatchId(runtime, [
       { toolCallId: "call-1" },
       { toolCallId: "call-2" },

@@ -48,6 +48,7 @@ type TaskAgentSelection =
   | { kind: "external"; type: ExternalCodingAgentType }
   | { kind: "letta"; subagentType: string };
 
+/** Resolve a preset first, otherwise the explicitly selected runner and context. */
 export function resolveTaskAgentSelection(args: {
   harness?: unknown;
   subagent_type?: unknown;

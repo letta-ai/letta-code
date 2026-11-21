@@ -78,6 +78,7 @@ const HOOK_EVENTS: { event: HookEvent; description: string }[] = [
   { event: "SessionEnd", description: "When a session ends" },
 ];
 
+// Fallback tool names if agent tools can't be fetched
 const FALLBACK_TOOL_NAMES = [
   "Task",
   "Bash",

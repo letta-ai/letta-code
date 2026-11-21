@@ -218,6 +218,7 @@ export interface VerdictInput {
   parse_error: boolean;
 }
 
+/** Decide which verdict best describes the upstream change set. */
 export function decideVerdict(input: VerdictInput): Verdict {
   if (input.parse_error) return "manual review required";
   if (!input.models_diff) return "manual review required";

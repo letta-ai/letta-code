@@ -103,6 +103,7 @@ export function resolveStartupTarget(
     return { action: "select" };
   }
 
+  // Step 4: Global LRU (directory-switching fallback)
   // Do NOT restore global conversation — keep conversations project-scoped
   if (input.globalAgentId && input.globalAgentExists) {
     return {

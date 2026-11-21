@@ -367,6 +367,10 @@ async function parseSkillFile(
 
   const { frontmatter, body } = parseFrontmatter(content);
 
+  // Derive the legacy fallback ID from the directory structure relative to root.
+  // E.g., .skills/data-analysis/SKILL.MD -> "data-analysis"
+  // E.g., .skills/web/scraper/SKILL.MD -> "web/scraper"
+  // Normalize rootPath to not have trailing slash
   const normalizedRoot = rootPath.endsWith("/")
     ? rootPath.slice(0, -1)
     : rootPath;

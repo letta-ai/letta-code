@@ -425,6 +425,11 @@ async function readWorktreeIncludeEntries(
   }
 }
 
+/**
+ * Copies a gitignored file or directory (relative to the repo root) from the
+ * primary checkout into the worktree. Symlinks are skipped and `.git` is never
+ * descended into.
+ */
 async function copyPathIntoWorktree(
   primaryRoot: string,
   worktreePath: string,
@@ -545,6 +550,11 @@ export async function provisionWorktree(params: {
   return { notes, linkedDependencies };
 }
 
+/**
+ * Switches the active session/conversation working directory to `worktreePath`,
+ * using the listener-aware path when a runtime is attached and falling back to
+ * a plain process chdir otherwise. Shared by the create and enter flows.
+ */
 export async function switchSessionToWorktree(params: {
   worktreePath: string;
   shouldSwitchCwd: boolean;
@@ -571,6 +581,7 @@ export async function switchSessionToWorktree(params: {
 // `@/utils/worktree-lock`; the helpers here add git-dir resolution,
 // runtime-context ownership, and the user-facing conflict message.
 
+/** Resolves the per-worktree git admin directory, or null if it cannot. */
 export async function resolveWorktreeGitDir(
   worktreePath: string,
 ): Promise<string | null> {
@@ -713,6 +724,12 @@ async function listRegisteredWorktrees(
   return entries;
 }
 
+/**
+ * Switches the session into an existing worktree. Validation-only: the target
+ * must be a registered, non-prunable linked worktree of this repository, living
+ * under the managed `.letta/worktrees/` directory. Does not create or
+ * re-provision anything.
+ */
 async function enterExistingWorktree(params: {
   args: EnterWorktreeArgs;
   requestedPath: string;

@@ -371,6 +371,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
         autoDeniedSnapshot,
       );
       try {
+        // Don't send results if user has already cancelled
         if (
           userCancelledRef.current ||
           abortControllerRef.current?.signal.aborted

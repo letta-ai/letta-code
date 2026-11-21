@@ -34,6 +34,7 @@ export function detectTerminalType(): TerminalType {
   if (termProgram === "cursor") return "cursor";
   if (termProgram === "windsurf") return "windsurf";
 
+  // Fallback checks
   if (process.env.VSCODE_INJECTION === "1") return "vscode";
 
   return null;
@@ -43,6 +44,9 @@ export function isVSCodeLikeTerminal(): boolean {
   return detectTerminalType() !== null;
 }
 
+/**
+ * Get platform-specific path to keybindings.json
+ */
 export function getKeybindingsPath(terminal: TerminalType): string | null {
   if (!terminal) return null;
 

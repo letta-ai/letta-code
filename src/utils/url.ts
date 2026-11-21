@@ -13,6 +13,7 @@ export function parseUrl(
       return parsed;
     }
   } catch {
+    // Fall through to optional http:// fallback below.
   }
 
   if (!options.allowMissingProtocol) {

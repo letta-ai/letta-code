@@ -16,6 +16,14 @@ export type ListMessagesRoute = {
   agentId?: string;
 };
 
+/**
+ * Resolve which Letta API endpoint to call for a list_messages request.
+ *
+ * @param listReq      The inbound control request (partial — only conv/agent id used)
+ * @param sessionConvId  The session's current conversationId (already resolved
+ *                       at session init, either "default" or a real conv id)
+ * @param sessionAgentId The session's agentId (fallback when using agents path)
+ */
 export function resolveListMessagesRoute(
   listReq: Pick<ListMessagesControlRequest, "conversation_id" | "agent_id">,
   sessionConvId: string,

@@ -54,6 +54,7 @@ export function aliasBareExitCommand(input: string): string {
   return input;
 }
 
+// Check if a command is interactive (opens overlay, should not be queued)
 export function isInteractiveCommand(msg: string): boolean {
   const trimmed = msg.trim().toLowerCase();
   if (INTERACTIVE_SLASH_COMMANDS.has(trimmed)) return true;

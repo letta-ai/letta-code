@@ -108,6 +108,7 @@ export function normalizeCredentialBaseUrl(serverUrl: string): string {
     const parsed = new URL(trimmed);
     return parsed.origin;
   } catch {
+    // Fall back to a conservative slash-trimmed value if URL parsing fails.
     return trimmed;
   }
 }

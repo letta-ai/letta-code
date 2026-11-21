@@ -63,6 +63,10 @@ export function formatZaiError(code: number, message: string): string {
   return `Z.ai error (${code}): ${message}`;
 }
 
+/**
+ * Check if an error string contains a Z.ai error. If so, return a formatted
+ * user-friendly message; otherwise return undefined.
+ */
 export function checkZaiError(errorText: string): string | undefined {
   const parsed = parseZaiError(errorText);
   if (!parsed) return undefined;

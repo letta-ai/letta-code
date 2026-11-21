@@ -50,6 +50,7 @@ describe("headless subagent stdout loss", () => {
     expect(summary.code, formatSummary(summary)).toBe(0);
     // Exactly one retry: the isRetry guard must prevent further respawns.
     expect(summary.spawnArgvs, formatSummary(summary)).toHaveLength(2);
+    // The retry must preserve the original spawn arguments verbatim.
     expect(summary.spawnArgvs[1]).toEqual(summary.spawnArgvs[0]);
     expect(summary.taskOutput, formatSummary(summary)).toContain(
       "SUBAGENT-REPORT-OK",

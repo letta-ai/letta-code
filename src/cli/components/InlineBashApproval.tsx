@@ -162,6 +162,7 @@ export const InlineBashApproval = memo(
 
     return (
       <Box flexDirection="column">
+        {/* Static command content - memoized to prevent re-render on keystroke */}
         {showPreview && memoizedCommandContent}
 
         <Box marginTop={optionsMarginTop} flexDirection="column">
@@ -187,6 +188,7 @@ export const InlineBashApproval = memo(
             </Box>
           </Box>
 
+          {/* Option 2: Yes, always (only if persistence allowed) */}
           {allowPersistence && (
             <Box flexDirection="row">
               <Box width={5} flexShrink={0}>

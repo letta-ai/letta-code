@@ -397,6 +397,7 @@ test("source steering does not merge sources from a new turn into an active turn
     makeDelivery({ sources: [source1], clientMessageId: "cm-a" }),
   );
 
+  // Switch to "queued" so the second turn is queued while first is active
   client.inputResponse.disposition = "queued";
   await gateway.submit(
     makeDelivery({ sources: [source2], clientMessageId: "cm-b" }),
@@ -839,6 +840,7 @@ test("runtime registration is skipped when signature matches", async () => {
   await gateway.submit(makeDelivery({ clientMessageId: "cm-1" }));
   expect(client.startedRuntimes).toHaveLength(1);
 
+  // Second submit with same delivery params should not re-register
   await gateway.submit(makeDelivery({ clientMessageId: "cm-2" }));
   expect(client.startedRuntimes).toHaveLength(1);
 
@@ -961,6 +963,8 @@ test("close disposes all listeners and clears state", async () => {
 
   gateway.close();
 
+  // After close, emitting messages should not trigger any hooks
+  // (listeners are disposed)
   client.emit(makeTurnFinished("end_turn"));
 
   expect(client.closeCalls).toBe(1);

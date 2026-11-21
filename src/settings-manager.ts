@@ -203,6 +203,12 @@ export function shouldPersistSessionState(): boolean {
   );
 }
 
+/**
+ * Normalize a base URL for use as a settings key.
+ * Strips protocol (https://, http://) and returns host:port.
+ * @param baseUrl - The base URL (e.g., "https://api.letta.com", "http://localhost:8283")
+ * @returns Normalized key (e.g., "api.letta.com", "localhost:8283")
+ */
 function normalizeBaseUrl(baseUrl: string): string {
   // Strip protocol
   let normalized = baseUrl.replace(/^https?:\/\//, "");
@@ -253,6 +259,14 @@ function shouldSkipLegacyLocalBackendSessionFallback(): boolean {
   );
 }
 
+/**
+ * Get the current server key for indexing settings.
+ * Uses the local backend storage path when local backend mode is active,
+ * otherwise LETTA_SETTINGS_BASE_URL, LETTA_BASE_URL, or
+ * settings.env.LETTA_BASE_URL, defaulting to api.letta.com.
+ * @param settings - Optional settings object to check for env overrides
+ * @returns Normalized server key (e.g., "api.letta.com", "localhost:8283", "local:/path/to/store")
+ */
 function getApiServerKey(settings?: Settings | null): string {
   const baseUrl =
     process.env[SETTINGS_BASE_URL_ENV] ||
@@ -279,6 +293,12 @@ function serverKeyForBackendMode(
     : getApiServerKey(settings);
 }
 
+/**
+ * Get the current memfs server key for memfs-related agent settings.
+ * Uses LETTA_MEMFS_BASE_URL and falls back to api.letta.com.
+ * @param settings - Optional settings object to check for env overrides
+ * @returns Normalized server key (e.g., "api.letta.com", "localhost:8283")
+ */
 function getCurrentMemfsServerKey(settings?: Settings | null): string {
   if (isLocalBackendEnvEnabled()) {
     return getLocalBackendSettingsKey();
@@ -527,6 +547,7 @@ class SettingsManager {
       }
     }
 
+    // Fallback to tokens in settings file if secrets are not available
     const fallbackRefreshToken =
       !secureTokens.refreshToken && baseSettings.refreshToken
         ? baseSettings.refreshToken
@@ -638,12 +659,16 @@ class SettingsManager {
     this.pendingWrites.add(writePromise);
   }
 
+  /**
+   * Persist settings and tokens, with fallback for secrets unavailability
+   */
   private async persistSettingsAndTokens(
     secureTokens: SecureTokens,
   ): Promise<void> {
     const secretsAvailable = await this.isKeychainAvailable();
 
     if (secretsAvailable && Object.keys(secureTokens).length > 0) {
+      // Try to store tokens in secrets, fall back to settings file if it fails
       try {
         await Promise.all([
           this.persistSettings(),
@@ -655,10 +680,12 @@ class SettingsManager {
           "Failed to store tokens in secrets, falling back to settings file:",
           error,
         );
+        // Continue to fallback logic below
       }
     }
 
     if (Object.keys(secureTokens).length > 0) {
+      // Fallback: store tokens in settings file
       debugWarn(
         "settings",
         "Secrets not available, storing tokens in settings file for persistence",
@@ -1034,6 +1061,15 @@ class SettingsManager {
     }
   }
 
+  // =====================================================================
+  // Session Management Helpers
+  // =====================================================================
+
+  /**
+   * Get the last session from global settings for the current server.
+   * Looks up by server key first, falls back to legacy lastSession for migration.
+   * Returns null if no session is available.
+   */
   getGlobalLastSession(): SessionRef | null {
     const settings = this.getSettings();
     const serverKey = getCurrentServerKey(settings);
@@ -1055,6 +1091,7 @@ class SettingsManager {
       return null;
     }
 
+    // Fall back to legacy lastSession for migration
     if (
       settings.lastSession &&
       isSessionCompatibleWithServerKey(settings.lastSession, serverKey)
@@ -1065,6 +1102,11 @@ class SettingsManager {
     return null;
   }
 
+  /**
+   * Get the last agent ID from global settings for the current server.
+   * Returns the agentId from server-indexed session if available,
+   * otherwise falls back to legacy lastSession/lastAgent.
+   */
   getGlobalLastAgentId(): string | null {
     const settings = this.getSettings();
     const serverKey = getCurrentServerKey(settings);
@@ -1086,6 +1128,7 @@ class SettingsManager {
       return null;
     }
 
+    // Fall back to legacy for migration
     if (
       settings.lastSession &&
       isSessionCompatibleWithServerKey(settings.lastSession, serverKey)
@@ -1101,6 +1144,10 @@ class SettingsManager {
     return null;
   }
 
+  /**
+   * Set the last session in global settings for the current server.
+   * Writes to both server-indexed and legacy fields for backwards compat.
+   */
   setGlobalLastSession(session: SessionRef): void {
     const settings = this.getSettings();
     const serverKey = getCurrentServerKey(settings);
@@ -1145,6 +1192,11 @@ class SettingsManager {
     this.updateSettings({ sessionsByServer });
   }
 
+  /**
+   * Get the last session from local project settings for the current server.
+   * Looks up by server key first, falls back to legacy lastSession for migration.
+   * Returns null if no session is available.
+   */
   getLocalLastSession(
     workingDirectory: string = process.cwd(),
   ): SessionRef | null {
@@ -1169,6 +1221,7 @@ class SettingsManager {
       return null;
     }
 
+    // Fall back to legacy lastSession for migration
     if (
       localSettings.lastSession &&
       isSessionCompatibleWithServerKey(localSettings.lastSession, serverKey)
@@ -1179,6 +1232,11 @@ class SettingsManager {
     return null;
   }
 
+  /**
+   * Get the last agent ID from local project settings for the current server.
+   * Returns the agentId from server-indexed session if available,
+   * otherwise falls back to legacy lastSession/lastAgent.
+   */
   getLocalLastAgentId(workingDirectory: string = process.cwd()): string | null {
     const globalSettings = this.getSettings();
     const serverKey = getCurrentServerKey(globalSettings);
@@ -1201,6 +1259,7 @@ class SettingsManager {
       return null;
     }
 
+    // Fall back to legacy for migration
     if (
       localSettings.lastSession &&
       isSessionCompatibleWithServerKey(localSettings.lastSession, serverKey)
@@ -1216,6 +1275,10 @@ class SettingsManager {
     return null;
   }
 
+  /**
+   * Set the last session in local project settings for the current server.
+   * Writes to both server-indexed and legacy fields for backwards compat.
+   */
   setLocalLastSession(
     session: SessionRef,
     workingDirectory: string = process.cwd(),
@@ -1265,9 +1328,14 @@ class SettingsManager {
     if (localSession) {
       return localSession;
     }
+    // Fall back to global
     return this.getGlobalLastSession();
   }
 
+  /**
+   * Get the effective last agent ID (local overrides global).
+   * Useful for migration when we need an agent but don't have a conversation yet.
+   */
   getEffectiveLastAgentId(
     workingDirectory: string = process.cwd(),
   ): string | null {
@@ -1275,6 +1343,7 @@ class SettingsManager {
     if (localAgentId) {
       return localAgentId;
     }
+    // Fall back to global
     return this.getGlobalLastAgentId();
   }
 

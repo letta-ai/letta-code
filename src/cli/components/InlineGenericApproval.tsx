@@ -83,6 +83,11 @@ function formatArgs(toolArgs: string, maxRows: number, width: number): string {
   }
 }
 
+/**
+ * InlineGenericApproval - Renders generic tool approval UI inline
+ *
+ * Used as fallback for any tool not handled by specialized inline components.
+ */
 export const InlineGenericApproval = memo(
   ({
     toolName,
@@ -214,6 +219,7 @@ export const InlineGenericApproval = memo(
 
     return (
       <Box flexDirection="column">
+        {/* Static tool content - memoized to prevent re-render on keystroke */}
         {showPreview && memoizedToolContent}
 
         <Box marginTop={optionsMarginTop} flexDirection="column">
@@ -239,6 +245,7 @@ export const InlineGenericApproval = memo(
             </Box>
           </Box>
 
+          {/* Option 2: Yes, always (only if persistence allowed) */}
           {allowPersistence && (
             <Box flexDirection="row">
               <Box width={5} flexShrink={0}>

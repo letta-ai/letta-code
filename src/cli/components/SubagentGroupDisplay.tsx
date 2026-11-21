@@ -342,6 +342,7 @@ export const SubagentGroupDisplay = memo(() => {
   // via their own mechanisms (e.g. EventMessage).
   const visible = agents.filter((a) => !a.silent);
 
+  // Don't render if no agents
   if (visible.length === 0) {
     return null;
   }

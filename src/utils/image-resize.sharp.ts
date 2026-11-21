@@ -165,6 +165,8 @@ export async function resizeImageIfNeeded(
   }
 
   if (needsResize) {
+    // Resize preserving aspect ratio
+    // Use 'inside' fit which is equivalent to Codex's resize behavior
     const resized = image.resize(MAX_IMAGE_WIDTH, MAX_IMAGE_HEIGHT, {
       fit: "inside",
       withoutEnlargement: true,
@@ -174,6 +176,7 @@ export async function resizeImageIfNeeded(
     let outputMediaType: string;
 
     if (format === "jpeg") {
+      // Preserve JPEG format with good quality (Codex uses 85)
       outputBuffer = await resized.jpeg({ quality: 85 }).toBuffer();
       outputMediaType = "image/jpeg";
     } else {

@@ -2788,6 +2788,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
           return { submitted: true };
         }
+        // All manual aliases resolve ownership before entering any legacy mode.
         if (/^\/(dream|reflect|reflection)(?:\s|$)/.test(trimmed)) {
           const agentId = commandScope.agentId;
           const cmd = commandRunner.start(msg, "Starting reflection...");
@@ -3447,6 +3448,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
             return { submitted: true };
           }
+          // Don't treat as command - continue to regular message handling below
         } else {
           if (result.success && result.refreshSecretsInfo) {
             markSecretsInfoReminderPending(sharedReminderStateRef.current);
@@ -3461,6 +3463,11 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       const contentParts =
         overrideContentParts ?? buildMessageContentFromDisplay(msg);
 
+      // Append the optimistic user message and trigger a render immediately —
+      // before any async work (reminder building, hooks, etc.) so the user
+      // sees their message appear without delay. Ink uses React legacy mode
+      // which doesn't auto-batch async state updates, so we do this synchronously
+      // while still inside the React event handler to get a single render cycle.
       const userOtid = createClientOtid();
       const optimisticUserLineId = appendOptimisticUserLine(
         buffersRef.current,
@@ -3580,6 +3587,7 @@ ${SYSTEM_REMINDER_CLOSE}
 
       // Check for pending approvals before sending message (skip if we already have
       // a queued approval response to send first).
+      // Only do eager check when resuming a session (LET-7101) - otherwise lazy recovery handles it
       let eagerRecoveryDenials: ApprovalResult[] | null = null;
       if (needsEagerApprovalCheck && !queuedApprovalResults) {
         try {

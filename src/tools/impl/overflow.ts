@@ -14,6 +14,7 @@ export const OVERFLOW_CONFIG = {
 export function getOverflowDirectory(workingDirectory: string): string {
   const configDir = resolveGlobalConfigDir();
 
+  // Normalize and sanitize the working directory path for use in the file system
   const normalizedPath = path.normalize(workingDirectory);
   const sanitizedPath = normalizedPath
     .replace(/^[/\\]/, "") // Remove leading slash
@@ -72,6 +73,14 @@ export function writeOverflowFile(
   return filePath;
 }
 
+/**
+ * Clean up old overflow files to prevent directory bloat.
+ * Removes files older than the specified age.
+ *
+ * @param workingDirectory - Current working directory (project root)
+ * @param maxAgeMs - Maximum age in milliseconds (default: 24 hours)
+ * @returns Number of files deleted
+ */
 export function cleanupOldOverflowFiles(
   workingDirectory: string,
   maxAgeMs: number = 24 * 60 * 60 * 1000,

@@ -637,6 +637,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           return;
         }
 
+        // Double-check we haven't become stale between entry and try block
         if (myGeneration !== conversationGenerationRef.current) {
           return;
         }
@@ -1068,6 +1069,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                     const textToRestore = getRestorableUserText(currentInput);
                     if (textToRestore) setRestoredInput(textToRestore);
 
+                    // Clear all stale approval state before setting new approvals
                     setApprovalResults([]);
                     setAutoHandledResults([]);
                     setAutoDeniedApprovals([]);
@@ -1115,6 +1117,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                     buffersRef.current.interrupted = false;
                     continue;
                   }
+                  // Otherwise fall through to error handling below
                 } catch {
                 }
               }
@@ -2130,6 +2133,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 const textToRestore = getRestorableUserText(currentInput);
                 if (textToRestore) setRestoredInput(textToRestore);
 
+                // Clear all stale approval state before setting new approvals
                 setApprovalResults([]);
                 setAutoHandledResults([]);
                 setAutoDeniedApprovals([]);
@@ -2177,6 +2181,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 buffersRef.current.interrupted = false;
                 continue;
               }
+              // Otherwise fall through to error handling below
             } catch {
             }
           }
@@ -2351,6 +2356,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               },
             );
 
+            // Show subtle grey status message (skip for silently-retried errors)
             debugLog(
               "retry",
               "Post-stream retry (run=%s, stop=%s): %s",
@@ -2410,6 +2416,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             }
           }
 
+          // Reset retry counters on non-retriable error (or max retries exceeded)
           llmApiErrorRetriesRef.current = 0;
           emptyResponseRetriesRef.current = 0;
           conversationBusyRetriesRef.current = 0;
@@ -2530,6 +2537,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 );
               }
             } catch (_e) {
+              // If we can't fetch error details, show generic error
               appendError(
                 `An error occurred during agent execution\n(run_id: ${lastRunId}, stop_reason: ${stopReason})\n(Unable to fetch additional error details from server)`,
                 {

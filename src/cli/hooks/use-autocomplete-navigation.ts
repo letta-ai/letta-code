@@ -43,6 +43,8 @@ export function useAutocompleteNavigation<T>({
     }
   }, [matches.length]);
 
+  // Notify parent about active state changes (only if manageActiveState is true)
+  // Only fire callback when the boolean active state actually changes (not on every match count change)
   useEffect(() => {
     if (manageActiveState) {
       const isActive = matches.length > 0;
@@ -56,6 +58,7 @@ export function useAutocompleteNavigation<T>({
   useInput((_input, key) => {
     if (!matches.length || disabled) return;
 
+    // If maxVisible is set, limit navigation to visible items; otherwise navigate all
     const maxIndex =
       maxVisible !== undefined
         ? Math.min(matches.length, maxVisible) - 1
@@ -68,6 +71,7 @@ export function useAutocompleteNavigation<T>({
     } else if (key.tab) {
       const selected = matches[selectedIndex];
       if (selected) {
+        // Tab: use onAutocomplete if provided, otherwise fall back to onSelect
         if (onAutocomplete) {
           onAutocomplete(selected);
         } else if (onSelect) {

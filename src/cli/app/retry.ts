@@ -7,6 +7,7 @@ export async function isRetriableError(
   lastRunId: string | null | undefined,
   fallbackDetail?: string | null,
 ): Promise<boolean> {
+  // Early exit for stop reasons that should never be retried
   const nonRetriableReasons: StopReasonType[] = [
     "cancelled",
     "requires_approval",

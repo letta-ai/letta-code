@@ -806,6 +806,11 @@ function resolveReasoningLineId(
   return lineId;
 }
 
+/**
+ * Attempts to split content at a paragraph boundary for aggressive static promotion.
+ * If split found, creates a committed line for "before" and updates original with "after".
+ * Returns true if split occurred, false otherwise.
+ */
 function trySplitContent(
   b: Buffers,
   id: string,
@@ -906,6 +911,7 @@ export function onChunk(
         const newText = normalizeReasoningSectionBoundaries(line.text + delta);
         b.tokenCount += Buffer.byteLength(delta, "utf8");
 
+        // Try to split at paragraph boundary (only if streaming enabled)
         if (!trySplitContent(b, id, "reasoning", newText)) {
           b.byId.set(id, {
             ...line,
@@ -945,6 +951,7 @@ export function onChunk(
         const newText = line.text + delta;
         b.tokenCount += Buffer.byteLength(delta, "utf8");
 
+        // Try to split at paragraph boundary (only if streaming enabled)
         if (!trySplitContent(b, id, "assistant", newText)) {
           b.byId.set(id, {
             ...line,
@@ -1128,6 +1135,7 @@ export function onChunk(
       // Tool return is a special case
       // It will have a different otid than the tool call, but we want to merge into the tool call
 
+      // Handle parallel tool returns: check tool_returns array first, fallback to singular fields
       const toolReturns =
         Array.isArray(chunk.tool_returns) && chunk.tool_returns.length > 0
           ? chunk.tool_returns
@@ -1299,6 +1307,7 @@ export function onChunk(
       const msgType = chunk.message_type as string | undefined;
 
       if (msgType === "summary_message") {
+        // Use otid if available, fall back to id
         const summaryChunk = chunk as LettaStreamingResponse & {
           id?: string;
           otid?: string;
@@ -1345,6 +1354,7 @@ export function onChunk(
       }
 
       if (msgType === "event_message") {
+        // Use otid if available, fall back to id
         const eventChunk = chunk as LettaStreamingResponse & {
           id?: string;
           otid?: string;

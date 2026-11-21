@@ -25,6 +25,7 @@ export function scanMemoryFilesystem(memoryRoot: string): TreeNode[] {
 
     const filtered = entries.filter((name) => !name.startsWith("."));
 
+    // Sort: directories first, "system" always first among dirs, then alphabetically
     const sorted = filtered.sort((a, b) => {
       const aPath = join(dir, a);
       const bPath = join(dir, b);

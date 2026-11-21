@@ -325,6 +325,11 @@ test("Tool pattern: case sensitivity", () => {
   expect(matchesToolPattern("WebFetch", "WebFetch")).toBe(true);
 });
 
+// ============================================================================
+// Windows Path Normalization Tests (Issue #790)
+// These test that backslash paths work correctly for glob matching
+// ============================================================================
+
 test("File pattern: Windows-style backslashes in pattern", () => {
   expect(
     matchesFilePattern(
@@ -356,6 +361,7 @@ test("File pattern: Windows-style backslashes in both", () => {
 });
 
 test("File pattern: Edit(**) matches any path with backslashes", () => {
+  // The ** glob should match everything, even with Windows paths
   // Note: minimatch requires dot:true to match dot-prefixed paths with **
   // so we test with a non-dot path here
   expect(
@@ -368,6 +374,7 @@ test("File pattern: Edit(**) matches any path with backslashes", () => {
 });
 
 test("File pattern: Windows absolute path in working directory", () => {
+  // Windows-style working directory should work
   expect(
     matchesFilePattern(
       "Edit(src/file.ts)",

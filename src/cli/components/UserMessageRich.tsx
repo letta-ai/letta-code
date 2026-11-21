@@ -212,6 +212,11 @@ function padToColumns(text: string, columns: number): string {
   return `${text}${" ".repeat(pad)}`;
 }
 
+/**
+ * Render a block of text with a prompt prefix (first line) and matching-width
+ * continuation spaces on subsequent lines.
+ * If highlighted, applies background and foreground colors. Otherwise plain text.
+ */
 export function renderBlock(
   text: string,
   contentWidth: number,

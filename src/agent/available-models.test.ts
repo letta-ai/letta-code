@@ -82,6 +82,7 @@ describe("available-models cache semantics", () => {
     preConnect.resolve([]);
     await fetchA;
 
+    // The stale result must not have been committed to the cache.
     expect(getCachedModelHandles()).toBeNull();
 
     postConnect.resolve([{ handle: "openai/gpt-4o" }]);

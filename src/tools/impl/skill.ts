@@ -181,6 +181,7 @@ export async function readSkillContent(
     }
   }
 
+  // 3. Try agent memory skills fallback directories
   for (const memorySkillsDir of getMemorySkillsDirs(agentId)) {
     const result = await readSkillFromRoot(memorySkillsDir, skillId);
     if (result) {
@@ -225,6 +226,7 @@ export async function readSkillContent(
     }
   }
 
+  // Legacy fallback: check for bundled skills in a repo-level skills directory
   try {
     const bundledSkillsDir = join(process.cwd(), "skills", "skills");
     const bundledSkillPath = join(bundledSkillsDir, skillId, "SKILL.md");
@@ -247,6 +249,7 @@ export async function getResolvedSkillsDir(): Promise<string> {
     return skillsDir;
   }
 
+  // Fall back to the execution working directory when available.
   return join(getCurrentWorkingDirectory(), SKILLS_DIR);
 }
 

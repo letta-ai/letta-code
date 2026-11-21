@@ -74,6 +74,7 @@ const MIN_SPLIT_LENGTH = 1500;
  * can be committed to Ink's <Static> component to reduce flicker.
  */
 export function findLastSafeSplitPoint(content: string): number {
+  // Don't split if content is too short - prevents excessive chunking
   if (content.length < MIN_SPLIT_LENGTH) {
     return content.length;
   }
@@ -100,5 +101,6 @@ export function findLastSafeSplitPoint(content: string): number {
     searchStartIndex = dnlIndex - 1;
   }
 
+  // No safe split point found - don't split
   return content.length;
 }

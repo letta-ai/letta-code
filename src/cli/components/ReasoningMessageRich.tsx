@@ -49,6 +49,16 @@ export function formatThinkingDuration(durationMs: number): string {
   return `${seconds} ${seconds === 1 ? "second" : "seconds"}`;
 }
 
+/**
+ * ReasoningMessageRich - Rich formatting version with special reasoning layout
+ * This is a direct port from the old letta-code codebase to preserve the exact styling
+ *
+ * Features:
+ * - Header row with "✻" symbol and "Thinking…" text (unless continuation)
+ * - Reasoning content indented with 2 spaces
+ * - Full markdown rendering with dimmed colors
+ * - Proper text normalization
+ */
 export const ReasoningMessage = memo(
   ({ line, expanded = false }: { line: ReasoningLine; expanded?: boolean }) => {
     const columns = useTerminalWidth();

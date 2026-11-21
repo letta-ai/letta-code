@@ -639,6 +639,11 @@ async function executeApprovalBatchUnwatched(
     }
   };
 
+  // Execute all categories concurrently:
+  // 1. Parallel-safe tools (all in parallel)
+  // 2. Write tools grouped by resource (sequential within each group, parallel across groups)
+  // 3. Denials (no actual execution needed, but process for UI updates)
+  //
   // Do not fail fast here. A sibling may already have crossed its effect boundary;
   // callers must retain their claim/lease until every started group has settled.
   try {
@@ -665,6 +670,16 @@ async function executeApprovalBatchUnwatched(
   return results.filter((r): r is ApprovalResult => r !== null);
 }
 
+/**
+ * Helper to execute auto-allowed tools and map results to the format expected by App.tsx.
+ * Consolidates the common pattern of converting approvals to decisions, executing them,
+ * and mapping the results back.
+ *
+ * @param autoAllowed - Array of auto-allowed approval contexts (must have .approval property)
+ * @param onChunk - Callback to update UI with tool results
+ * @param options - Optional abort signal for cancellation
+ * @returns Array of results with toolCallId and ToolExecutionResult
+ */
 export async function executeAutoAllowedTools(
   autoAllowed: Array<{ approval: ApprovalRequest }>,
   onChunk: (chunk: ToolReturnMessage) => void,

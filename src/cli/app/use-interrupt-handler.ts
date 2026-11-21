@@ -255,6 +255,7 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       executingToolCallIdsRef.current = [];
       autoAllowedExecutionRef.current = null;
 
+      // ALSO abort the main stream - don't leave it running
       buffersRef.current.abortGeneration =
         (buffersRef.current.abortGeneration || 0) + 1;
       const toolsCancelled = markIncompleteToolsAsCancelled(

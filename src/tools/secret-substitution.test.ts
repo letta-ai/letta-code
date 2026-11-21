@@ -283,6 +283,13 @@ describe("scoped shell secret execution", () => {
   }
 });
 
+/**
+ * Ambient runtime credential containment (LET-10106). A Cloud sandbox child
+ * printed the full runtime key to stderr after an env-file parse failure even
+ * though the command never referenced $LETTA_API_KEY; the redaction set only
+ * covered command-referenced agent secrets. These tests use a deterministic
+ * fake env-file parser and a sentinel credential — never a real key.
+ */
 const AMBIENT_SENTINEL = "sk-lettatest-SENTINEL-credential-0123456789abcdef";
 const AMBIENT_PLACEHOLDER = "LETTA_API_KEY=<REDACTED>";
 

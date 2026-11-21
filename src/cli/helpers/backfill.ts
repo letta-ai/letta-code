@@ -282,6 +282,7 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
       }
 
       case "tool_return_message": {
+        // Handle parallel tool returns: check tool_returns array first, fallback to singular fields
         const toolReturns =
           Array.isArray(msg.tool_returns) && msg.tool_returns.length > 0
             ? msg.tool_returns

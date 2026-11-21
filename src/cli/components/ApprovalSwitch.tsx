@@ -160,6 +160,13 @@ function getTaskInfo(approval: ApprovalRequest): TaskInfo | null {
   }
 }
 
+/**
+ * ApprovalSwitch - Unified approval component that renders the appropriate
+ * specialized approval UI based on tool type.
+ *
+ * This consolidates the approval rendering logic that was previously duplicated
+ * in the transcript rendering and fallback UI paths.
+ */
 export const ApprovalSwitch = memo(
   ({
     approval,
@@ -241,6 +248,7 @@ export const ApprovalSwitch = memo(
       }
     }
 
+    // Fallback → InlineGenericApproval
     return (
       <InlineGenericApproval
         toolName={toolName}

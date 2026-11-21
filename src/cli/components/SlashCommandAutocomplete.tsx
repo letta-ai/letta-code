@@ -242,6 +242,7 @@ export function SlashCommandAutocomplete({
     onActiveChange?.(isActive);
   }, [hideAutocomplete, matches.length, onActiveChange]);
 
+  // Don't show if input doesn't start with "/"
   if (!currentInput.startsWith("/")) {
     return null;
   }
@@ -254,6 +255,7 @@ export function SlashCommandAutocomplete({
     );
   }
 
+  // Don't show if no matches and query is empty (shouldn't happen, but safety check)
   if (hideAutocomplete || matches.length === 0) {
     return null;
   }

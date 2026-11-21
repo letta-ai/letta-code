@@ -7,6 +7,7 @@ import { Text } from "./Text";
 
 interface StreamingOutputDisplayProps {
   streaming: StreamingState;
+  /** Show "(esc to interrupt)" hint - used by bash mode (LET-7199) */
   showInterruptHint?: boolean;
 }
 

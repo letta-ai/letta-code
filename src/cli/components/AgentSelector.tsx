@@ -321,6 +321,7 @@ export function AgentSelector({
     loadPinnedAgents();
   }, [loadPinnedAgents]);
 
+  // Load tab data when switching tabs (only if not already loaded)
   useEffect(() => {
     if (activeTab === "local" && !localLoaded && !localLoading) {
       loadLocalAgents();
@@ -359,6 +360,7 @@ export function AgentSelector({
     }
   }, [activeTab]);
 
+  // Reload current tab when search query changes (only if query differs from cached)
   useEffect(() => {
     if (activeTab === "cloud" && hasCloudAuth && activeQuery !== cloudQuery) {
       loadCloudAgents(activeQuery || undefined);

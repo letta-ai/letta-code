@@ -112,6 +112,7 @@ export function resolveScopedMemoryDir(
       return getScopedMemoryFilesystemRoot(scopedAgentId, { env, homeDir });
     }
   } catch {
+    // No runtime-scoped agent context; fall back below.
   }
 
   const directMemoryDir = (env.LETTA_MEMORY_DIR || env.MEMORY_DIR || "").trim();
@@ -548,6 +549,7 @@ export async function applyMemfsFlags(
     Boolean(options?.agentTags?.includes(GIT_MEMORY_ENABLED_TAG));
   const enabling = Boolean(memfsFlag || shouldAutoEnableFromTag);
 
+  // 2. Reconcile system prompt first, then persist local memfs setting.
   if (enabling) {
     if (!options?.skipPromptUpdate) {
       const { updateAgentSystemPromptMemfs } = await import("@/agent/modify");

@@ -1,3 +1,10 @@
+// How a subagent child process is launched: the command/args to spawn, the
+// working directory it runs in, and the environment it inherits (including the
+// memory-subagent MEMORY_DIR wiring).
+//
+// Extracted from `manager.ts`. Pure resolution helpers — they depend only on
+// lower-level backend/runtime/shell helpers and shared subagent types, never
+// back on the subagent manager, so the graph stays acyclic.
 
 import { homedir } from "node:os";
 import { join } from "node:path";

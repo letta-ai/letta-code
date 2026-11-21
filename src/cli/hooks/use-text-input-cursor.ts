@@ -24,6 +24,10 @@ export function useTextInputCursor(initialText = "") {
   const [text, setText] = useState(initialText);
   const [cursorPos, setCursorPos] = useState(0);
 
+  /**
+   * Handle keyboard input for text editing.
+   * @returns true if the key was handled, false otherwise
+   */
   const handleKey = (input: string, key: Key): boolean => {
     if (key.leftArrow) {
       setCursorPos((prev) => Math.max(0, prev - 1));

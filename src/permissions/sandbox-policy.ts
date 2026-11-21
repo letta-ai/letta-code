@@ -155,6 +155,10 @@ function isTreeOrAncestorOfTree(
   );
 }
 
+/**
+ * Resolve the caller-supplied agents trees (canonicalizing each), or fall back
+ * to both backend trees when none were given. Shared by the policy builders.
+ */
 function resolveAgentsTreeRootsInput(roots?: string[]): string[] {
   return roots?.length
     ? roots.map(canonicalizeRoot)

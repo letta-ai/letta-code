@@ -2107,6 +2107,15 @@ export interface CheckoutBranchResponse {
   error?: string;
 }
 
+// ─────────────────────────────────────────────────
+//  Secrets management (modal + CLI source of truth)
+//
+//  letta-code owns the secrets cache. All reads and writes go through these
+//  three commands so the in-memory cache stays consistent. Per-turn
+//  hydration is one-shot — these commands are the only paths that re-touch
+//  core after the initial fetch.
+// ─────────────────────────────────────────────────
+
 /**
  * Refresh the local secrets cache from core and return the available
  * secrets. The modal needs the plaintext values to populate the form, so

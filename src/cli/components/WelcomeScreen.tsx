@@ -79,6 +79,8 @@ export function WelcomeScreen({
 
   const tildePath = toTildePath(cwd);
 
+  // Get model display name (pretty name if available, otherwise last part of handle)
+  // Build full model handle from llm_config (model_endpoint_type/model) like App.tsx does
   const llmConfig = agentState?.llm_config;
   const fullModel =
     llmConfig?.model_endpoint_type && llmConfig?.model

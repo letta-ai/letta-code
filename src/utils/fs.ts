@@ -1,3 +1,7 @@
+/**
+ * File system utilities using Node.js APIs
+ * Compatible with both Node.js and Bun
+ */
 
 import {
   chmodSync,

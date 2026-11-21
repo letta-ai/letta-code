@@ -492,6 +492,11 @@ export function createDiscordAdapter(
           ? message.channelId
           : null;
 
+        // If mentioned outside a thread, create one — but only when the
+        // account/channel is configured to auto-thread on mention. When
+        // auto-threading is disabled, the mention routes to the channel
+        // itself (effectiveChatId stays as message.channelId and
+        // effectiveThreadId stays null) instead of spawning a new thread.
         if (!isThread && wasMentioned) {
           if (shouldAutoThreadOnDiscordMention(config, message.channelId)) {
             const createdThread = await createThreadForMention(

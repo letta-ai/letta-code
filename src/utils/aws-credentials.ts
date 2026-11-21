@@ -20,12 +20,14 @@ export async function parseAwsCredentials(): Promise<AwsProfile[]> {
     const content = await readFile(credentialsPath, "utf-8");
     parseIniFile(content, profiles, false);
   } catch {
+    // Credentials file doesn't exist or can't be read
   }
 
   try {
     const content = await readFile(configPath, "utf-8");
     parseIniFile(content, profiles, true);
   } catch {
+    // Config file doesn't exist or can't be read
   }
 
   return Array.from(profiles.values());

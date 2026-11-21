@@ -271,6 +271,10 @@ export function buildInstallArgs(
   return args;
 }
 
+/**
+ * Detect which package manager was used to install this binary.
+ * Checks LETTA_PACKAGE_MANAGER env var first, then inspects the resolved binary path.
+ */
 export function detectPackageManager(): PackageManager {
   const envOverride = process.env.LETTA_PACKAGE_MANAGER;
   if (envOverride) {

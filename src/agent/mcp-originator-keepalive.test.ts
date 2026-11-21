@@ -205,6 +205,7 @@ describe("MCP originator keepalive", () => {
     });
     await runMcpOriginatorKeepaliveTickForTests("run-a");
     await runMcpOriginatorKeepaliveTickForTests("run-a");
+    // Two strikes against B: renewal must still be armed.
     expect(hasMcpOriginatorKeepaliveForTests("run-a")).toBe(true);
     await runMcpOriginatorKeepaliveTickForTests("run-a");
     expect(hasMcpOriginatorKeepaliveForTests("run-a")).toBe(false);

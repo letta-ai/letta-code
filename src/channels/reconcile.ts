@@ -29,6 +29,7 @@ import type { ChannelRoute, DiscordChannelAccount } from "./types";
 
 export interface StaleRouteInfo {
   route: ChannelRoute;
+  /** Human-readable explanation of why it's stale. */
   reason: string;
   /** The channel ID that was checked against allowedChannels. */
   resolvedGateChannelId: string | null;

@@ -646,6 +646,7 @@ export function AppView(props: AppViewProps) {
                 </Box>
               )}
 
+              {/* Fallback approval UI when backfill is disabled (no liveItems) */}
               {liveItems.length === 0 && currentApproval && (
                 <Box flexDirection="column">
                   <ApprovalSwitch
@@ -1555,6 +1556,8 @@ export function AppView(props: AppViewProps) {
               />
             )}
 
+            {/* Memory Viewer - conditionally mounted as overlay */}
+            {/* Use tree view for memfs-enabled agents, tab view otherwise */}
             {activeOverlay === "memory" &&
               (isActiveMemfsEnabled(agentId) ? (
                 <MemfsTreeViewer

@@ -137,6 +137,9 @@ function isNonRetryableRunErrorType(errorType: unknown): boolean {
   );
 }
 
+// ── Classifiers ─────────────────────────────────────────────────────
+
+/** Tool call IDs don't match what the server expects. */
 export function isInvalidToolCallIdsError(detail: unknown): boolean {
   if (typeof detail !== "string") return false;
   return detail.toLowerCase().includes(INVALID_TOOL_CALL_IDS_FRAGMENT);
@@ -181,6 +184,7 @@ export function isRetryableProviderErrorDetail(detail: unknown): boolean {
   );
 }
 
+/** Non-transient auth/validation style provider detail that should not be retried. */
 export function isNonRetryableProviderErrorDetail(detail: unknown): boolean {
   if (typeof detail !== "string") return false;
   if (isZaiNonRetryableError(detail)) return true;
@@ -191,6 +195,7 @@ export function isNonRetryableProviderErrorDetail(detail: unknown): boolean {
   );
 }
 
+/** Retry decision for run-metadata fallback classification. */
 export function shouldRetryRunMetadataError(
   errorType: unknown,
   detail: unknown,

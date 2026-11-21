@@ -378,6 +378,7 @@ function resolveSecretsAgentId(explicitAgentId?: string): string | null {
       return scopedAgentId;
     }
   } catch {
+    // Fall through to env fallback below.
   }
 
   const envAgentId = (

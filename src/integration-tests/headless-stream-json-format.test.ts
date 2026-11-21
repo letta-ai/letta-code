@@ -183,6 +183,7 @@ describe("stream-json format", () => {
       expect(init.tools).toBeInstanceOf(Array);
       expect(init.cwd).toBeDefined();
       expect(init.uuid).toBe(`init-${init.agent_id}`);
+      // Every emitted wire line must carry an ISO 8601 UTC timestamp.
       expect(init.timestamp).toMatch(ISO_TIMESTAMP_REGEX);
     },
     { timeout: 200000 },

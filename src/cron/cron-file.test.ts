@@ -36,6 +36,9 @@ const TEST_DIR = path.join(import.meta.dir, "__cron_test_tmp__");
 const _CRON_PATH = path.join(TEST_DIR, "crons.json");
 const _LOCK_PATH = path.join(TEST_DIR, "crons.lock");
 
+// Override the internal paths used by cronFile.ts for testing.
+// We need to use the module's own path resolution, so we'll set
+// LETTA_HOME to point to our test directory.
 const origHome = process.env.LETTA_HOME;
 const origConfigDir = process.env.LETTA_CONFIG_DIR;
 const origXdg = process.env.XDG_CONFIG_HOME;
@@ -792,6 +795,7 @@ describe("garbageCollect", () => {
         scheduled_for: new Date(Date.now() + 60000),
       }),
     );
+    // Mark as fired with old timestamps (both created_at and fired_at must be old for GC)
     updateTask(task.id, (t) => {
       t.status = "fired";
       const twoDaysAgo = new Date(

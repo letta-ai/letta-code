@@ -146,6 +146,7 @@ test("requires_approval stop reason does not finish the turn", async () => {
     }),
   );
 
+  // Should NOT trigger finished lifecycle
   const finishedEvents = lifecycleEvents.filter((e) => e.type === "finished");
   expect(finishedEvents).toHaveLength(0);
 

@@ -110,6 +110,10 @@ export interface CrossAgentTargets {
  */
 const UNRESOLVED_AGENT_ID = "<unresolved>";
 
+/**
+ * Normalize a path for structural comparison: forward slashes, no
+ * trailing slash, preserving a bare `/` as root.
+ */
 function normalizePathForCompare(path: string): string {
   const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
   return normalized.length === 0 ? "/" : normalized;

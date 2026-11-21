@@ -123,12 +123,14 @@ export function loadRoutes(channelId: string): void {
 
 let saveRoutesOverride: ((channelId: string) => void) | null = null;
 
+/** @internal Test-only: override saveRoutes behavior. Pass null to restore. */
 export function __testOverrideSaveRoutes(
   fn: ((channelId: string) => void) | null,
 ): void {
   saveRoutesOverride = fn;
 }
 
+/** @internal Test-only: override loadRoutes behavior. Pass null to restore. */
 export function __testOverrideLoadRoutes(
   fn: ((channelId: string) => ChannelRoute[] | null) | null,
 ): void {

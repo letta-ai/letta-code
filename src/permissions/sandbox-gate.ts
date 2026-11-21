@@ -18,6 +18,7 @@ import {
  * the policy without re-probing the host or re-resolving the same paths.
  */
 export interface ShellSandboxContext {
+  /** The validated backend to wrap with (never null). */
   backend: SandboxBackend;
   bwrapPath?: string;
   /** Both backend agents trees to wall off (canonical). */

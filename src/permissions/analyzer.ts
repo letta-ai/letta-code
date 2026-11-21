@@ -280,6 +280,7 @@ function analyzeEditApproval(
  */
 function analyzeGhApproval(category: string, action: string): ApprovalContext {
   if (!category) {
+    // bare `gh` with no subcommand - fall back to a generic rule
     return {
       recommendedRule: "Bash(gh:*)",
       ruleDescription: "'gh' commands",
@@ -384,6 +385,7 @@ function getReadOnlyRulePrefix(parts: string[]): string | null {
   return null;
 }
 
+// Commands that should never be auto-approved
 const DANGEROUS_COMMANDS = [
   "rm",
   "mv",
@@ -450,6 +452,7 @@ export function parseAbsoluteCommandPaths(command: string): string[] {
     }
   }
 
+  // Preserve first-seen order while de-duplicating.
   return Array.from(new Set(candidates));
 }
 

@@ -20,6 +20,16 @@ type AssistantLine = {
   isContinuation?: boolean;
 };
 
+/**
+ * AssistantMessageRich - Rich formatting version with two-column layout
+ * This is a direct port from the old letta-code codebase to preserve the exact styling
+ *
+ * Features:
+ * - Left column (2 chars wide) with bullet point marker (unless continuation)
+ * - Right column with wrapped text content
+ * - Proper text normalization
+ * - Support for markdown rendering (when MarkdownDisplay is available)
+ */
 export const AssistantMessage = memo(({ line }: { line: AssistantLine }) => {
   const columns = useTerminalWidth();
   const contentWidth = Math.max(0, columns - 2);

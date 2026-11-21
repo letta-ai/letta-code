@@ -1,3 +1,8 @@
+/**
+ * Pre-commit originator admission gate tests for the listener message router
+ * (evil-shub round-8 P1). Split out of message-router.test.ts so both files
+ * stay under the source-file size limit.
+ */
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";

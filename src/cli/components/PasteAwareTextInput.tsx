@@ -1,3 +1,8 @@
+// Paste-aware text input wrapper that:
+// 1. Detects large pastes (>5 lines or >500 chars) and replaces with placeholders
+// 2. Supports image pasting (iTerm2 inline, data URLs, file paths, macOS clipboard)
+// 3. Maintains separate display value (with placeholders) vs actual value (full content)
+// 4. Resolves placeholders on submit
 
 // Import useInput from vendored Ink for bracketed paste support
 import { useInput, useStdin } from "ink";
@@ -186,6 +191,7 @@ export function PasteAwareTextInput({
     }
   }, [value, displayValue]);
 
+  // Intercept paste events and macOS fallback for image clipboard imports
   useInput(
     (input, key) => {
       if (key.return && (key.shift || key.meta || key.ctrl)) {
@@ -283,6 +289,7 @@ export function PasteAwareTextInput({
           }
         };
 
+        // If paste event carried no text (common for image-only clipboard), try macOS import
         if ((!translated || translated.length === 0) && payload.length === 0) {
           (async () => {
             const clipResult = await tryImportClipboardImageMac();
@@ -574,6 +581,7 @@ export function PasteAwareTextInput({
     // This prevents any flicker since we never commit the "!" to displayValue
     if (displayValue === "" && newValue === "!") {
       if (onBangAtEmpty?.()) {
+        // Parent handled it (entered bash mode) - don't update our state
         return;
       }
     }
@@ -641,6 +649,7 @@ export function PasteAwareTextInput({
         return;
       }
 
+      // Otherwise, insert the translated text inline (sanitize newlines for display)
       const displayText = sanitizeForDisplay(translated);
       const newDisplayValue =
         a.slice(0, lcp) + displayText + a.slice(a.length - lcs);

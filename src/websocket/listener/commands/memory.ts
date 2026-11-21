@@ -449,6 +449,7 @@ export function handleMemoryProtocolCommand(
           "listener_enable_memfs_send_failed",
           "listener_enable_memfs",
         );
+        // Push memory_updated so the UI auto-refreshes its file list
         safeSocketSend(
           socket,
           {
@@ -865,6 +866,7 @@ export function handleMemoryProtocolCommand(
           );
         }
 
+        // ── Notify UI so the memory view auto-refreshes ────────────────
         if (commitResult.committed) {
           safeSocketSend(
             socket,
@@ -980,6 +982,7 @@ export function handleMemoryProtocolCommand(
 
         const pathspec = rel.split(sep).join("/");
 
+        // ── Idempotent delete: missing file is a no-op success ─────────
         const removeIfPresent = async (): Promise<boolean> => {
           if (!existsSync(absolutePath)) return false;
           await unlink(absolutePath);

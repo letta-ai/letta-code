@@ -127,6 +127,7 @@ export const MultiSelectPicker = memo(function MultiSelectPicker({
         onConfirm(selectedKeysInOrder);
         return;
       }
+      // Space toggles checkbox (no-op for disabled items)
       if (input === " ") {
         const item = orderedItems[cursor];
         if (item && !item.disabled) {

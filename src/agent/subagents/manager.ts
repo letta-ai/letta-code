@@ -285,6 +285,7 @@ async function executeSubagent(
     });
   }
 
+  // Update the state with the model being used (may differ on retry/fallback)
   if (model) {
     updateSubagent(subagentId, { model });
   }
@@ -663,6 +664,7 @@ async function executeSubagent(
         `stdout=${Buffer.concat(stdoutChunks).length} bytes, stderr=${stderr.length} bytes`,
     );
 
+    // Fallback: parse from stdout
     const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
     debugLog(
       "subagent",
@@ -825,6 +827,7 @@ async function spawnSubagentInContext(
   config = formatConfig;
   const billingTier = await getCurrentBillingTier();
 
+  // For existing agents, don't override model; for new agents, use provided or config default
   const model = isDeployingExisting
     ? null
     : await resolveSubagentModel({

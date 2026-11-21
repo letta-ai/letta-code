@@ -860,6 +860,7 @@ export function completePairing(
 
   const resolvedAccountId = pending.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
 
+  // Snapshot existing route so we can restore it on failure
   const previousRoute = getRouteRaw(
     channelId,
     pending.chatId,

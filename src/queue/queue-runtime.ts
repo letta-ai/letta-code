@@ -449,6 +449,9 @@ export class QueueRuntime {
     return this.store.filter((item) => !item.paused);
   }
 
+  // ── Internals ──────────────────────────────────────────────────
+
+  /** Remove the given items (by identity) from the store, preserving order. */
   private removeAll(items: readonly QueueItem[]): void {
     const removing = new Set(items);
     let write = 0;

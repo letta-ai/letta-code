@@ -373,6 +373,7 @@ export const InlineFileEditApproval = memo(
 
     return (
       <Box flexDirection="column">
+        {/* Static diff content - memoized to prevent re-render on keystroke */}
         {showPreview && memoizedDiffContent}
 
         <Box marginTop={optionsMarginTop} flexDirection="column">
@@ -398,6 +399,7 @@ export const InlineFileEditApproval = memo(
             </Box>
           </Box>
 
+          {/* Option 2: Yes, always (only if persistence allowed) */}
           {allowPersistence && (
             <Box flexDirection="row">
               <Box width={5} flexShrink={0}>
