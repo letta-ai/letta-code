@@ -39,6 +39,30 @@ describe("ephemeral headless toolset selection", () => {
     rmSync(storageDir, { recursive: true, force: true });
   });
 
+  test("honors the requested toolset when preparing an agent turn", async () => {
+    const model = "openai/gpt-5.3-codex";
+    const { agent, conversationId } = await createLocalEphemeralConversation({
+      model,
+      systemPromptCustom: "headless toolset override test",
+    });
+    const prepared =
+      await __headlessTestUtils.prepareHeadlessToolExecutionContext({
+        agentId: agent.id,
+        conversationId,
+        cachedAgent: agent,
+        toolsetPreference: "codemode",
+      });
+
+    try {
+      expect(prepared.availableTools).toEqual(["CodeMode"]);
+      expect(prepared.preparedToolContext.toolset).toBe("codemode");
+    } finally {
+      releaseToolExecutionContext(
+        prepared.preparedToolContext.preparedToolContext.contextId,
+      );
+    }
+  });
+
   for (const model of REPRESENTATIVE_MODELS) {
     test(`matches an agent-backed conversation for ${model}`, async () => {
       const backend = getBackend();
