@@ -27,6 +27,7 @@ export interface BackgroundProcess {
   process: BackgroundProcessHandle;
   completion?: Promise<unknown>;
   terminate?: () => void;
+  foregroundBash?: boolean;
   command: string;
   /**
    * Recent output lines that Bash replays in its completion notification.
