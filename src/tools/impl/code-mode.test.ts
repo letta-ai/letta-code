@@ -131,6 +131,38 @@ async function run(
   );
 }
 
+test.each([
+  ["anthropic/claude-sonnet-4-6", "Bash", { command: "printf codemode-ok" }],
+  ["openai/gpt-5.3-codex", "exec_command", { cmd: "printf codemode-ok" }],
+] as const)(
+  "%s exposes only CodeMode and can run its shell tool inside a script",
+  async (modelIdentifier, shell, input) => {
+    const { preparedToolContext } =
+      await prepareToolExecutionContextForResolvedTarget({
+        modelIdentifier,
+        toolsetPreference: "codemode",
+        workingDirectory: home,
+        permissionModeState: { mode: "unrestricted" },
+        runtimeContext: { agentId, conversationId: "default" },
+      });
+    expect(preparedToolContext.clientTools.map(({ name }) => name)).toEqual([
+      "CodeMode",
+    ]);
+
+    const result = await runWithRuntimeContext(
+      { toolContextId: preparedToolContext.contextId },
+      () =>
+        executeTool(
+          "CodeMode",
+          { code: `return await tools.${shell}(${JSON.stringify(input)});` },
+          { toolContextId: preparedToolContext.contextId },
+        ),
+    );
+    expect(result.status).toBe("success");
+    expect(result.toolReturn).toContain("codemode-ok");
+  },
+);
+
 test("combines a real file read and MCP calls without Workflow metadata or model setup", async () => {
   writeFileSync(join(home, "input.txt"), "hello from a file");
   settingsManager.setMcpServers(agentId, [
