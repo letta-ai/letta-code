@@ -1073,9 +1073,9 @@ async function recoverMemoryPullByResettingToRemote(
     );
   }
 
-  await runGitWithRetry(memoryDir, ["fetch", "origin", "main"], token, {
-    operation: "fetch memory repo for reset",
-  });
+  const tipOnlyFetch = ["fetch", "--depth", "1", "origin", "main"]; // reset tip
+  const options = { operation: "fetch memory repo for reset" };
+  await runGitWithRetry(memoryDir, tipOnlyFetch, token, options);
 
   const { stdout: remoteShaOut } = await runGit(memoryDir, [
     "rev-parse",
@@ -1493,19 +1493,19 @@ export async function syncAttachedAgentRepositories(
 }
 
 /**
- * Clone the agent's state repo into the memory directory.
+ * Shallow-clone the agent's state repo (tip only) into the memory directory.
  *
  * Git root is ~/.letta/agents/{id}/memory/ (not the agent root).
  */
 export async function cloneMemoryRepo(agentId: string): Promise<void> {
   startAttachedAgentRepositories(agentId);
   const token = await getAuthToken();
-  const url = getMemoryRemoteUrl(agentId);
+  const clone = ["clone", "--depth", "1", getMemoryRemoteUrl(agentId), "."];
   await withRepositoryCheckout(
     getMemoryRepoDir(agentId),
     async (dir, fresh) => {
       if (fresh) {
-        await runGitWithRetry(dir, ["clone", url, "."], token, {
+        await runGitWithRetry(dir, clone, token, {
           operation: "clone memory repo",
           timeoutMs: GIT_CLONE_TIMEOUT_MS,
         });
@@ -1518,7 +1518,7 @@ export async function cloneMemoryRepo(agentId: string): Promise<void> {
             rmSync(tmpDir, { recursive: true, force: true });
           }
           mkdirSync(tmpDir, { recursive: true });
-          await runGitWithRetry(tmpDir, ["clone", url, "."], token, {
+          await runGitWithRetry(tmpDir, clone, token, {
             operation: "clone memory repo (tmp migration)",
             timeoutMs: GIT_CLONE_TIMEOUT_MS,
           });

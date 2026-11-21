@@ -16,6 +16,8 @@ const HOSTED_EXTERNAL_MEMORY_INTRO =
   "External memory is stored outside of the system prompt, including both skills (procedural memory), general-purpose files (markdown files, images, etc.), and shared memory.";
 const LOCAL_EXTERNAL_MEMORY_INTRO =
   "External memory is stored outside of the system prompt, including both skills (procedural memory) and general-purpose files (markdown files, images, etc.).";
+const HOSTED_SHALLOW_MEMORY_NOTE =
+  " Your memory repo may be a shallow clone containing only recent commits; if you need older history, run `git fetch --deepen=<n>` or `git fetch --unshallow` only when needed.";
 
 const ROOT_ONLY_PROMPT_ASSETS = [
   initializingMemoryPrompt,
@@ -31,10 +33,10 @@ function containsSystemDirectoryPath(content: string): boolean {
 
 function withoutSharedMemoryGuidance(prompt: string): string {
   expect(prompt).toContain(HOSTED_EXTERNAL_MEMORY_INTRO);
-  const withLocalIntro = prompt.replace(
-    HOSTED_EXTERNAL_MEMORY_INTRO,
-    LOCAL_EXTERNAL_MEMORY_INTRO,
-  );
+  expect(prompt).toContain(HOSTED_SHALLOW_MEMORY_NOTE);
+  const withLocalIntro = prompt
+    .replace(HOSTED_EXTERNAL_MEMORY_INTRO, LOCAL_EXTERNAL_MEMORY_INTRO)
+    .replace(HOSTED_SHALLOW_MEMORY_NOTE, "");
   const sectionStart = withLocalIntro.indexOf("#### Shared memory\n");
   const sectionEnd = withLocalIntro.indexOf(
     "### Syncing memory, state, and context\n",
