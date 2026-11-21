@@ -34,7 +34,6 @@ export function initGitRepo(dir: string): TempGitRepo {
   };
 }
 
-/** A throwaway repository in a fresh temporary directory. */
 export function createTempGitRepo(prefix = "letta-test-repo-"): TempGitRepo {
   return initGitRepo(mkdtempSync(join(tmpdir(), prefix)));
 }

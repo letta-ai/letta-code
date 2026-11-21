@@ -1,10 +1,6 @@
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 
-// ============================================================================
-// TYPES
-// ============================================================================
-
 export interface ApprovalRequest {
   toolCallId: string;
   toolName: string;
@@ -34,13 +30,10 @@ type StructuredLettaErrorMessage = LettaStreamingResponse.LettaErrorMessage & {
 };
 
 export interface ChunkProcessingResult {
-  /** Whether this chunk should be output to the user */
   shouldOutput: boolean;
 
-  /** If this is an error chunk, formatted error message */
   errorInfo?: ErrorInfo;
 
-  /** If this chunk updated an approval, the current state */
   updatedApproval?: ApprovalRequest;
 }
 
@@ -61,12 +54,7 @@ export function advanceStreamSequenceCursor(
   };
 }
 
-// ============================================================================
-// STREAM PROCESSOR
-// ============================================================================
-
 export class StreamProcessor {
-  // State tracking (public for easy access - wrapper decides usage)
   public pendingApprovals = new Map<string, ApprovalRequest>();
   public runIds = new Set<string>();
   public lastRunId: string | null = null;
@@ -101,12 +89,10 @@ export class StreamProcessor {
       this.lastRunId = chunk.run_id;
     }
 
-    // Track seq_id (drainStream line 122-124)
     if ("seq_id" in chunk && chunk.seq_id != null) {
       this.lastSeqId = chunk.seq_id;
     }
 
-    // Skip ping messages (drainStream line 126)
     if (chunk.message_type === "ping") {
       return { shouldOutput: false };
     }
@@ -116,8 +102,6 @@ export class StreamProcessor {
       return { shouldOutput: false };
     }
 
-    // Detect mid-stream errors
-    // Case 1: LettaErrorMessage from the API (has message_type: "error_message")
     if ("message_type" in chunk && chunk.message_type === "error_message") {
       // Cloud may send structured fields that predate the generated SDK type.
       const apiError = chunk as StructuredLettaErrorMessage;
@@ -131,7 +115,6 @@ export class StreamProcessor {
         run_id: this.lastRunId || undefined,
       };
     }
-    // Case 2: Generic error object without message_type
     const chunkWithError = chunk as typeof chunk & {
       error?: { message?: string; detail?: string };
     };
@@ -155,7 +138,6 @@ export class StreamProcessor {
       )
     ) {
       // Server isn't ready for approval yet; let the stream continue until it is
-      // Suppress the error frame from output
       return { shouldOutput: false, errorInfo };
     }
 
@@ -174,10 +156,6 @@ export class StreamProcessor {
     // tool_call_message = auto-executed server-side (e.g., web_search)
     // approval_request_message = needs user approval (e.g., Bash)
     if (chunk.message_type === "approval_request_message") {
-      // console.log(
-      // "[drainStream] approval_request_message chunk:",
-      // JSON.stringify(chunk, null, 2),
-      // );
 
       // Normalize tool calls: support both legacy tool_call and new tool_calls array
       const toolCalls = Array.isArray(chunk.tool_calls)
@@ -191,7 +169,6 @@ export class StreamProcessor {
         if (!toolCallId) continue; // contract: approval chunks include tool_call_id
         const id = toolCallId;
 
-        // Get or create entry for this tool_call_id
         const existing = this.pendingApprovals.get(id) || {
           toolCallId: id,
           toolName: "",
@@ -204,7 +181,6 @@ export class StreamProcessor {
           existing.messageId = chunk.id;
         }
 
-        // Update name if provided
         if (toolCall.name) {
           existing.toolName = toolCall.name;
         }
@@ -224,13 +200,9 @@ export class StreamProcessor {
       // Continue reading stream to get usage_statistics that may come after
     }
 
-    // Default: output this chunk
     return { shouldOutput: true, errorInfo, updatedApproval };
   }
 
-  /**
-   * Get accumulated approvals as array
-   */
   getApprovals(): ApprovalRequest[] {
     return Array.from(this.pendingApprovals.values()).map((a) => ({
       toolCallId: a.toolCallId,

@@ -144,7 +144,6 @@ function validateMatch(match: unknown): UrlMonitorMatch | undefined {
   return result;
 }
 
-/** The Cloud source for validated url arguments. */
 function buildCloudSource(args: UrlMonitorArgs, url: string): CloudUrlSource {
   const source: CloudUrlSource = {
     type: "url",

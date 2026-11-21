@@ -1,8 +1,3 @@
-/**
- * Default agent (Letta Code) creation and management.
- *
- * Letta Code: Stateful agent with full memory - learns and grows with the user.
- */
 
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { ONBOARDING_ORIGIN_TAG } from "@/agent/agent-tags";
@@ -15,7 +10,6 @@ import { getDefaultModel, resolveModel } from "./model";
 import { buildCreateAgentOptionsForPersonality } from "./personality";
 import { MEMORY_PROMPTS } from "./prompt-assets";
 
-// Tags used to identify default agents
 export const MEMO_TAG = "default:memo";
 export const TUTOR_TAG = "default:tutorial";
 
@@ -27,7 +21,6 @@ export const TUTOR_TAG = "default:tutorial";
  */
 export type DefaultAgentPersonality = "memo" | "tutorial";
 
-// Letta Code's default memory blocks - loaded from Memo-specific prompts.
 const MEMO_PERSONA = parseMdxFrontmatter(
   MEMORY_PROMPTS["persona_memo.mdx"] ?? "",
 ).body;
@@ -38,9 +31,6 @@ const MEMO_HUMAN = parseMdxFrontmatter(
 // Agent descriptions shown in /agents selector
 const MEMO_DESCRIPTION = "The default Letta Code agent with persistent memory";
 
-/**
- * Default agent configurations.
- */
 export const DEFAULT_AGENT_CONFIGS: Record<string, CreateAgentOptions> = {
   memo: {
     name: "Letta Code",
@@ -128,9 +118,6 @@ async function resolveDefaultAgentModel(
   }
 }
 
-/**
- * Add a tag to an existing agent.
- */
 async function addTagToAgent(
   backend: Backend,
   agentId: string,

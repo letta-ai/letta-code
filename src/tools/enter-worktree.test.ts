@@ -547,7 +547,6 @@ describe("EnterWorktree tool", () => {
     if (!result.worktree_path) {
       throw new Error("Expected EnterWorktree to return a worktree path");
     }
-    // node_modules must not be present (neither symlinked nor copied).
     const linked = await lstat(
       path.join(result.worktree_path, "node_modules"),
     ).catch(() => null);
@@ -832,7 +831,6 @@ describe("EnterWorktree tool", () => {
       throw new Error("Expected EnterWorktree to return worktree paths");
     }
 
-    // conv-a takes worktree one, then moves to worktree two (releasing one).
     await runWithRuntimeContext(
       { conversationId: "conv-a", workingDirectory: repo },
       () => enter_worktree({ path: pathOne }),

@@ -37,8 +37,6 @@ export interface ResolvedIdentity {
   observedMappings: ObservedMapping[];
 }
 
-// -- helpers --;
-
 function toStrictPhoneJid(candidate: string | null | undefined): string | null {
   if (!candidate || !isStrictPhoneJid(candidate)) return null;
   return stripDeviceSuffix(candidate);
@@ -134,8 +132,6 @@ function resolveCandidates(
   return { phoneJid, observedMappings };
 }
 
-// -- resolver --;
-
 export function resolveInboundIdentity(
   transport: InboundTransport,
   store: LidStore | null = null,
@@ -152,7 +148,6 @@ function resolveDirect(
 ): ResolvedIdentity | null {
   const { selfPhoneJid, selfLid, remoteJid } = transport;
 
-  // Self-chat: phone-to-phone.
   if (
     isStrictPhoneJid(remoteJid) &&
     isStrictPhoneJid(selfPhoneJid) &&
@@ -162,7 +157,6 @@ function resolveDirect(
     return make(c, c);
   }
 
-  // Self-chat: LID-to-LID.
   if (
     isStrictLidJid(remoteJid) &&
     isStrictLidJid(selfLid) &&

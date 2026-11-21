@@ -1,5 +1,3 @@
-// Window title configuration picker.
-// Wraps MultiSelectPicker with window-title-specific logic.
 
 import { memo, useCallback, useMemo, useRef, useState } from "react";
 import {

@@ -73,7 +73,6 @@ describe("RemoteSessionLog", () => {
     expect(log.path).not.toBe(firstPath);
     const files = readdirSync(dir).filter((f) => f.endsWith(".log"));
     expect(files.length).toBeGreaterThan(1);
-    // The newest file records why rotation happened.
     const latest = readFileSync(log.path, "utf8");
     expect(latest).toContain("rotated from");
     expect(latest).toContain("exceeded 128 bytes");

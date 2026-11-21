@@ -3,9 +3,6 @@ import recallSubagentLocalPrompt from "@/agent/prompts/recall_subagent_local.md"
 import type { BackendMode } from "@/backend";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 
-/**
- * Build a system reminder prefix for deployed agents
- */
 export function buildDeploySystemReminder(
   senderAgentName: string,
   senderAgentId: string,

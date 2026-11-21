@@ -1,6 +1,3 @@
-// src/cli/helpers/markdownSplit.ts
-// Markdown-aware content splitting for aggressive static promotion.
-// Ported from Gemini CLI: packages/cli/src/ui/utils/markdownUtilities.ts
 
 /**
  * Checks if a given character index is inside a fenced code block (```).
@@ -34,7 +31,6 @@ function findNextLineFence(content: string, startPos: number): number {
   while (pos < content.length) {
     const nextFence = content.indexOf("```", pos);
     if (nextFence === -1) return -1;
-    // Only count as fence if at start of content or after a newline
     if (nextFence === 0 || content[nextFence - 1] === "\n") {
       return nextFence;
     }
@@ -43,10 +39,6 @@ function findNextLineFence(content: string, startPos: number): number {
   return -1;
 }
 
-/**
- * Finds the starting index of the code block that encloses the given index.
- * Returns -1 if the index is not inside a code block.
- */
 function findEnclosingCodeBlockStart(content: string, index: number): number {
   if (!isIndexInsideCodeBlock(content, index)) {
     return -1;
@@ -82,11 +74,9 @@ const MIN_SPLIT_LENGTH = 1500;
  * can be committed to Ink's <Static> component to reduce flicker.
  */
 export function findLastSafeSplitPoint(content: string): number {
-  // Don't split if content is too short - prevents excessive chunking
   if (content.length < MIN_SPLIT_LENGTH) {
     return content.length;
   }
-  // If end of content is inside a code block, split before that block
   const enclosingBlockStart = findEnclosingCodeBlockStart(
     content,
     content.length,
@@ -95,7 +85,6 @@ export function findLastSafeSplitPoint(content: string): number {
     return enclosingBlockStart;
   }
 
-  // Search for the last double newline (\n\n) not in a code block
   let searchStartIndex = content.length;
   while (searchStartIndex >= 0) {
     const dnlIndex = content.lastIndexOf("\n\n", searchStartIndex);
@@ -111,6 +100,5 @@ export function findLastSafeSplitPoint(content: string): number {
     searchStartIndex = dnlIndex - 1;
   }
 
-  // No safe split point found - don't split
   return content.length;
 }

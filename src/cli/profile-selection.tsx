@@ -1,7 +1,3 @@
-/**
- * Profile selection flow - runs before main app starts
- * Similar pattern to auth/setup.ts
- */
 
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { Box, useInput } from "ink";
@@ -126,8 +122,6 @@ function ProfileSelectionUI({
   const loading = externalLoading || optionsLoading;
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [showAll, setShowAll] = useState(false);
-  // Model selection mode for custom API backends
-  // Start in model selection mode if serverModelsForNewAgent is provided and no agents to show
   const [selectingModel, setSelectingModel] = useState(
     !!(serverModelsForNewAgent && serverModelsForNewAgent.length > 0),
   );
@@ -147,7 +141,6 @@ function ProfileSelectionUI({
       let fetchedOptions: ProfileOption[] = [];
       const seenAgentIds = new Set<string>();
 
-      // First: LRU agent
       if (lruAgentId) {
         const pinnedLru = pinned.find(
           ({ agentId, agent }) => agentId === lruAgentId && agent,
@@ -176,7 +169,6 @@ function ProfileSelectionUI({
         seenAgentIds.add(lruAgentId);
       }
 
-      // Then: Other pinned agents
       for (const { agentId, agent } of pinned) {
         if (agent && !seenAgentIds.has(agentId)) {
           fetchedOptions.push({
@@ -189,7 +181,6 @@ function ProfileSelectionUI({
         }
       }
 
-      // Fresh repo / invalid pins fallback: show recent agents from the active backend(s)
       if (fetchedOptions.length === 0) {
         const recentAgents = await getRecentAgentOptions({
           includeLocal: false,
@@ -222,7 +213,6 @@ function ProfileSelectionUI({
   const hasMore = options.length > MAX_DISPLAY;
   const totalItems = displayOptions.length + 1 + (hasMore && !showAll ? 1 : 0);
 
-  // Model selection - filter out legacy models and apply search
   const allServerModels =
     serverModelsForNewAgent?.filter((h) => h !== "letta/letta-free") ?? [];
   const showModelSearch = allServerModels.length > MODEL_SEARCH_THRESHOLD;
@@ -233,7 +223,6 @@ function ProfileSelectionUI({
     : allServerModels;
   const modelCount = filteredModels.length;
 
-  // Model selection scrolling
   const modelStartIndex = Math.max(
     0,
     Math.min(
@@ -255,7 +244,6 @@ function ProfileSelectionUI({
       return;
     }
 
-    // Model selection mode
     if (selectingModel && serverModelsForNewAgent) {
       if (key.upArrow) {
         setModelSelectedIndex((prev) => Math.max(0, prev - 1));
@@ -299,7 +287,6 @@ function ProfileSelectionUI({
           onComplete({ type: "new_with_model", model: selected });
         }
       } else if (key.escape || (key.ctrl && _input === "c")) {
-        // Go back to agent selection or exit
         if (options.length > 0) {
           setSelectingModel(false);
           setModelSearchQuery("");
@@ -308,7 +295,6 @@ function ProfileSelectionUI({
           onComplete({ type: "exit" });
         }
       } else if (key.backspace || key.delete) {
-        // Handle backspace for search
         if (showModelSearch && modelSearchQuery.length > 0) {
           setModelSearchQuery((prev) => prev.slice(0, -1));
           setModelSelectedIndex(0);
@@ -320,14 +306,12 @@ function ProfileSelectionUI({
         !key.ctrl &&
         !key.meta
       ) {
-        // Handle typing for search
         setModelSearchQuery((prev) => prev + _input);
         setModelSelectedIndex(0);
       }
       return;
     }
 
-    // Agent selection mode
     if (key.upArrow) {
       setSelectedIndex((prev) => Math.max(0, prev - 1));
     } else if (key.downArrow) {
@@ -350,9 +334,7 @@ function ProfileSelectionUI({
         setShowAll(true);
         setSelectedIndex(0);
       } else {
-        // "Create new agent" selected
         if (serverModelsForNewAgent && serverModelsForNewAgent.length > 0) {
-          // Need to pick a model first
           setSelectingModel(true);
           setModelSelectedIndex(0);
         } else {
@@ -373,7 +355,6 @@ function ProfileSelectionUI({
 
   return (
     <Box flexDirection="column">
-      {/* Welcome Screen */}
       <WelcomeScreen
         loadingState={loading ? "loading_profiles" : "ready"}
         continueSession={false}
@@ -407,7 +388,6 @@ function ProfileSelectionUI({
           onCancel={() => setModelReasoningPrompt(null)}
         />
       ) : selectingModel && serverModelsForNewAgent ? (
-        // Model selection mode
         <Box flexDirection="column" gap={1}>
           <Text bold color={colors.selector.title}>
             Select a model
@@ -467,7 +447,6 @@ function ProfileSelectionUI({
           </Box>
         </Box>
       ) : (
-        // Agent selection mode
         <Box flexDirection="column" gap={1}>
           <Text dimColor>{contextMessage}</Text>
 
@@ -558,9 +537,6 @@ function ProfileSelectionUI({
   );
 }
 
-/**
- * Inline profile selection component - used within LoadingApp
- */
 export function ProfileSelectionInline({
   lruAgentId,
   loading: externalLoading,
@@ -578,15 +554,11 @@ export function ProfileSelectionInline({
   loading?: boolean;
   freshRepoMode?: boolean;
   failedAgentMessage?: string;
-  /** If provided, show model selector when user clicks "Create new" */
   serverModelsForNewAgent?: string[];
-  /** The default model handle that wasn't available */
   defaultModelHandle?: string;
-  /** The server base URL for error messages */
   serverBaseUrl?: string;
   onSelect: (agentId: string) => void;
   onCreateNew: () => void;
-  /** Called when user selects a model from serverModelsForNewAgent */
   onCreateNewWithModel?: (
     model: string,
     reasoningEffort?: ModelReasoningSelection,
@@ -617,19 +589,14 @@ export function ProfileSelectionInline({
   });
 }
 
-/**
- * Check if profile selection is needed
- */
 export async function shouldShowProfileSelection(
   forceNew: boolean,
   agentIdArg: string | null,
 ): Promise<{ show: boolean; lruAgentId: string | null }> {
-  // Skip for explicit flags
   if (forceNew || agentIdArg) {
     return { show: false, lruAgentId: null };
   }
 
-  // Load settings
   await settingsManager.loadLocalProjectSettings();
   const localSettings = settingsManager.getLocalProjectSettings();
   const globalProfiles = settingsManager.getGlobalProfiles();
@@ -640,7 +607,6 @@ export async function shouldShowProfileSelection(
     Object.keys(localProfiles).length > 0;
   const lru = localSettings.lastAgent || null;
 
-  // Show selector if there are choices
   return {
     show: hasProfiles || !!lru,
     lruAgentId: lru,

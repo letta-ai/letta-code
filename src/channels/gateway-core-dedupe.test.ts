@@ -33,7 +33,6 @@ test("drops a resubmitted delivery whose clientMessageId was already accepted", 
     (event) => event.type === "queued",
   ).length;
 
-  // The whole chunk again, from the first message.
   for (const delivery of deliveries) {
     expect(await gateway.submit(delivery)).toBe(true);
   }

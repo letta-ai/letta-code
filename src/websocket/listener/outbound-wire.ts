@@ -312,7 +312,6 @@ function drainOutboundQueue(
   }
 }
 
-/** Test/diagnostic visibility into a transport's queue. */
 export function getOutboundQueueStats(transport: ListenerTransport): {
   queuedFrames: number;
   killed: boolean;
@@ -324,7 +323,6 @@ export function getOutboundQueueStats(transport: ListenerTransport): {
   };
 }
 
-/** Settle every queued frame when its owning connection closes. */
 export function closeOutboundTransportQueue(
   transport: ListenerTransport,
 ): void {
@@ -340,7 +338,6 @@ export function closeOutboundTransportQueue(
   if (!state.killed) queueByTransport.delete(transport);
 }
 
-// ----- Wire perf telemetry (moved from protocol-outbound.ts) -----
 // Aggregates per-message-type send metrics into 1s windows, flushed to stderr
 // or LETTA_LISTENER_PERF_FILE when LETTA_LISTENER_PERF is enabled.
 

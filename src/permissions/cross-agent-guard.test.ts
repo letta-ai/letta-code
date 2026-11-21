@@ -94,10 +94,6 @@ afterEach(() => {
   permissionMode.reset();
 });
 
-// ---------------------------------------------------------------------------
-// resolveAllowedAgents
-// ---------------------------------------------------------------------------
-
 describe("resolveAllowedAgents", () => {
   test("self-only when no parent is configured", () => {
     const allowed = resolveAllowedAgents();
@@ -153,10 +149,6 @@ describe("resolveAllowedAgents", () => {
     expect(isMemoryGuardDisabled()).toBe(false);
   });
 });
-
-// ---------------------------------------------------------------------------
-// extractTargetAgentPaths
-// ---------------------------------------------------------------------------
 
 describe("extractTargetAgentPaths", () => {
   test("file-tool targeting own memory", () => {
@@ -256,10 +248,6 @@ describe("extractTargetAgentPaths", () => {
     ).toEqual(new Set([OTHER]));
   });
 });
-
-// ---------------------------------------------------------------------------
-// evaluateCrossAgentGuard
-// ---------------------------------------------------------------------------
 
 describe("evaluateCrossAgentGuard", () => {
   beforeEach(() => {
@@ -392,10 +380,6 @@ describe("evaluateCrossAgentGuard", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Integration with checkPermission — when enabled, guard is unbypassable by any mode
-// ---------------------------------------------------------------------------
-
 describe("checkPermission integration", () => {
   const permissions = { allow: [], deny: [], ask: [] };
 
@@ -498,15 +482,6 @@ describe("checkPermission integration", () => {
     expect(result.decision).toBe("allow");
   });
 });
-
-// ---------------------------------------------------------------------------
-// Regression tests: Grep / Glob ancestor-path bypass.
-//
-// The classifier used to require `<home>/.letta/agents/<id>/memory` to
-// match, so pointing Grep or Glob at `.letta/agents` (the tree root)
-// slipped through entirely — leaking file contents and enumerating every
-// agent on disk.
-// ---------------------------------------------------------------------------
 
 describe("Grep/Glob ancestor-path regression tests", () => {
   const agentsTreeRoot = join(HOME, ".letta", "agents");
@@ -901,12 +876,6 @@ describe("local-backend memfs tree", () => {
     expect(result?.offendingAgentIds).toContain(OTHER);
   });
 });
-
-// ---------------------------------------------------------------------------
-// Toolset alignment: the guard covers Codex file tools (not just Claude)
-// on BOTH the API and local trees. Tool names are canonicalized; path args
-// converge on file_path / path / notebook_path / patch input.
-// ---------------------------------------------------------------------------
 
 describe("toolset alignment (Codex file tools)", () => {
   const localMemfs = (id: string, rel = ""): string =>

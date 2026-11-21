@@ -17,11 +17,9 @@ const SOLID_LINE = "─";
 interface MessageSearchProps {
   onClose: () => void;
   initialQuery?: string;
-  /** Current agent ID for "current agent" filter */
   agentId?: string;
   /** Current conversation ID for "current conv" filter */
   conversationId?: string;
-  /** Callback when user wants to open a conversation */
   onOpenConversation?: (
     agentId: string,
     conversationId?: string,
@@ -126,9 +124,6 @@ export function buildMessageSearchRequestBody(
   return body;
 }
 
-/**
- * Format a timestamp in local timezone
- */
 function formatLocalTime(dateStr: string | null | undefined): string {
   if (!dateStr) return "";
 
@@ -148,9 +143,6 @@ function formatLocalTime(dateStr: string | null | undefined): string {
   return date.toLocaleString(undefined, options);
 }
 
-/**
- * Truncate text to fit width, adding ellipsis if needed
- */
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, (match) => `\\${match}`);
 }
@@ -165,11 +157,7 @@ function stringifyMessageValue(value: unknown): string {
   }
 }
 
-/**
- * Get display text from a message
- */
 export function getMessageText(msg: MessageSearchResponse[number]): string {
-  // Assistant message content
   if ("content" in msg) {
     const content = msg.content;
     if (typeof content === "string") return content;
@@ -182,33 +170,25 @@ export function getMessageText(msg: MessageSearchResponse[number]): string {
       }
     }
   }
-  // Text field (user messages, etc)
   if ("text" in msg && typeof msg.text === "string") {
     return msg.text;
   }
-  // Reasoning messages
   if ("reasoning" in msg && typeof msg.reasoning === "string") {
     return msg.reasoning;
   }
-  // Tool call messages
   if ("tool_call" in msg && msg.tool_call) {
     const tc = msg.tool_call as { name?: string; arguments?: string };
     return `Tool: ${tc.name || "unknown"}`;
   }
-  // Tool return messages - show tool name and preview of return
   if ("tool_return" in msg) {
     const toolName = "name" in msg ? (msg.name as string) : "tool";
     const returnValue = stringifyMessageValue(msg.tool_return);
-    // Truncate long return values
     const preview = returnValue.slice(0, 100);
     return `${toolName}: ${preview}`;
   }
   return `[${msg.message_type || "unknown"}]`;
 }
 
-/**
- * Highlight keywords in text
- */
 function HighlightedText({ text, query }: { text: string; query: string }) {
   if (!query.trim()) return <Text>{text}</Text>;
 
@@ -273,14 +253,12 @@ export function MessageSearch({
     Map<string, Promise<MessageSearchResponse>>
   >(new Map());
 
-  // Warm tpuf cache on mount (fire-and-forget)
   useEffect(() => {
     void warmMessageSearchCache().catch(() => {
       // Silently ignore - cache warm is best-effort
     });
   }, []);
 
-  // Get cache key for a specific query+mode+range combination
   const getCacheKey = useCallback(
     (query: string, mode: SearchMode, range: SearchRange) => {
       const rangeKey =
@@ -294,7 +272,6 @@ export function MessageSearch({
     [agentId, conversationId],
   );
 
-  // Execute search for a single mode (returns results, doesn't set state)
   const fetchSearchResults = useCallback(
     async (query: string, mode: SearchMode, range: SearchRange) => {
       const body = buildMessageSearchRequestBody(query, mode, range, {
@@ -422,7 +399,6 @@ export function MessageSearch({
     [fetchAndCacheSearchResults, getCacheKey, prefetchSearchResults],
   );
 
-  // Submit search (only when query changes)
   const submitSearch = useCallback(() => {
     if (searchInput.trim() && searchInput !== activeQuery) {
       setActiveQuery(searchInput);
@@ -430,7 +406,6 @@ export function MessageSearch({
     }
   }, [searchInput, activeQuery, searchMode, searchRange, executeSearch]);
 
-  // Clear search
   const clearSearch = useCallback(() => {
     setSearchInput("");
     setActiveQuery("");
@@ -438,7 +413,6 @@ export function MessageSearch({
     setSelectedIndex(0);
   }, []);
 
-  // Cycle search mode (Shift+Tab)
   const cycleSearchMode = useCallback((reverse = false) => {
     setSearchMode((current) => {
       const currentIndex = SEARCH_MODES.indexOf(current);
@@ -449,7 +423,6 @@ export function MessageSearch({
     });
   }, []);
 
-  // Cycle search range (Tab)
   const cycleSearchRange = useCallback(() => {
     setSearchRange((current) => {
       const currentIndex = SEARCH_RANGES.indexOf(current);
@@ -458,14 +431,12 @@ export function MessageSearch({
     });
   }, []);
 
-  // Re-run search when mode or range changes (if there's an active query) - uses cache
   useEffect(() => {
     if (activeQuery) {
       executeSearch(activeQuery, searchMode, searchRange);
     }
   }, [searchMode, searchRange, activeQuery, executeSearch]);
 
-  // Sliding window for visible items
   const startIndex = Math.max(
     0,
     Math.min(selectedIndex - 2, results.length - VISIBLE_ITEMS),
@@ -479,7 +450,6 @@ export function MessageSearch({
       return;
     }
 
-    // Handle expanded message view
     if (expandedMessage) {
       if (key.escape) {
         setExpandedMessage(null);
@@ -506,20 +476,16 @@ export function MessageSearch({
         onClose();
       }
     } else if (key.return) {
-      // If user has typed a new query, search first
       if (searchInput.trim() && searchInput !== activeQuery) {
         submitSearch();
       } else if (results.length > 0 && results[selectedIndex]) {
-        // Otherwise expand the selected result
         setExpandedMessage(results[selectedIndex]);
       }
     } else if (key.backspace || key.delete) {
       setSearchInput((prev) => prev.slice(0, -1));
     } else if (key.tab && key.shift) {
-      // Shift+Tab cycles search mode
       cycleSearchMode();
     } else if (key.tab) {
-      // Tab cycles search range
       cycleSearchRange();
     } else if (key.upArrow) {
       setSelectedIndex((prev) => Math.max(0, prev - 1));
@@ -532,7 +498,6 @@ export function MessageSearch({
 
   const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
 
-  // Range label helper
   const getRangeLabel = (range: SearchRange) => {
     switch (range) {
       case "all":
@@ -546,13 +511,11 @@ export function MessageSearch({
 
   return (
     <Box flexDirection="column">
-      {/* Command header */}
       <Text dimColor>{"> /search"}</Text>
       <Text dimColor>{solidLine}</Text>
 
       <Box height={1} />
 
-      {/* Expanded message view - hide title/controls */}
       {expandedMessage &&
         (() => {
           const msgData = expandedMessage as {
@@ -570,12 +533,10 @@ export function MessageSearch({
 
           return (
             <Box flexDirection="column" paddingX={1}>
-              {/* Full message text with padding and HighlightedText */}
               <Box paddingLeft={2} paddingY={1} marginBottom={1}>
                 <HighlightedText text={fullText} query={activeQuery} />
               </Box>
 
-              {/* Metadata list */}
               <Box flexDirection="column" paddingLeft={2} gap={0}>
                 <Text dimColor>
                   {typeLabel}, sent {timestamp}
@@ -594,7 +555,6 @@ export function MessageSearch({
 
               <Box height={1} />
 
-              {/* Action prompt footer */}
               <Box paddingLeft={2}>
                 <Text dimColor>
                   {onOpenConversation ? (
@@ -612,14 +572,12 @@ export function MessageSearch({
           );
         })()}
 
-      {/* Title and search controls - hidden when expanded */}
       {!expandedMessage && (
         <Box flexDirection="column" gap={1} marginBottom={1}>
           <Text bold color={colors.selector.title}>
             Search messages across all agents
           </Text>
           <Box flexDirection="column" paddingLeft={1}>
-            {/* Search input */}
             <Box flexDirection="row">
               <Text dimColor> Search: </Text>
               {searchInput ? (
@@ -636,7 +594,6 @@ export function MessageSearch({
 
             <Box height={1} />
 
-            {/* Range tabs */}
             <Box flexDirection="row">
               <Text dimColor> Range (tab): </Text>
               {SEARCH_RANGES.map((range, i) => {
@@ -658,7 +615,6 @@ export function MessageSearch({
               })}
             </Box>
 
-            {/* Mode tabs */}
             <Box flexDirection="row">
               <Text dimColor> Mode (shift-tab): </Text>
               {SEARCH_MODES.map((mode, i) => {
@@ -683,28 +639,24 @@ export function MessageSearch({
         </Box>
       )}
 
-      {/* Error state */}
       {!expandedMessage && error && (
         <Box paddingLeft={2}>
           <Text color="red">Error: {error}</Text>
         </Box>
       )}
 
-      {/* Loading state */}
       {!expandedMessage && loading && (
         <Box paddingLeft={2}>
           <Text dimColor>Searching...</Text>
         </Box>
       )}
 
-      {/* No results */}
       {!expandedMessage && !loading && activeQuery && results.length === 0 && (
         <Box paddingLeft={2}>
           <Text dimColor>No results found for "{activeQuery}"</Text>
         </Box>
       )}
 
-      {/* Results list */}
       {!expandedMessage && !loading && results.length > 0 && (
         <Box flexDirection="column">
           {visibleResults.map(
@@ -726,7 +678,6 @@ export function MessageSearch({
                 msgWithDate.created_at || msgWithDate.date,
               );
 
-              // Determine emoji based on message type
               const isAssistant =
                 msgType === "assistant_message" ||
                 msgType === "reasoning_message";
@@ -739,7 +690,6 @@ export function MessageSearch({
                 availableWidth,
               );
 
-              // Show conversation_id if exists, otherwise agent_id
               const idToShow = conversationIdFromMsg || agentIdFromMsg;
 
               // Use message id + index for guaranteed uniqueness (search can return same message multiple times)
@@ -780,7 +730,6 @@ export function MessageSearch({
         </Box>
       )}
 
-      {/* Footer */}
       {!expandedMessage && (
         <Box flexDirection="column" marginTop={1} paddingLeft={2}>
           {results.length > 0 && (

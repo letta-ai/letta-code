@@ -327,7 +327,6 @@ describe("pending channel control requests", () => {
     expect(approvalResponses).toHaveLength(0);
     expect(deliveries).toHaveLength(0);
 
-    // The initiating sender's reply still resolves the pending prompt.
     await adapter.onMessage?.(createInboundMessage("2"));
     expect(approvalResponses).toHaveLength(1);
     __testOverrideLoadChannelAccounts(null);

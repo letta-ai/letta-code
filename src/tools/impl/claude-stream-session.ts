@@ -153,7 +153,6 @@ function resolveTurnWaiters(session: ClaudeSession): void {
   session.turnWaiters.clear();
 }
 
-/** Resolves once a turn can be interrupted or Claude is idle on background tasks. */
 function waitForTurnStart(
   session: ClaudeSession,
   signal?: AbortSignal,
@@ -232,7 +231,6 @@ function writeInput(session: ClaudeSession, prompt: string): Promise<void> {
   );
 }
 
-/** Marks an input as picked up when Claude echoes or starts it by UUID. */
 function acknowledgeInput(session: ClaudeSession, uuid: unknown): void {
   if (typeof uuid !== "string" || !session.latestInputUuid) return;
   session.acknowledgesInputs = true;
@@ -435,7 +433,6 @@ function holdResult(
   // settle() and the next turn start clear it, so it never outlives the session.
 }
 
-/** Settle on a final result unless Claude is still waiting on background tasks. */
 function finishResult(
   session: ClaudeSession,
   value: Record<string, unknown>,

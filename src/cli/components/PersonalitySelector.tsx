@@ -1,5 +1,3 @@
-// Personality selector.
-// Wraps SingleSelectPicker with personality-specific logic.
 
 import { memo, useMemo } from "react";
 import {

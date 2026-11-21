@@ -11,7 +11,6 @@ function deadlineReached(deadline: number | null): boolean {
   return deadline !== null && Date.now() >= deadline;
 }
 
-/** Wait for a background subagent to publish a linkable agent or conversation. */
 export async function waitForBackgroundSubagentLink(
   subagentId: string,
   timeoutMs: number | null = null,
@@ -36,7 +35,6 @@ export async function waitForBackgroundSubagentLink(
   }
 }
 
-/** Wait for a background subagent to publish its agent identity. */
 export async function waitForBackgroundSubagentAgentId(
   subagentId: string,
   timeoutMs: number | null = null,
@@ -61,7 +59,6 @@ export async function waitForBackgroundSubagentAgentId(
   return null;
 }
 
-/** Wait for a background subagent to publish its conversation identity. */
 export async function waitForBackgroundSubagentConversationId(
   subagentId: string,
   timeoutMs: number | null = null,

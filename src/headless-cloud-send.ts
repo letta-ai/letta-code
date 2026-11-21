@@ -100,7 +100,6 @@ export interface CloudSendDeps {
   timeoutMs?: number;
 }
 
-/** Return undefined for execution paths this PR intentionally leaves unchanged. */
 export async function tryCloudHeadlessSend(
   values: SendValues,
   prompt: string,

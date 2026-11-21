@@ -54,7 +54,6 @@ export interface InboundDebouncer<T> {
   enqueue: (item: T) => Promise<void>;
   /** Force an immediate flush for a specific key, if any buffer is pending. */
   flushKey: (key: string) => Promise<void>;
-  /** Force every pending key to flush immediately. */
   flushAll: () => Promise<void>;
   /** Cancel every pending debounced buffer without calling `onFlush`. */
   cancelAll: () => void;

@@ -71,7 +71,6 @@ async function copyToResolved(srcRel, targetSpecifier) {
           const itRoot = dirname(itPkgPath);
           dest = join(itRoot, "build", "index.js");
         } catch {
-          // Final fallback
           dest = join(
             pkgRoot,
             "node_modules",
@@ -147,7 +146,6 @@ async function patchInkRuntime(replacements) {
   console.log(`[patch] resettable static output -> ${runtimePath}`);
 }
 
-// Ink internals (resolve actual installed module path)
 await copyToResolved(
   "vendor/ink/build/components/App.js",
   "ink/build/components/App.js",
@@ -171,11 +169,8 @@ await patchInkRuntime([
   },
   {
     before: [
-      // Current patched state from the 8 MiB follow-up on this branch.
       "    fullStaticOutput;\n    staticOutputRepaintPending = false;\n    isCi = () => isInCi && !this.options.stdout.isTTY;\n    // Cap the retained static transcript tail (in UTF-16 code units). Ink keeps\n    // fullStaticOutput so overflow frames and static repaints can rewrite the\n    // newest tail after a viewport clear. Overflow uses 2J+H (no 3J) so emulator\n    // scrollback keeps older history; 8 MiB is a UX-sized rewrite window (256 KB\n    // is one large Read/git diff) and bounds per-frame write volume. Uncapped,\n    // the string grows with the whole session and is re-serialized on overflow.\n    staticOutputRetainLimit = 8 * 1024 * 1024;\n    retainStaticOutput = (value) => {\n        if (value.length <= this.staticOutputRetainLimit) {\n            return value;\n        }\n        const cut = value.indexOf('\\n', value.length - this.staticOutputRetainLimit);\n        return '\\u001B[0m' + (cut === -1 ? value.slice(value.length - this.staticOutputRetainLimit) : value.slice(cut + 1));\n    };\n    exitPromise;",
-      // Current patched state from this PR's first commit (256 KB cap).
       "    fullStaticOutput;\n    staticOutputRepaintPending = false;\n    isCi = () => isInCi && !this.options.stdout.isTTY;\n    // Cap the retained static transcript tail (in UTF-16 code units). Ink keeps\n    // fullStaticOutput so overflow frames and static repaints can rewrite the\n    // transcript after clearing the terminal; uncapped it grows linearly with\n    // the whole session transcript and is re-serialized on every overflow frame.\n    staticOutputRetainLimit = 256 * 1024;\n    retainStaticOutput = (value) => {\n        if (value.length <= this.staticOutputRetainLimit) {\n            return value;\n        }\n        const cut = value.indexOf('\\n', value.length - this.staticOutputRetainLimit);\n        return '\\u001B[0m' + (cut === -1 ? value.slice(value.length - this.staticOutputRetainLimit) : value.slice(cut + 1));\n    };\n    exitPromise;",
-      // Current patched state from a previous install (transition path).
       "    fullStaticOutput;\n    staticOutputRepaintPending = false;\n    isCi = () => isInCi && !this.options.stdout.isTTY;\n    exitPromise;",
       "    fullStaticOutput;\n    staticOutputRepaintPending = false;\n    exitPromise;",
       "    fullStaticOutput;\n    exitPromise;",
@@ -198,7 +193,6 @@ await patchInkRuntime([
   },
   {
     before: [
-      // Current patched state from a previous install (transition path).
       "        if (this.staticOutputRepaintPending && (this.options.debug || this.isCi())) {\n            if (this.options.stdout.isTTY) {\n                this.fullStaticOutput = hasStaticOutput ? staticOutput : '';\n                this.repaintStaticOutput(output);\n                return;\n            }\n            this.staticOutputRepaintPending = false;\n        }\n        if (this.options.debug) {",
       "        if (this.options.debug) {",
     ],
@@ -224,22 +218,13 @@ await patchInkRuntime([
     // lastOutput keeps the clipped frame, so console redraws and later diffs
     // match the screen. fullStaticOutput stays for the one-shot #4032 repaint.
     before: [
-      // Current branch: 2J+H replace of the live tail clipped to rows lines.
       "            if (hasStaticOutput) {\n                this.options.stdout.write(staticOutput + '\\n'.repeat(this.options.stdout.rows || 1));\n            }\n            if (hasStaticOutput || output !== this.lastOutput) {\n                const rows = this.options.stdout.rows || 1;\n                const liveLines = output.split('\\n');\n                this.options.stdout.write('\\u001B[2J\\u001B[H' + (liveLines.length > rows ? liveLines.slice(-rows).join('\\n') : output));\n            }\n            this.lastOutput = output;\n            return;",
-      // Earlier: clip kept the top of the live tree (hides input/approval).
       "            if (hasStaticOutput) {\n                this.options.stdout.write(staticOutput + '\\n'.repeat(this.options.stdout.rows || 1));\n            }\n            if (hasStaticOutput || output !== this.lastOutput) {\n                const rows = this.options.stdout.rows || 1;\n                const liveLines = output.split('\\n');\n                this.options.stdout.write('\\u001B[2J\\u001B[H' + (liveLines.length > rows ? liveLines.slice(0, rows).join('\\n') : output));\n            }\n            this.lastOutput = output;\n            return;",
-      // Earlier: scroll increment then 2J+H the unclipped live region
-      // (still scrolls when outputHeight > rows).
       "            if (hasStaticOutput) {\n                this.options.stdout.write(staticOutput + '\\n'.repeat(this.options.stdout.rows || 1));\n            }\n            if (hasStaticOutput || output !== this.lastOutput) {\n                this.options.stdout.write('\\u001B[2J\\u001B[H' + output);\n            }\n            this.lastOutput = output;\n            return;",
-      // Earlier: append increment and live with no viewport replace.
       "            if (hasStaticOutput) {\n                this.options.stdout.write(staticOutput);\n            }\n            if (output !== this.lastOutput) {\n                this.options.stdout.write(output);\n            }\n            this.lastOutput = output;\n            return;",
-      // Earlier: increment immediately followed by 2J (erases the item).
       "            if (hasStaticOutput || output !== this.lastOutput) {\n                this.options.stdout.write((hasStaticOutput ? staticOutput : '') + '\\u001B[2J\\u001B[H' + output);\n            }\n            this.lastOutput = output;\n            return;",
-      // Earlier: 2J+H but still replayed the retained tail.
       "            if (hasStaticOutput || output !== this.lastOutput) {\n                this.options.stdout.write('\\u001B[2J\\u001B[H' + this.fullStaticOutput + output);\n            }\n            this.lastOutput = output;\n            return;",
-      // Earlier: skip-no-change guard still used clearTerminal (3J).
       "            if (hasStaticOutput || output !== this.lastOutput) {\n                this.options.stdout.write(ansiEscapes.clearTerminal + this.fullStaticOutput + output);\n            }\n            this.lastOutput = output;\n            return;",
-      // Pristine Ink / earlier patched state: always-rewrite overflow.
       "            this.options.stdout.write(ansiEscapes.clearTerminal + this.fullStaticOutput + output);\n            this.lastOutput = output;\n            return;",
     ],
     after:

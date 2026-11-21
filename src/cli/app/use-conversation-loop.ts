@@ -1,4 +1,3 @@
-// src/cli/app/useConversationLoop.ts
 
 import { randomUUID } from "node:crypto";
 import { APIError } from "@letta-ai/letta-client/core/error";
@@ -481,7 +480,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     ],
   );
 
-  // Core streaming function - iterative loop that processes conversation turns
   // biome-ignore lint/correctness/useExhaustiveDependencies: blanket suppression — this callback has ~16 omitted deps (refs, stable functions, etc.). Refs are safe (read .current dynamically), but the blanket ignore also hides any genuinely missing reactive deps. If stale-closure bugs appear in processConversation, audit the dep array here first.
   const processConversation = useCallback(
     async (
@@ -500,7 +498,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         }
       };
 
-      // Reset per-run approval tracking used by streaming UI.
       buffersRef.current.approvalsPending = false;
       if (buffersRef.current.serverToolCalls.size > 0) {
         let didPromote = false;
@@ -609,7 +606,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           ? pendingTranscriptStartLineIndexRef.current
           : null;
 
-      // Reset retry counters for new conversation turns (fresh budget per user message)
       if (!allowReentry) {
         llmApiErrorRetriesRef.current = 0;
         emptyResponseRetriesRef.current = 0;
@@ -636,13 +632,11 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           return;
         }
 
-        // Check if user hit escape before we started
         if (userCancelledRef.current) {
           userCancelledRef.current = false; // Reset for next time
           return;
         }
 
-        // Double-check we haven't become stale between entry and try block
         if (myGeneration !== conversationGenerationRef.current) {
           return;
         }
@@ -727,10 +721,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             "internal_cancel",
           );
         }
-        // Reset interrupted flag since we're starting a fresh stream
         buffersRef.current.interrupted = false;
 
-        // Clear completed subagents only on true new turns.
         if (
           shouldClearCompletedSubagentsOnTurnStart(
             allowReentry,
@@ -745,7 +737,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         while (true) {
           const signal = abortControllerRef.current?.signal;
 
-          // Check if cancelled before starting new stream
           if (signal?.aborted) {
             const isStaleAtAbort =
               myGeneration !== conversationGenerationRef.current;
@@ -814,7 +805,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 : "none",
             );
 
-            // Extract error detail using shared helper (handles nested/direct/message shapes)
             const errorDetail = extractConflictDetail(preStreamError);
 
             // Route through shared pre-stream conflict classifier (parity with headless.ts)
@@ -874,7 +864,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               preStreamAction === "retry_conversation_busy" ||
               blockingRunId
             ) {
-              // Log the conversation-busy error
               telemetry.trackError(
                 "retry_conversation_busy",
                 formatTelemetryErrorMessage(
@@ -980,9 +969,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   }
                 }
               }
-              // User pressed ESC - fall through to error handling
             }
-            // Retry pre-stream transient errors (429/5xx/network) with shared LLM retry budget
             if (preStreamAction === "retry_transient") {
               llmApiErrorRetriesRef.current += 1;
               const attempt = llmApiErrorRetriesRef.current;
@@ -999,7 +986,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 retryAfterMs,
               });
 
-              // Log the error that triggered the retry
               telemetry.trackError(
                 "retry_pre_stream_transient",
                 formatTelemetryErrorMessage(
@@ -1055,13 +1041,10 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 restorePinnedPermissionMode();
                 continue;
               }
-              // User pressed ESC - fall through to error handling
             }
 
-            // Reset conversation busy retry counter on non-busy error
             conversationBusyRetriesRef.current = 0;
 
-            // Check if this is a pre-stream approval desync error
             const hasApprovalInPayload = currentInput.some(
               (item) => item?.type === "approval",
             );
@@ -1085,17 +1068,14 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                     const textToRestore = getRestorableUserText(currentInput);
                     if (textToRestore) setRestoredInput(textToRestore);
 
-                    // Clear all stale approval state before setting new approvals
                     setApprovalResults([]);
                     setAutoHandledResults([]);
                     setAutoDeniedApprovals([]);
                     setApprovalContexts([]);
                     queueApprovalResults(null);
 
-                    // Set up approval UI with fetched approvals
                     setPendingApprovals(serverApprovals);
 
-                    // Analyze approval contexts (same logic as /resume)
                     try {
                       const contexts = await Promise.all(
                         serverApprovals.map(async (approval) => {
@@ -1135,14 +1115,11 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                     buffersRef.current.interrupted = false;
                     continue;
                   }
-                  // Otherwise fall through to error handling below
                 } catch {
-                  // Fetch failed - fall through to error handling below
                 }
               }
             }
 
-            // Not a recoverable desync - re-throw to outer catch
             if (!stream) {
               reportBusyRetryExhausted(
                 errorDetail,
@@ -1202,10 +1179,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 currentEnableReasoner !== agentEnableReasoner
               ) {
                 if (!hasConversationModelOverrideRef.current) {
-                  // Model has changed at the agent level - update local state.
                   setLlmConfig(agent.llm_config);
 
-                  // Derive model ID from the configured model handle for ModelSelector.
                   const agentModelHandle = getPreferredAgentModelHandle(agent);
 
                   const modelInfo = getModelInfoForLlmConfig(
@@ -1224,7 +1199,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   setCurrentModelHandle(agentModelHandle || null);
                 }
 
-                // Always keep base agent state fresh.
                 setAgentState(agent);
                 setAgentDescription(agent.description ?? null);
                 const lastRunCompletion = (
@@ -1293,12 +1267,9 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             lastSeqId,
           );
 
-          // Update currentRunId for error reporting in catch block
           currentRunId = lastRunId ?? undefined;
-          // Expose to statusline
           if (lastRunId) lastRunIdRef.current = lastRunId;
 
-          // Track API duration and trajectory deltas
           sessionStatsRef.current.endTurn(apiDurationMs);
           const usageDelta = sessionStatsRef.current.updateUsageFromBuffers(
             buffersRef.current,
@@ -1367,7 +1338,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           // Record the final stop reason so the dequeue gate can check it.
           lastStopReasonRef.current = stopReasonToHandle;
 
-          // Case 1: Turn ended normally
           if (stopReasonToHandle === "end_turn") {
             clearApprovalToolContext();
             setStreaming(false);
@@ -1415,7 +1385,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             // delta is on disk, so step counts include this turn.
             await maybeRunPostTurnReflection();
 
-            // Get last assistant message, user message, and reasoning for Stop hook
             const bufferedLines = Array.from(
               buffersRef.current.byId.values(),
             ) as Line[];
@@ -1434,7 +1403,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             const precedingReasoning = buffersRef.current.lastReasoning;
             buffersRef.current.lastReasoning = undefined; // Clear after use
 
-            // Run Stop hooks - if blocked/errored, continue the conversation with feedback
             const stopHookResult = await runStopHooks(
               stopReasonToHandle,
               buffersRef.current.order.length,
@@ -1445,7 +1413,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               userMessage,
             );
 
-            // If hook blocked (exit 2), inject stderr feedback and continue conversation
             if (stopHookResult.blocked) {
               const stderrOutput = stopHookResult.results
                 .map((r) => r.stderr)
@@ -1454,7 +1421,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               const feedback = stderrOutput || "Stop hook blocked";
               const hookMessage = `<stop-hook>\n${feedback}\n</stop-hook>`;
 
-              // Add status to transcript so user sees what's happening
               const statusId = uid("status");
               buffersRef.current.byId.set(statusId, {
                 kind: "status",
@@ -1464,7 +1430,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               buffersRef.current.order.push(statusId);
               refreshDerived();
 
-              // Continue conversation with the hook feedback
               const hookMessageOtid = randomUUID();
               setTimeout(() => {
                 processConversation(
@@ -1536,7 +1501,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               setNeedsEagerApprovalCheck(false);
             }
 
-            // Derive an auto title client-side once the first assistant turn completes.
             if (
               shouldAutoGenerateConversationTitleRef.current &&
               !isAutoConversationTitleInFlightRef.current &&
@@ -1613,13 +1577,10 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               }
             }
 
-            // Send desktop notification when turn completes
-            // and we're not about to auto-send another queued message
             if (!waitingForQueueCancelRef.current) {
               sendDesktopNotification("Turn completed, awaiting your input");
             }
 
-            // Check if we were waiting for cancel but stream finished naturally
             if (waitingForQueueCancelRef.current) {
               // Queue-cancel completed - let dequeue effect handle the messages
               // We don't call onSubmit here because isAgentBusy() would return true
@@ -1640,7 +1601,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             return;
           }
 
-          // Case 1.5: Stream was cancelled by user
           if (stopReasonToHandle === "cancelled") {
             clearApprovalToolContext();
             pendingTranscriptStartLineIndexRef.current = null;
@@ -1648,7 +1608,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             closeTrajectorySegment();
             syncTrajectoryElapsedBase();
 
-            // Check if this cancel was triggered by queue threshold
             if (waitingForQueueCancelRef.current) {
               // Queue-cancel completed - let dequeue effect handle the messages
               // We don't call onSubmit here because isAgentBusy() would return true
@@ -1665,7 +1624,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               waitingForQueueCancelRef.current = false;
               queueSnapshotRef.current = [];
             } else {
-              // Regular user cancellation - show error
               if (!EAGER_CANCEL) {
                 appendError(INTERRUPT_MESSAGE, true);
               }
@@ -1674,7 +1632,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             return;
           }
 
-          // Case 2: Requires approval
           if (stopReasonToHandle === "requires_approval") {
             clearApprovalToolContext();
             preserveTranscriptStartForApproval = true;
@@ -1698,11 +1655,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               return;
             }
 
-            // If in quietCancel mode (user queued messages), auto-reject all approvals
-            // and send denials + queued messages together
             if (waitingForQueueCancelRef.current) {
               clearApprovalToolContext();
-              // Create denial results for all approvals
               const denialResults = approvalsToProcess.map((approvalItem) => ({
                 type: "approval" as const,
                 tool_call_id: approvalItem.toolCallId,
@@ -1710,7 +1664,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 reason: "User cancelled - new message queued",
               }));
 
-              // Update buffers to show tools as cancelled
               for (const approvalItem of approvalsToProcess) {
                 onChunk(buffersRef.current, {
                   message_type: "tool_return_message",
@@ -1723,7 +1676,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               }
               refreshDerived();
 
-              // Queue denial results - dequeue effect will pick them up via onSubmit
               queueApprovalResults(denialResults);
 
               debugLog(
@@ -1744,7 +1696,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               return;
             }
 
-            // Check if user cancelled before starting permission checks
             if (
               userCancelledRef.current ||
               abortControllerRef.current?.signal.aborted
@@ -1874,12 +1825,10 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
 
             try {
               if (autoAllowedToolCallIds.length > 0) {
-                // Set phase to "running" for auto-allowed tools
                 setToolCallsRunning(buffersRef.current, autoAllowedToolCallIds);
                 refreshDerived();
               }
 
-              // Execute auto-allowed tools (sequential for writes, parallel for reads)
               try {
                 const approvalToolContextId =
                   approvalToolContextIdRef.current ??
@@ -1927,8 +1876,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 return;
               }
 
-              // Update buffers with tool rejection for UI (denial results
-              // were pre-built before execution)
               for (const ad of autoDeniedResults) {
                 onChunk(buffersRef.current, {
                   message_type: "tool_return_message",
@@ -1965,9 +1912,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   }
                 : undefined;
 
-              // If all are auto-handled, continue immediately without showing dialog
               if (needsUserInput.length === 0) {
-                // Check if user cancelled before continuing
                 if (
                   userCancelledRef.current ||
                   abortControllerRef.current?.signal.aborted ||
@@ -2016,9 +1961,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   return;
                 }
 
-                // Cancel mode - queue results and let dequeue effect handle
                 if (waitingForQueueCancelRef.current) {
-                  // Queue results - dequeue effect will pick them up via onSubmit
                   if (allResults.length > 0) {
                     queueApprovalResults(allResults, autoAllowedMetadata);
                   }
@@ -2062,9 +2005,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 return;
               }
 
-              // Check again if user queued messages during auto-allowed tool execution
               if (waitingForQueueCancelRef.current) {
-                // Create denial results for tools that need user input
                 const denialResults = needsUserInput.map((ac) => ({
                   type: "approval" as const,
                   tool_call_id: ac.approval.toolCallId,
@@ -2072,7 +2013,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   reason: "User cancelled - new message queued",
                 }));
 
-                // Update buffers to show tools as cancelled
                 for (const ac of needsUserInput) {
                   onChunk(buffersRef.current, {
                     message_type: "tool_return_message",
@@ -2085,7 +2025,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 }
                 refreshDerived();
 
-                // Combine with auto-handled results and queue for sending
                 const queuedResults = [...allResults, ...denialResults];
                 if (queuedResults.length > 0) {
                   queueApprovalResults(queuedResults, autoAllowedMetadata);
@@ -2123,7 +2062,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               }
             }
 
-            // Check if user cancelled before showing dialog
             if (
               userCancelledRef.current ||
               abortControllerRef.current?.signal.aborted
@@ -2140,7 +2078,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               return;
             }
 
-            // Show approval dialog for tools that need user input
             setPendingApprovals(needsUserInput.map((ac) => ac.approval));
             setApprovalContexts(
               needsUserInput
@@ -2152,19 +2089,14 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             setStreaming(false);
             closeTrajectorySegment();
             syncTrajectoryElapsedBase();
-            // Notify user that approval is needed
             sendDesktopNotification("Approval needed");
             return;
           }
 
-          // Unexpected stop reason (error, llm_api_error, etc.)
-          // Cache desync detection and last failure for consistent handling
-          // Check if payload contains approvals (could be approval-only or mixed with user message)
           const hasApprovalInPayload = currentInput.some(
             (item) => item?.type === "approval",
           );
 
-          // Capture the most recent error text in this turn (if any)
           let latestErrorText: string | null = null;
           for (let i = buffersRef.current.order.length - 1; i >= 0; i -= 1) {
             const id = buffersRef.current.order[i];
@@ -2198,17 +2130,14 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 const textToRestore = getRestorableUserText(currentInput);
                 if (textToRestore) setRestoredInput(textToRestore);
 
-                // Clear all stale approval state before setting new approvals
                 setApprovalResults([]);
                 setAutoHandledResults([]);
                 setAutoDeniedApprovals([]);
                 setApprovalContexts([]);
                 queueApprovalResults(null);
 
-                // Set up approval UI with fetched approvals
                 setPendingApprovals(serverApprovals);
 
-                // Analyze approval contexts
                 try {
                   const contexts = await Promise.all(
                     serverApprovals.map(async (approval) => {
@@ -2248,9 +2177,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 buffersRef.current.interrupted = false;
                 continue;
               }
-              // Otherwise fall through to error handling below
             } catch {
-              // Fetch failed - fall through to error handling below
             }
           }
 
@@ -2272,7 +2199,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             llmApiErrorRetriesRef.current += 1;
 
             try {
-              // Fetch pending approvals and auto-deny them
               const agent = await getBackend().retrieveAgent(
                 agentIdRef.current,
               );
@@ -2389,7 +2315,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             continue;
           }
 
-          // Check if this is a retriable error (transient LLM API error)
           const retriable = await isRetriableError(
             stopReasonToHandle,
             lastRunId,
@@ -2412,7 +2337,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               detail: detailFromRun ?? fallbackError,
             });
 
-            // Log the error that triggered the retry
             telemetry.trackError(
               "retry_post_stream_error",
               formatTelemetryErrorMessage(
@@ -2427,7 +2351,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               },
             );
 
-            // Show subtle grey status message (skip for silently-retried errors)
             debugLog(
               "retry",
               "Post-stream retry (run=%s, stop=%s): %s",
@@ -2447,7 +2370,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               refreshDerived();
             }
 
-            // Wait before retry (check abort signal periodically for ESC cancellation)
             let cancelled = false;
             const startTime = Date.now();
             while (Date.now() - startTime < delayMs) {
@@ -2461,7 +2383,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               await new Promise((resolve) => setTimeout(resolve, 100)); // Check every 100ms
             }
 
-            // Remove status message
             if (retryStatusId) {
               buffersRef.current.byId.delete(retryStatusId);
               buffersRef.current.order = buffersRef.current.order.filter(
@@ -2485,13 +2406,10 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               streamSequenceCursor = null;
               // Reset interrupted flag so retry stream chunks are processed
               buffersRef.current.interrupted = false;
-              // Retry by continuing the while loop with fresh OTIDs.
               continue;
             }
-            // User pressed ESC - fall through to error handling
           }
 
-          // Reset retry counters on non-retriable error (or max retries exceeded)
           llmApiErrorRetriesRef.current = 0;
           emptyResponseRetriesRef.current = 0;
           conversationBusyRetriesRef.current = 0;
@@ -2520,12 +2438,10 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             });
             appendError(ERROR_FEEDBACK_HINT, true);
 
-            // Restore dequeued message to input on error
             if (lastDequeuedMessageRef.current) {
               setRestoredInput(lastDequeuedMessageRef.current);
               lastDequeuedMessageRef.current = null;
             }
-            // Clear any remaining queue on error
             tuiQueueRef.current?.clear("error");
 
             setStreaming(false);
@@ -2544,12 +2460,10 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             runId: lastRunId ?? undefined,
           };
 
-          // Fetch error details from the run if available (server-side errors)
           if (lastRunId) {
             try {
               const run = await getBackend().retrieveRun(lastRunId);
 
-              // Check if run has error information in metadata
               if (run.metadata?.error) {
                 const errorData = run.metadata.error as {
                   type?: string;
@@ -2560,7 +2474,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 const serverErrorDetail =
                   errorData.detail || errorData.message || null;
 
-                // Pass structured error data to our formatter
                 const errorObject = {
                   error: {
                     error: errorData,
@@ -2589,7 +2502,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                     isProviderStreamDisconnectErrorText(serverErrorDetail)
                   )
                 ) {
-                  // Show appropriate error hint based on stop reason
                   appendError(
                     getErrorHintForStopReason(
                       stopReasonToHandle,
@@ -2600,7 +2512,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   );
                 }
               } else {
-                // No error metadata, show generic error with run info
                 appendError(
                   `An error occurred during agent execution\n(run_id: ${lastRunId}, stop_reason: ${stopReason})`,
                   {
@@ -2609,7 +2520,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   },
                 );
 
-                // Show appropriate error hint based on stop reason
                 appendError(
                   getErrorHintForStopReason(
                     stopReasonToHandle,
@@ -2620,7 +2530,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 );
               }
             } catch (_e) {
-              // If we can't fetch error details, show generic error
               appendError(
                 `An error occurred during agent execution\n(run_id: ${lastRunId}, stop_reason: ${stopReason})\n(Unable to fetch additional error details from server)`,
                 {
@@ -2629,7 +2538,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 },
               );
 
-              // Show appropriate error hint based on stop reason
               appendError(
                 getErrorHintForStopReason(
                   stopReasonToHandle,
@@ -2639,12 +2547,10 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 true,
               );
 
-              // Restore dequeued message to input on error
               if (lastDequeuedMessageRef.current) {
                 setRestoredInput(lastDequeuedMessageRef.current);
                 lastDequeuedMessageRef.current = null;
               }
-              // Clear any remaining queue on error
               tuiQueueRef.current?.clear("error");
 
               setStreaming(false);
@@ -2654,7 +2560,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               return;
             }
           } else {
-            // No run_id available - but this is unusual since errors should have run_ids
             appendError(
               `An error occurred during agent execution\n(stop_reason: ${stopReason})`,
               {
@@ -2663,7 +2568,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               },
             );
 
-            // Show appropriate error hint based on stop reason
             appendError(
               getErrorHintForStopReason(
                 stopReasonToHandle,
@@ -2674,12 +2578,10 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             );
           }
 
-          // Restore dequeued message to input on error
           if (lastDequeuedMessageRef.current) {
             setRestoredInput(lastDequeuedMessageRef.current);
             lastDequeuedMessageRef.current = null;
           }
-          // Clear any remaining queue on error
           tuiQueueRef.current?.clear("error");
 
           setStreaming(false);
@@ -2730,7 +2632,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           return;
         }
 
-        // Use comprehensive error formatting
         const errorDetails = formatErrorDetails(e, agentIdRef.current);
         appendError(errorDetails, {
           ...extractErrorMeta(e),
@@ -2740,12 +2641,10 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         });
         appendError(ERROR_FEEDBACK_HINT, true);
 
-        // Restore dequeued message to input on error (Input component will only use if empty)
         if (lastDequeuedMessageRef.current) {
           setRestoredInput(lastDequeuedMessageRef.current);
           lastDequeuedMessageRef.current = null;
         }
-        // Clear any remaining queue on error
         tuiQueueRef.current?.clear("error");
 
         setStreaming(false);

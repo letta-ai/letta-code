@@ -114,10 +114,6 @@ export interface GenerateMemoryViewerOptions {
   contextUsage?: ContextUsageSnapshot;
 }
 
-// ---------------------------------------------------------------------------
-// Git helpers
-// ---------------------------------------------------------------------------
-
 async function runGitSafe(cwd: string, args: string[]): Promise<string> {
   try {
     const { stdout } = await execFile("git", args, {
@@ -131,11 +127,6 @@ async function runGitSafe(cwd: string, args: string[]): Promise<string> {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Data collectors
-// ---------------------------------------------------------------------------
-
-/** Parse frontmatter from a .md file's raw content. */
 function parseFrontmatter(raw: string): {
   frontmatter: Record<string, string>;
   body: string;
@@ -161,7 +152,6 @@ function parseFrontmatter(raw: string): {
   return { frontmatter: fm, body };
 }
 
-/** Collect memory files from the working tree on disk. */
 export function collectMemoryViewerFiles(memoryRoot: string): MemoryFile[] {
   const format = detectMemoryFormat(memoryRoot, false);
   const treeNodes = scanMemoryFilesystem(memoryRoot);
@@ -181,7 +171,6 @@ export function collectMemoryViewerFiles(memoryRoot: string): MemoryFile[] {
     });
 }
 
-/** Collect commit metadata via a single git log call. */
 async function collectMetadata(repoDir: string): Promise<
   Array<{
     hash: string;
@@ -214,7 +203,6 @@ async function collectMetadata(repoDir: string): Promise<
 
   for (const record of records) {
     const parts = record.replace(/^\n+/, "");
-    // Split on first 4 NUL bytes only
     const nulPositions: number[] = [];
     for (let j = 0; j < parts.length && nulPositions.length < 4; j++) {
       if (parts[j] === "\0") nulPositions.push(j);
@@ -235,7 +223,6 @@ async function collectMetadata(repoDir: string): Promise<
   return commits;
 }
 
-/** Collect diffstats via a single git log call. Returns a hash -> stat map. */
 async function collectStats(repoDir: string): Promise<Map<string, string>> {
   const raw = await runGitSafe(repoDir, [
     "log",
@@ -260,7 +247,6 @@ async function collectStats(repoDir: string): Promise<Map<string, string>> {
   return map;
 }
 
-/** Collect full diffs for the most recent N commits. Returns hash -> patch map. */
 async function collectDiffs(repoDir: string): Promise<Map<string, string>> {
   const raw = await runGitSafe(repoDir, [
     "log",
@@ -294,17 +280,14 @@ async function getTotalCommitCount(repoDir: string): Promise<number> {
 
 const REFLECTION_PATTERN = /\(reflection\)|🔮|reflection:/i;
 
-/** Assemble all data into a MemoryViewerData object. */
 async function collectMemoryData(
   agentId: string,
   repoDir: string,
   memoryRoot: string,
   conversationId?: string,
 ): Promise<MemoryViewerData> {
-  // Filesystem scan (synchronous)
   const files = collectMemoryViewerFiles(memoryRoot);
 
-  // Git calls (parallel)
   const [metadata, statsMap, diffsMap, totalCount] = await Promise.all([
     collectMetadata(repoDir),
     collectStats(repoDir),
@@ -312,7 +295,6 @@ async function collectMemoryData(
     getTotalCommitCount(repoDir),
   ]);
 
-  // Merge into commits with payload size caps
   let cumulativeSize = 0;
   const commits: MemoryCommit[] = metadata.map((m) => {
     const message = m.body ? `${m.subject}\n\n${m.body}` : m.subject;
@@ -352,7 +334,6 @@ async function collectMemoryData(
     serverUrl = process.env.LETTA_BASE_URL || "https://api.letta.com";
   }
 
-  // Fetch agent info and context breakdown (best-effort, parallel)
   let agentName = agentId;
   let context: ContextData | undefined;
   let messages: MessageInfo[] | undefined;
@@ -373,7 +354,6 @@ async function collectMemoryData(
     // Local backend context collection failed - fall back to API paths below.
   }
 
-  // Try SDK client for agent name + model info
   if (!context) {
     try {
       const client = await getClient();
@@ -398,7 +378,6 @@ async function collectMemoryData(
       try {
         const apiKey = process.env.LETTA_API_KEY || "";
         if (apiKey && serverUrl) {
-          // Fetch agent info + context in parallel
           const [agentData, overview] = await Promise.all([
             apiRequest<{
               name?: string;
@@ -438,7 +417,6 @@ async function collectMemoryData(
     }
   }
 
-  // Fetch recent conversations (best-effort)
   if (!conversations) {
     try {
       const client = await getClient();
@@ -480,10 +458,6 @@ async function collectMemoryData(
   };
 }
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
 export async function generateAndOpenMemoryViewer(
   agentId: string,
   options?: GenerateMemoryViewerOptions,
@@ -495,7 +469,6 @@ export async function generateAndOpenMemoryViewer(
     throw new Error("Memory viewer requires memfs. Run /memfs enable first.");
   }
 
-  // 1. Collect data
   const data = await collectMemoryData(
     agentId,
     repoDir,
@@ -503,7 +476,6 @@ export async function generateAndOpenMemoryViewer(
     options?.conversationId,
   );
 
-  // Override agent name if provided by caller
   if (options?.agentName) {
     data.agent.name = options.agentName;
   }
@@ -517,7 +489,6 @@ export async function generateAndOpenMemoryViewer(
     () => jsonPayload,
   );
 
-  // 3. Write to ~/.letta/viewers/ with owner-only permissions
   if (!existsSync(VIEWERS_DIR)) {
     mkdirSync(VIEWERS_DIR, { recursive: true, mode: 0o700 });
   }

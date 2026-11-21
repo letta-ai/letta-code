@@ -47,7 +47,6 @@ export function supportsPublishedResume(version: string | undefined): boolean {
 }
 
 export interface LoadedSdk {
-  /** A local SDK client whose spawned harness uses the selected state backend. */
   createLocalClient(harnessBackend: "api" | "local"): SdkClient;
   /** Explicit opt-in until SDK #322 is released and the package is upgraded. */
   supportsAgentFreeResume: boolean;
@@ -69,7 +68,6 @@ function preferRunningCliForSubagents(): void {
   }
 }
 
-/** The package's ESM entry from its package.json, or null if unreadable. */
 function packageVersion(entry: string): string | undefined {
   for (let dir = dirname(entry); ; dir = dirname(dir)) {
     try {

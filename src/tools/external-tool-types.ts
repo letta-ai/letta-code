@@ -2,7 +2,6 @@
 export const EXTERNAL_TOOL_FOREGROUND_INTERRUPTED =
   "external_tool_foreground_interrupted";
 
-/** Model-facing client tool definition. */
 export interface ClientTool {
   name: string;
   description?: string | null;

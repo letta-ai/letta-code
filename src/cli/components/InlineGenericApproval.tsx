@@ -24,7 +24,6 @@ type Props = {
   defaultScope?: "project" | "session";
 };
 
-// Horizontal line character for Claude Code style
 const SOLID_LINE = "─";
 
 const SCRIPT_PREVIEW_MAX_LINES = 40;
@@ -59,10 +58,6 @@ function formatScriptArgs(
   ).join("\n");
 }
 
-/**
- * Format tool arguments for display, keeping the start within `maxRows`
- * terminal rows at `width` columns.
- */
 function formatArgs(toolArgs: string, maxRows: number, width: number): string {
   try {
     const parsed = JSON.parse(toolArgs);
@@ -77,25 +72,17 @@ function formatArgs(toolArgs: string, maxRows: number, width: number): string {
         width,
       );
     }
-    // Pretty print with 2-space indent, but limit length
     let formatted = JSON.stringify(parsed, null, 2);
-    // Truncate if too long
     if (formatted.length > 500) {
       formatted = `${formatted.slice(0, 500)}\n...`;
     }
     return fitPreviewLines(formatted.split("\n"), maxRows, width).join("\n");
   } catch {
-    // If not valid JSON, return as-is
     const raw = toolArgs || "(no arguments)";
     return fitPreviewLines(raw.split("\n"), maxRows, width).join("\n");
   }
 }
 
-/**
- * InlineGenericApproval - Renders generic tool approval UI inline
- *
- * Used as fallback for any tool not handled by specialized inline components.
- */
 export const InlineGenericApproval = memo(
   ({
     toolName,
@@ -121,7 +108,6 @@ export const InlineGenericApproval = memo(
     const terminalRows = useTerminalRows();
     useProgressIndicator();
 
-    // Custom option index depends on whether "always" option is shown
     const customOptionIndex = allowPersistence ? 2 : 1;
     const maxOptionIndex = customOptionIndex;
     const isOnCustomOption = selectedOption === customOptionIndex;
@@ -132,13 +118,11 @@ export const InlineGenericApproval = memo(
       (input, key) => {
         if (!isFocused) return;
 
-        // CTRL-C: cancel (queue denial, return to input)
         if (key.ctrl && input === "c") {
           onCancel?.();
           return;
         }
 
-        // Arrow navigation always works
         if (key.upArrow) {
           setSelectedOption((prev) => Math.max(0, prev - 1));
           return;
@@ -148,7 +132,6 @@ export const InlineGenericApproval = memo(
           return;
         }
 
-        // When on custom input option
         if (isOnCustomOption) {
           if (key.return) {
             if (customReason.trim()) {
@@ -164,11 +147,9 @@ export const InlineGenericApproval = memo(
             }
             return;
           }
-          // Handle text input (arrows, backspace, typing)
           if (handleKey(input, key)) return;
         }
 
-        // When on regular options
         if (key.return) {
           if (selectedOption === 0) {
             onApprove();
@@ -182,7 +163,6 @@ export const InlineGenericApproval = memo(
           return;
         }
 
-        // Number keys for quick selection (only for fixed options, not custom text input)
         if (input === "1") {
           onApprove();
           return;
@@ -195,7 +175,6 @@ export const InlineGenericApproval = memo(
       { isActive: isFocused },
     );
 
-    // Generate horizontal line
     const solidLine = SOLID_LINE.repeat(Math.max(columns, 10));
     // The preview box is indented by 2 columns.
     const formattedArgs = formatArgs(
@@ -209,17 +188,14 @@ export const InlineGenericApproval = memo(
     const memoizedToolContent = useMemo(
       () => (
         <>
-          {/* Top solid line */}
           <Text dimColor>{solidLine}</Text>
 
-          {/* Header */}
           <Text bold color={colors.approval.header}>
             Run {toolName}?
           </Text>
 
           <Box height={1} />
 
-          {/* Arguments preview */}
           <Box paddingLeft={2} flexDirection="column">
             <Text dimColor>{formattedArgs}</Text>
           </Box>
@@ -228,7 +204,6 @@ export const InlineGenericApproval = memo(
       [toolName, formattedArgs, solidLine],
     );
 
-    // Hint text based on state
     const hintText = isOnCustomOption
       ? customReason
         ? "Enter to submit · Esc to clear"
@@ -239,12 +214,9 @@ export const InlineGenericApproval = memo(
 
     return (
       <Box flexDirection="column">
-        {/* Static tool content - memoized to prevent re-render on keystroke */}
         {showPreview && memoizedToolContent}
 
-        {/* Options */}
         <Box marginTop={optionsMarginTop} flexDirection="column">
-          {/* Option 1: Yes */}
           <Box flexDirection="row">
             <Box width={5} flexShrink={0}>
               <Text
@@ -267,7 +239,6 @@ export const InlineGenericApproval = memo(
             </Box>
           </Box>
 
-          {/* Option 2: Yes, always (only if persistence allowed) */}
           {allowPersistence && (
             <Box flexDirection="row">
               <Box width={5} flexShrink={0}>
@@ -293,7 +264,6 @@ export const InlineGenericApproval = memo(
             </Box>
           )}
 
-          {/* Custom input option */}
           <Box flexDirection="row">
             <Box width={5} flexShrink={0}>
               <Text
@@ -319,7 +289,6 @@ export const InlineGenericApproval = memo(
           </Box>
         </Box>
 
-        {/* Hint */}
         <Box marginTop={1}>
           <Text dimColor>{hintText}</Text>
         </Box>

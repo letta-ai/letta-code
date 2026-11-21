@@ -103,12 +103,10 @@ export const MultiSelectPicker = memo(function MultiSelectPicker({
 
   const handleInput = useCallback(
     (input: string, key: Key) => {
-      // Up: arrow or vim-style "k"
       if (key.upArrow || input === "k") {
         setCursor((c) => Math.max(0, c - 1));
         return;
       }
-      // Down: arrow or vim-style "j"
       if (key.downArrow || input === "j") {
         setCursor((c) => Math.min(orderedItems.length - 1, c + 1));
         return;
@@ -129,7 +127,6 @@ export const MultiSelectPicker = memo(function MultiSelectPicker({
         onConfirm(selectedKeysInOrder);
         return;
       }
-      // Space toggles checkbox (no-op for disabled items)
       if (input === " ") {
         const item = orderedItems[cursor];
         if (item && !item.disabled) {
@@ -154,7 +151,6 @@ export const MultiSelectPicker = memo(function MultiSelectPicker({
 
   return (
     <Box flexDirection="column">
-      {/* Items */}
       <Box flexDirection="column">
         {orderedItems.map((item, index) => {
           const isCursor = index === cursor;
@@ -168,11 +164,9 @@ export const MultiSelectPicker = memo(function MultiSelectPicker({
 
           return (
             <Box key={item.key} flexDirection="row">
-              {/* Cursor indicator */}
               <Box width={2} flexShrink={0}>
                 <Text color={color}>{isCursor ? "›" : " "}</Text>
               </Box>
-              {/* Checkbox */}
               <Box width={4} flexShrink={0}>
                 <Text
                   color={isDisabled ? undefined : isChecked ? "green" : color}
@@ -181,7 +175,6 @@ export const MultiSelectPicker = memo(function MultiSelectPicker({
                   [{isChecked ? "✓" : " "}]{" "}
                 </Text>
               </Box>
-              {/* Label + description */}
               <Box flexGrow={1} width={Math.max(0, columns - 6)}>
                 <Text
                   color={color}
@@ -200,7 +193,6 @@ export const MultiSelectPicker = memo(function MultiSelectPicker({
         })}
       </Box>
 
-      {/* Preview */}
       {preview !== undefined && (
         <>
           <Box height={1} />
@@ -208,7 +200,6 @@ export const MultiSelectPicker = memo(function MultiSelectPicker({
         </>
       )}
 
-      {/* Hint */}
       <Box marginTop={1}>
         <Text dimColor>
           Space to toggle · ↑↓ to navigate · Enter to confirm · Esc to cancel

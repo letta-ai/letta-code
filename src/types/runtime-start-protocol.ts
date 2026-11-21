@@ -36,7 +36,6 @@ export interface RuntimeStartCommand {
   conversation_source_tags?: readonly string[];
   /** Initial working directory for this runtime scope. Null resets to listener boot CWD. */
   cwd?: string | null;
-  /** Initial permission mode for this runtime scope. */
   mode?: DevicePermissionMode;
   /**
    * Treat `mode` as a default: apply it only when the conversation has no

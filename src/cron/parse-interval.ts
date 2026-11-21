@@ -13,8 +13,6 @@
 
 import { CronExpressionParser } from "cron-parser";
 
-// ── Interval parsing (--every) ──────────────────────────────────────
-
 export interface ParsedInterval {
   cron: string;
   /** Human-readable summary of what was parsed / any rounding applied. */
@@ -24,10 +22,6 @@ export interface ParsedInterval {
 const INTERVAL_RE =
   /^(\d+)\s*(s|sec|secs|seconds?|m|min|mins|minutes?|h|hr|hrs|hours?|d|day|days?)$/i;
 
-/**
- * Parse an --every value (e.g. "5m", "2h", "1d") into a 5-field cron expression.
- * Returns null if the string is not a valid interval.
- */
 export function parseEvery(input: string): ParsedInterval | null {
   const match = input.trim().match(INTERVAL_RE);
   if (!match) return null;
@@ -37,7 +31,6 @@ export function parseEvery(input: string): ParsedInterval | null {
 
   const unit = (match[2] ?? "").toLowerCase();
 
-  // Seconds → round up to 1-minute minimum
   if (unit.startsWith("s")) {
     if (value < 60) {
       return {
@@ -45,17 +38,14 @@ export function parseEvery(input: string): ParsedInterval | null {
         note: `Rounded ${value}s up to 1m (minimum granularity is 1 minute)`,
       };
     }
-    // >= 60s → convert to minutes
     const mins = Math.round(value / 60);
     return minuteCron(mins);
   }
 
-  // Minutes
   if (unit.startsWith("m")) {
     return minuteCron(value);
   }
 
-  // Hours
   if (unit.startsWith("h")) {
     if (value >= 24) {
       return { cron: "0 0 * * *", note: `${value}h clamped to daily` };
@@ -63,7 +53,6 @@ export function parseEvery(input: string): ParsedInterval | null {
     if (24 % value === 0) {
       return { cron: `0 */${value} * * *` };
     }
-    // Non-clean divisor: use closest divisor of 24
     const divisors = [1, 2, 3, 4, 6, 8, 12, 24];
     const closest = divisors.reduce((prev, curr) =>
       Math.abs(curr - value) < Math.abs(prev - value) ? curr : prev,
@@ -74,12 +63,10 @@ export function parseEvery(input: string): ParsedInterval | null {
     };
   }
 
-  // Days
   if (unit.startsWith("d")) {
     if (value === 1) {
       return { cron: "0 0 * * *" };
     }
-    // Multi-day: use day-of-month step
     const cron = `0 0 */${value} * *`;
     return isValidCron(cron) ? { cron } : null;
   }
@@ -94,12 +81,10 @@ function minuteCron(mins: number): ParsedInterval {
     return { cron: `0 */${Math.max(1, hours)} * * *` };
   }
 
-  // Clean divisors of 60
   if (60 % mins === 0) {
     return { cron: `*/${mins} * * * *` };
   }
 
-  // Round to nearest clean divisor of 60
   const divisors = [1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60];
   const closest = divisors.reduce((prev, curr) =>
     Math.abs(curr - mins) < Math.abs(prev - mins) ? curr : prev,
@@ -109,8 +94,6 @@ function minuteCron(mins: number): ParsedInterval {
     note: `${mins}m rounded to every ${closest}m (nearest clean divisor of 60)`,
   };
 }
-
-// ── Time parsing (--at) ─────────────────────────────────────────────
 
 export interface ParsedAt {
   /** Absolute UTC time to fire. */
@@ -172,7 +155,6 @@ export function parseAt(input: string, now?: Date): ParsedAt | null {
   const trimmed = input.trim();
   const currentTime = now ?? new Date();
 
-  // Relative time: "in 45m", "in 2h"
   const relMatch = trimmed.match(RELATIVE_RE);
   if (relMatch) {
     const value = Number.parseInt(relMatch[1] ?? "", 10);
@@ -201,7 +183,6 @@ export function parseAt(input: string, now?: Date): ParsedAt | null {
     };
   }
 
-  // Absolute time: "3:00pm", "11:30am"
   const timeMatch = trimmed.match(TIME_RE);
   if (timeMatch) {
     let hours = Number.parseInt(timeMatch[1] ?? "", 10);
@@ -216,7 +197,6 @@ export function parseAt(input: string, now?: Date): ParsedAt | null {
     const scheduledFor = new Date(currentTime);
     scheduledFor.setHours(hours, minutes, 0, 0);
 
-    // If the time has already passed today, schedule for tomorrow
     if (scheduledFor.getTime() <= currentTime.getTime()) {
       scheduledFor.setDate(scheduledFor.getDate() + 1);
     }
@@ -230,12 +210,9 @@ export function parseAt(input: string, now?: Date): ParsedAt | null {
   return null;
 }
 
-/** Convert a Date to a 5-field cron expression matching that specific minute. */
 function dateToCron(d: Date): string {
   return `${d.getMinutes()} ${d.getHours()} ${d.getDate()} ${d.getMonth() + 1} *`;
 }
-
-// ── Cron validation ─────────────────────────────────────────────────
 
 /**
  * Product dialect gate: we only accept the classic 5-field numeric cron
@@ -364,8 +341,6 @@ export function isValidCron(expr: string): boolean {
   return normalizeCronExpressionForParser(expr) !== null;
 }
 
-// ── Cron evaluation ─────────────────────────────────────────────────
-
 const MS_PER_MINUTE = 60 * 1000;
 
 /**
@@ -450,8 +425,6 @@ function toWallClockMinute(date: Date, timezone?: string | null): Date {
   );
 }
 
-// ── Period estimation (for jitter) ──────────────────────────────────
-
 /**
  * Estimate the period (in ms) of a cron expression for jitter calculation.
  * Only handles common patterns; returns 0 for complex expressions.
@@ -468,7 +441,6 @@ export function estimatePeriodMs(cron: string): number {
     string,
   ];
 
-  // */N * * * * → every N minutes
   if (
     minute.startsWith("*/") &&
     hour === "*" &&
@@ -480,7 +452,6 @@ export function estimatePeriodMs(cron: string): number {
     return step > 0 ? step * 60 * 1000 : 0;
   }
 
-  // N */H * * * → every H hours
   if (
     !minute.startsWith("*") &&
     hour.startsWith("*/") &&
@@ -492,7 +463,6 @@ export function estimatePeriodMs(cron: string): number {
     return step > 0 ? step * 60 * 60 * 1000 : 0;
   }
 
-  // N N * * * → daily (specific minute + hour)
   if (
     !minute.includes("*") &&
     !hour.includes("*") &&

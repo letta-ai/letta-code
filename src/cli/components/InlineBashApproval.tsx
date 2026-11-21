@@ -26,16 +26,9 @@ type Props = {
   defaultScope?: "project" | "session";
 };
 
-// Horizontal line character for Claude Code style
 const SOLID_LINE = "─";
 const BASH_PREVIEW_MAX_LINES = 3;
 
-/**
- * InlineBashApproval - Renders bash/shell approval UI inline (Claude Code style)
- *
- * Option 3 is an inline text input - when selected, user can type directly
- * without switching to a separate screen.
- */
 export const InlineBashApproval = memo(
   ({
     bashInfo,
@@ -59,7 +52,6 @@ export const InlineBashApproval = memo(
     const columns = useTerminalWidth();
     useProgressIndicator();
 
-    // Custom option index depends on whether "always" option is shown
     const customOptionIndex = allowPersistence ? 2 : 1;
     const maxOptionIndex = customOptionIndex;
     const isOnCustomOption = selectedOption === customOptionIndex;
@@ -70,13 +62,11 @@ export const InlineBashApproval = memo(
       (input, key) => {
         if (!isFocused) return;
 
-        // CTRL-C: cancel (queue denial, return to input)
         if (key.ctrl && input === "c") {
           onCancel?.();
           return;
         }
 
-        // Arrow navigation always works
         if (key.upArrow) {
           setSelectedOption((prev) => Math.max(0, prev - 1));
           return;
@@ -86,7 +76,6 @@ export const InlineBashApproval = memo(
           return;
         }
 
-        // When on custom input option
         if (isOnCustomOption) {
           if (key.return) {
             if (customReason.trim()) {
@@ -102,11 +91,9 @@ export const InlineBashApproval = memo(
             }
             return;
           }
-          // Handle text input (arrows, backspace, typing)
           if (handleKey(input, key)) return;
         }
 
-        // When on regular options
         if (key.return) {
           if (selectedOption === 0) {
             onApprove();
@@ -116,12 +103,10 @@ export const InlineBashApproval = memo(
           return;
         }
         if (key.escape) {
-          // Cancel (queue denial, return to input)
           onCancel?.();
           return;
         }
 
-        // Number keys for quick selection (only for fixed options, not custom text input)
         if (input === "1") {
           onApprove();
           return;
@@ -141,17 +126,14 @@ export const InlineBashApproval = memo(
     const memoizedCommandContent = useMemo(
       () => (
         <>
-          {/* Top solid line */}
           <Text dimColor>{solidLine}</Text>
 
-          {/* Header */}
           <Text bold color={colors.approval.header}>
             Run this command?
           </Text>
 
           <Box height={1} />
 
-          {/* Command preview */}
           <Box paddingLeft={2} flexDirection="column">
             <SyntaxHighlightedCommand
               command={bashInfo.command}
@@ -170,7 +152,6 @@ export const InlineBashApproval = memo(
       [bashInfo.command, bashInfo.description, solidLine, columns],
     );
 
-    // Hint text based on state
     const hintText = isOnCustomOption
       ? customReason
         ? "Enter to submit · Esc to clear"
@@ -181,12 +162,9 @@ export const InlineBashApproval = memo(
 
     return (
       <Box flexDirection="column">
-        {/* Static command content - memoized to prevent re-render on keystroke */}
         {showPreview && memoizedCommandContent}
 
-        {/* Options */}
         <Box marginTop={optionsMarginTop} flexDirection="column">
-          {/* Option 1: Yes */}
           <Box flexDirection="row">
             <Box width={5} flexShrink={0}>
               <Text
@@ -209,7 +187,6 @@ export const InlineBashApproval = memo(
             </Box>
           </Box>
 
-          {/* Option 2: Yes, always (only if persistence allowed) */}
           {allowPersistence && (
             <Box flexDirection="row">
               <Box width={5} flexShrink={0}>
@@ -235,7 +212,6 @@ export const InlineBashApproval = memo(
             </Box>
           )}
 
-          {/* Custom input option (3 if persistence, 2 if not) */}
           <Box flexDirection="row">
             <Box width={5} flexShrink={0}>
               <Text
@@ -261,7 +237,6 @@ export const InlineBashApproval = memo(
           </Box>
         </Box>
 
-        {/* Hint */}
         <Box marginTop={1}>
           <Text dimColor>{hintText}</Text>
         </Box>

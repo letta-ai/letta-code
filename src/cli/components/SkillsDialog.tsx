@@ -58,7 +58,6 @@ export function SkillsDialog({ onClose, agentId }: SkillsDialogProps) {
     })();
   }, [agentId]);
 
-  // Group skills by source
   const skillsBySource = useMemo(() => {
     const grouped = new Map<SkillSource, Skill[]>();
     for (const skill of skills) {
@@ -74,7 +73,6 @@ export function SkillsDialog({ onClose, agentId }: SkillsDialogProps) {
 
   const [activeTab, setActiveTab] = useState<SkillTab | null>(null);
 
-  // Set initial tab once skills load
   useEffect(() => {
     if (!loading && availableTabs.length > 0 && activeTab === null) {
       setActiveTab(availableTabs[0] ?? null);
@@ -168,13 +166,11 @@ export function SkillsDialog({ onClose, agentId }: SkillsDialogProps) {
 
   return (
     <Box flexDirection="column">
-      {/* Command header */}
       <Text dimColor>{"> /skills"}</Text>
       <Text dimColor>{solidLine}</Text>
 
       <Box height={1} />
 
-      {/* Title and tabs */}
       <Box flexDirection="column" gap={1} marginBottom={1}>
         <Text bold color={colors.selector.title}>
           Skills ({loadedCount} currently available)
@@ -208,7 +204,6 @@ export function SkillsDialog({ onClose, agentId }: SkillsDialogProps) {
         )}
       </Box>
 
-      {/* Skill list for active tab */}
       {!loading && currentSkills.length > 0 && (
         <Box flexDirection="column">
           {visibleSkills.map((skill) => {
@@ -231,14 +226,12 @@ export function SkillsDialog({ onClose, agentId }: SkillsDialogProps) {
         </Box>
       )}
 
-      {/* Empty state for active tab */}
       {!loading && activeTab && currentSkills.length === 0 && (
         <Box paddingLeft={2}>
           <Text dimColor>No skills in this location</Text>
         </Box>
       )}
 
-      {/* Footer */}
       <Box marginTop={1}>
         <Text dimColor>
           {"  "}

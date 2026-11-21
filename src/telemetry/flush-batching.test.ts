@@ -82,7 +82,6 @@ describe("telemetry flush batching", () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
-    // Resolve the single in-flight request and let all three callers settle.
     deferred.resolve(new Response(null, { status: 200 }));
     await Promise.all([a, b, c]);
 

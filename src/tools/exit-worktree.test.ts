@@ -103,7 +103,6 @@ describe("ExitWorktree tool", () => {
     return repo;
   }
 
-  /** Create a worktree and return its path plus branch, without switching cwd. */
   async function makeWorktree(
     repo: string,
     name: string,

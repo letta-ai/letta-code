@@ -283,13 +283,6 @@ describe("scoped shell secret execution", () => {
   }
 });
 
-/**
- * Ambient runtime credential containment (LET-10106). A Cloud sandbox child
- * printed the full runtime key to stderr after an env-file parse failure even
- * though the command never referenced $LETTA_API_KEY; the redaction set only
- * covered command-referenced agent secrets. These tests use a deterministic
- * fake env-file parser and a sentinel credential — never a real key.
- */
 const AMBIENT_SENTINEL = "sk-lettatest-SENTINEL-credential-0123456789abcdef";
 const AMBIENT_PLACEHOLDER = "LETTA_API_KEY=<REDACTED>";
 
@@ -753,7 +746,6 @@ describe("ambient runtime credential redaction", () => {
 
         const text = asText(result.toolReturn);
         expect(result.status).toBe("success");
-        // Prove the hook actually fed back, then prove containment.
         expect(text).toContain("[Hook feedback]:");
         expect(text).not.toContain(AMBIENT_SENTINEL);
         expect(text).toContain(AMBIENT_PLACEHOLDER);
@@ -933,7 +925,6 @@ describe("always-on vault secret redaction", () => {
     expect(scrubbedA).not.toContain(VAULT_VALUE);
     expect(scrubbedA).toContain(`${VAULT_KEY}=<REDACTED>`);
 
-    // Agent B's vault does not redact agent A's value.
     const scrubbedB = scrubSecretsFromString(
       `${VAULT_VALUE} stays`,
       {},
@@ -967,7 +958,6 @@ describe("always-on vault secret redaction", () => {
     ) as Array<{ type?: string; text?: string; url?: string }>;
     expect(partsContent[0]?.text).not.toContain(VAULT_VALUE);
     expect(partsContent[0]?.text).toContain(`${VAULT_KEY}=<REDACTED>`);
-    // Non-text content passes through unchanged.
     expect(partsContent[1]?.url).toBe("https://example.com/img.png");
   });
 });

@@ -524,7 +524,6 @@ describe("app-server native websocket", () => {
       stream = new WebSocket(handle.controlUrl);
       await waitForOpen(stream);
 
-      // The watchdog should ping connected clients on its cadence.
       await waitForClientPing(stream);
 
       // The `ws` client auto-pongs, so a healthy socket survives multiple

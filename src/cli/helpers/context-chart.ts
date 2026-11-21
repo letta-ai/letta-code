@@ -237,8 +237,6 @@ function renderBrailleChart(
   const labelWidth = 5; // e.g. "100k "
   const steps = history.length;
 
-  // Chart starts at ~25% of terminal, grows 1 char column per step,
-  // caps at ~80% of terminal — then interpolates to fit all steps.
   const minChartWidth = Math.max(1, Math.floor(termWidth * 0.25) - labelWidth);
   const maxChartWidth = Math.max(
     minChartWidth,
@@ -250,11 +248,9 @@ function renderBrailleChart(
   let values: number[]; // one value per character column
   // Color index per character column (null = use default single color)
   let colColors: number[] | null;
-  // Set of character-column indices where compaction occurred
   const compactedCols = new Set<number>();
 
   if (steps <= maxChartWidth) {
-    // Each step gets its own character column; pad to at least minChartWidth
     chartWidth = Math.max(steps, minChartWidth);
     values = allValues.slice(); // 1:1 mapping
 
@@ -262,12 +258,10 @@ function renderBrailleChart(
     // turnId is incremented once per user turn, so all steps within a turn share the same color
     colColors = history.map((h) => bounceIndex(h.turnId));
 
-    // Track compaction columns (1:1 mapping)
     history.forEach((h, i) => {
       if (h.compacted) compactedCols.add(i);
     });
   } else {
-    // Interpolate to fit all steps into maxChartWidth columns — no color alternation
     chartWidth = maxChartWidth;
     values = [];
     for (let i = 0; i < chartWidth; i++) {
@@ -278,7 +272,6 @@ function renderBrailleChart(
       const v2 = allValues[Math.min(idx + 1, allValues.length - 1)] ?? v1;
       values.push(v1 + frac * (v2 - v1));
 
-      // Mark column if any source entry in its range was compacted
       const idxEnd = Math.min(idx + 1, history.length - 1);
       if (history[idx]?.compacted || history[idxEnd]?.compacted) {
         compactedCols.add(i);
@@ -300,7 +293,6 @@ function renderBrailleChart(
     Array(dotsWidth).fill(false),
   );
 
-  // Plot as filled area chart — each value fills both dot columns in its char column
   for (let charIdx = 0; charIdx < values.length; charIdx++) {
     const val = values[charIdx] ?? 0;
     const normalized = (val - min) / range;
@@ -315,7 +307,6 @@ function renderBrailleChart(
     }
   }
 
-  // Convert dot grid to braille characters
   const dotBits = [
     [0x01, 0x08], // row 0: dots 1, 4
     [0x02, 0x10], // row 1: dots 2, 5
@@ -323,7 +314,6 @@ function renderBrailleChart(
     [0x40, 0x80], // row 3: dots 7, 8
   ];
 
-  // Generate y-axis labels (top, middle, bottom)
   const yLabels: string[] = [];
   for (let row = 0; row < chartHeight; row++) {
     if (row === 0) {
@@ -343,7 +333,6 @@ function renderBrailleChart(
     CHART_PALETTE[Math.floor(CHART_PALETTE.length / 2)] ?? "\x1b[36m";
   const white = "\x1b[97m";
 
-  // Pre-compute braille codes per (charRow, charCol)
   const brailleCodes: number[][] = Array.from({ length: chartHeight }, () =>
     Array(chartWidth).fill(0x2800),
   );
@@ -366,7 +355,6 @@ function renderBrailleChart(
           Math.ceil(termWidth / 2),
         ).fill(0x2800);
       }
-      // brailleCodes[charRow] initialized above if missing
       (brailleCodes[charRow] as number[])[charCol] = code;
     }
   }
@@ -376,14 +364,12 @@ function renderBrailleChart(
   // - Otherwise, ↓ replaces the topmost braille char in that column
   const FULL_BRAILLE = 0x28ff;
   let needsMarkerRow = false;
-  // Track which compacted columns have ↓ placed inline (replacing top braille)
   const inlineMarkerRow = new Map<number, number>(); // charCol → charRow where ↓ is placed
 
   for (const col of compactedCols) {
     if (brailleCodes[0]?.[col] === FULL_BRAILLE) {
       needsMarkerRow = true;
     } else {
-      // Find topmost non-empty row to replace, or use row 0
       let targetRow = 0;
       for (let r = 0; r < chartHeight; r++) {
         if (brailleCodes[r]?.[col] !== 0x2800) {
@@ -397,7 +383,6 @@ function renderBrailleChart(
 
   const chartLines: string[] = [];
 
-  // Optional marker row above the chart for compaction columns with full top braille
   if (needsMarkerRow) {
     let markerRow = " ".repeat(labelWidth);
     let markerCurrentColor = "";
@@ -422,10 +407,8 @@ function renderBrailleChart(
   for (let charRow = 0; charRow < chartHeight; charRow++) {
     let rowStr = yLabels[charRow] ?? "";
 
-    // Build chart portion with per-column coloring
     let currentColor = "";
     for (let charCol = 0; charCol < chartWidth; charCol++) {
-      // Check if this cell should be a ↓ marker
       if (inlineMarkerRow.get(charCol) === charRow) {
         if (currentColor !== white) {
           rowStr += white;
@@ -437,7 +420,6 @@ function renderBrailleChart(
 
       const brailleCode = brailleCodes[charRow]?.[charCol] ?? 0x2800;
 
-      // Determine color for this column
       const targetColor =
         colColors && charCol < colColors.length
           ? (CHART_PALETTE[colColors[charCol] ?? 0] ?? defaultColor)

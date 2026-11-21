@@ -28,7 +28,6 @@ export async function replaySyncStateForRuntime(
     recoverApprovalStateForSync?: (
       ...args: Parameters<typeof recoverApprovalStateForSync>
     ) => Promise<unknown>;
-    /** Turn processor for a recovered continuation; defaults to the real turn. */
     processIncomingMessage?: typeof handleIncomingMessage;
     recoveredContinuationDependencies?: RecoveredContinuationDependencies;
     scheduleWarmupsAfterSync?: (

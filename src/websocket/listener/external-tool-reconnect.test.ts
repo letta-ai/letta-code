@@ -47,7 +47,6 @@ type FakeSocket = LocalTransport & {
   open: boolean;
 };
 
-/** A socket whose peer answers requests only when `respond` is set. */
 function createSocket(runtime: ListenerRuntime, respond: boolean): FakeSocket {
   const socket: FakeSocket = {
     kind: "local",

@@ -75,7 +75,6 @@ export interface StartupResolutionInput {
 export function resolveStartupTarget(
   input: StartupResolutionInput,
 ): StartupTarget {
-  // --new-agent always creates
   if (input.forceNew) {
     return { action: "create", trigger: "force-new" };
   }
@@ -91,7 +90,6 @@ export function resolveStartupTarget(
     };
   }
 
-  // Step 2: Pinned agent
   if (input.pinnedAgentId && input.pinnedAgentExists) {
     return {
       action: "resume",
@@ -105,7 +103,6 @@ export function resolveStartupTarget(
     return { action: "select" };
   }
 
-  // Step 4: Global LRU (directory-switching fallback)
   // Do NOT restore global conversation — keep conversations project-scoped
   if (input.globalAgentId && input.globalAgentExists) {
     return {
@@ -124,16 +121,13 @@ export function resolveStartupTarget(
     };
   }
 
-  // Step 5: Custom API model picker
   if (input.needsModelPicker) {
     return { action: "select" };
   }
 
-  // Step 6: Show selector if any pinned agents exist
   if (input.pinnedCount > 0) {
     return { action: "select" };
   }
 
-  // Step 7: True fresh user — create default agent
   return { action: "create", trigger: "fresh-start" };
 }

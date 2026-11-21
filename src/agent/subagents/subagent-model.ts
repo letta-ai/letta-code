@@ -1,10 +1,3 @@
-// Model resolution for spawned subagents: decide which model handle a subagent
-// should run on, given the user's request, the subagent config's recommended
-// model, the parent agent's active model, and the account's billing tier.
-//
-// Extracted from `manager.ts` so this self-contained resolution logic (and its
-// tests) live on their own. It depends only on lower-level model/backend
-// helpers, never back on the subagent manager.
 
 import { getAvailableModelHandles } from "@/agent/available-models";
 import { getCurrentAgentId } from "@/agent/context";
@@ -283,13 +276,11 @@ export async function resolveSubagentModel(options: {
     }
   };
 
-  // Free-tier default for subagents: auto-fast, when available.
   const freeTierDefaultHandle = isFreeTier ? resolveModel("auto-fast") : null;
   if (freeTierDefaultHandle && (await isAvailable(freeTierDefaultHandle))) {
     return freeTierDefaultHandle;
   }
 
-  // Free-tier fallback default: auto, when available.
   if (isFreeTier) {
     const defaultHandle = getDefaultModelForTier(billingTier);
     if (defaultHandle && (await isAvailable(defaultHandle))) {
@@ -337,7 +328,6 @@ export async function resolveSubagentModel(options: {
     return recommendedSelection(recommendedHandle);
   }
 
-  // Non-free fallback default: auto, when available.
   const defaultHandle = getDefaultModelForTier(billingTier);
   if (defaultHandle && (await isAvailable(defaultHandle))) {
     return defaultHandle;

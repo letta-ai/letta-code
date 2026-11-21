@@ -1,5 +1,3 @@
-// Utility to format tool argument JSON strings into a concise display label
-// Copied from old letta-code repo to preserve exact formatting behavior
 
 import { relative } from "node:path";
 import { isRecord } from "@/utils/type-guards";
@@ -25,31 +23,20 @@ function formatItemCount(count: number): string {
   return `${String(count)} item${count === 1 ? "" : "s"}`;
 }
 
-/**
- * Formats a file path for display (matches Claude Code style):
- * - Files within cwd: relative path without ./ prefix
- * - Files outside cwd: full absolute path
- */
 function formatDisplayPath(filePath: string): string {
   const cwd = process.cwd();
   const relativePath = relative(cwd, filePath);
-  // If path goes outside cwd (starts with ..), show full absolute path
   if (relativePath.startsWith("..")) {
     return filePath;
   }
   return relativePath;
 }
 
-/**
- * Parses a patch input to extract operation type and file path.
- * Returns null if parsing fails. Used for tool call display.
- */
 export function parsePatchInput(
   input: string,
 ): { kind: "add" | "update" | "delete"; path: string } | null {
   if (!input) return null;
 
-  // Look for the first operation marker
   const addMatch = /\*\*\* Add File:\s*(.+)/.exec(input);
   if (addMatch?.[1]) {
     return { kind: "add", path: addMatch[1].trim() };
@@ -68,9 +55,6 @@ export function parsePatchInput(
   return null;
 }
 
-/**
- * Patch operation types for result rendering
- */
 export type PatchOperation =
   | { kind: "add"; path: string; content: string; patchLines: string[] }
   | {
@@ -82,11 +66,6 @@ export type PatchOperation =
     }
   | { kind: "delete"; path: string };
 
-/**
- * Parses a patch input to extract all operations with full content.
- * Used for rendering patch results (shows diffs/content).
- * Based on ApplyPatch.ts parsing logic.
- */
 export function parsePatchOperations(input: string): PatchOperation[] {
   if (!input) return [];
 
@@ -108,7 +87,6 @@ export function parsePatchOperations(input: string): PatchOperation[] {
       continue;
     }
 
-    // Add File operation
     if (line.startsWith("*** Add File:")) {
       const path = line.replace("*** Add File:", "").trim();
       i++;
@@ -132,17 +110,14 @@ export function parsePatchOperations(input: string): PatchOperation[] {
       continue;
     }
 
-    // Update File operation
     if (line.startsWith("*** Update File:")) {
       const path = line.replace("*** Update File:", "").trim();
       i++;
 
-      // Skip optional "*** Move to:" line
       if (i < stopIdx && lines[i]?.startsWith("*** Move to:")) {
         i++;
       }
 
-      // Collect all hunk lines
       const oldParts: string[] = [];
       const newParts: string[] = [];
       const patchLines: string[] = []; // Store raw lines for direct hunk parsing
@@ -159,7 +134,6 @@ export function parsePatchOperations(input: string): PatchOperation[] {
           continue;
         }
 
-        // Parse diff lines
         if (hLine === "") {
           // Empty line counts as context
           oldParts.push("");
@@ -169,14 +143,11 @@ export function parsePatchOperations(input: string): PatchOperation[] {
           const text = hLine.slice(1);
 
           if (prefix === " ") {
-            // Context line - appears in both
             oldParts.push(text);
             newParts.push(text);
           } else if (prefix === "-") {
-            // Removed line
             oldParts.push(text);
           } else if (prefix === "+") {
-            // Added line
             newParts.push(text);
           }
         }
@@ -193,7 +164,6 @@ export function parsePatchOperations(input: string): PatchOperation[] {
       continue;
     }
 
-    // Delete File operation
     if (line.startsWith("*** Delete File:")) {
       const path = line.replace("*** Delete File:", "").trim();
       operations.push({ kind: "delete", path });
@@ -201,7 +171,6 @@ export function parsePatchOperations(input: string): PatchOperation[] {
       continue;
     }
 
-    // Unknown line, skip
     i++;
   }
 
@@ -237,40 +206,33 @@ export function formatArgsDisplay(
         if ("request_heartbeat" in clone) delete clone.request_heartbeat;
         parsed = clone;
 
-        // Special handling for file tools - show clean relative path
         if (toolName) {
-          // Patch tools: parse input and show operation + path
           if (isPatchTool(toolName) && typeof parsed.input === "string") {
             const patchInfo = parsePatchInput(parsed.input);
             if (patchInfo) {
               display = formatDisplayPath(patchInfo.path);
               return { display, parsed };
             }
-            // Fallback if parsing fails
             display = "…";
             return { display, parsed };
           }
 
-          // Edit tools: show just the file path
           if (isFileEditTool(toolName) && parsed.file_path) {
             const filePath = String(parsed.file_path);
             display = formatDisplayPath(filePath);
             return { display, parsed };
           }
 
-          // Write tools: show just the file path
           if (isFileWriteTool(toolName) && parsed.file_path) {
             const filePath = String(parsed.file_path);
             display = formatDisplayPath(filePath);
             return { display, parsed };
           }
 
-          // Read tools: show file path + any other useful args (limit, offset)
           if (isFileReadTool(toolName) && (parsed.file_path || parsed.path)) {
             const filePath = String(parsed.file_path || parsed.path);
             const relativePath = formatDisplayPath(filePath);
 
-            // Collect other non-hidden args
             const otherArgs: string[] = [];
             for (const [k, v] of Object.entries(parsed)) {
               if (
@@ -296,7 +258,6 @@ export function formatArgsDisplay(
             return { display, parsed };
           }
 
-          // Search/Grep tools: show "query in path" instead of "query: ..., path: ..."
           if (isSearchTool(toolName)) {
             const query = String(parsed.query ?? parsed.pattern ?? "");
             const rawPath = parsed.path
@@ -316,7 +277,6 @@ export function formatArgsDisplay(
             return { display, parsed };
           }
 
-          // Glob tools: show "pattern in path" instead of "pattern: ..., path: ..."
           if (isGlobTool(toolName)) {
             const pattern = String(parsed.pattern ?? "");
             const rawPath = parsed.path
@@ -336,7 +296,6 @@ export function formatArgsDisplay(
             return { display, parsed };
           }
 
-          // Memory tools: show "reason" in file_path
           if (isMemoryTool(toolName)) {
             const reason = String(parsed.reason ?? "");
             const filePath = parsed.file_path ? String(parsed.file_path) : null;

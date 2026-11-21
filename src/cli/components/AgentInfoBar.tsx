@@ -97,9 +97,6 @@ function wrapTextToWidth(text: string, maxWidth: number): string[] {
   return lines;
 }
 
-/**
- * Shows agent info bar with current agent details and useful links.
- */
 export const AgentInfoBar = memo(function AgentInfoBar({
   agentId,
   agentName,
@@ -110,7 +107,6 @@ export const AgentInfoBar = memo(function AgentInfoBar({
 }: AgentInfoBarProps) {
   const columns = useTerminalWidth();
   const isTmux = Boolean(process.env.TMUX);
-  // Check if current agent is pinned
   const isPinned = useMemo(() => {
     if (!agentId) return false;
     return settingsManager.isAgentPinned(agentId);
@@ -156,10 +152,8 @@ export const AgentInfoBar = memo(function AgentInfoBar({
 
   return (
     <Box flexDirection="column">
-      {/* Blank line after commands */}
       <Box height={1} />
 
-      {/* Agent summary */}
       <Box flexDirection="column">
         <Box>
           <Box width={2} flexShrink={0}>
@@ -214,7 +208,6 @@ export const AgentInfoBar = memo(function AgentInfoBar({
         </>
       )}
 
-      {/* Version and Discord/feedback info */}
       <Box>
         <Box width={2} flexShrink={0}>
           <Text>{"  "}</Text>

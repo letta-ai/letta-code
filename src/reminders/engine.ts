@@ -41,9 +41,7 @@ export interface SharedReminderContext {
   workingDirectory?: string;
   /** Source of the session context (varies intro text). */
   sessionContextSource?: SessionContextSource;
-  /** Reason the session context is being (re)generated. */
   sessionContextReason?: SessionContextReason;
-  /** Shell context detected at startup, if available. */
   shellContext?: ShellContext;
 }
 

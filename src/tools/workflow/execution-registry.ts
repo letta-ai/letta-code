@@ -94,7 +94,6 @@ export function getWorkflowExecutionsVersion(): number {
   return version;
 }
 
-/** Subscribe to registry changes; returns an unsubscribe function. */
 export function subscribeToWorkflowExecutions(
   listener: () => void,
 ): () => void {
@@ -131,7 +130,6 @@ export function registerWorkflowExecution(params: {
   notify();
 }
 
-/** Apply one engine progress event to a run. */
 export function recordWorkflowProgress(
   taskId: string,
   event: WorkflowProgressEvent,

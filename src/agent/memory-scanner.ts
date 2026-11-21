@@ -1,10 +1,3 @@
-/**
- * Shared memory filesystem scanner.
- *
- * Recursively scans the on-disk memory directory and returns a flat list of
- * TreeNode objects that represent files and directories.  Used by both the
- * TUI MemfsTreeViewer and the web-based memory viewer generator.
- */
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -19,9 +12,6 @@ export interface TreeNode {
   parentIsLast: boolean[];
 }
 
-/**
- * Scan the memory filesystem directory and build tree nodes.
- */
 export function scanMemoryFilesystem(memoryRoot: string): TreeNode[] {
   const nodes: TreeNode[] = [];
 
@@ -33,10 +23,8 @@ export function scanMemoryFilesystem(memoryRoot: string): TreeNode[] {
       return;
     }
 
-    // Filter out hidden files and state file
     const filtered = entries.filter((name) => !name.startsWith("."));
 
-    // Sort: directories first, "system" always first among dirs, then alphabetically
     const sorted = filtered.sort((a, b) => {
       const aPath = join(dir, a);
       const bPath = join(dir, b);
@@ -49,7 +37,6 @@ export function scanMemoryFilesystem(memoryRoot: string): TreeNode[] {
         bIsDir = statSync(bPath).isDirectory();
       } catch {}
       if (aIsDir !== bIsDir) return aIsDir ? -1 : 1;
-      // "system" directory comes first (only at root level, depth 0)
       if (aIsDir && bIsDir && depth === 0) {
         if (a === "system") return -1;
         if (b === "system") return 1;
@@ -89,16 +76,10 @@ export function scanMemoryFilesystem(memoryRoot: string): TreeNode[] {
   return nodes;
 }
 
-/**
- * Get only file nodes (for navigation).
- */
 export function getFileNodes(nodes: TreeNode[]): TreeNode[] {
   return nodes.filter((n) => !n.isDirectory);
 }
 
-/**
- * Read file content safely, returning empty string on failure.
- */
 export function readFileContent(fullPath: string): string {
   try {
     return readFileSync(fullPath, "utf-8");

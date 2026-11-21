@@ -415,7 +415,6 @@ export async function runSharedMemorySubcommand(
         return mounted ? 0 : 1;
       }
 
-      // detach
       await request(
         "DELETE",
         `/v1/agents/${encodeURIComponent(agentId)}/repositories/${encodeURIComponent(repository.id)}`,

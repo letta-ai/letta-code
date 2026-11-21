@@ -13,13 +13,10 @@ import { Text } from "./Text";
 type FileEditInfo = {
   toolName: string;
   filePath: string;
-  // For write tools
   content?: string;
-  // For edit tools
   oldString?: string;
   newString?: string;
   replaceAll?: boolean;
-  // For patch tools
   patchInput?: string;
   toolCallId?: string;
 };
@@ -44,17 +41,12 @@ type Props = {
   headerOverride?: string;
 };
 
-// Horizontal line characters for Claude Code style
 const SOLID_LINE = "─";
 const DOTTED_LINE = "╌";
 
-/**
- * Get a human-readable header for the file edit
- */
 function getHeaderText(fileEdit: FileEditInfo): string {
   const t = fileEdit.toolName.toLowerCase();
 
-  // Handle ApplyPatch (multi-file)
   if (t === "applypatch") {
     if (fileEdit.patchInput) {
       const operations = parsePatchOperations(fileEdit.patchInput);
@@ -81,7 +73,6 @@ function getHeaderText(fileEdit: FileEditInfo): string {
     return "Apply patch?";
   }
 
-  // Handle single-file edit/write tools
   const { relative } = require("node:path");
   const cwd = process.cwd();
   const relPath = relative(cwd, fileEdit.filePath);
@@ -94,7 +85,6 @@ function getHeaderText(fileEdit: FileEditInfo): string {
         return `Overwrite ${displayPath}?`;
       }
     } catch {
-      // Ignore errors
     }
     return `Write to ${displayPath}?`;
   }
@@ -106,21 +96,10 @@ function getHeaderText(fileEdit: FileEditInfo): string {
   return `Edit ${displayPath}?`;
 }
 
-/**
- * Determine diff kind based on tool name
- */
 function getDiffKind(toolName: string): "write" | "edit" {
   return toolName.toLowerCase() === "write" ? "write" : "edit";
 }
 
-/**
- * InlineFileEditApproval - Renders file edit approval UI inline (Claude Code style)
- *
- * Uses horizontal lines instead of boxes for visual styling:
- * - ──── solid line at top
- * - ╌╌╌╌ dotted line around diff content
- * - Approval options below
- */
 export const InlineFileEditApproval = memo(
   ({
     fileEdit,
@@ -147,7 +126,6 @@ export const InlineFileEditApproval = memo(
     const columns = useTerminalWidth();
     useProgressIndicator();
 
-    // Custom option index depends on whether "always" option is shown
     const customOptionIndex = allowPersistence ? 2 : 1;
     const maxOptionIndex = customOptionIndex;
     const isOnCustomOption = selectedOption === customOptionIndex;
@@ -157,15 +135,12 @@ export const InlineFileEditApproval = memo(
       const diffs = new Map<string, AdvancedDiffSuccess>();
       const toolCallId = fileEdit.toolCallId;
 
-      // For Edit/Write - single file diff
       if (precomputedDiff && toolCallId) {
         diffs.set(toolCallId, precomputedDiff);
         return diffs;
       }
 
-      // For Patch tools - use allDiffs or parse patch input
       if (fileEdit.patchInput && toolCallId) {
-        // First try to use allDiffs if available
         if (allDiffs) {
           const operations = parsePatchOperations(fileEdit.patchInput);
           for (const op of operations) {
@@ -177,7 +152,6 @@ export const InlineFileEditApproval = memo(
           }
         }
 
-        // If no diffs found from allDiffs, parse patch hunks directly
         if (diffs.size === 0) {
           const operations = parsePatchOperations(fileEdit.patchInput);
           for (const op of operations) {
@@ -202,13 +176,11 @@ export const InlineFileEditApproval = memo(
       (input, key) => {
         if (!isFocused) return;
 
-        // CTRL-C: cancel (queue denial, return to input)
         if (key.ctrl && input === "c") {
           onCancel?.();
           return;
         }
 
-        // Arrow navigation always works
         if (key.upArrow) {
           setSelectedOption((prev) => Math.max(0, prev - 1));
           return;
@@ -218,7 +190,6 @@ export const InlineFileEditApproval = memo(
           return;
         }
 
-        // When on custom input option
         if (isOnCustomOption) {
           if (key.return) {
             if (customReason.trim()) {
@@ -234,11 +205,9 @@ export const InlineFileEditApproval = memo(
             }
             return;
           }
-          // Handle text input (arrows, backspace, typing)
           if (handleKey(input, key)) return;
         }
 
-        // When on regular options
         if (key.return) {
           if (selectedOption === 0) {
             onApprove(diffsToPass.size > 0 ? diffsToPass : undefined);
@@ -255,7 +224,6 @@ export const InlineFileEditApproval = memo(
           return;
         }
 
-        // Number keys for quick selection (only for fixed options, not custom text input)
         if (input === "1") {
           onApprove(diffsToPass.size > 0 ? diffsToPass : undefined);
           return;
@@ -271,7 +239,6 @@ export const InlineFileEditApproval = memo(
       { isActive: isFocused },
     );
 
-    // Generate horizontal lines
     const solidLine = SOLID_LINE.repeat(Math.max(columns, 10));
     const dottedLine = DOTTED_LINE.repeat(Math.max(columns, 10));
     const headerText = headerOverride || getHeaderText(fileEdit);
@@ -282,21 +249,16 @@ export const InlineFileEditApproval = memo(
     const memoizedDiffContent = useMemo(
       () => (
         <>
-          {/* Top solid line */}
           <Text dimColor>{solidLine}</Text>
 
-          {/* Header */}
           <Text bold color={colors.approval.header}>
             {headerText}
           </Text>
 
-          {/* Dotted separator before diff content */}
           <Text dimColor>{dottedLine}</Text>
 
-          {/* Diff preview */}
           <Box paddingLeft={0}>
             {fileEdit.patchInput ? (
-              // Render patch operations (can be multiple files)
               <Box flexDirection="column">
                 {parsePatchOperations(fileEdit.patchInput).map((op, idx) => {
                   const { relative } = require("node:path");
@@ -306,7 +268,6 @@ export const InlineFileEditApproval = memo(
                     ? op.path
                     : relPath;
 
-                  // Look up precomputed diff using toolCallId:path key
                   const diffKey = fileEdit.toolCallId
                     ? `${fileEdit.toolCallId}:${op.path}`
                     : undefined;
@@ -381,7 +342,6 @@ export const InlineFileEditApproval = memo(
             )}
           </Box>
 
-          {/* Dotted separator after diff content */}
           <Text dimColor>{dottedLine}</Text>
         </>
       ),
@@ -403,7 +363,6 @@ export const InlineFileEditApproval = memo(
       ],
     );
 
-    // Hint text based on state
     const hintText = isOnCustomOption
       ? customReason
         ? "Enter to submit · Esc to clear"
@@ -414,12 +373,9 @@ export const InlineFileEditApproval = memo(
 
     return (
       <Box flexDirection="column">
-        {/* Static diff content - memoized to prevent re-render on keystroke */}
         {showPreview && memoizedDiffContent}
 
-        {/* Options */}
         <Box marginTop={optionsMarginTop} flexDirection="column">
-          {/* Option 1: Yes */}
           <Box flexDirection="row">
             <Box width={5} flexShrink={0}>
               <Text
@@ -442,7 +398,6 @@ export const InlineFileEditApproval = memo(
             </Box>
           </Box>
 
-          {/* Option 2: Yes, always (only if persistence allowed) */}
           {allowPersistence && (
             <Box flexDirection="row">
               <Box width={5} flexShrink={0}>
@@ -468,7 +423,6 @@ export const InlineFileEditApproval = memo(
             </Box>
           )}
 
-          {/* Custom input option */}
           <Box flexDirection="row">
             <Box width={5} flexShrink={0}>
               <Text
@@ -494,7 +448,6 @@ export const InlineFileEditApproval = memo(
           </Box>
         </Box>
 
-        {/* Hint */}
         <Box marginTop={1}>
           <Text dimColor>{hintText}</Text>
         </Box>

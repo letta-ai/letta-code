@@ -6,9 +6,6 @@ import {
   toolOutputText,
 } from "./external-tool-call";
 
-// Pure readers for Codex app-server notification payloads: turn results,
-// capacity errors, and tool-like thread items.
-
 /** Delays before the second and third attempts of a turn rejected for capacity. */
 export const CAPACITY_RETRY_DELAYS_MS = [1_000, 2_000] as const;
 

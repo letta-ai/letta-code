@@ -1,4 +1,3 @@
-// src/cli/app/useConversationSwitching.ts
 
 import { randomUUID } from "node:crypto";
 import { APIError } from "@letta-ai/letta-client/core/error";
@@ -194,7 +193,6 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
 
         const backend = getBackend();
 
-        // Fork the conversation
         const forked = await backend.forkConversation(
           conversationIdRef.current,
           {
@@ -335,7 +333,6 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
     async (conversationId: string) => {
       debugLog("btw", "jump to conversationId=%s", conversationId);
 
-      // Clear btw state
       setBtwState({ status: "idle" });
 
       // Abort the current stream if running — bumping generation makes
@@ -350,10 +347,8 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
       setInterruptRequested(false);
       setIsExecutingTool(false);
 
-      // Clear any pending approvals from the original conversation
       setPendingApprovals([]);
 
-      // Switch to the forked conversation using existing pattern from /search
       resetPendingReasoningCycle();
       setCommandRunning(true);
       const previousConversationId = conversationIdRef.current;
@@ -385,7 +380,6 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
 
         settingsManager.persistSession(agentId, conversationId, process.cwd());
 
-        // Clear current transcript and static items (same pattern as /search)
         buffersRef.current.byId.clear();
         buffersRef.current.order = [];
         buffersRef.current.tokenCount = 0;
@@ -397,7 +391,6 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         setStaticRenderEpoch((e) => e + 1);
         resetTrajectoryBases();
 
-        // Backfill message history
         if (resumeData.messageHistory.length > 0) {
           hasBackfilledRef.current = false;
           backfillBuffers(buffersRef.current, resumeData.messageHistory);
@@ -416,7 +409,6 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
           setLines(toLines(buffersRef.current));
         }
 
-        // Restore pending approvals if any
         if (resumeData.pendingApprovals.length > 0) {
           await recoverRestoredPendingApprovals(resumeData.pendingApprovals);
         }
@@ -508,7 +500,6 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         ? commandRunner.getHandle(opts.commandId, "/agents")
         : consumeOverlayCommand("resume");
 
-      // Close selector immediately
       setActiveOverlay(null);
 
       // Skip if already on this agent (no async work needed, queue can proceed)
@@ -521,10 +512,8 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         return;
       }
 
-      // Drop any pending reasoning-tier debounce before switching contexts.
       resetPendingReasoningCycle();
 
-      // If agent is busy, queue the switch for after end_turn
       if (isAgentBusy()) {
         const cmd =
           overlayCommand ??
@@ -549,7 +538,6 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
       // Lock input for async operation (set before any await to prevent queue processing)
       setCommandRunning(true);
 
-      // Show loading indicator while switching
       const cmd =
         overlayCommand ?? commandRunner.start("/agents", "Switching agent...");
       cmd.update({ output: "Switching agent...", phase: "running" });
@@ -559,7 +547,6 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
       let didSwitchBackend = false;
 
       try {
-        // Switch backend if the target agent belongs to a different backend
         if (opts?.backendMode) {
           const currentIsLocal = isLocalBackendEnabled();
           const targetIsLocal = opts.backendMode === "local";
@@ -569,21 +556,16 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
           }
         }
 
-        // Fetch new agent
         const agent = await getBackend().retrieveAgent(targetAgentId, {
           include: ["agent.blocks"],
         });
 
-        // Use specified conversation or default to the agent's default conversation
         const targetConversationId = opts?.conversationId ?? "default";
 
-        // Update project settings with new agent
         await updateProjectSettings({ lastAgent: targetAgentId });
 
-        // Save the session (agent + conversation) to settings
         settingsManager.persistSession(targetAgentId, targetConversationId);
 
-        // Clear current transcript and static items
         buffersRef.current.byId.clear();
         buffersRef.current.order = [];
         buffersRef.current.tokenCount = 0;
@@ -608,7 +590,6 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         // after switching to a different conversation/agent context.
         resetBootstrapReminderState();
 
-        // Set conversation switch context for agent switch
         {
           const { getModelDisplayName } = await import("@/agent/model");
           const modelHandle =
@@ -633,10 +614,8 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
           };
         }
 
-        // Reset context token tracking for new agent
         resetContextHistory(contextTrackerRef.current);
 
-        // Build success message
         const agentLabel = agent.name || targetAgentId;
         const isSpecificConv =
           opts?.conversationId && opts.conversationId !== "default";
@@ -657,7 +636,6 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         setStaticItems([separator]);
         cmd.finish(successOutput, true);
       } catch (error) {
-        // Rollback backend mode if we switched before the failure
         if (didSwitchBackend) {
           configureBackendMode(previousBackendMode);
         }
@@ -694,17 +672,14 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
     ],
   );
 
-  // Handle creating a new agent and switching to it
   // biome-ignore lint/correctness/useExhaustiveDependencies: switch refs are stable objects; .current is read dynamically during agent creation.
   const handleCreateNewAgent = useCallback(
     async (
       name: string,
       opts?: { commandId?: string; backendMode?: "local" | "api" },
     ) => {
-      // Close dialog immediately
       setActiveOverlay(null);
 
-      // Lock input for async operation
       setCommandRunning(true);
 
       const cmd = opts?.commandId
@@ -750,7 +725,6 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
           }
         }
 
-        // Create the new agent
         const { agent } = await createAgent({
           name,
           model: effectiveModel,
@@ -765,7 +739,6 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         // without blocking the new-agent UX on the initial clone.
         void enableMemfsIfCloud(agent.id);
 
-        // Update project settings with new agent
         await updateProjectSettings({ lastAgent: agent.id });
 
         // New agents always start on their default conversation route.
@@ -774,7 +747,6 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         const targetConversationId = "default";
         settingsManager.persistSession(agent.id, targetConversationId);
 
-        // Build success message with hints
         const agentUrl = buildAgentReference(agent.id);
         const memfsTip =
           "Tip: use /init to initialize your agent's memory system!";
@@ -783,7 +755,6 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
           `${CLI_GLYPHS.result}  ${agentUrl}`,
           `${CLI_GLYPHS.result}  ${memfsTip}`,
         ].join("\n");
-        // Clear current transcript and static items
         buffersRef.current.byId.clear();
         buffersRef.current.order = [];
         buffersRef.current.tokenCount = 0;
@@ -793,7 +764,6 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         setStaticRenderEpoch((e) => e + 1);
         resetTrajectoryBases();
 
-        // Update agent state
         agentIdRef.current = agent.id;
         setAgentId(agent.id);
         setAgentState(agent);
@@ -804,7 +774,6 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         setConversationAutoTitleEligibility(false);
         setConversationSummary(null);
 
-        // Set conversation switch context for new agent switch
         pendingConversationSwitchRef.current = {
           origin: "agent-switch",
           conversationId: targetConversationId,
@@ -821,7 +790,6 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
           },
         };
 
-        // Reset context token tracking for new agent
         resetContextHistory(contextTrackerRef.current);
 
         // Ensure bootstrap reminders are re-injected after creating a new agent.

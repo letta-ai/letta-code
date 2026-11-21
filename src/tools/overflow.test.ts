@@ -20,17 +20,14 @@ describe("overflow utilities", () => {
   });
 
   afterEach(() => {
-    // Clean up test files
     if (fs.existsSync(overflowDir)) {
       const files = fs.readdirSync(overflowDir);
       for (const file of files) {
         fs.unlinkSync(path.join(overflowDir, file));
       }
-      // Try to remove the directory (will fail if not empty)
       try {
         fs.rmdirSync(overflowDir);
       } catch {
-        // Directory not empty, that's OK
       }
     }
   });
@@ -143,15 +140,12 @@ describe("overflow utilities", () => {
 
   describe("cleanupOldOverflowFiles", () => {
     test("removes files older than specified age", async () => {
-      // Create a test file
       const content = "Test content";
       const filePath = writeOverflowFile(content, testWorkingDir, "TestTool");
 
-      // Manually set the file's mtime to be old
       const oldTime = Date.now() - 48 * 60 * 60 * 1000; // 48 hours ago
       fs.utimesSync(filePath, new Date(oldTime), new Date(oldTime));
 
-      // Clean up files older than 24 hours
       const deletedCount = cleanupOldOverflowFiles(
         testWorkingDir,
         24 * 60 * 60 * 1000,
@@ -165,7 +159,6 @@ describe("overflow utilities", () => {
       const content = "Test content";
       const filePath = writeOverflowFile(content, testWorkingDir, "TestTool");
 
-      // Clean up files older than 24 hours (file is recent)
       const deletedCount = cleanupOldOverflowFiles(
         testWorkingDir,
         24 * 60 * 60 * 1000,
@@ -186,19 +179,15 @@ describe("overflow utilities", () => {
     });
 
     test("skips subdirectories without crashing", () => {
-      // Create a test file and a subdirectory
       const content = "Test content";
       const filePath = writeOverflowFile(content, testWorkingDir, "TestTool");
 
-      // Create a subdirectory in the overflow dir
       const subDir = path.join(path.dirname(filePath), "subdir");
       fs.mkdirSync(subDir, { recursive: true });
 
-      // Make the file old
       const oldTime = Date.now() - 48 * 60 * 60 * 1000;
       fs.utimesSync(filePath, new Date(oldTime), new Date(oldTime));
 
-      // Cleanup should skip the directory and only delete the file
       const deletedCount = cleanupOldOverflowFiles(
         testWorkingDir,
         24 * 60 * 60 * 1000,
@@ -208,7 +197,6 @@ describe("overflow utilities", () => {
       expect(fs.existsSync(filePath)).toBe(false);
       expect(fs.existsSync(subDir)).toBe(true);
 
-      // Clean up the subdir
       fs.rmdirSync(subDir);
     });
   });

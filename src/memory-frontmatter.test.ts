@@ -30,8 +30,6 @@ afterEach(() => {
   root = undefined;
 });
 
-// This table runs against both the public function and a real installed hook.
-// It was also run against the pre-extraction Bash hook to preserve its policy.
 describe.each(["memfs-v2", "legacy"] as const)("%s frontmatter", (format) => {
   const valid = format === "memfs-v2" ? v2 : legacy;
   const cases: Array<[string, string, string | null, string | null]> = [

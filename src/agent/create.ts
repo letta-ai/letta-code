@@ -1,6 +1,3 @@
-/**
- * Utilities for creating an agent on the Letta API backend
- **/
 
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { type BackendCapabilities, getBackend } from "@/backend";
@@ -22,25 +19,16 @@ import { resolveCreatedAgentName } from "./subagents/names";
 import { resolveAndBuildSystemPrompt } from "./system-prompt-resolution";
 import { recordManagedSystemPrompt } from "./system-prompt-versioning";
 
-/**
- * Describes where a memory block came from
- */
 export interface BlockProvenance {
   label: string;
   source: "global" | "project" | "new" | "shared";
 }
 
-/**
- * Provenance info for an agent creation
- */
 export interface AgentProvenance {
   isNew: true;
   blocks: BlockProvenance[];
 }
 
-/**
- * Result from createAgent including provenance info
- */
 export interface CreateAgentResult {
   agent: AgentState;
   provenance: AgentProvenance;
@@ -208,9 +196,7 @@ export interface CreateAgentOptions {
   systemPromptPreset?: string;
   /** Raw system prompt string (mutually exclusive with systemPromptPreset) */
   systemPromptCustom?: string;
-  /** Which managed memory prompt mode to apply */
   memoryPromptMode?: MemoryPromptMode;
-  /** Base tools to include */
   baseTools?: string[];
   /** Custom memory blocks (overrides default blocks) */
   memoryBlocks?: Array<
@@ -218,7 +204,6 @@ export interface CreateAgentOptions {
   >;
   /** Override values for preset blocks (label → value) */
   blockValues?: Record<string, string>;
-  /** Tags to organize and categorize the agent */
   tags?: string[];
 }
 
@@ -260,7 +245,6 @@ export async function createAgent(
   );
   delete process.env[SUBAGENT_NAME_ENV];
 
-  // Resolve model identifier to handle
   let modelHandle: string;
   if (options.model) {
     const resolved = resolveModel(options.model);
@@ -273,7 +257,6 @@ export async function createAgent(
     }
     modelHandle = resolved;
   } else {
-    // Use the default model from the runtime catalog
     modelHandle = getDefaultModel();
   }
 
@@ -296,12 +279,6 @@ export async function createAgent(
   // NOT attached to the agent. This is the new pattern - no more stub tool registration.
   const toolNames = options.baseTools;
 
-  // Determine which memory blocks to use:
-  // 1. If options.memoryBlocks is provided, use those (custom blocks and/or block references)
-  // 2. Subagents are ephemeral and get no memory blocks.
-  // 3. Otherwise, use the default blocks.
-
-  // Separate block references from blocks to create
   const referencedBlockIds: string[] = [];
   let filteredMemoryBlocks: Array<{
     label: string;
@@ -311,7 +288,6 @@ export async function createAgent(
   }>;
 
   if (options.memoryBlocks !== undefined) {
-    // Separate blockId references from CreateBlock items
     const createBlocks: typeof filteredMemoryBlocks = [];
     for (const item of options.memoryBlocks) {
       if ("blockId" in item) {
@@ -322,11 +298,9 @@ export async function createAgent(
     }
     filteredMemoryBlocks = createBlocks;
   } else {
-    // Subagents get no blocks; everyone else gets the default .mdx blocks.
     filteredMemoryBlocks = isSubagent ? [] : await getDefaultMemoryBlocks();
   }
 
-  // Apply blockValues overrides to preset blocks
   if (options.blockValues) {
     for (const [label, value] of Object.entries(options.blockValues)) {
       const block = filteredMemoryBlocks.find((b) => b.label === label);
@@ -340,16 +314,12 @@ export async function createAgent(
     }
   }
 
-  // Track provenance: which blocks were created
-  // Note: We no longer reuse shared blocks - each agent gets fresh blocks
   const blockProvenance: BlockProvenance[] = [];
 
-  // Mark new blocks for provenance tracking (actual creation happens in agents.create)
   for (const block of filteredMemoryBlocks) {
     blockProvenance.push({ label: block.label, source: "new" });
   }
 
-  // Mark referenced blocks for provenance tracking
   for (const blockId of referencedBlockIds) {
     blockProvenance.push({ label: blockId, source: "shared" });
   }
@@ -377,8 +347,6 @@ export async function createAgent(
   });
 
   // Create agent with inline memory blocks (LET-7101: single API call instead of N+1)
-  // - memory_blocks: new blocks to create inline
-  // - block_ids: references to existing blocks (for shared memory)
   const agentDescription =
     options.description ?? `Letta Code agent created in ${process.cwd()}`;
 
@@ -465,7 +433,6 @@ export async function createAgent(
     // Subagent names: don't persist (no stable managed prompt metadata)
   }
 
-  // Build provenance info
   const provenance: AgentProvenance = {
     isNew: true,
     blocks: blockProvenance,

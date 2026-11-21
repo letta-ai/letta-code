@@ -1,6 +1,3 @@
-/**
- * Custom slash commands from the project and active product config roots.
- */
 
 import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
@@ -22,18 +19,10 @@ export interface CustomCommand {
   source: "project" | "user";
   path: string; // Full path to .md file
   content: string; // Prompt body (after frontmatter)
-  // Future fields (parsed but not used in MVP):
-  // allowedTools?: string[];
-  // model?: string;
-  // disableModelInvocation?: boolean;
 }
 
-// Cached commands (lazy initialized)
 let cachedCommands: CustomCommand[] | null = null;
 
-/**
- * Get custom commands (cached after first call)
- */
 export async function getCustomCommands(): Promise<CustomCommand[]> {
   if (cachedCommands !== null) {
     return cachedCommands;
@@ -42,22 +31,15 @@ export async function getCustomCommands(): Promise<CustomCommand[]> {
   return cachedCommands;
 }
 
-/**
- * Force refresh of cached commands
- */
 export function refreshCustomCommands(): void {
   cachedCommands = null;
 }
 
-/**
- * Discover custom commands from project and user directories
- */
 export async function discoverCustomCommands(
   projectPath: string = join(process.cwd(), COMMANDS_DIR),
 ): Promise<CustomCommand[]> {
   const commandsById = new Map<string, CustomCommand[]>(); // Group by id for collision handling
 
-  // 1. Discover user commands first (lower priority)
   const userCommands = await discoverFromDirectory(
     getGlobalCommandsDir(),
     "user",
@@ -68,17 +50,13 @@ export async function discoverCustomCommands(
     commandsById.set(cmd.id, existing);
   }
 
-  // 2. Discover project commands (higher priority - may override user)
   const projectCommands = await discoverFromDirectory(projectPath, "project");
   for (const cmd of projectCommands) {
     const existing = commandsById.get(cmd.id) || [];
-    // Insert project commands at front (higher priority)
     existing.unshift(cmd);
     commandsById.set(cmd.id, existing);
   }
 
-  // Flatten to array - keep all commands (for namespace disambiguation)
-  // Note: When executing, we pick the first match (project > user)
   const result: CustomCommand[] = [];
   for (const [_id, cmds] of commandsById) {
     result.push(...cmds);
@@ -87,9 +65,6 @@ export async function discoverCustomCommands(
   return result;
 }
 
-/**
- * Discover commands from a single directory
- */
 async function discoverFromDirectory(
   dirPath: string,
   source: "project" | "user",
@@ -103,9 +78,6 @@ async function discoverFromDirectory(
   return commands;
 }
 
-/**
- * Recursively find .md files in directory
- */
 async function findCommandFiles(
   currentPath: string,
   rootPath: string,
@@ -127,20 +99,13 @@ async function findCommandFiles(
             commands.push(cmd);
           }
         } catch (_error) {
-          // Silently skip malformed command files
-          // In future: could track errors in a separate array for debugging
         }
       }
     }
   } catch (_error) {
-    // Directory read failed - silently continue
-    // This is expected if directory doesn't exist or lacks permissions
   }
 }
 
-/**
- * Parse a command markdown file
- */
 async function parseCommandFile(
   filePath: string,
   rootPath: string,
@@ -149,14 +114,11 @@ async function parseCommandFile(
   const content = await readFile(filePath, "utf-8");
   const { frontmatter, body } = parseFrontmatter(content);
 
-  // Derive command ID from filename (without .md extension)
   const id = basename(filePath, ".md");
 
-  // Derive namespace from subdirectory path
   const relativePath = dirname(filePath).slice(rootPath.length);
   const namespace = relativePath.replace(/^[/\\]/, "") || undefined;
 
-  // Get description from frontmatter or first line of body
   let description = getStringField(frontmatter, "description");
   if (!description) {
     const firstLine = body.split("\n")[0]?.trim();
@@ -176,16 +138,11 @@ async function parseCommandFile(
   };
 }
 
-/**
- * Substitute arguments in command content
- */
 export function substituteArguments(content: string, args: string): string {
   let result = content;
 
-  // Replace $ARGUMENTS with all arguments
   result = result.replace(/\$ARGUMENTS/g, args);
 
-  // Replace $1, $2, ... $9 with positional arguments
   const argParts = args.split(/\s+/).filter(Boolean);
   for (let i = 0; i < 9; i++) {
     result = result.replace(new RegExp(`\\$${i + 1}`, "g"), argParts[i] || "");
@@ -194,13 +151,7 @@ export function substituteArguments(content: string, args: string): string {
   return result;
 }
 
-/**
- * Expand bash commands in content
- * Replaces !`command` patterns with command output
- * Uses existing spawnCommand from Bash tool for consistency
- */
 export async function expandBashCommands(content: string): Promise<string> {
-  // Match !`command` pattern (backticks required)
   const bashPattern = /!`([^`]+)`/g;
   const matches = [...content.matchAll(bashPattern)];
 

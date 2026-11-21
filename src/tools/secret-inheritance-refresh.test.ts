@@ -77,13 +77,11 @@ describe("inherited secrets refresh", () => {
 
     parentVault.NEW_SECRET = "new-secret-value";
 
-    // Within the freshness window the cached parent vault is reused.
     const cached = await asSubagent(() =>
       resolveSecretEnvFromCommand(command, CHILD),
     );
     expect(cached.NEW_SECRET).toBeUndefined();
 
-    // Once the entry is stale, the next lookup re-fetches the parent vault.
     __testSetSecretsMaxAgeMs(0);
     const refreshed = await asSubagent(() =>
       resolveSecretEnvFromCommand(command, CHILD),

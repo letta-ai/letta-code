@@ -1,6 +1,3 @@
-/**
- * LSP Client - Handles JSON-RPC communication with LSP servers
- */
 
 import { EventEmitter } from "node:events";
 import type { Readable, Writable } from "node:stream";
@@ -20,9 +17,6 @@ export interface LSPClientOptions {
   rootUri: string;
 }
 
-/**
- * LSP Client that communicates with an LSP server via JSON-RPC over STDIO
- */
 export class LSPClient extends EventEmitter {
   private process: LSPServerProcess;
   private rootUri: string;
@@ -56,7 +50,6 @@ export class LSPClient extends EventEmitter {
   }
 
   private setupListeners(): void {
-    // Read from stdout and parse JSON-RPC messages
     this.stdout.on("data", (chunk: Buffer) => {
       this.buffer += chunk.toString();
       this.processBuffer();
@@ -73,7 +66,6 @@ export class LSPClient extends EventEmitter {
 
   private processBuffer(): void {
     while (true) {
-      // Find Content-Length header
       const headerMatch = this.buffer.match(/Content-Length: (\d+)\r\n/);
       if (!headerMatch?.[1]) break;
 
@@ -84,7 +76,6 @@ export class LSPClient extends EventEmitter {
       const messageStart = headerEnd + 4;
       if (this.buffer.length < messageStart + contentLength) break;
 
-      // Extract message
       const messageText = this.buffer.substring(
         messageStart,
         messageStart + contentLength,
@@ -101,7 +92,6 @@ export class LSPClient extends EventEmitter {
   }
 
   private handleMessage(message: JsonRpcResponse | JsonRpcNotification): void {
-    // Handle responses to our requests
     if ("id" in message && message.id !== undefined) {
       const response = message as JsonRpcResponse;
       const pending = this.pendingRequests.get(response.id);
@@ -116,7 +106,6 @@ export class LSPClient extends EventEmitter {
       return;
     }
 
-    // Handle notifications from server
     const notification = message as JsonRpcNotification;
     if (notification.method === "textDocument/publishDiagnostics") {
       const params = notification.params as {
@@ -163,9 +152,6 @@ export class LSPClient extends EventEmitter {
     this.stdin.write(header + content);
   }
 
-  /**
-   * Initialize the LSP server
-   */
   async initialize(): Promise<InitializeResult> {
     const params: InitializeParams = {
       processId: process.pid,
@@ -186,16 +172,12 @@ export class LSPClient extends EventEmitter {
       params,
     );
 
-    // Send initialized notification
     this.sendNotification("initialized", {});
     this.initialized = true;
 
     return result;
   }
 
-  /**
-   * Notify server that a document was opened
-   */
   didOpen(
     uri: string,
     languageId: string,
@@ -214,9 +196,6 @@ export class LSPClient extends EventEmitter {
     });
   }
 
-  /**
-   * Notify server that a document was changed
-   */
   didChange(uri: string, version: number, text: string): void {
     if (!this.initialized) return;
 
@@ -233,9 +212,6 @@ export class LSPClient extends EventEmitter {
     });
   }
 
-  /**
-   * Notify server that a document was closed
-   */
   didClose(uri: string): void {
     if (!this.initialized) return;
 
@@ -246,9 +222,6 @@ export class LSPClient extends EventEmitter {
     });
   }
 
-  /**
-   * Shutdown the LSP server gracefully
-   */
   async shutdown(): Promise<void> {
     if (this.initialized) {
       await this.sendRequest("shutdown");

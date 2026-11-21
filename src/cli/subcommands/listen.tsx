@@ -311,8 +311,6 @@ export async function runListenSubcommand(
 
   await settingsManager.loadLocalProjectSettings();
 
-  // Initialize channels if explicitly requested, or restore persisted enabled
-  // channels when a desktop wrapper opts into boot-time channel restore.
   const scopedRestoreAgentScope = getScopedChannelRestoreAgentScope();
   const restoreEnabledChannels =
     !values.channels &&

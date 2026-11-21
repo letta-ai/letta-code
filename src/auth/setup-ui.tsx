@@ -1,6 +1,3 @@
-/**
- * Ink UI components for OAuth setup flow
- */
 
 import { Box, useInput } from "ink";
 import { useState } from "react";
@@ -52,7 +49,6 @@ export function SetupUI({
     return options[nextIndex] ?? current;
   };
 
-  // Handle menu navigation
   useInput(
     (_input, key) => {
       if (mode === "menu") {
@@ -62,7 +58,6 @@ export function SetupUI({
           setSelectedOption((prev) => selectNextOption(prev, 1));
         } else if (key.return) {
           if (selectedOption === 0) {
-            // Sign in with Letta - start device code flow
             setMode("device-code");
           } else if (selectedOption === 1 && !localModeDisabled) {
             proceedLocally();
@@ -131,7 +126,6 @@ export function SetupUI({
     );
   }
 
-  // Main menu
   return (
     <Box flexDirection="column" padding={1}>
       <AnimatedLogo color={colors.welcome.accent} animate={AUTH_LOGO_ANIMATE} />

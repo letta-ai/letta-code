@@ -234,7 +234,6 @@ export type StaticItem =
       toolCallId: string;
       toolName: string;
       toolArgs: string;
-      // Optional precomputed/cached data for rendering
       precomputedDiff?: AdvancedDiffSuccess;
     }
   | Line;

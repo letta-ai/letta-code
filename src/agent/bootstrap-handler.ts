@@ -20,10 +20,6 @@ import type {
 } from "@/types/protocol";
 import { resolveListMessagesRoute } from "./list-messages-routing";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Minimal interfaces — only what the handler needs
-// ─────────────────────────────────────────────────────────────────────────────
-
 export type BootstrapHandlerBackend = Pick<Backend, "listConversationMessages">;
 
 export interface BootstrapHandlerSessionContext {
@@ -43,10 +39,6 @@ export interface HandleBootstrapParams {
   /** Optional: flag indicating a pending approval is waiting. */
   hasPendingApproval?: boolean;
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Handler
-// ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * Execute a bootstrap_session_state control request and return the ControlResponse.

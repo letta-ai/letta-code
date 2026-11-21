@@ -176,7 +176,6 @@ const SAFE_MEMORY_COMMANDS = new Set([
   "sleep",
 ]);
 
-// gh CLI read-only commands: category -> allowed actions
 // null means any action is allowed for that category
 export const SAFE_GH_COMMANDS: Record<string, Set<string> | null> = {
   pr: new Set(["list", "status", "checks", "diff", "view"]),
@@ -454,7 +453,6 @@ function isReadOnlyGitBranchArgs(args: string[]): boolean {
     // Filter flags like --contains, --merged, etc. take an optional commit arg.
     if (readOnlyFilterFlags.has(arg)) {
       sawReadOnlyFlag = true;
-      // Consume the optional commit/branch argument if present.
       if (typeof args[i + 1] === "string" && !args[i + 1]?.startsWith("-")) {
         i += 1;
       }

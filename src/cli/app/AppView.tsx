@@ -1,4 +1,3 @@
-// src/cli/app/AppView.tsx
 
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
@@ -504,7 +503,6 @@ export function AppView(props: AppViewProps) {
       />
 
       <Box flexDirection="column">
-        {/* Loading screen / intro text */}
         {loadingState !== "ready" && (
           <WelcomeScreen
             loadingState={loadingState}
@@ -515,9 +513,7 @@ export function AppView(props: AppViewProps) {
 
         {loadingState === "ready" && (
           <>
-            {/* Transcript - wrapped in AnimationProvider for overflow-based animation control */}
             <AnimationProvider shouldAnimate={shouldAnimate}>
-              {/* Show liveItems always - all approvals now render inline */}
               {liveItems.length > 0 && (
                 <Box flexDirection="column">
                   {liveItems.map((ln) => {
@@ -561,7 +557,6 @@ export function AppView(props: AppViewProps) {
                       return null;
                     }
 
-                    // Check if this tool call matches the current approval awaiting user input
                     const matchesCurrentApproval =
                       ln.kind === "tool_call" &&
                       currentApproval &&
@@ -606,7 +601,6 @@ export function AppView(props: AppViewProps) {
                         ) : ln.kind === "tool_call" &&
                           ln.toolCallId &&
                           queuedIds.has(ln.toolCallId) ? (
-                          // Render stub for queued (decided but not executed) approval
                           <PendingApprovalStub
                             toolName={
                               approvalMap.get(ln.toolCallId)?.toolName ||
@@ -619,7 +613,6 @@ export function AppView(props: AppViewProps) {
                         ) : ln.kind === "tool_call" &&
                           ln.toolCallId &&
                           pendingIds.has(ln.toolCallId) ? (
-                          // Render stub for pending (undecided) approval
                           <PendingApprovalStub
                             toolName={
                               approvalMap.get(ln.toolCallId)?.toolName ||
@@ -653,7 +646,6 @@ export function AppView(props: AppViewProps) {
                 </Box>
               )}
 
-              {/* Fallback approval UI when backfill is disabled (no liveItems) */}
               {liveItems.length === 0 && currentApproval && (
                 <Box flexDirection="column">
                   <ApprovalSwitch
@@ -680,11 +672,9 @@ export function AppView(props: AppViewProps) {
                 </Box>
               )}
 
-              {/* Subagent group display - shows running/completed subagents */}
               <SubagentGroupDisplay />
             </AnimationProvider>
 
-            {/* Exit stats - shown when exiting via double Ctrl+C */}
             {showExitStats &&
               (() => {
                 const stats = sessionStatsRef.current.getSnapshot();
@@ -698,7 +688,6 @@ export function AppView(props: AppViewProps) {
                 );
               })()}
 
-            {/* Reflection arena choice prompt - merges the selected memory worktree */}
             {reflectionArenaChoicePending && !currentApproval && (
               <Box marginTop={1} flexDirection="column">
                 <InlineQuestionApproval
@@ -711,7 +700,6 @@ export function AppView(props: AppViewProps) {
               </Box>
             )}
 
-            {/* /btw ephemeral pane - shows forked conversation response */}
             {btwState.status !== "idle" && (
               <BtwPane
                 state={btwState}
@@ -784,7 +772,6 @@ export function AppView(props: AppViewProps) {
               />
             </Box>
 
-            {/* Model Selector - conditionally mounted as overlay */}
             {activeOverlay === "model" &&
               (modelReasoningPrompt ? (
                 <ModelReasoningSelector
@@ -870,7 +857,6 @@ export function AppView(props: AppViewProps) {
               />
             )}
 
-            {/* Window Title Configurator - for customizing terminal title */}
             {activeOverlay === "window-title" && (
               <WindowTitlePicker
                 projectDirectory={projectDirectory}
@@ -881,7 +867,6 @@ export function AppView(props: AppViewProps) {
               />
             )}
 
-            {/* GitHub App Installer - setup Letta Code GitHub Action */}
             {activeOverlay === "install-github-app" && (
               <InstallGithubAppFlow
                 onComplete={(result) => {
@@ -957,7 +942,6 @@ export function AppView(props: AppViewProps) {
               />
             )}
 
-            {/* Provider Selector - for connecting BYOK providers */}
             {activeOverlay === "connect" && (
               <ProviderSelector
                 onCancel={closeOverlay}
@@ -1006,7 +990,6 @@ export function AppView(props: AppViewProps) {
               />
             )}
 
-            {/* Experiment Selector - conditionally mounted as overlay */}
             {activeOverlay === "experiment" && (
               <ExperimentSelector
                 experiments={experimentManager.list()}
@@ -1060,7 +1043,6 @@ export function AppView(props: AppViewProps) {
                 />
               )}
 
-            {/* Toolset Selector - conditionally mounted as overlay */}
             {activeOverlay === "toolset" && (
               <ToolsetSelector
                 currentToolset={currentToolset ?? undefined}
@@ -1070,7 +1052,6 @@ export function AppView(props: AppViewProps) {
               />
             )}
 
-            {/* System Prompt Selector - conditionally mounted as overlay */}
             {activeOverlay === "system" && (
               <SystemPromptSelector
                 currentPromptId={currentSystemPromptId ?? undefined}
@@ -1087,12 +1068,10 @@ export function AppView(props: AppViewProps) {
               />
             )}
 
-            {/* Subagent Manager - for managing custom subagents */}
             {activeOverlay === "subagent" && (
               <SubagentManager onClose={closeOverlay} />
             )}
 
-            {/* Agent Selector - for browsing/selecting agents */}
             {activeOverlay === "resume" && (
               <AgentSelector
                 currentAgentId={agentId}
@@ -1155,7 +1134,6 @@ export function AppView(props: AppViewProps) {
               />
             )}
 
-            {/* Conversation Selector - for resuming conversations */}
             {activeOverlay === "conversations" && (
               <ConversationSelector
                 agentId={agentId}
@@ -1164,7 +1142,6 @@ export function AppView(props: AppViewProps) {
                 onSelect={async (convId, selectorContext) => {
                   const overlayCommand = completeOverlay("conversations");
 
-                  // Skip if already on this conversation
                   if (convId === conversationId) {
                     const cmd =
                       overlayCommand ??
@@ -1176,7 +1153,6 @@ export function AppView(props: AppViewProps) {
                     return;
                   }
 
-                  // If agent is busy, queue the switch for after end_turn
                   if (isAgentBusy()) {
                     const cmd =
                       overlayCommand ??
@@ -1197,7 +1173,6 @@ export function AppView(props: AppViewProps) {
                     return;
                   }
 
-                  // Lock input for async operation
                   setCommandRunning(true);
 
                   const inputCmd = "/resume";
@@ -1218,7 +1193,6 @@ export function AppView(props: AppViewProps) {
                         convId,
                       );
 
-                      // Only update state after validation succeeds
                       setConversationIdAndRef(convId);
                       setConversationAutoTitleEligibility(false);
                       setConversationSummary(selectorContext?.summary ?? null);
@@ -1236,7 +1210,6 @@ export function AppView(props: AppViewProps) {
 
                       settingsManager.persistSession(agentId, convId);
 
-                      // Build success command with agent + conversation info
                       const currentAgentName =
                         agentState.name || "Unnamed Agent";
                       const successLines =
@@ -1262,7 +1235,6 @@ export function AppView(props: AppViewProps) {
                         success: true,
                       };
 
-                      // Clear current transcript and static items
                       buffersRef.current.byId.clear();
                       buffersRef.current.order = [];
                       buffersRef.current.tokenCount = 0;
@@ -1274,14 +1246,12 @@ export function AppView(props: AppViewProps) {
                       setStaticRenderEpoch((e) => e + 1);
                       resetTrajectoryBases();
 
-                      // Backfill message history with visual separator
                       if (resumeData.messageHistory.length > 0) {
                         hasBackfilledRef.current = false;
                         backfillBuffers(
                           buffersRef.current,
                           resumeData.messageHistory,
                         );
-                        // Collect backfilled items
                         const backfilledItems: StaticItem[] = [];
                         for (const id of buffersRef.current.order) {
                           const ln = buffersRef.current.byId.get(id);
@@ -1289,7 +1259,6 @@ export function AppView(props: AppViewProps) {
                           emittedIdsRef.current.add(id);
                           backfilledItems.push({ ...ln } as StaticItem);
                         }
-                        // Add separator before backfilled messages, then success at end
                         const separator = {
                           kind: "separator" as const,
                           id: uid("sep"),
@@ -1302,7 +1271,6 @@ export function AppView(props: AppViewProps) {
                         setLines(toLines(buffersRef.current));
                         hasBackfilledRef.current = true;
                       } else {
-                        // Add separator for visual spacing even without backfill
                         const separator = {
                           kind: "separator" as const,
                           id: uid("sep"),
@@ -1311,7 +1279,6 @@ export function AppView(props: AppViewProps) {
                         setLines(toLines(buffersRef.current));
                       }
 
-                      // Restore pending approvals if any (fixes #540 for ConversationSelector)
                       if (resumeData.pendingApprovals.length > 0) {
                         await recoverRestoredPendingApprovals(
                           resumeData.pendingApprovals,
@@ -1319,8 +1286,6 @@ export function AppView(props: AppViewProps) {
                       }
                     }
                   } catch (error) {
-                    // Update existing loading message instead of creating new one
-                    // Format error message to be user-friendly (avoid raw JSON/internal details)
                     let errorMsg = "Unknown error";
                     if (error instanceof APIError) {
                       if (error.status === 404) {
@@ -1341,7 +1306,6 @@ export function AppView(props: AppViewProps) {
                 onNewConversation={async () => {
                   const overlayCommand = completeOverlay("conversations");
 
-                  // Lock input for async operation
                   setCommandRunning(true);
 
                   const cmd =
@@ -1356,7 +1320,6 @@ export function AppView(props: AppViewProps) {
                   });
 
                   try {
-                    // Create a new conversation
                     const conversation = await getBackend().createConversation({
                       agent_id: agentId,
                     });
@@ -1369,7 +1332,6 @@ export function AppView(props: AppViewProps) {
                     setConversationSummary(null);
                     settingsManager.persistSession(agentId, conversation.id);
 
-                    // Build success command with agent + conversation info
                     const currentAgentName =
                       agentState?.name || "Unnamed Agent";
                     const shortConvId = conversation.id.slice(0, 20);
@@ -1389,7 +1351,6 @@ export function AppView(props: AppViewProps) {
                       success: true,
                     };
 
-                    // Clear current transcript and static items
                     buffersRef.current.byId.clear();
                     buffersRef.current.order = [];
                     buffersRef.current.tokenCount = 0;
@@ -1414,7 +1375,6 @@ export function AppView(props: AppViewProps) {
               />
             )}
 
-            {/* Message Search - conditionally mounted as overlay */}
             {activeOverlay === "search" && (
               <MessageSearch
                 onClose={closeOverlay}
@@ -1428,7 +1388,6 @@ export function AppView(props: AppViewProps) {
                 ) => {
                   const overlayCommand = completeOverlay("search");
 
-                  // Different agent: use handleAgentSelect (which supports optional conversationId)
                   if (targetAgentId !== agentId) {
                     await handleAgentSelect(targetAgentId, {
                       conversationId: targetConvId,
@@ -1437,10 +1396,8 @@ export function AppView(props: AppViewProps) {
                     return;
                   }
 
-                  // Normalize undefined/null to "default"
                   const actualTargetConv = targetConvId || "default";
 
-                  // Same agent, same conversation: nothing to do
                   if (actualTargetConv === conversationId) {
                     const cmd =
                       overlayCommand ??
@@ -1452,8 +1409,6 @@ export function AppView(props: AppViewProps) {
                     return;
                   }
 
-                  // Same agent, different conversation: switch conversation
-                  // (Reuses ConversationSelector's onSelect logic pattern)
                   if (isAgentBusy()) {
                     const cmd =
                       overlayCommand ??
@@ -1521,7 +1476,6 @@ export function AppView(props: AppViewProps) {
                         success: true,
                       };
 
-                      // Clear current transcript and static items
                       buffersRef.current.byId.clear();
                       buffersRef.current.order = [];
                       buffersRef.current.tokenCount = 0;
@@ -1533,7 +1487,6 @@ export function AppView(props: AppViewProps) {
                       setStaticRenderEpoch((e) => e + 1);
                       resetTrajectoryBases();
 
-                      // Backfill message history
                       if (resumeData.messageHistory.length > 0) {
                         hasBackfilledRef.current = false;
                         backfillBuffers(
@@ -1567,7 +1520,6 @@ export function AppView(props: AppViewProps) {
                         setLines(toLines(buffersRef.current));
                       }
 
-                      // Restore pending approvals if any
                       if (resumeData.pendingApprovals.length > 0) {
                         await recoverRestoredPendingApprovals(
                           resumeData.pendingApprovals,
@@ -1595,7 +1547,6 @@ export function AppView(props: AppViewProps) {
               />
             )}
 
-            {/* Feedback Dialog - conditionally mounted as overlay */}
             {activeOverlay === "feedback" && (
               <FeedbackDialog
                 onSubmit={handleFeedbackSubmit}
@@ -1604,8 +1555,6 @@ export function AppView(props: AppViewProps) {
               />
             )}
 
-            {/* Memory Viewer - conditionally mounted as overlay */}
-            {/* Use tree view for memfs-enabled agents, tab view otherwise */}
             {activeOverlay === "memory" &&
               (isActiveMemfsEnabled(agentId) ? (
                 <MemfsTreeViewer
@@ -1638,7 +1587,6 @@ export function AppView(props: AppViewProps) {
             {/* Memory sync conflict overlay removed - git-backed memory
                 uses standard git merge conflicts resolved by the agent */}
 
-            {/* MCP Server Selector - conditionally mounted as overlay */}
             {activeOverlay === "mcp" && (
               <McpSelector
                 agentId={agentId}
@@ -1658,20 +1606,16 @@ export function AppView(props: AppViewProps) {
               />
             )}
 
-            {/* Help Dialog - conditionally mounted as overlay */}
             {activeOverlay === "help" && <HelpDialog onClose={closeOverlay} />}
 
-            {/* Skills Dialog - browse available skills */}
             {activeOverlay === "skills" && (
               <SkillsDialog onClose={closeOverlay} agentId={agentId} />
             )}
 
-            {/* Hooks Manager - for managing hooks configuration */}
             {activeOverlay === "hooks" && (
               <HooksManager onClose={closeOverlay} agentId={agentId} />
             )}
 
-            {/* Pin Dialog - for naming agent before pinning */}
             {activeOverlay === "pin" && (
               <PinDialog
                 currentName={agentName || ""}
@@ -1691,7 +1635,6 @@ export function AppView(props: AppViewProps) {
                   });
 
                   try {
-                    // Rename if new name provided
                     if (newName && newName !== agentName) {
                       await getBackend().updateAgent(agentId, {
                         name: newName,
@@ -1723,7 +1666,6 @@ export function AppView(props: AppViewProps) {
               />
             )}
 
-            {/* Plan Mode Dialog - NOW RENDERED INLINE with tool call (see liveItems above) */}
           </>
         )}
       </Box>

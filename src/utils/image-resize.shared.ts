@@ -8,7 +8,6 @@ export const MAX_IMAGE_HEIGHT = 2000;
 // client to avoid provider-side API errors.
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
-/** True when the image's base64 encoding fits within MAX_IMAGE_BYTES. */
 export function fitsImageByteLimit(buffer: Buffer): boolean {
   return Math.ceil(buffer.length / 3) * 4 <= MAX_IMAGE_BYTES;
 }

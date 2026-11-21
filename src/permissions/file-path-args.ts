@@ -19,7 +19,6 @@ const CWD_FILE_PATH_TOOLS = new Set([
   "EnterWorktree",
 ]);
 
-/** Expand cwd-relative path arguments shared by in-process file tools. */
 export function expandPathArgs(
   toolName: string,
   toolArgs: ToolArgs,

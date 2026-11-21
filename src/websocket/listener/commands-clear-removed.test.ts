@@ -18,19 +18,6 @@ import { createRuntime } from "./lifecycle";
 import { setActiveRuntime } from "./runtime";
 import type { ConversationRuntime, ListenerRuntime } from "./types";
 
-/**
- * Remote `/clear` used to create a conversation and then reassign
- * `runtime.conversationId` in place while `runtime.key` kept addressing the
- * old scope. The next accepted input was keyed in the durable ledger under the
- * stale `runtime.key` but carried a replay payload scoped to the new
- * conversation, so the whole `input-dispositions-v2.json` failed validation
- * ("Disposition replay payload identity is invalid") and every subsequent
- * read of the store threw.
- *
- * The command is gone. An old client that still sends it must get a plain
- * unsuccessful result and must not move any runtime or conversation state.
- */
-
 const REMOVED_MESSAGE =
   "/clear was removed; use /new to start a fresh conversation.";
 

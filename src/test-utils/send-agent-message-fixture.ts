@@ -2,7 +2,6 @@ import type { TrackChildSendInput } from "@/agent/subagents/child-send-tracking"
 import type { AgentRetrieveOptions, Backend } from "@/backend";
 import type { EnqueueConversationInput } from "@/backend/api/conversation-enqueue";
 
-/** Shared SendAgentMessage tool fixture: a Cloud backend and recording deps. */
 export const TARGET_CONV = "conv-33333333-3333-4333-8333-333333333333";
 
 export function sendAgentMessageFixture(

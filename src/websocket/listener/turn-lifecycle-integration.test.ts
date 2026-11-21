@@ -433,7 +433,6 @@ describe("listener turn lifecycle integration", () => {
                 },
               );
               for await (const _event of stream) {
-                /* Drain the real SDK stream. */
               }
               return {
                 kind: "terminal" as const,

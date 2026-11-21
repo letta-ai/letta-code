@@ -1,16 +1,3 @@
-/**
- * In-process cron scheduler for the WS listener.
- *
- * On start:
- * 1. Claims the scheduler lease in crons.json
- * 2. Starts a setInterval that fires every 60s
- * 3. On each tick: reads active tasks, checks cron match against current time,
- *    enqueues matching tasks into their ConversationRuntime's queueRuntime,
- *    and kicks the queue pump
- * 4. Runs GC every 60 minutes
- *
- * On stop: clears interval, releases lease.
- */
 
 import { isLocalAgentId } from "@/agent/agent-id";
 import { getBackend } from "@/backend";
@@ -63,8 +50,6 @@ export {
   getIntendedCronOccurrence,
 } from "./prompt";
 
-// ── Types ───────────────────────────────────────────────────────────
-
 type ProcessQueuedTurn = (
   queuedTurn: IncomingMessage,
   dequeuedBatch: DequeuedBatch,
@@ -80,11 +65,9 @@ interface SchedulerState {
   processQueuedTurn: ProcessQueuedTurn;
   /** Last mtime of crons.json — skip re-reads when unchanged. */
   lastMtime: number;
-  /** Cached active tasks (refreshed on file change). */
   cachedTasks: CronTask[];
   /** Set of task IDs that fired this minute (prevent double-fire). */
   firedThisMinute: Set<string>;
-  /** Minute key for the current tick (e.g. "2026-03-26T00:15"). */
   lastMinuteKey: string;
   /** Pending jitter-delayed timers — cleared on stop/lease loss. */
   pendingTimers: Set<NodeJS.Timeout>;
@@ -126,8 +109,6 @@ let listenerFireContext: {
   processQueuedTurn: ProcessQueuedTurn;
 } | null = null;
 
-// ── Constants ───────────────────────────────────────────────────────
-
 const TICK_INTERVAL_MS = 60_000;
 const GC_INTERVAL_MS = 60 * 60_000; // 1 hour
 const TOMBSTONE_HEARTBEAT_MS = 1_000;
@@ -142,8 +123,6 @@ function clearSlowLeaseRetry(): void {
   slowLeaseRetryTimer = null;
 }
 const NEW_CONVERSATION_TARGET = "new";
-
-// ── Helpers ─────────────────────────────────────────────────────────
 
 function logScheduler(opts: StartListenerOptions, message: string): void {
   if (opts.onLog) {
@@ -239,8 +218,6 @@ function emitCronsUpdated(
   );
 }
 
-// ── Core tick logic ─────────────────────────────────────────────────
-
 function refreshTaskCache(state: SchedulerState): void {
   const mtime = getCronFileMtime();
   if (mtime !== state.lastMtime) {
@@ -280,14 +257,12 @@ function setLastRunOutcome(
 }
 
 export function shouldFireTask(task: CronTask, now: Date): boolean {
-  // One-shot: check if scheduled_for is now or past (jitter applied to scheduled time)
   if (!task.recurring && task.scheduled_for) {
     const scheduledMs =
       new Date(task.scheduled_for).getTime() + task.jitter_offset_ms;
     return scheduledMs <= now.getTime();
   }
 
-  // Recurring: check if the cron expression matches this minute.
   // Jitter is applied as a setTimeout delay at the call site, not here.
   return cronMatchesTime(task.cron, now, task.timezone);
 }
@@ -463,7 +438,6 @@ async function fireCronTask(
 /** Returns true if the task was marked as missed (caller should skip firing). */
 export function handleMissedOneShot(task: CronTask, now: Date): boolean {
   if (task.recurring || !task.scheduled_for) return false;
-  // A one-shot is "missed" if it's been more than 5 minutes past scheduled time
   const scheduledMs = new Date(task.scheduled_for).getTime();
   const missThreshold = 5 * 60_000;
   if (now.getTime() > scheduledMs + missThreshold && task.status === "active") {
@@ -580,7 +554,6 @@ function tick(
   opts: StartListenerOptions,
   processQueuedTurn: ProcessQueuedTurn,
 ): void {
-  // Verify we still hold the lease and keep the mixed-version tombstone live.
   if (!holdSchedulerLease(state, opts)) {
     return;
   }
@@ -588,7 +561,6 @@ function tick(
   const matchedAt = new Date();
   const currentMinuteKey = minuteKey(matchedAt);
 
-  // Reset per-minute dedup when minute changes
   if (currentMinuteKey !== state.lastMinuteKey) {
     state.firedThisMinute.clear();
     state.lastMinuteKey = currentMinuteKey;
@@ -611,7 +583,6 @@ function tick(
       continue;
     }
 
-    // Per-minute dedup
     if (state.firedThisMinute.has(task.id)) continue;
 
     if (shouldFireTask(task, matchedAt)) {
@@ -688,8 +659,6 @@ function tick(
     }
   }
 }
-
-// ── Public API ──────────────────────────────────────────────────────
 
 /**
  * Start the cron scheduler. Should be called when the WS listener connects.
@@ -856,9 +825,6 @@ export function stopScheduler(): void {
   schedulerState = null;
 }
 
-/**
- * Check if the scheduler is running.
- */
 export function isSchedulerRunning(): boolean {
   return schedulerState !== null;
 }

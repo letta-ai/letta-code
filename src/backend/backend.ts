@@ -358,7 +358,6 @@ export interface Backend {
     runId?: string | null,
   ): Promise<Awaited<ReturnType<APIClient["agents"]["messages"]["cancel"]>>>;
 
-  /** Latest run created for this conversation, or null when none exists. */
   latestConversationRun(conversationId: string): Promise<Run | null>;
 
   retrieveRun(

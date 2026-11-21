@@ -1,14 +1,12 @@
 import { memo, useEffect, useState } from "react";
 import { Text } from "./Text";
 
-// Default configuration
 const DEFAULT_GARBAGE_CHARS = "._";
 const DEFAULT_TICK_MS = 30;
 const DEFAULT_MIN_GARBAGE = 1;
 const DEFAULT_MAX_GARBAGE = 2;
 const DEFAULT_CURSOR = "█";
 
-// Generate random garbage string
 function generateGarbage(count: number, chars: string): string {
   let result = "";
   for (let i = 0; i < count; i++) {
@@ -42,13 +40,6 @@ export interface FanOutAnimationProps extends FanOutAnimationOptions {
   dimColor?: boolean;
 }
 
-/**
- * Pre-generate all animation frames at initialization.
- * Follows 3-state cycle:
- * 1. Cursor flush against revealed text (no garbage)
- * 2. Garbage characters appear
- * 3. Garbage replaced with same number of real characters
- */
 function generateFrames(
   text: string,
   garbageChars: string,
@@ -59,7 +50,6 @@ function generateFrames(
   const frames: string[] = [];
   let position = 0;
 
-  // State 1: Initial frame - just cursor
   frames.push(cursor);
 
   while (position < text.length) {
@@ -70,27 +60,20 @@ function generateFrames(
       remaining,
     );
 
-    // State 2: Garbage appears
     const revealed = text.slice(0, position);
     const garbage = generateGarbage(count, garbageChars);
     frames.push(`${revealed}${garbage}${cursor}`);
 
-    // State 3: Garbage replaced with real chars (same count)
     position += count;
     const newRevealed = text.slice(0, position);
     frames.push(`${newRevealed}${cursor}`);
   }
 
-  // Final frame: complete text without cursor
   frames.push(text);
 
   return frames;
 }
 
-/**
- * Hook for fan-out animation logic.
- * Pre-computes all frames, then cycles through with a simple index.
- */
 export function useFanOutAnimation(
   text: string,
   options: FanOutAnimationOptions = {},
@@ -105,12 +88,10 @@ export function useFanOutAnimation(
     showCursorOnComplete = false,
   } = options;
 
-  // Pre-generate frames once on mount
   const [frames] = useState(() =>
     generateFrames(text, garbageChars, minGarbage, maxGarbage, cursor),
   );
 
-  // Simple index state - just increment each tick
   const [frameIndex, setFrameIndex] = useState(0);
 
   const isComplete = frameIndex >= frames.length - 1;
@@ -139,10 +120,6 @@ export function useFanOutAnimation(
   return { display: finalDisplay, isComplete };
 }
 
-/**
- * Generic fan-out animation component.
- * Characters reveal left-to-right with random garbage chars before each reveal.
- */
 export const FanOutAnimation = memo(
   ({
     text,
@@ -163,10 +140,6 @@ export const FanOutAnimation = memo(
 
 FanOutAnimation.displayName = "FanOutAnimation";
 
-/**
- * Animated "Compacting..." text with cursor block effect.
- * Convenience wrapper around FanOutAnimation.
- */
 export const CompactingAnimation = memo(() => {
   return <FanOutAnimation text="Compacting..." bold />;
 });

@@ -16,7 +16,6 @@ interface WindowsCommandSafetyOptions {
   env?: NodeJS.ProcessEnv;
 }
 
-/** Tokenize command lists while preserving a quoted command as one token. */
 function parseCommands(input: string): string[][] {
   const commands: string[][] = [];
   let tokens: string[] = [];

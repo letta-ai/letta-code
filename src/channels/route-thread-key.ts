@@ -20,7 +20,6 @@ export function resolveChannelRouteThreadKey(threadId?: string | null): string {
   return trimmed && trimmed.length > 0 ? trimmed : CHANNEL_ROOT_THREAD_KEY;
 }
 
-/** Translate a persisted route thread key back into a platform thread id. */
 export function channelRouteThreadIdFromKey(
   threadKey?: string | null,
 ): string | null {

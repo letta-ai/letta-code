@@ -12,7 +12,6 @@ import type { WorkflowMeta } from "./types.ts";
 
 const META_PATTERN = /export\s+const\s+meta\s*=\s*\{/;
 
-/** Find the meta literal's object text via a balanced-brace scan. */
 function extractMetaLiteral(script: string): { literal: string; end: number } {
   const match = META_PATTERN.exec(script);
   if (!match) {

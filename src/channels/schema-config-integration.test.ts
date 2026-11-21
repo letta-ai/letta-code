@@ -176,7 +176,6 @@ describe("bluesky-shape schema (integration)", () => {
       keywords: ["letta", "ai"],
       entity_tiers: { "did:plc:abc": 1, "did:plc:xyz": 2 },
     });
-    // Secret must not leak through.
     expect((snapshot as Record<string, unknown>).password).toBeUndefined();
   });
 });

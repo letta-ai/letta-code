@@ -106,7 +106,6 @@ function resolveChannelRuntimeModulePath(
     try {
       return resolver.resolve(moduleName);
     } catch {
-      // Try next resolver.
     }
   }
 

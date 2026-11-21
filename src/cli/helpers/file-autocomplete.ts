@@ -15,7 +15,6 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { resolveGlobalConfigDir } from "@/utils/settings-path";
 
-// Ported from Pi TUI packages/tui/src/autocomplete.ts.
 // Keep behavior aligned with Pi's fd-backed @ file autocomplete.
 const PATH_DELIMITERS = new Set([" ", "\t", '"', "'", "="]);
 

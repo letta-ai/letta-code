@@ -501,7 +501,6 @@ function extractCommandFailureMessage(
     const message = parsed.error?.error?.detail ?? parsed.error?.error?.message;
     if (typeof message === "string" && message.trim()) return message.trim();
   } catch {
-    // Fall through to a concise first-line stderr summary.
   }
   return (
     trimmed

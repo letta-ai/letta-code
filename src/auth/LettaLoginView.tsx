@@ -101,7 +101,6 @@ export function LettaLoginView({
             });
           })
           .catch(() => {
-            // Silently ignore any failures
           });
 
         const deviceId = settingsManager.getOrCreateDeviceId();

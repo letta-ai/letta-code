@@ -19,16 +19,10 @@ export function setErrorContext(context: Partial<ErrorContext>): void {
   currentContext = { ...currentContext, ...context };
 }
 
-/**
- * Get the current error context
- */
 export function getErrorContext(): ErrorContext {
   return currentContext;
 }
 
-/**
- * Clear the error context
- */
 export function clearErrorContext(): void {
   currentContext = {};
 }

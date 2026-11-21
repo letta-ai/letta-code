@@ -109,7 +109,6 @@ test("a conversation with running background Bash stays held and is re-reported 
     processQueuedTurn: async () => {
       turns += 1;
       if (turns > 1) return;
-      // The turn starts background work and ends while it is still running.
       const result = await bash({
         command: `"${process.execPath}" "${script}"`,
         run_in_background: true,
@@ -137,10 +136,8 @@ test("a conversation with running background Bash stays held and is re-reported 
       "queue pump to finish",
     );
 
-    // Turn ended, but the background shell still belongs to this conversation.
     expect(listener.conversationRuntimes.get(runtimeKey)).toBe(runtime);
 
-    // A new connection re-reports the running process for this conversation.
     const transport = new MockTransport();
     const connection = openListenerConnection({
       runtime: listener,
@@ -158,8 +155,6 @@ test("a conversation with running background Bash stays held and is re-reported 
     // a subscribed recipient for it.
     closeListenerConnection(listener, "conn-bg-evict-2");
 
-    // Once the shell exits and its notification turn runs, the conversation
-    // is released.
     writeFileSync(releaseFile, "");
     await waitFor(() => turns === 2, "notification turn");
     await waitFor(

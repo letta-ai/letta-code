@@ -2,14 +2,6 @@ import {
   type AgentSandboxOptions,
   SUBAGENT_CLOUD_OPTIONS_ENV,
 } from "@/backend/api/environments";
-/**
- * Subagent manager for spawning and coordinating subagents
- *
- * This module handles:
- * - Spawning subagents via letta CLI in headless mode
- * - Executing subagents and collecting final reports
- * - Managing parallel subagent execution
- */
 
 import { rmSync } from "node:fs";
 import { platform } from "node:os";
@@ -84,10 +76,6 @@ import {
   processStreamEvent,
 } from "./subagent-stream";
 
-// ============================================================================
-// Constants
-// ============================================================================
-
 /**
  * Subagent types that don't need server-side base tools (web_search,
  * fetch_webpage). These agents operate on local memory/git state and have
@@ -98,13 +86,6 @@ import {
  */
 const NO_BASE_TOOL_SUBAGENT_TYPES = new Set(["reflection", "memory", "init"]);
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
-/**
- * Check if an error message indicates an unsupported provider
- */
 function isProviderNotSupportedError(errorOutput: string): boolean {
   return (
     errorOutput.includes("Provider") &&
@@ -112,10 +93,6 @@ function isProviderNotSupportedError(errorOutput: string): boolean {
     errorOutput.includes("supported providers:")
   );
 }
-
-// ============================================================================
-// Core Functions
-// ============================================================================
 
 interface BuildSubagentArgsOptions {
   backendMode?: BackendMode;
@@ -141,7 +118,6 @@ interface BuildSubagentArgsOptions {
   ephemeral?: boolean;
 }
 
-/** Build CLI arguments for spawning a subagent. */
 export function buildSubagentArgs(
   type: string,
   config: SubagentConfig,
@@ -173,7 +149,6 @@ export function buildSubagentArgs(
   }
 
   if (isDeployingExisting) {
-    // Deploy existing agent/conversation
     if (existingConversationId) {
       // "default" is agent-scoped; conv-* IDs identify their owner directly.
       if (existingConversationId === "default" && existingAgentId) {
@@ -254,7 +229,6 @@ export function buildSubagentArgs(
     args.push("--disallowedTools", parentDisallowedTools.join(","));
   }
 
-  // Add tool filtering if specified (applies to both new and existing agents)
   if (
     config.allowedTools !== "all" &&
     Array.isArray(config.allowedTools) &&
@@ -266,12 +240,10 @@ export function buildSubagentArgs(
     args.push("--tools", scopedTools.join(","));
   }
 
-  // Add max turns limit if specified
   if (maxTurns !== undefined && maxTurns > 0) {
     args.push("--max-turns", String(maxTurns));
   }
 
-  // Pre-load skills specified in the subagent config
   if (config.skills.length > 0) {
     args.push("--pre-load-skills", config.skills.join(","));
   }
@@ -279,9 +251,6 @@ export function buildSubagentArgs(
   return args;
 }
 
-/**
- * Execute a subagent and collect its final report by spawning letta in headless mode
- */
 async function executeSubagent(
   type: string,
   config: SubagentConfig,
@@ -307,7 +276,6 @@ async function executeSubagent(
   const withModel = (result: SubagentResult): SubagentResult =>
     model ? { ...result, model } : result;
 
-  // Check if already aborted before starting
   if (signal?.aborted) {
     return withModel({
       agentId: "",
@@ -317,7 +285,6 @@ async function executeSubagent(
     });
   }
 
-  // Update the state with the model being used (may differ on retry/fallback)
   if (model) {
     updateSubagent(subagentId, { model });
   }
@@ -488,7 +455,6 @@ async function executeSubagent(
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
 
-    // Initialize execution state
     const state: ExecutionState = {
       agentId: existingAgentId || null,
       conversationId: existingConversationId || null,
@@ -521,7 +487,6 @@ async function executeSubagent(
       stderrChunks.push(data);
     });
 
-    // Wait for process to complete
     const { exitCode, exitSignal } = await runningProcess.completion;
 
     if (
@@ -546,7 +511,6 @@ async function executeSubagent(
     }
     flushPendingProgressText(state, subagentId);
 
-    // Check if process was aborted by user
     if (runningProcess.wasAborted()) {
       return withModel({
         agentId: state.agentId || "",
@@ -559,7 +523,6 @@ async function executeSubagent(
 
     const stderr = Buffer.concat(stderrChunks).toString("utf-8").trim();
 
-    // Handle non-zero exit code
     if (exitCode !== 0) {
       // A prepared conversation must fail rather than switch models and agents.
       if (
@@ -657,7 +620,6 @@ async function executeSubagent(
       );
     }
 
-    // Return captured result if available
     if (state.finalResult !== null) {
       const toolFailureError =
         type === "reflection" && !hasSuccessfulToolCall(state)
@@ -676,7 +638,6 @@ async function executeSubagent(
       });
     }
 
-    // Return error if captured
     if (state.finalError) {
       debugWarn(
         "subagent",
@@ -695,7 +656,6 @@ async function executeSubagent(
       });
     }
 
-    // No result or error captured during streaming — this is unusual
     debugWarn(
       "subagent",
       `Subagent ${subagentId} (agentId=${state.agentId}) exited cleanly (exitCode=${exitCode}) ` +
@@ -703,7 +663,6 @@ async function executeSubagent(
         `stdout=${Buffer.concat(stdoutChunks).length} bytes, stderr=${stderr.length} bytes`,
     );
 
-    // Fallback: parse from stdout
     const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
     debugLog(
       "subagent",
@@ -866,7 +825,6 @@ async function spawnSubagentInContext(
   config = formatConfig;
   const billingTier = await getCurrentBillingTier();
 
-  // For existing agents, don't override model; for new agents, use provided or config default
   const model = isDeployingExisting
     ? null
     : await resolveSubagentModel({
@@ -878,7 +836,6 @@ async function spawnSubagentInContext(
         subagentType: type,
         backendMode,
       });
-  // Build the prompt with system reminder for deployed agents
   let finalPrompt = prompt;
   if (
     (type !== "custom" || forkedContext) &&
@@ -928,7 +885,6 @@ async function spawnSubagentInContext(
     });
   }
 
-  // Execute subagent - state updates are handled via the state store
   return executeSubagent(
     type,
     config,

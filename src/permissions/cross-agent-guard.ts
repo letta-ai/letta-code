@@ -1,4 +1,3 @@
-// src/permissions/cross-agent-guard.ts
 // Cross-agent guard: hard-denies an in-process file tool whose target path
 // resolves under another agent's memory directory.
 //
@@ -41,10 +40,6 @@ import {
   canonicalizeRoot,
   getCrossBackendAgentsTreeRoots,
 } from "./sandbox-policy";
-
-// --------------------------------------------------------------------------
-// Allowed agents
-// --------------------------------------------------------------------------
 
 export interface CrossAgentGuardOptions {
   env?: NodeJS.ProcessEnv;
@@ -93,10 +88,6 @@ export function resolveAllowedAgents(
   return ids;
 }
 
-// --------------------------------------------------------------------------
-// Target path extraction
-// --------------------------------------------------------------------------
-
 type ToolArgs = Record<string, unknown>;
 
 export interface CrossAgentTargets {
@@ -119,10 +110,6 @@ export interface CrossAgentTargets {
  */
 const UNRESOLVED_AGENT_ID = "<unresolved>";
 
-/**
- * Normalize a path for structural comparison: forward slashes, no
- * trailing slash, preserving a bare `/` as root.
- */
 function normalizePathForCompare(path: string): string {
   const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
   return normalized.length === 0 ? "/" : normalized;
@@ -193,9 +180,6 @@ function classifyPathUnderRoot(
   return { kind: "outside" };
 }
 
-/**
- * Extract file directives from an ApplyPatch input.
- */
 export function extractApplyPatchPaths(input: string): string[] {
   const paths: string[] = [];
   const fileDirectivePattern = /\*\*\* (?:Add|Update|Delete) File:\s*(.+)/g;
@@ -308,7 +292,6 @@ export function extractTargetAgentPaths(
     }
   };
 
-  // ApplyPatch: extract every file directive.
   if (toolName === "ApplyPatch") {
     if (typeof toolArgs.input === "string") {
       for (const p of extractApplyPatchPaths(toolArgs.input)) {
@@ -318,8 +301,6 @@ export function extractTargetAgentPaths(
     return { agentIds, anyAgentScoped };
   }
 
-  // All other in-process file tools: Read/Write/Edit/NotebookEdit/Glob/Grep/LS
-  // (all converge on file_path / path / notebook_path).
   addFromPath(extractFilePath(toolArgs));
 
   // Glob also accepts a `pattern` arg. An absolute pattern like
@@ -331,10 +312,6 @@ export function extractTargetAgentPaths(
 
   return { agentIds, anyAgentScoped };
 }
-
-// --------------------------------------------------------------------------
-// Guard evaluation
-// --------------------------------------------------------------------------
 
 export interface CrossAgentGuardResult {
   matchedRule: "cross-agent guard";

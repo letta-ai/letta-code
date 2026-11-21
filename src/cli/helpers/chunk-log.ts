@@ -1,16 +1,3 @@
-/**
- * ChunkLog - Rolling log of the last N streaming chunks received by the client.
- *
- * Stores truncated chunks as JSONL on disk, organized per agent per session:
- *   ~/.letta/logs/chunk-logs/{agent_id}/{session_id}.jsonl
- *
- * Metadata (message_type, ids, timestamps) is preserved fully;
- * large content fields (reasoning, tool_return, arguments, etc.) are
- * truncated to keep the file compact.
- *
- * Old session logs are garbage-collected: only the most recent N sessions
- * per agent are kept on disk.
- */
 
 import {
   existsSync,
@@ -29,10 +16,6 @@ const CONTENT_TRUNCATE_LEN = 200;
 const MAX_SESSION_FILES = 5;
 const LOG_BASE_DIR = join(resolveGlobalConfigDir(), "logs", "chunk-logs");
 
-// ---------------------------------------------------------------------------
-// Truncation helpers
-// ---------------------------------------------------------------------------
-
 function truncateStr(value: unknown, maxLen: number): string {
   if (value === null || value === undefined) return "";
   const s = typeof value === "string" ? value : JSON.stringify(value);
@@ -40,10 +23,6 @@ function truncateStr(value: unknown, maxLen: number): string {
   return `${s.slice(0, maxLen)}...[truncated, was ${s.length}b]`;
 }
 
-/**
- * Build a compact representation of a chunk, preserving all metadata but
- * truncating large content fields.
- */
 function truncateChunk(chunk: LettaStreamingResponse): Record<string, unknown> {
   const raw = chunk as Record<string, unknown>;
   const type = raw.message_type as string | undefined;
@@ -62,7 +41,6 @@ function truncateChunk(chunk: LettaStreamingResponse): Record<string, unknown> {
       };
 
     case "tool_call_message": {
-      // Truncate arguments inside tool_call / tool_calls
       const truncateToolCall = (tc: Record<string, unknown>) => ({
         ...tc,
         arguments: truncateStr(tc.arguments, CONTENT_TRUNCATE_LEN),
@@ -96,7 +74,6 @@ function truncateChunk(chunk: LettaStreamingResponse): Record<string, unknown> {
     case "usage_statistics":
       return raw;
 
-    // Unknown types -- shallow copy, truncate any "content" field
     default: {
       const result = { ...raw };
       if (typeof result.content === "string" || Array.isArray(result.content)) {
@@ -107,10 +84,6 @@ function truncateChunk(chunk: LettaStreamingResponse): Record<string, unknown> {
   }
 }
 
-// ---------------------------------------------------------------------------
-// ChunkLog class
-// ---------------------------------------------------------------------------
-
 class ChunkLog {
   private buffer: Record<string, unknown>[] = [];
   private dirty = false;
@@ -118,11 +91,6 @@ class ChunkLog {
   private agentDir: string | null = null;
   private dirCreated = false;
 
-  /**
-   * Initialize the chunk log for a specific agent + session.
-   * Must be called before append/flush will write to disk.
-   * Clears in-memory buffer and garbage-collects old session files.
-   */
   init(agentId: string, sessionId: string): void {
     this.agentDir = join(LOG_BASE_DIR, agentId);
     this.logPath = join(this.agentDir, `${sessionId}.jsonl`);
@@ -130,18 +98,12 @@ class ChunkLog {
     this.dirty = false;
     this.dirCreated = false;
 
-    // GC old session files for this agent (keep last N)
     this.pruneOldSessions();
   }
 
-  /**
-   * Append a chunk to the in-memory log. Does NOT write to disk.
-   * Call flush() after a stream completes to persist.
-   */
   append(chunk: LettaStreamingResponse): void {
     this.buffer.push(truncateChunk(chunk));
 
-    // Drop oldest entry if over capacity
     if (this.buffer.length > MAX_ENTRIES) {
       this.buffer.shift();
     }
@@ -149,9 +111,6 @@ class ChunkLog {
     this.dirty = true;
   }
 
-  /**
-   * Flush buffered entries to disk. Call once per stream drain, not per chunk.
-   */
   flush(): void {
     if (this.dirty && this.logPath) {
       this.writeToDisk();
@@ -159,23 +118,13 @@ class ChunkLog {
     }
   }
 
-  /**
-   * Get all entries as an array of objects (for sending in feedback payload).
-   */
   getEntries(): Record<string, unknown>[] {
     return this.buffer;
   }
 
-  /**
-   * Number of entries currently in the log.
-   */
   get size(): number {
     return this.buffer.length;
   }
-
-  // -----------------------------------------------------------------------
-  // Disk I/O
-  // -----------------------------------------------------------------------
 
   private ensureDir(): void {
     if (this.dirCreated || !this.agentDir) return;
@@ -246,5 +195,4 @@ class ChunkLog {
   }
 }
 
-// Singleton instance
 export const chunkLog = new ChunkLog();

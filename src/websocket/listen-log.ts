@@ -52,12 +52,10 @@ function pruneOldLogs(dir: string, maxFiles: number): void {
         try {
           unlinkSync(join(dir, file));
         } catch {
-          // best-effort cleanup
         }
       }
     }
   } catch {
-    // best-effort cleanup
   }
 }
 
@@ -116,7 +114,6 @@ export class RemoteSessionLog {
     return join(this.dir, `${stamp}${suffix}.log`);
   }
 
-  /** Start a new timestamped file once the current one exceeds the size cap. */
   private rotate(): void {
     const previous = this.path;
     this.rotation += 1;
@@ -143,7 +140,6 @@ export class RemoteSessionLog {
       appendFileSync(this.path, line, { encoding: "utf8" });
       this.bytesWritten += Buffer.byteLength(line, "utf8");
     } catch {
-      // best-effort
     }
   }
 
@@ -155,7 +151,6 @@ export class RemoteSessionLog {
       }
       this.dirCreated = true;
     } catch {
-      // silently ignore
     }
   }
 }

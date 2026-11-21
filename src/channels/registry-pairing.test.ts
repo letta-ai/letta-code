@@ -97,15 +97,12 @@ describe("completePairing", () => {
 
     const result = completePairing("telegram", code, "agent-a", "conv-1");
 
-    // Should report failure with rollback
     expect(result.success).toBe(false);
     expect(result.error).toContain("rolled back");
     expect(result.error).toContain("EACCES");
 
-    // In-memory route must NOT exist
     expect(getRoute("telegram", "99")).toBeNull();
 
-    // Pairing must be rolled back: user not approved, pending code restored
     expect(isUserApproved("telegram", "user-1")).toBe(false);
     expect(getPendingPairings("telegram")).toHaveLength(1);
     expect(getPendingPairings("telegram")[0]?.code).toBe(code);
@@ -114,7 +111,6 @@ describe("completePairing", () => {
   test("restores pre-existing route when rebind fails", () => {
     new ChannelRegistry();
 
-    // Set up an existing route for 50
     addRoute("telegram", {
       chatId: "50",
       agentId: "agent-old",
@@ -123,15 +119,12 @@ describe("completePairing", () => {
       createdAt: "2026-01-01T00:00:00Z",
     });
 
-    // Verify it exists
     const before = getRoute("telegram", "50");
     expect(before).not.toBeNull();
     expect(before?.agentId).toBe("agent-old");
 
-    // Create a pairing for the same chat
     const code = createPairingCode("telegram", "user-2", "50", "jane");
 
-    // Make saveRoutes throw on the rebind attempt
     __testOverrideSaveRoutes(() => {
       throw new Error("ENOSPC: no space left");
     });
@@ -139,7 +132,6 @@ describe("completePairing", () => {
     const result = completePairing("telegram", code, "agent-new", "conv-new");
     expect(result.success).toBe(false);
 
-    // The OLD route must still be in memory (restored from snapshot)
     const after = getRoute("telegram", "50");
     expect(after).not.toBeNull();
     expect(after?.agentId).toBe("agent-old");

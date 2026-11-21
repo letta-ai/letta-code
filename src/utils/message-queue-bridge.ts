@@ -40,9 +40,6 @@ let queueAdder: QueueAdder | null = null;
 const pendingMessages: QueuedMessage[] = [];
 const MAX_PENDING_MESSAGES = 10;
 
-/**
- * Set the queue adder function. Called by App.tsx on mount.
- */
 export function setMessageQueueAdder(fn: QueueAdder | null): void {
   queueAdder = fn;
   if (queueAdder && pendingMessages.length > 0) {
@@ -53,11 +50,6 @@ export function setMessageQueueAdder(fn: QueueAdder | null): void {
   }
 }
 
-/**
- * Add a message to the messageQueue.
- * Called from Task.ts when a background task completes.
- * If queue adder not set (App not mounted), message is dropped.
- */
 export function addToMessageQueue(message: QueuedMessage): void {
   if (queueAdder) {
     queueAdder(message);
@@ -69,16 +61,10 @@ export function addToMessageQueue(message: QueuedMessage): void {
   pendingMessages.push(message);
 }
 
-/**
- * Check if the queue bridge is connected.
- */
 export function isQueueBridgeConnected(): boolean {
   return queueAdder !== null;
 }
 
-/**
- * Clear any pending messages (for testing).
- */
 export function clearPendingMessages(): void {
   pendingMessages.length = 0;
 }

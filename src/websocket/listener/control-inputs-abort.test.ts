@@ -170,7 +170,6 @@ async function exerciseCancellation(withAgentOwner: boolean): Promise<void> {
       } as never,
     );
     for await (const _chunk of followUp) {
-      // Drain the complete deterministic follow-up.
     }
     expect(await backend.retrieveRun("local-run-2")).toMatchObject({
       status: "completed",

@@ -1,28 +1,6 @@
 import { markManagedCloudRuntimeFromListenerIdentity } from "@/managed-cloud-runtime";
 
 /**
- * Spawner-assigned listener identity (LET-10085, minimal scope).
- *
- * The one bug this solves: listener identity was derived from the display
- * name (`listenerInstanceId = <surface>-sha256(connectionName)`), so a
- * Desktop-spawned listener and a manual `letta server` — both defaulting
- * to hostname() as the name — collapsed onto one relay environment slot
- * and rotated each other's connection lease (the LET-9772 ping-pong that
- * aborted in-flight turns).
- *
- * The fix: an OWNING SPAWNER (Desktop, LET-10023) assigns its child an
- * explicit identity via LETTA_LISTENER_INSTANCE_ID (e.g.
- * `desktop-primary:<installation-id>`). Registration passes it through
- * verbatim, giving Desktop children relay slots that can never collide
- * with manual listeners or other installations.
- *
- * Manual listener identity behavior remains unchanged (legacy name-derived
- * ids). Standalone `letta server`/`letta remote` processes use that exact id
- * for their local single-instance guard; in-app `/listen` remains a separate
- * surface and is not part of that guard.
- */
-
-/**
  * Environment variable an owning spawner sets to assign its child an
  * explicit listener identity. Desktop uses `desktop-<slot>:<installation-id>`.
  */

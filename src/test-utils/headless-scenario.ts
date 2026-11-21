@@ -480,7 +480,6 @@ async function main() {
       throw new Error(formatAttemptDiagnostics(failedAttempts));
     }
   } catch (e) {
-    // Dump full stdout to aid debugging
     console.error(
       `\n===== BEGIN STDOUT (${args.backend} / ${args.model} / ${args.output}) =====`,
     );

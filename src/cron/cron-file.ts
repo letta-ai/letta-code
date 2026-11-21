@@ -1,11 +1,3 @@
-/**
- * Persistent cron task storage backed by ~/.letta/crons.json.
- * Provides CRUD operations with:
- * - Atomic writes (temp file + rename)
- * - mkdir-based advisory locking for read-modify-write cycles
- * - Scheduler ownership lease (PID + random token)
- * - Garbage collection for terminal tasks older than 24 hours
- */
 
 import { randomBytes } from "node:crypto";
 import {
@@ -64,7 +56,6 @@ export interface SchedulerOwner {
 export type CronSchedulerScope = "all" | "cloud" | "local";
 
 export interface CronTask {
-  // Identity
   id: string;
   agent_id: string;
   /**
@@ -75,19 +66,15 @@ export interface CronTask {
    */
   conversation_id: string;
 
-  // Metadata
   name: string;
   description: string;
 
-  // Schedule
   cron: string;
   timezone: string; // IANA
   recurring: boolean;
 
-  // Content
   prompt: string;
 
-  // Lifecycle
   status: CronTaskStatus;
   created_at: string; // ISO
   expires_at: string | null; // null for all tasks now (no auto-expiry)
@@ -96,7 +83,6 @@ export interface CronTask {
   cancel_reason: CancelReason | null;
   jitter_offset_ms: number;
 
-  // Last run outcome summary (for table/status display without reading logs)
   last_run_at: string | null;
   last_run_outcome: CronRunOutcome | null;
   last_run_reason: CronRunReason | null;
@@ -105,7 +91,6 @@ export interface CronTask {
   missed_count: number;
   failed_count: number;
 
-  // One-shot specific
   scheduled_for: string | null; // ISO UTC
   fired_at: string | null;
   missed_at: string | null;
@@ -120,8 +105,6 @@ interface CronFileData {
   tasks: CronTask[];
 }
 
-// ── Constants ───────────────────────────────────────────────────────
-
 const CRON_FILE_NAME = "crons.json";
 const LOCK_DIR_NAME = "crons.lock";
 const LOCK_TOKEN_FILE = "owner.json";
@@ -130,12 +113,7 @@ const LOCK_RETRY_MS = 50;
 const LOCK_STALE_AGE_MS = 30_000;
 const MAX_ACTIVE_TASKS_PER_AGENT = 50;
 const TASK_ID_BYTES = 4; // 8 hex chars
-// Recurring tasks no longer auto-expire. They remain active until explicitly
-// cancelled. GC still removes terminal tasks (fired, missed, cancelled) after 24h.
-// One-shot tasks already use null for expires_at and are handled separately.
 const GC_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
-
-// ── Paths ───────────────────────────────────────────────────────────
 
 function getLettaDir(): string {
   return resolveGlobalStateDir();
@@ -148,8 +126,6 @@ export function getCronFilePath(): string {
 function getLockDirPath(): string {
   return join(getLettaDir(), LOCK_DIR_NAME);
 }
-
-// ── File I/O ────────────────────────────────────────────────────────
 
 function emptyFile(): CronFileData {
   return {
@@ -209,8 +185,6 @@ function writeCronFile(data: CronFileData): void {
   renameSync(tmp, path);
 }
 
-// ── Locking ─────────────────────────────────────────────────────────
-
 interface LockOwner {
   pid: number;
   token: string;
@@ -235,7 +209,6 @@ function writeLockOwner(lockDir: string, owner: LockOwner): void {
 function isLockStale(lockDir: string): boolean {
   const owner = readLockOwner(lockDir);
   if (!owner) {
-    // No owner file → consider stale if dir exists and is old
     try {
       const stat = statSync(lockDir);
       return Date.now() - stat.mtimeMs > LOCK_STALE_AGE_MS;
@@ -244,7 +217,6 @@ function isLockStale(lockDir: string): boolean {
     }
   }
 
-  // Steal only if PID is dead AND lock is older than threshold
   const pidDead = !isProcessAlive(owner.pid, owner);
   const isOld = Date.now() - owner.acquired_at > LOCK_STALE_AGE_MS;
   return pidDead && isOld;
@@ -274,7 +246,6 @@ export function acquireLock(): LockHandle {
   while (Date.now() < deadline) {
     try {
       mkdirSync(lockDir, { recursive: false });
-      // Success — we own the lock
       const owner: LockOwner = {
         pid: process.pid,
         token,
@@ -285,7 +256,6 @@ export function acquireLock(): LockHandle {
       return {
         release() {
           try {
-            // Verify we still own it before releasing
             const current = readLockOwner(lockDir);
             if (current && current.token === token) {
               rmSync(lockDir, { recursive: true, force: true });
@@ -298,12 +268,10 @@ export function acquireLock(): LockHandle {
     } catch (err: unknown) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === "EEXIST") {
-        // Lock held — check if stale
         if (isLockStale(lockDir)) {
           stealLock(lockDir);
           continue; // Retry immediately
         }
-        // Wait and retry
         const sleepMs = Math.min(
           LOCK_RETRY_MS + Math.random() * LOCK_RETRY_MS,
           deadline - Date.now(),
@@ -333,8 +301,6 @@ export function withLock<T>(fn: () => T): T {
   }
 }
 
-// ── Task ID ─────────────────────────────────────────────────────────
-
 function generateTaskId(): string {
   return randomBytes(TASK_ID_BYTES).toString("hex");
 }
@@ -346,8 +312,6 @@ function assertValidCronForPersistence(cron: string): void {
     );
   }
 }
-
-// ── Jitter ──────────────────────────────────────────────────────────
 
 function simpleHash(s: string): number {
   let hash = 0;
@@ -386,15 +350,12 @@ export function computeJitter(
   const min = scheduledFor.getMinutes();
   if (min === 0 || min === 30) {
     const offset = -(simpleHash(taskId) % 90_000);
-    // Don't fire before creation time
     if (scheduledFor.getTime() + offset < createdAt.getTime()) return 0;
     return offset;
   }
 
   return 0;
 }
-
-// ── CRUD ────────────────────────────────────────────────────────────
 
 export interface AddTaskInput {
   agent_id: string;
@@ -458,8 +419,6 @@ export function addTask(input: AddTaskInput): AddTaskResult {
       prompt: input.prompt,
       status: "active",
       created_at: now.toISOString(),
-      // Recurring tasks do not auto-expire (expires_at: null)
-      // One-shot tasks also use null (handled by scheduled_for)
       expires_at: null,
       last_fired_at: null,
       fire_count: 0,
@@ -504,9 +463,6 @@ export function addTask(input: AddTaskInput): AddTaskResult {
   });
 }
 
-/**
- * List tasks, optionally filtered by agent and/or conversation.
- */
 export function listTasks(filters?: {
   agent_id?: string;
   conversation_id?: string;
@@ -522,9 +478,6 @@ export function listTasks(filters?: {
   return tasks;
 }
 
-/**
- * Get a single task by ID.
- */
 export function getTask(taskId: string): CronTask | null {
   const data = readCronFile();
   return data.tasks.find((t) => t.id === taskId) ?? null;
@@ -561,8 +514,6 @@ export function deleteAllTasks(agentId: string): number {
     return removed;
   });
 }
-
-// ── Scheduler lease ─────────────────────────────────────────────────
 
 function isLiveOwner(
   owner: SchedulerOwner | null | undefined,
@@ -687,9 +638,6 @@ export function claimSchedulerLease(scope: CronSchedulerScope = "all"): string {
   });
 }
 
-/**
- * Verify we still hold the scheduler lease.
- */
 export function verifySchedulerLease(
   token: string,
   scope: CronSchedulerScope = "all",
@@ -761,9 +709,6 @@ export function refreshSchedulerLease(
   });
 }
 
-/**
- * Release the scheduler lease.
- */
 export function releaseSchedulerLease(
   token: string,
   scope: CronSchedulerScope = "all",
@@ -784,8 +729,6 @@ export function releaseSchedulerLease(
     writeCronFile(data);
   });
 }
-
-// ── Task state updates (used by scheduler) ──────────────────────────
 
 /**
  * Update task state atomically. Acquires the lock.
@@ -959,7 +902,6 @@ export function garbageCollect(): number {
       // the known terminal states are eligible for collection.
       if (!TERMINAL_TASK_STATUSES.has(t.status)) return true;
       const createdAt = new Date(t.created_at).getTime();
-      // Use the most recent timestamp for GC age
       const terminalAt = Math.max(
         t.last_fired_at ? new Date(t.last_fired_at).getTime() : 0,
         t.fired_at ? new Date(t.fired_at).getTime() : 0,
@@ -974,8 +916,6 @@ export function garbageCollect(): number {
     return removed;
   });
 }
-
-// ── Get active tasks (for scheduler) ────────────────────────────────
 
 /**
  * Read the cron file and return only active tasks.

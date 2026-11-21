@@ -98,7 +98,6 @@ function prepareOpenAiTranscriptionFile(localPath: string): {
   };
 }
 
-/** Check whether an API key is available for transcription. */
 export function isTranscriptionConfigured(): boolean {
   return !!process.env.OPENAI_API_KEY;
 }

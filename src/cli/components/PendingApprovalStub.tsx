@@ -25,7 +25,6 @@ type Props = {
 export const PendingApprovalStub = memo(
   ({ toolName, description, decision }: Props) => {
     if (decision) {
-      // Queued state - decision made but not yet executed
       const isApprove = decision.type === "approve";
       return (
         <Box>
@@ -41,7 +40,6 @@ export const PendingApprovalStub = memo(
       );
     }
 
-    // Pending state - awaiting user decision
     return (
       <Box>
         <Text dimColor>

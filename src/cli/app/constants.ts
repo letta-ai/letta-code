@@ -1,4 +1,3 @@
-// Used only for terminal resize, not for dialog dismissal (see PR for details)
 export const CLEAR_SCREEN_AND_HOME = "\u001B[2J\u001B[H";
 export const MIN_RESIZE_DELTA = 2;
 export const RESIZE_SETTLE_MS = 250;
@@ -23,15 +22,12 @@ export const EMPTY_RESPONSE_MAX_RETRIES = 2;
 // Retry config for 409 "conversation busy" errors (exponential backoff)
 export const CONVERSATION_BUSY_MAX_RETRIES = 3; // 10s -> 20s -> 40s
 
-// Message shown when user interrupts the stream
 export const INTERRUPT_MESSAGE =
   "Interrupted – tell the agent what to do differently. Something went wrong? Use /feedback to report issues.";
 
-// Hint shown after errors to encourage feedback
 export const ERROR_FEEDBACK_HINT =
   "Something went wrong? Use /feedback to report issues.";
 
-// Status page URLs for known providers
 export const PROVIDER_STATUS_PAGES: Record<
   string,
   { name: string; url: string }

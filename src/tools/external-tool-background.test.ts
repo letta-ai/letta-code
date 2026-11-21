@@ -355,9 +355,6 @@ describe("external tool auto-backgrounding", () => {
 
 describe("external tool cancel racing (turn abort signal)", () => {
   test("non-backgroundable tool settles immediately when the turn aborts", async () => {
-    // Regression: a cancelled turn used to block on the remote tool result
-    // until the bridge timeout (up to 5 minutes) because nothing raced the
-    // wait against the turn's abort signal.
     const controller = new AbortController();
     let settleOperation!: () => void;
     const operation = new Promise<{ status: "success"; toolReturn: string }>(

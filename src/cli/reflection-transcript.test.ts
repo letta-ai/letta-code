@@ -410,7 +410,6 @@ describe("reflectionTranscript helper", () => {
     expect(payload).not.toBeNull();
     if (!payload) return;
 
-    // Two more assistant steps complete while reflection is "running".
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
       { kind: "user", id: "u2", text: "second", messageId: "u2" },
       {

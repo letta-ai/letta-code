@@ -1,5 +1,3 @@
-// Config resolution and rendering for the terminal window title.
-// Precedence: local project > project > global settings.
 
 import { homedir } from "node:os";
 import { basename, resolve } from "node:path";
@@ -41,7 +39,6 @@ export const DEFAULT_WINDOW_TITLE_ITEMS = [
   "agent-name",
 ] as const satisfies readonly WindowTitleField[];
 
-/** Braille-pattern dot-spinner frames for the terminal title animation. */
 export const TERMINAL_TITLE_SPINNER_FRAMES = [
   "⠋",
   "⠙",
@@ -55,19 +52,15 @@ export const TERMINAL_TITLE_SPINNER_FRAMES = [
   "⠏",
 ] as const;
 
-/** Time between spinner frame advances in the terminal title. */
 export const TERMINAL_TITLE_SPINNER_INTERVAL_MS = 100;
 
-/** Time between action-required blink phases in the terminal title. */
 export const TERMINAL_TITLE_ACTION_REQUIRED_INTERVAL_MS = 1000;
 
-/** Prefix shown in the terminal title when the agent is blocked on user input. */
 export const TERMINAL_TITLE_ACTION_REQUIRED_PREFIX = "[ ! ] Action Required";
 export const TERMINAL_TITLE_ACTION_REQUIRED_PREFIX_HIDDEN =
   "[ . ] Action Required";
 export const ACTION_REQUIRED_PREVIEW_PREFIX = "[ ! ] Action Required";
 
-/** Human-readable labels and descriptions for each field. */
 export const WINDOW_TITLE_FIELD_INFO: Record<
   WindowTitleField,
   { label: string; description: string }
@@ -179,7 +172,6 @@ const WINDOW_TITLE_FIELD_ALIASES: Record<string, WindowTitleField> = {
   "conversation-name": "thread-title",
 };
 
-/** Data available for rendering the window title. */
 export interface WindowTitleData {
   agentName?: string | null;
   appName?: string | null;

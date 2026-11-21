@@ -7,7 +7,6 @@ import { Text } from "./Text";
 
 interface StreamingOutputDisplayProps {
   streaming: StreamingState;
-  /** Show "(esc to interrupt)" hint - used by bash mode (LET-7199) */
   showInterruptHint?: boolean;
 }
 
@@ -76,7 +75,6 @@ export const StreamingOutputDisplay = memo(
             {clipToWidth(line.text)}
           </Text>
         ))}
-        {/* Hidden count + elapsed time */}
         {hiddenCount > 0 && (
           <Text dimColor>
             {"     "}… +{hiddenCount} more lines ({elapsed}s){interruptHint}

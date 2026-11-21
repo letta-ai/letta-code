@@ -53,7 +53,6 @@ export function detectNativeSignalCliConfigDir(): string | null {
       if (configDir) return configDir;
     }
   } catch {
-    // Fall through to default path.
   }
   const defaultDir = getDefaultSignalCliConfigDir();
   return defaultDir && existsSync(defaultDir) ? defaultDir : null;

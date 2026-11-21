@@ -121,7 +121,6 @@ test("stop-failure notifications surface once per failed attempt and respect the
   expect(first.failures).toEqual([FAILURE("deploy check")]);
   expect(first.stops).toEqual([]);
 
-  // Deduplicated while the row stays a live stop-failure in scope.
   const second = selectStopFailedNotifications(rows, seen, scope);
   expect(second.failures).toEqual([]);
 
@@ -140,7 +139,6 @@ test("stop-failure notifications surface once per failed attempt and respect the
       conversationId: "conv-1",
     }).failures,
   ).not.toContain(FAILURE("no recorded parent agent"));
-  // But a scope without an agent id still reaches the unscoped row.
   expect(
     selectStopFailedNotifications(rows, new Set<string>(), {
       conversationId: "conv-1",
@@ -152,7 +150,6 @@ test("a fast retry that fails re-notifies without any render observing the in-fl
   const seen = new Set<string>();
   const scope = { agentId: "agent-1", conversationId: "conv-1" };
 
-  // First failure surfaces (attempt 1).
   const first = selectStopFailedNotifications(
     [
       {
@@ -184,7 +181,6 @@ test("a fast retry that fails re-notifies without any render observing the in-fl
   expect(refailed.failures).toEqual([FAILURE("deploy check")]);
   expect(refailed.stops).toEqual([]);
 
-  // Same attempt never re-notifies.
   const stable = selectStopFailedNotifications(
     [
       {
@@ -232,7 +228,6 @@ test("a fast retry that lands emits the correction from a single terminal snapsh
   expect(landed.failures).toEqual([]);
   expect(landed.stops).toEqual([STOPPED("deploy check")]);
 
-  // Terminal state is stable: no repeat messages on later snapshots.
   const settled = selectStopFailedNotifications(
     [
       {
@@ -301,7 +296,6 @@ test("a run that fails naturally during a retry is never reported as a stop", ()
   expect(natural.failures).toEqual([]);
   expect(natural.stops).toEqual([]);
 
-  // Natural completion is equally silent.
   const completed = selectStopFailedNotifications(
     [
       {
@@ -328,18 +322,15 @@ test("scope switches never replay a failure and never drop a landed correction",
     stopOutcome: { attempt: 1, kind: "failed" as const },
   };
 
-  // Failure surfaces in conv-1.
   expect(
     selectStopFailedNotifications([liveFailure], seen, scopeA).failures,
   ).toEqual([FAILURE("deploy check")]);
 
-  // Switch to conv-2 and back: the still-live failure must not replay.
   selectStopFailedNotifications([liveFailure], seen, scopeB);
   expect(
     selectStopFailedNotifications([liveFailure], seen, scopeA).failures,
   ).toEqual([]);
 
-  // The retry lands while conv-2 is active: nothing is written there...
   const landedRow = {
     ...base,
     status: "error",
@@ -348,11 +339,9 @@ test("scope switches never replay a failure and never drop a landed correction",
   expect(
     selectStopFailedNotifications([landedRow], seen, scopeB).stops,
   ).toEqual([]);
-  // ...and returning to conv-1 emits the retained correction.
   expect(
     selectStopFailedNotifications([landedRow], seen, scopeA).stops,
   ).toEqual([STOPPED("deploy check")]);
-  // Exactly once.
   expect(
     selectStopFailedNotifications([landedRow], seen, scopeA).stops,
   ).toEqual([]);
@@ -370,7 +359,6 @@ test("entries retire only when their row leaves the snapshot", () => {
   selectStopFailedNotifications([row], seen, scope);
   expect(seen.has("sub_a:1")).toBe(true);
 
-  // Row still in the snapshot (even terminal): entry survives.
   selectStopFailedNotifications(
     [
       {
@@ -384,7 +372,6 @@ test("entries retire only when their row leaves the snapshot", () => {
   );
   expect(seen.has("sub_a:1")).toBe(true);
 
-  // Row deleted from the store: entry retires.
   selectStopFailedNotifications([], seen, scope);
   expect(seen.has("sub_a:1")).toBe(false);
 });

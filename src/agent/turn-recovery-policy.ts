@@ -13,8 +13,6 @@ import { isCloudflareEdge52xErrorText } from "@/cli/helpers/error-formatter";
 import { isZaiNonRetryableError } from "@/cli/helpers/zai-errors";
 import type { StopReasonType } from "@/types/protocol_v2";
 
-// ── Error fragment constants ────────────────────────────────────────
-
 const INVALID_TOOL_CALL_IDS_FRAGMENT = "invalid tool call ids";
 const APPROVAL_PENDING_DETAIL_FRAGMENT = "waiting for approval";
 const CONVERSATION_BUSY_DETAIL_FRAGMENTS = [
@@ -139,21 +137,16 @@ function isNonRetryableRunErrorType(errorType: unknown): boolean {
   );
 }
 
-// ── Classifiers ─────────────────────────────────────────────────────
-
-/** Tool call IDs don't match what the server expects. */
 export function isInvalidToolCallIdsError(detail: unknown): boolean {
   if (typeof detail !== "string") return false;
   return detail.toLowerCase().includes(INVALID_TOOL_CALL_IDS_FRAGMENT);
 }
 
-/** Backend has a pending approval blocking new messages. */
 export function isApprovalPendingError(detail: unknown): boolean {
   if (typeof detail !== "string") return false;
   return detail.toLowerCase().includes(APPROVAL_PENDING_DETAIL_FRAGMENT);
 }
 
-/** Conversation is busy (another request is being processed). */
 export function isConversationBusyError(detail: unknown): boolean {
   if (typeof detail !== "string") return false;
   const normalized = detail.toLowerCase();
@@ -162,7 +155,6 @@ export function isConversationBusyError(detail: unknown): boolean {
   );
 }
 
-/** Extract the server-reported blocking run id from a conversation-busy error. */
 export function extractConversationBusyRunId(detail: unknown): string | null {
   if (typeof detail !== "string" || !isConversationBusyError(detail)) {
     return null;
@@ -181,7 +173,6 @@ export function isEmptyResponseError(detail: unknown): boolean {
   return detail.toLowerCase().includes(EMPTY_RESPONSE_DETAIL_FRAGMENT);
 }
 
-/** Transient provider/network detail that is usually safe to retry. */
 export function isRetryableProviderErrorDetail(detail: unknown): boolean {
   if (isCloudflareEdge52xDetail(detail)) return true;
   if (typeof detail !== "string") return false;
@@ -190,7 +181,6 @@ export function isRetryableProviderErrorDetail(detail: unknown): boolean {
   );
 }
 
-/** Non-transient auth/validation style provider detail that should not be retried. */
 export function isNonRetryableProviderErrorDetail(detail: unknown): boolean {
   if (typeof detail !== "string") return false;
   if (isZaiNonRetryableError(detail)) return true;
@@ -201,7 +191,6 @@ export function isNonRetryableProviderErrorDetail(detail: unknown): boolean {
   );
 }
 
-/** Retry decision for run-metadata fallback classification. */
 export function shouldRetryRunMetadataError(
   errorType: unknown,
   detail: unknown,
@@ -272,7 +261,6 @@ export function isEmptyResponseRetryable(
   return isEmptyResponseError(detail);
 }
 
-/** Retry decision for pre-stream send failures before any chunks are yielded. */
 export function shouldRetryPreStreamTransientError(opts: {
   status: number | undefined;
   detail: unknown;
@@ -361,8 +349,6 @@ export function getTransientRetryDelayMs(opts: {
   });
 }
 
-// ── Pre-stream conflict routing ─────────────────────────────────────
-
 export type PreStreamConflictKind =
   | "approval_pending"
   | "conversation_busy"
@@ -380,7 +366,6 @@ export interface PreStreamErrorOptions {
   maxTransientRetries?: number;
 }
 
-/** Classify a pre-stream 409 conflict detail string. */
 export function classifyPreStreamConflict(
   detail: unknown,
 ): PreStreamConflictKind {
@@ -389,7 +374,6 @@ export function classifyPreStreamConflict(
   return null;
 }
 
-/** Determine the recovery action for a pre-stream 409 error. */
 export function getPreStreamErrorAction(
   detail: unknown,
   conversationBusyRetries: number,
@@ -420,8 +404,6 @@ export function getPreStreamErrorAction(
   return "rethrow";
 }
 
-// ── Error text extraction ───────────────────────────────────────────
-
 /**
  * Extract error detail string from a pre-stream APIError's nested body.
  *
@@ -438,15 +420,12 @@ export function extractConflictDetail(error: unknown): string {
     if (typeof errObj === "string") return errObj;
     if (errObj && typeof errObj === "object") {
       const outer = errObj as Record<string, unknown>;
-      // Nested: e.error.error.detail → e.error.error.message
       if (outer.error && typeof outer.error === "object") {
         const nested = outer.error as Record<string, unknown>;
         if (typeof nested.detail === "string") return nested.detail;
         if (typeof nested.message === "string") return nested.message;
       }
-      // String body: e.error.error (e.g. { error: "Conversation is busy..." })
       if (typeof outer.error === "string") return outer.error;
-      // Direct: e.error.detail → e.error.message
       if (typeof outer.detail === "string") return outer.detail;
       if (typeof outer.message === "string") return outer.message;
     }
@@ -454,8 +433,6 @@ export function extractConflictDetail(error: unknown): string {
   if (error instanceof Error) return error.message;
   return "";
 }
-
-// ── Approval payload rebuild ────────────────────────────────────────
 
 export interface PendingApprovalInfo {
   toolCallId: string;
@@ -536,8 +513,6 @@ export function rebuildInputWithFreshDenials(
   return stripped;
 }
 
-// ── Retry gating ────────────────────────────────────────────────────
-
 /**
  * Decide whether an approval-pending recovery attempt should proceed.
  * Centralizes the retry-budget check used by both TUI and headless.
@@ -549,8 +524,6 @@ export function shouldAttemptApprovalRecovery(opts: {
 }): boolean {
   return opts.approvalPendingDetected && opts.retries < opts.maxRetries;
 }
-
-// ── ChatGPT plan quota rotation ─────────────────────────────────────
 
 const CHATGPT_USAGE_LIMIT_FRAGMENT = "usage_limit_reached";
 const CHATGPT_OAUTH_PROVIDER_TYPE = "chatgpt_oauth";

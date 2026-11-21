@@ -124,13 +124,11 @@ export interface SubagentStopResponse {
   error?: string;
 }
 
-/** Event-log fields of a subagent snapshot. */
 export interface SubagentEvents {
   /** Latest event seq; present when `read_subagent_events` can read them. */
   event_seq?: number;
 }
 
-/** One entry of a subagent task's event log. */
 export interface SubagentEventRecord {
   /** 1-based, increasing per subagent. */
   seq: number;
@@ -150,7 +148,6 @@ export interface ReadSubagentEventsCommand {
   request_id: string;
   /** The launching parent conversation. */
   runtime: AgentRuntimeScope;
-  /** `subagent_id` from the subagent's snapshot. */
   subagent_id: string;
   after_seq: number;
   /** Page budget; the computer caps it. */

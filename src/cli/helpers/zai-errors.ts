@@ -14,7 +14,6 @@
  *   500        Internal server error
  */
 
-// Regex patterns to extract Z.ai's {code, message} from error detail strings.
 // Python dict repr: {'code': 1302, 'message': 'High concurrency...'}
 const PYTHON_REPR_PATTERN = /'code':\s*(\d{3,4}),\s*'message':\s*'([^']+)'/;
 // JSON format: {"code": 1302, "message": "High concurrency..."}
@@ -30,10 +29,6 @@ function isKnownZaiCode(code: number): boolean {
   );
 }
 
-/**
- * Parse a Z.ai error from an error detail string.
- * Returns the extracted code and message, or null if not a Z.ai error.
- */
 export function parseZaiError(
   text: string,
 ): { code: number; message: string } | null {
@@ -49,9 +44,6 @@ export function parseZaiError(
   return null;
 }
 
-/**
- * Format a Z.ai error code and message into a user-friendly string.
- */
 export function formatZaiError(code: number, message: string): string {
   if (code >= 1000 && code <= 1004) {
     return `Z.ai authentication error: ${message}. Check your Z.ai API key with /connect.`;
@@ -71,10 +63,6 @@ export function formatZaiError(code: number, message: string): string {
   return `Z.ai error (${code}): ${message}`;
 }
 
-/**
- * Check if an error string contains a Z.ai error. If so, return a formatted
- * user-friendly message; otherwise return undefined.
- */
 export function checkZaiError(errorText: string): string | undefined {
   const parsed = parseZaiError(errorText);
   if (!parsed) return undefined;

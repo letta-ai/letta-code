@@ -23,7 +23,6 @@ describeIntegration("memory prompt integration", () => {
       try {
         await client.agents.delete(agentId);
       } catch {
-        // Best-effort cleanup.
       }
     }
   });

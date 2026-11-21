@@ -16,18 +16,11 @@ import { LEGACY_CHANNEL_ACCOUNT_ID } from "./accounts";
 import { getChannelDir, getChannelPairingPath } from "./config";
 import type { ApprovedUser, PairingStore, PendingPairing } from "./types";
 
-// ── Constants ─────────────────────────────────────────────────────
-
-/** Pairing codes expire after 15 minutes. */
 const PAIRING_CODE_TTL_MS = 15 * 60 * 1000;
 
-/** Maximum pending pairing codes to keep. */
 const MAX_PENDING_CODES = 50;
 
-/** Code character set (uppercase alphanumeric, no ambiguous chars). */
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // No I, O, 0, 1
-
-// ── In-memory store ───────────────────────────────────────────────
 
 const stores = new Map<string, PairingStore>();
 
@@ -50,8 +43,6 @@ function getStore(channelId: string): PairingStore {
   }
   return store;
 }
-
-// ── Load/save ─────────────────────────────────────────────────────
 
 export function loadPairingStore(channelId: string): void {
   if (loadPairingStoreOverride) {
@@ -101,8 +92,6 @@ function savePairingStore(channelId: string): void {
   );
 }
 
-// ── Code generation ───────────────────────────────────────────────
-
 function generateCode(length = 6): string {
   let code = "";
   for (let i = 0; i < length; i++) {
@@ -113,11 +102,6 @@ function generateCode(length = 6): string {
   return code;
 }
 
-// ── Pairing operations ────────────────────────────────────────────
-
-/**
- * Check if a user is approved (has completed pairing).
- */
 export function isUserApproved(
   channelId: string,
   userId: string,
@@ -132,10 +116,6 @@ export function isUserApproved(
   );
 }
 
-/**
- * Create a pending pairing code for an unknown user.
- * Returns the generated code.
- */
 export function createPairingCode(
   channelId: string,
   userId: string,
@@ -160,7 +140,6 @@ export function createPairingCode(
     return existing.code;
   }
 
-  // Remove any existing (expired) code for this user
   store.pending = store.pending.filter(
     (p) =>
       !(
@@ -169,13 +148,11 @@ export function createPairingCode(
       ),
   );
 
-  // Prune expired codes
   const now = Date.now();
   store.pending = store.pending.filter(
     (p) => new Date(p.expiresAt).getTime() > now,
   );
 
-  // Enforce max pending limit
   while (store.pending.length >= MAX_PENDING_CODES) {
     store.pending.shift();
   }
@@ -197,10 +174,6 @@ export function createPairingCode(
   return code;
 }
 
-/**
- * Validate and consume a pairing code.
- * Returns the pending pairing info if valid, null if invalid/expired.
- */
 export function consumePairingCode(
   channelId: string,
   code: string,
@@ -230,18 +203,14 @@ export function consumePairingCode(
   const pending = store.pending[index] as PendingPairing;
   const pendingAccountId = normalizeAccountId(pending.accountId);
 
-  // Check expiry
   if (new Date(pending.expiresAt).getTime() < Date.now()) {
-    // Remove expired code
     store.pending.splice(index, 1);
     savePairingStore(channelId);
     return null;
   }
 
-  // Remove from pending
   store.pending.splice(index, 1);
 
-  // Add to approved (if not already)
   if (
     !store.approved.some(
       (u) =>
@@ -262,10 +231,6 @@ export function consumePairingCode(
   return pending;
 }
 
-/**
- * Get all pending pairing codes for a channel.
- * Filters out expired codes.
- */
 export function getPendingPairings(
   channelId: string,
   accountId?: string,
@@ -282,9 +247,6 @@ export function getPendingPairings(
   );
 }
 
-/**
- * Get all approved users for a channel.
- */
 export function getApprovedUsers(
   channelId: string,
   accountId?: string,
@@ -310,7 +272,6 @@ export function rollbackPairingApproval(
   const store = getStore(channelId);
   const normalizedAccountId = normalizeAccountId(pending.accountId);
 
-  // Remove from approved
   store.approved = store.approved.filter(
     (u) =>
       !(
@@ -319,7 +280,6 @@ export function rollbackPairingApproval(
       ),
   );
 
-  // Re-add to pending
   store.pending.push(pending);
 
   savePairingStore(channelId);

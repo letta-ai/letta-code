@@ -380,7 +380,6 @@ export function validateConfigAgainstSchema(
   // Reserved JSON-bucket keys are always permitted regardless of whether
   // the plugin's schema declares them — they back the dedicated Accounts /
   // Config / Metadata tabs and are stored as opaque strings.
-  // Reserved string-bucket keys: always accepted regardless of schema.
   const reservedStringKeys = new Set([
     "accounts_json",
     "configs_json",
@@ -609,7 +608,6 @@ export function redactConfigForSnapshot(
       continue;
     }
 
-    // text / select
     if (typeof stored === "string") {
       result[field.key] = stored;
     } else if (typeof field.default === "string") {

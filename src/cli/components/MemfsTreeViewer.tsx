@@ -17,11 +17,9 @@ import { generateAndOpenMemoryViewer } from "@/web/generate-memory-viewer";
 import { colors } from "./colors";
 import { Text } from "./Text";
 
-// Line characters
 const SOLID_LINE = "─";
 const DOTTED_LINE = "╌";
 
-// Tree view constants
 const TREE_VISIBLE_LINES = 15;
 const FULL_VIEW_VISIBLE_LINES = 16;
 
@@ -33,9 +31,6 @@ interface MemfsTreeViewerProps {
   contextUsage?: ContextUsageSnapshot;
 }
 
-/**
- * Render tree line prefix based on depth and parent status
- */
 function renderTreePrefix(node: TreeNode): string {
   let prefix = "";
   for (let i = 0; i < node.depth; i++) {
@@ -60,7 +55,6 @@ export function MemfsTreeViewer({
     ? null
     : buildChatUrl(agentId, { view: "memory", conversationId });
 
-  // State
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [treeScrollOffset, setTreeScrollOffset] = useState(0);
   const [viewMode, setViewMode] = useState<"split" | "full">("split");
@@ -68,7 +62,6 @@ export function MemfsTreeViewer({
   const [status, setStatus] = useState<string | null>(null);
   const statusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Get memory filesystem root
   const memoryRoot = getScopedMemoryFilesystemRoot(agentId);
   const memoryExists = existsSync(memoryRoot);
   const hasGitRepo = useMemo(
@@ -82,7 +75,6 @@ export function MemfsTreeViewer({
     statusTimerRef.current = setTimeout(() => setStatus(null), durationMs);
   }
 
-  // Cleanup status timer on unmount
   useEffect(
     () => () => {
       if (statusTimerRef.current) clearTimeout(statusTimerRef.current);
@@ -90,36 +82,30 @@ export function MemfsTreeViewer({
     [],
   );
 
-  // Scan filesystem and build tree
   const treeNodes = useMemo(
     () => (memoryExists ? scanMemoryFilesystem(memoryRoot) : []),
     [memoryRoot, memoryExists],
   );
   const fileNodes = useMemo(() => getFileNodes(treeNodes), [treeNodes]);
 
-  // Get currently selected file and its content
   const selectedFile = fileNodes[selectedIndex];
   const selectedContent = useMemo(
     () => (selectedFile ? readFileContent(selectedFile.fullPath) : ""),
     [selectedFile],
   );
 
-  // Calculate scroll bounds
   const contentLines = selectedContent.split("\n");
   const maxFullViewScroll = Math.max(
     0,
     contentLines.length - FULL_VIEW_VISIBLE_LINES,
   );
 
-  // Handle input
   useInput((input, key) => {
-    // CTRL-C: immediately close
     if (key.ctrl && input === "c") {
       onClose();
       return;
     }
 
-    // O: open memory viewer in browser (works in both split and full view)
     if ((input === "o" || input === "O") && hasGitRepo) {
       showStatus("Opening in browser...", 10000);
       generateAndOpenMemoryViewer(agentId, {
@@ -144,7 +130,6 @@ export function MemfsTreeViewer({
       return;
     }
 
-    // ESC: close or return from full view
     if (key.escape) {
       if (viewMode === "full") {
         setViewMode("split");
@@ -156,19 +141,15 @@ export function MemfsTreeViewer({
     }
 
     if (viewMode === "split") {
-      // Up/down to navigate files
       if (key.upArrow) {
         if (selectedIndex > 0) {
-          // Navigate to previous file
           const newIndex = selectedIndex - 1;
           setSelectedIndex(newIndex);
-          // Find where this file is in the full tree (including directories)
           const newFile = fileNodes[newIndex];
           if (newFile) {
             const nodeIndex = treeNodes.findIndex(
               (n) => n.relativePath === newFile.relativePath,
             );
-            // Scroll up to show the selected node with context
             if (nodeIndex >= 0) {
               const desiredOffset = Math.max(0, nodeIndex - 1);
               if (desiredOffset < treeScrollOffset) {
@@ -177,19 +158,16 @@ export function MemfsTreeViewer({
             }
           }
         } else if (treeScrollOffset > 0) {
-          // Already at first file, but can still scroll tree up to show context
           setTreeScrollOffset(treeScrollOffset - 1);
         }
       } else if (key.downArrow && selectedIndex < fileNodes.length - 1) {
         const newIndex = selectedIndex + 1;
         setSelectedIndex(newIndex);
-        // Find where this file is in the full tree (including directories)
         const newFile = fileNodes[newIndex];
         if (newFile) {
           const nodeIndex = treeNodes.findIndex(
             (n) => n.relativePath === newFile.relativePath,
           );
-          // Scroll down if the selected node is below the visible area
           if (
             nodeIndex >= 0 &&
             nodeIndex >= treeScrollOffset + TREE_VISIBLE_LINES
@@ -198,14 +176,12 @@ export function MemfsTreeViewer({
           }
         }
       } else if (key.return) {
-        // Enter to view full file
         if (selectedFile) {
           setViewMode("full");
           setFullViewScrollOffset(0);
         }
       }
     } else {
-      // Full view mode - scroll with up/down
       if (key.upArrow) {
         setFullViewScrollOffset((prev) => Math.max(0, prev - 1));
       } else if (key.downArrow) {
@@ -216,7 +192,6 @@ export function MemfsTreeViewer({
     }
   });
 
-  // No memfs directory
   if (!memoryExists) {
     return (
       <Box flexDirection="column">
@@ -239,7 +214,6 @@ export function MemfsTreeViewer({
     );
   }
 
-  // Empty state
   if (treeNodes.length === 0) {
     return (
       <Box flexDirection="column">
@@ -259,7 +233,6 @@ export function MemfsTreeViewer({
     );
   }
 
-  // Full view mode
   if (viewMode === "full" && selectedFile) {
     const visibleLines = contentLines.slice(
       fullViewScrollOffset,
@@ -275,14 +248,12 @@ export function MemfsTreeViewer({
         <Text dimColor>{solidLine}</Text>
         <Box height={1} />
 
-        {/* Title with file path */}
         <Box marginBottom={1}>
           <Text bold color={colors.selector.title}>
             {selectedFile.relativePath}
           </Text>
         </Box>
 
-        {/* Content with left border */}
         <Box
           borderStyle="single"
           borderLeft
@@ -295,7 +266,6 @@ export function MemfsTreeViewer({
           <Text>{visibleLines.join("\n") || "(empty)"}</Text>
         </Box>
 
-        {/* Scroll indicator */}
         {canScrollDown ? (
           <Text dimColor>
             {"  "}↓ {maxFullViewScroll - fullViewScrollOffset} more line
@@ -305,7 +275,6 @@ export function MemfsTreeViewer({
           <Text> </Text>
         ) : null}
 
-        {/* Footer */}
         <Box flexDirection="column" marginTop={1}>
           <Text dimColor>
             {"  "}
@@ -327,17 +296,14 @@ export function MemfsTreeViewer({
     );
   }
 
-  // Split view mode
   const leftWidth = Math.floor((terminalWidth - 4) * 0.45);
   const rightWidth = terminalWidth - leftWidth - 4;
 
-  // Visible tree nodes
   const visibleTreeNodes = treeNodes.slice(
     treeScrollOffset,
     treeScrollOffset + TREE_VISIBLE_LINES,
   );
 
-  // Preview content - fills the space
   // Layout: title (1) + content (TREE_VISIBLE_LINES - 1) + more indicator (1) = TREE_VISIBLE_LINES + 1
   // This matches the left panel: tree (TREE_VISIBLE_LINES) + more indicator (1)
   const previewContentLines = TREE_VISIBLE_LINES - 1;
@@ -350,26 +316,21 @@ export function MemfsTreeViewer({
       <Text dimColor>{solidLine}</Text>
       <Box height={1} />
 
-      {/* Title */}
       <Box marginBottom={1}>
         <Text bold color={colors.selector.title}>
           View your agent's memory
         </Text>
       </Box>
 
-      {/* Top dotted border - full width */}
       <Text dimColor>{DOTTED_LINE.repeat(terminalWidth)}</Text>
 
-      {/* Split view */}
       <Box flexDirection="row">
-        {/* Left panel - Tree */}
         <Box flexDirection="column" width={leftWidth}>
           {visibleTreeNodes.map((node) => {
             const isSelected =
               !node.isDirectory &&
               node.relativePath === selectedFile?.relativePath;
             const prefix = renderTreePrefix(node);
-            // "system/" directory gets special green color
             const isSystemDir = node.isDirectory && node.name === "system/";
 
             return (
@@ -400,7 +361,6 @@ export function MemfsTreeViewer({
               </Box>
             );
           })}
-          {/* Pad to fixed height */}
           {visibleTreeNodes.length < TREE_VISIBLE_LINES &&
             Array.from({
               length: TREE_VISIBLE_LINES - visibleTreeNodes.length,
@@ -408,7 +368,6 @@ export function MemfsTreeViewer({
               // biome-ignore lint/suspicious/noArrayIndexKey: static padding elements
               <Text key={`pad-${i}`}> </Text>
             ))}
-          {/* More indicator - always on last row */}
           {treeScrollOffset + TREE_VISIBLE_LINES < treeNodes.length ? (
             <Text dimColor>
               ...{treeNodes.length - treeScrollOffset - TREE_VISIBLE_LINES} more
@@ -418,7 +377,6 @@ export function MemfsTreeViewer({
           )}
         </Box>
 
-        {/* Separator */}
         <Box flexDirection="column" marginLeft={1} marginRight={1}>
           {Array.from({ length: TREE_VISIBLE_LINES + 1 }).map((_, i) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: static separator elements
@@ -428,11 +386,9 @@ export function MemfsTreeViewer({
           ))}
         </Box>
 
-        {/* Right panel - Preview */}
         <Box flexDirection="column" width={rightWidth}>
           {selectedFile ? (
             <>
-              {/* Content lines */}
               {previewLines.map((line, idx) => (
                 // biome-ignore lint/suspicious/noArrayIndexKey: content lines by position
                 <Text key={idx}>
@@ -441,7 +397,6 @@ export function MemfsTreeViewer({
                     : line || " "}
                 </Text>
               ))}
-              {/* Padding to fill remaining content space */}
               {Array.from({
                 length: Math.max(
                   0,
@@ -451,7 +406,6 @@ export function MemfsTreeViewer({
                 // biome-ignore lint/suspicious/noArrayIndexKey: static padding elements
                 <Text key={`pad-${i}`}> </Text>
               ))}
-              {/* More indicator */}
               {hasMorePreviewLines ? (
                 <Text dimColor>
                   ...{contentLines.length - previewContentLines} more (enter to
@@ -464,7 +418,6 @@ export function MemfsTreeViewer({
           ) : (
             <>
               <Text dimColor>No file selected</Text>
-              {/* Pad to match height */}
               {Array.from({ length: TREE_VISIBLE_LINES }).map((_, i) => (
                 // biome-ignore lint/suspicious/noArrayIndexKey: static padding elements
                 <Text key={`pad-${i}`}> </Text>
@@ -474,10 +427,8 @@ export function MemfsTreeViewer({
         </Box>
       </Box>
 
-      {/* Bottom dotted border - full width */}
       <Text dimColor>{DOTTED_LINE.repeat(terminalWidth)}</Text>
 
-      {/* Footer */}
       <Box flexDirection="column" marginTop={1}>
         {status ? (
           <Text dimColor>

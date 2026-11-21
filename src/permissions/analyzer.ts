@@ -1,5 +1,3 @@
-// src/permissions/analyzer.ts
-// Analyze tool executions and recommend appropriate permission rules
 
 import { homedir } from "node:os";
 import { dirname, relative, resolve, win32 } from "node:path";
@@ -29,25 +27,18 @@ export interface ApprovalContext {
   // What rule should be saved if user clicks "approve always"
   recommendedRule: string;
 
-  // Human-readable explanation of what the rule does
   ruleDescription: string;
 
-  // Button text for "approve always"
   approveAlwaysText: string;
 
-  // Where to save the rule by default
   defaultScope: "project" | "session" | "user";
 
   // Should we offer "approve always"?
   allowPersistence: boolean;
 
-  // Safety classification
   safetyLevel: "safe" | "moderate" | "dangerous";
 }
 
-/**
- * Analyze a tool execution and determine appropriate approval context
- */
 type ToolArgs = Record<string, unknown>;
 
 function normalizeOsPath(path: string): string {
@@ -179,16 +170,12 @@ export function analyzeApprovalContext(
   }
 }
 
-/**
- * Analyze Read tool approval
- */
 function analyzeReadApproval(
   filePath: string,
   workingDir: string,
 ): ApprovalContext {
   const absolutePath = resolvePathForContext(workingDir, filePath);
 
-  // If outside working directory, generalize to parent directory
   if (!isPathWithinDirectory(absolutePath, workingDir)) {
     const dirPath = dirnameForContext(absolutePath);
     const displayPath = formatDisplayPath(dirPath);
@@ -203,7 +190,6 @@ function analyzeReadApproval(
     };
   }
 
-  // Inside working directory - use relative path
   const relativePath = normalizeOsPath(
     relativePathForContext(workingDir, absolutePath),
   );
@@ -221,9 +207,6 @@ function analyzeReadApproval(
   };
 }
 
-/**
- * Analyze Write tool approval
- */
 function analyzeWriteApproval(
   _filePath: string,
   _workingDir: string,
@@ -240,9 +223,6 @@ function analyzeWriteApproval(
   };
 }
 
-/**
- * Analyze Edit tool approval
- */
 function analyzeEditApproval(
   filePath: string,
   workingDir: string,
@@ -252,7 +232,6 @@ function analyzeEditApproval(
   const absolutePath = resolvePathForContext(workingDir, filePath);
   const dirPath = dirnameForContext(absolutePath);
 
-  // If outside working directory, use canonical absolute path pattern
   if (!isPathWithinDirectory(dirPath, workingDir)) {
     const displayPath = formatDisplayPath(dirPath);
     return {
@@ -265,7 +244,6 @@ function analyzeEditApproval(
     };
   }
 
-  // Inside working directory, use relative path
   const relativeDirPath = normalizeOsPath(
     relativePathForContext(workingDir, dirPath),
   );
@@ -302,7 +280,6 @@ function analyzeEditApproval(
  */
 function analyzeGhApproval(category: string, action: string): ApprovalContext {
   if (!category) {
-    // bare `gh` with no subcommand - fall back to a generic rule
     return {
       recommendedRule: "Bash(gh:*)",
       ruleDescription: "'gh' commands",
@@ -319,7 +296,6 @@ function analyzeGhApproval(category: string, action: string): ApprovalContext {
     SAFE_GH_COMMANDS[category];
   const categoryInMap = allowedActions !== undefined;
 
-  // Determine if this specific action is read-only
   const isReadOnly =
     categoryInMap &&
     (allowedActions === null ||
@@ -408,7 +384,6 @@ function getReadOnlyRulePrefix(parts: string[]): string | null {
   return null;
 }
 
-// Commands that should never be auto-approved
 const DANGEROUS_COMMANDS = [
   "rm",
   "mv",
@@ -422,9 +397,6 @@ const DANGEROUS_COMMANDS = [
   "killall",
 ];
 
-/**
- * Check if a compound command contains any dangerous commands
- */
 function containsDangerousCommand(command: string): boolean {
   const segments = command.split(/\s*(?:&&|\||;)\s*/);
   for (const segment of segments) {
@@ -458,7 +430,6 @@ export function parseAbsoluteCommandPaths(command: string): string[] {
   );
   const candidates: string[] = [];
 
-  // Prefer explicit quoted paths first.
   const quotedRegex = /["']((?:[A-Za-z]:)?\/[^"']+)["']/g;
   let quotedMatch: RegExpExecArray | null = quotedRegex.exec(normalized);
   while (quotedMatch) {
@@ -479,7 +450,6 @@ export function parseAbsoluteCommandPaths(command: string): string[] {
     }
   }
 
-  // Preserve first-seen order while de-duplicating.
   return Array.from(new Set(candidates));
 }
 
@@ -622,7 +592,6 @@ function analyzeBashApproval(
   const topLevelGitSubcommand =
     baseCommand === "git" ? extractGitSubcommand(parts) : null;
 
-  // Check if command contains ANY dangerous commands (including in pipelines)
   if (
     containsDangerousCommand(command) ||
     containsDangerousCommand(normalizedCommand)
@@ -637,7 +606,6 @@ function analyzeBashApproval(
     };
   }
 
-  // Check for dangerous flags
   if (containsDangerousFlag(normalizedCommand)) {
     return {
       recommendedRule: "",
@@ -662,11 +630,9 @@ function analyzeBashApproval(
     };
   }
 
-  // Git commands - be specific to subcommand
   if (baseCommand === "git") {
     const gitSubcommand = topLevelGitSubcommand;
 
-    // Safe read-only git commands
     if (
       gitSubcommand &&
       SAFE_GIT_COMMANDS.includes(gitSubcommand) &&
@@ -682,7 +648,6 @@ function analyzeBashApproval(
       };
     }
 
-    // Git write commands - moderate safety
     if (
       gitSubcommand &&
       ["push", "pull", "fetch", "commit", "add"].includes(gitSubcommand)
@@ -697,7 +662,6 @@ function analyzeBashApproval(
       };
     }
 
-    // Other git commands - still allow but mark as moderate
     if (gitSubcommand) {
       return {
         recommendedRule: `Bash(git ${gitSubcommand}:*)`,
@@ -710,23 +674,19 @@ function analyzeBashApproval(
     }
   }
 
-  // gh CLI commands - generalize to category+action prefix rules
   if (baseCommand === "gh") {
     return analyzeGhApproval(firstArg, parts[2] || "");
   }
 
-  // Package manager commands
   if (baseCommand && ["npm", "bun", "yarn", "pnpm"].includes(baseCommand)) {
     const subcommand = firstArg;
     const thirdPart = parts[2];
 
-    // Handle "npm run test" format (include both "run" and script name)
     if (subcommand === "run" && thirdPart) {
       const fullCommand = `${baseCommand} ${subcommand} ${thirdPart}`;
       return buildPackageStyleRule(fullCommand, "safe");
     }
 
-    // Handle other subcommands (npm install, bun build, etc.)
     if (subcommand) {
       const fullCommand = `${baseCommand} ${subcommand}`;
       return buildPackageStyleRule(fullCommand, "safe");
@@ -742,7 +702,6 @@ function analyzeBashApproval(
     }
   }
 
-  // Safe read-only commands
   const readOnlyRulePrefix = getReadOnlyRulePrefix(parts);
   if (
     readOnlyRulePrefix &&
@@ -761,7 +720,6 @@ function analyzeBashApproval(
     };
   }
 
-  // Default: allow this specific command only
   const displayCommand =
     analysisCommand.length > 40
       ? `${analysisCommand.slice(0, 40)}...`
@@ -840,9 +798,6 @@ function extractGitSubcommand(parts: string[]): string | null {
   return null;
 }
 
-/**
- * Analyze WebFetch approval
- */
 function analyzeWebFetchApproval(url: string): ApprovalContext {
   try {
     const urlObj = new URL(url);
@@ -857,7 +812,6 @@ function analyzeWebFetchApproval(url: string): ApprovalContext {
       safetyLevel: "safe",
     };
   } catch {
-    // Invalid URL
     return {
       recommendedRule: "WebFetch",
       ruleDescription: "web requests",
@@ -869,9 +823,6 @@ function analyzeWebFetchApproval(url: string): ApprovalContext {
   }
 }
 
-/**
- * Analyze Glob/Grep approval
- */
 function analyzeSearchApproval(
   toolName: string,
   searchPath: string,
@@ -902,9 +853,6 @@ function analyzeSearchApproval(
   };
 }
 
-/**
- * Default approval for unknown tools
- */
 function analyzeDefaultApproval(
   toolName: string,
   toolArgs: ToolArgs,

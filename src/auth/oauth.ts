@@ -1,7 +1,3 @@
-/**
- * OAuth 2.0 utilities for Letta Cloud authentication
- * Uses Device Code Flow for CLI authentication
- */
 
 import Letta from "@letta-ai/letta-client";
 import { APIError } from "@letta-ai/letta-client/core/error";
@@ -332,9 +328,6 @@ function toOAuthActionError(
   return new Error(`Failed to ${action}: ${String(error)}`);
 }
 
-/**
- * Device Code Flow - Step 1: Request device code
- */
 export async function requestDeviceCode(
   organizationId?: string,
 ): Promise<DeviceCodeResponse> {
@@ -395,9 +388,6 @@ export async function requestDeviceCode(
   throw new Error("Failed to request device code from unreachable OAuth path");
 }
 
-/**
- * Device Code Flow - Step 2: Poll for token
- */
 export async function pollForToken(
   deviceCode: string,
   interval: number = 5,
@@ -473,13 +463,11 @@ export async function pollForToken(
       const error = result as OAuthError;
 
       if (error.error === "authorization_pending") {
-        // User hasn't authorized yet, keep polling
         consecutiveResponseFailures = 0;
         continue;
       }
 
       if (error.error === "slow_down") {
-        // We're polling too fast, increase interval by 5 seconds
         pollInterval += 5000;
         consecutiveResponseFailures = 0;
         continue;
@@ -527,9 +515,6 @@ export async function pollForToken(
   throw new Error("Timeout waiting for authorization (15 minutes)");
 }
 
-/**
- * Refresh an access token using a refresh token
- */
 export async function refreshAccessToken(
   refreshToken: string,
   deviceId: string,
@@ -590,9 +575,6 @@ export async function refreshAccessToken(
   }
 }
 
-/**
- * Revoke a refresh token (logout)
- */
 export async function revokeToken(refreshToken: string): Promise<void> {
   try {
     const response = await fetch(
@@ -632,10 +614,6 @@ export async function revokeToken(refreshToken: string): Promise<void> {
   }
 }
 
-/**
- * Validate credentials by checking an authenticated endpoint.
- * Uses SDK's agents.list() which requires valid authentication.
- */
 export async function validateCredentials(
   baseUrl: string,
   apiKey: string,
@@ -656,14 +634,12 @@ export async function validateCredentialsWithResult(
   }
 
   try {
-    // Create a temporary client to test authentication
     const client = new Letta({
       apiKey,
       baseURL: baseUrl,
       defaultHeaders: { "X-Letta-Source": "letta-code" },
     });
 
-    // Try to list agents - this requires valid authentication
     await client.agents.list({ limit: 1 });
 
     return { ok: true };

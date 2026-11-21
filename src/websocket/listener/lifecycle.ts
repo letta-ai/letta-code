@@ -977,13 +977,11 @@ async function connectWithRetry(
   });
 }
 
-/** Check if listener is currently active. */
 export function isListenerActive(): boolean {
   const runtime = getActiveRuntime();
   return runtime !== null && runtime.transport !== null;
 }
 
-/** Stop the active listener connection. */
 export function stopListenerClient(): void {
   const runtime = getActiveRuntime();
   if (!runtime) {

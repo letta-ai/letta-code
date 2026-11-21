@@ -382,10 +382,6 @@ class TelemetryManager {
     return `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
   }
 
-  /**
-   * Check if telemetry is enabled based on environment variables.
-   * Enabled by default unless explicitly disabled.
-   */
   private isTelemetryEnabled(): boolean {
     // LETTA_CODE_TELEM is Letta Code's specific opt-out. DO_NOT_TRACK is a
     // broader convention also honored by install-time analytics packages.
@@ -401,9 +397,6 @@ class TelemetryManager {
     return true;
   }
 
-  /**
-   * Check if the user is connected to Letta Cloud (api.letta.com)
-   */
   private isCloudUser(): boolean {
     try {
       return getServerUrl().includes("api.letta.com");
@@ -416,24 +409,18 @@ class TelemetryManager {
     }
   }
 
-  /**
-   * Initialize telemetry and start periodic flushing
-   */
   init(options: TelemetryInitOptions = {}) {
     if (!this.isTelemetryEnabled() || this.initialized) {
       return;
     }
     this.initialized = true;
 
-    // Initialize device ID (persistent across sessions)
     this.deviceId = settingsManager.getOrCreateDeviceId();
 
     this.trackSessionStart();
 
-    // Fetch server version for diagnostics (best-effort, non-blocking)
     this.fetchServerVersion().catch(() => {});
 
-    // Set up periodic flushing
     this.flushInterval = setInterval(() => {
       this.flush().catch((err) => {
         // Silently fail - we don't want telemetry to interfere with user experience
@@ -477,9 +464,6 @@ class TelemetryManager {
     // reliable without extending the fatal shutdown deadline.
   }
 
-  /**
-   * Track a telemetry event
-   */
   private track(
     type: TelemetryEvent["type"],
     data:
@@ -521,7 +505,6 @@ class TelemetryManager {
     // Drop the oldest events if failed re-queues have grown the queue to its bound.
     this.eventQueueCap.enforce(this.events);
 
-    // Flush if batch size is reached
     if (this.events.length >= this.MAX_BATCH_SIZE) {
       this.flush().catch((err) => {
         if (isDebugEnabled()) {
@@ -617,32 +600,19 @@ class TelemetryManager {
     this.sessionStatsGetter = getter;
   }
 
-  /**
-   * Get the current session ID
-   */
   getSessionId(): string {
     return this.sessionId;
   }
 
-  /**
-   * Get the current message count
-   */
   getMessageCount(): number {
     return this.messageCount;
   }
 
-  /**
-   * Get the current tool call count
-   */
   getToolCallCount(): number {
     return this.toolCallCount;
   }
 
-  /**
-   * Track session start
-   */
   trackSessionStart() {
-    // Extract agent ID from startup args if --agent or -a is provided
     const args = process.argv.slice(2);
     const agentFlagIndex = args.findIndex(
       (arg) => arg === "--agent" || arg === "-a",
@@ -707,7 +677,6 @@ class TelemetryManager {
       message_count: this.messageCount,
       tool_call_count: this.toolCallCount,
       exit_reason: exitReason,
-      // Include optional stats if available
       total_api_ms: sessionStats?.totalApiMs,
       total_wall_ms: sessionStats?.totalWallMs,
       prompt_tokens: sessionStats?.usage.promptTokens,
@@ -723,9 +692,6 @@ class TelemetryManager {
     this.track("session_end", data);
   }
 
-  /**
-   * Track tool usage
-   */
   trackToolUsage(
     toolName: string,
     success: boolean,
@@ -825,9 +791,6 @@ class TelemetryManager {
     this.track("user_input", data);
   }
 
-  /**
-   * Track reflection start events (manual and auto-triggered).
-   */
   trackReflectionStart(
     triggerSource: ReflectionTriggerSource,
     options?: {
@@ -851,9 +814,6 @@ class TelemetryManager {
     this.track("reflection_start", data);
   }
 
-  /**
-   * Track reflection completion events.
-   */
   trackReflectionEnd(
     triggerSource: ReflectionTriggerSource,
     success: boolean,
@@ -980,9 +940,6 @@ class TelemetryManager {
     }
   }
 
-  /**
-   * Clean up resources
-   */
   cleanup() {
     this.removeSigintHandler?.();
     this.removeSigintHandler = null;
@@ -996,5 +953,4 @@ class TelemetryManager {
   }
 }
 
-// Export singleton instance
 export const telemetry = new TelemetryManager();

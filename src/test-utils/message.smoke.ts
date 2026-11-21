@@ -1,9 +1,5 @@
 #!/usr/bin/env bun
 
-/**
- * Quick sanity check: create an agent, send a message, log streamed output.
- */
-
 import { createAgent } from "@/agent/create";
 import { sendMessageStream } from "@/agent/message";
 import { getClient } from "@/backend/api/client";
@@ -35,7 +31,6 @@ async function main() {
     },
   ]);
 
-  // Print every chunk as it arrives
   for await (const chunk of stream) {
     const type = chunk.message_type ?? "unknown";
 

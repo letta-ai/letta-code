@@ -64,7 +64,6 @@ function fixBunEncoding(value: ReactNode): ReactNode {
   if (!isBun) return value;
 
   if (typeof value === "string") {
-    // Quick check: if no non-ASCII characters, return as-is
     if (!/[\x80-\xFF]/.test(value)) return value;
 
     if (!looksLikeMojibake(value)) return value;
@@ -76,7 +75,6 @@ function fixBunEncoding(value: ReactNode): ReactNode {
     return decoder.decode(bytes);
   }
 
-  // Handle arrays of children
   if (Array.isArray(value)) {
     return value.map(fixBunEncoding);
   }

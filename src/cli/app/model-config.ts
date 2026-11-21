@@ -200,7 +200,6 @@ export function mapHandleToLlmConfigPatch(
   ) as Partial<LlmConfig>;
 }
 
-// Helper to get appropriate error hint based on stop reason and current model
 export function getErrorHintForStopReason(
   stopReason: StopReasonType | null,
   currentModelId: string | null,

@@ -1,4 +1,3 @@
-// src/settings.ts
 // Manages user settings and project settings in ./.letta/settings.local.json
 
 import { join } from "node:path";
@@ -15,11 +14,7 @@ export interface Settings {
   globalSharedBlockIds: Record<string, string>; // label -> blockId mapping (persona, human; style moved to project settings)
   permissions?: PermissionRules;
   env?: Record<string, string>;
-  // Shift+Enter keybinding state (for VS Code/Cursor/Windsurf)
-  // Tracks if we've auto-installed the keybinding (or if user already had it)
   shiftEnterKeybindingInstalled?: boolean;
-  // WezTerm Delete key fix state
-  // Tracks if we've auto-installed the fix for kitty keyboard protocol bug
   wezTermDeleteFixInstalled?: boolean;
 }
 
@@ -38,22 +33,15 @@ function getSettingsPath(): string {
   return resolveGlobalSettingsPath();
 }
 
-/**
- * Load global settings
- * If the file doesn't exist, creates it with default settings
- */
 export async function loadSettings(): Promise<Settings> {
   const settingsPath = getSettingsPath();
 
   try {
-    // Check if settings file exists
     if (!exists(settingsPath)) {
-      // Create default settings file
       await saveSettings(DEFAULT_SETTINGS);
       return DEFAULT_SETTINGS;
     }
 
-    // Read and parse settings
     const content = await readFile(settingsPath);
     const settings = JSON.parse(content) as Settings;
 
@@ -65,9 +53,6 @@ export async function loadSettings(): Promise<Settings> {
   }
 }
 
-/**
- * Save global settings
- */
 export async function saveSettings(settings: Settings): Promise<void> {
   const settingsPath = getSettingsPath();
 
@@ -82,9 +67,6 @@ export async function saveSettings(settings: Settings): Promise<void> {
   }
 }
 
-/**
- * Update specific settings fields
- */
 export async function updateSettings(
   updates: Partial<Settings>,
 ): Promise<Settings> {
@@ -94,9 +76,6 @@ export async function updateSettings(
   return newSettings;
 }
 
-/**
- * Get a specific setting value
- */
 export async function getSetting<K extends keyof Settings>(
   key: K,
 ): Promise<Settings[K]> {
@@ -104,17 +83,10 @@ export async function getSetting<K extends keyof Settings>(
   return settings[key];
 }
 
-/**
- * Get project settings path (./.letta/settings.local.json)
- */
 function getProjectSettingsPath(): string {
   return join(process.cwd(), ".letta", "settings.local.json");
 }
 
-/**
- * Load project settings from ./.letta/settings.local.json
- * Returns null if file doesn't exist
- */
 export async function loadProjectSettings(): Promise<ProjectSettings | null> {
   if (shouldIsolateHomeProjectConfig(process.cwd())) return null;
   const settingsPath = getProjectSettingsPath();
@@ -133,10 +105,6 @@ export async function loadProjectSettings(): Promise<ProjectSettings | null> {
   }
 }
 
-/**
- * Save project settings to ./.letta/settings.local.json
- * Creates .letta directory if it doesn't exist
- */
 export async function saveProjectSettings(
   settings: ProjectSettings,
 ): Promise<void> {
@@ -145,7 +113,6 @@ export async function saveProjectSettings(
   const dirPath = join(process.cwd(), ".letta");
 
   try {
-    // Create .letta directory if it doesn't exist
     if (!exists(dirPath)) {
       await mkdir(dirPath, { recursive: true });
     }
@@ -157,9 +124,6 @@ export async function saveProjectSettings(
   }
 }
 
-/**
- * Update project settings fields
- */
 export async function updateProjectSettings(
   updates: Partial<ProjectSettings>,
 ): Promise<ProjectSettings> {

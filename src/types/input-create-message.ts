@@ -1,8 +1,3 @@
-/**
- * The controller -> execution-environment `create_message` input payload and
- * its request-scoped toolset selection. Split out of protocol_v2.ts to keep
- * that file under the source-size limit; protocol_v2 re-exports both types.
- */
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ClientPreferences } from "./client-preferences";
 import type { ToolsetPreference } from "./toolset-protocol";

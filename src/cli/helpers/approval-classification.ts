@@ -63,7 +63,6 @@ function typeAllowsNull(schema: unknown): boolean {
   return type === "null" || (Array.isArray(type) && type.includes("null"));
 }
 
-/** True if the property schema (or one of its anyOf/oneOf branches) admits null. */
 function schemaAllowsNull(schema: unknown): boolean {
   if (typeAllowsNull(schema)) return true;
   if (!schema || typeof schema !== "object") return false;

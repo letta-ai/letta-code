@@ -59,7 +59,6 @@ test("inbound debounce: burst of 3 DMs collapse into a single dispatch", async (
     },
   });
 
-  // Still within the window — nothing dispatched yet.
   expect(onMessage).not.toHaveBeenCalled();
 
   await sleep(80);
@@ -145,7 +144,6 @@ test("inbound debounce: attachment mid-burst flushes pending debounced messages 
   const handler = app?.messageHandler;
   if (!handler) throw new Error("Expected Slack message handler");
 
-  // First message: debounced (no attachments).
   await handler({
     message: {
       channel: "D123",
@@ -156,8 +154,6 @@ test("inbound debounce: attachment mid-burst flushes pending debounced messages 
   });
   await sleep(10);
 
-  // Second message: has an attachment → bypass debounce. It should flush
-  // the first (debounced) message before dispatching itself.
   resolveSlackInboundAttachmentsMock.mockImplementationOnce(async () => [
     {
       id: "F1",
@@ -176,7 +172,6 @@ test("inbound debounce: attachment mid-burst flushes pending debounced messages 
     },
   });
 
-  // Wait a moment for the pre-flush and the immediate dispatch to settle.
   await sleep(30);
 
   expect(dispatchOrder).toEqual([
@@ -218,7 +213,6 @@ test("inbound debounce: message arrives first, then app_mention for same ts → 
   if (!messageHandler) throw new Error("Expected Slack message handler");
   if (!mentionHandler) throw new Error("Expected app_mention handler");
 
-  // `message` arrives first for a threaded channel mention.
   await messageHandler({
     message: {
       channel: "C123",
@@ -228,7 +222,6 @@ test("inbound debounce: message arrives first, then app_mention for same ts → 
       thread_ts: "1712800000.000099",
     },
   });
-  // Same ts fires `app_mention` shortly after.
   await mentionHandler({
     event: {
       channel: "C123",
@@ -239,7 +232,6 @@ test("inbound debounce: message arrives first, then app_mention for same ts → 
     },
   });
 
-  // Neither has dispatched yet — both sit inside the debounce window.
   expect(dispatched).toEqual([]);
 
   await sleep(80);
@@ -275,7 +267,6 @@ test("inbound debounce: app_mention arrives first, message-for-same-ts is droppe
   if (!messageHandler) throw new Error("Expected Slack message handler");
   if (!mentionHandler) throw new Error("Expected app_mention handler");
 
-  // app_mention arrives first; `markIngressMessageSeen` records the ts.
   await mentionHandler({
     event: {
       channel: "C123",

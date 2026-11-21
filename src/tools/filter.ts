@@ -1,5 +1,3 @@
-// src/tools/filter.ts
-// Tool filtering - controls which tools are loaded and registered with the agent
 
 /**
  * Tool filter manager to control which tools are enabled for the session.
@@ -14,10 +12,8 @@ class ToolFilterManager {
    */
   setEnabledTools(toolsString: string): void {
     if (toolsString === "") {
-      // Empty string means no tools
       this.enabledTools = [];
     } else {
-      // Parse comma-separated tool names
       this.enabledTools = toolsString
         .split(",")
         .map((t) => t.trim())
@@ -32,9 +28,6 @@ class ToolFilterManager {
     return this.enabledTools === null ? null : [...this.enabledTools];
   }
 
-  /**
-   * Reset to default (all tools enabled)
-   */
   reset(): void {
     this.enabledTools = null;
   }

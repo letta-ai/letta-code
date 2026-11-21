@@ -42,7 +42,6 @@ import {
   workflow,
 } from "./workflow";
 
-/** Progress lines written to a workflow's output file so far. */
 function progressLineCount(outputFile: string | undefined): number {
   if (!outputFile) return 0;
   return readFileSync(outputFile, "utf8").split("\n").filter(Boolean).length;

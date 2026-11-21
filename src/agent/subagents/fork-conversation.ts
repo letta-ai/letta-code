@@ -46,7 +46,6 @@ interface ForkParentConversationDependencies {
   inheritToolset?: typeof inheritForkToolset;
 }
 
-/** Fork the parent conversation, then apply fork-only runtime configuration. */
 export async function forkParentConversation(
   params: ForkParentConversationParams,
   dependencies: ForkParentConversationDependencies = {},

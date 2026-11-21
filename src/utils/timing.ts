@@ -1,26 +1,14 @@
-// src/utils/timing.ts
-// Debug timing utilities - only active when LETTA_DEBUG_TIMINGS env var is set
 
-/**
- * Check if debug timings are enabled via LETTA_DEBUG_TIMINGS env var
- * Set LETTA_DEBUG_TIMINGS=1 or LETTA_DEBUG_TIMINGS=true to enable timing logs
- */
 export function isTimingsEnabled(): boolean {
   const val = process.env.LETTA_DEBUG_TIMINGS;
   return val === "1" || val === "true";
 }
 
-/**
- * Format duration nicely: "245ms" or "1.52s"
- */
 export function formatDuration(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)}ms`;
   return `${(ms / 1000).toFixed(2)}s`;
 }
 
-/**
- * Format timestamp: "12:34:56.789"
- */
 export function formatTimestamp(date: Date): string {
   return date.toISOString().slice(11, 23);
 }
@@ -34,22 +22,10 @@ export function logTiming(message: string): void {
   }
 }
 
-// ============================================================================
-// Milestone tracking for latency audits
-// ============================================================================
-
-// Store milestones with their timestamps (ms since process start via performance.now())
 const milestones: Map<string, number> = new Map();
 
-// Reference time for relative measurements (set on first milestone)
 let firstMilestoneTime: number | null = null;
 
-/**
- * Mark a named milestone in the boot/execution sequence.
- * Call this at key points to track where time is spent.
- *
- * @param name - Descriptive name like "SETTINGS_LOADED" or "AGENT_RESOLVED"
- */
 export function markMilestone(name: string): void {
   const now = performance.now();
   milestones.set(name, now);
@@ -66,12 +42,6 @@ export function markMilestone(name: string): void {
   }
 }
 
-/**
- * Measure time elapsed since a previous milestone.
- *
- * @param label - Description of what we're measuring (e.g., "tool loading")
- * @param fromMilestone - Name of the starting milestone
- */
 export function measureSinceMilestone(
   label: string,
   fromMilestone: string,
@@ -90,10 +60,6 @@ export function measureSinceMilestone(
   console.error(`[timing] ${label}: ${formatDuration(duration)}`);
 }
 
-/**
- * Get the duration between two milestones in milliseconds.
- * Returns null if either milestone doesn't exist.
- */
 export function getMilestoneDuration(
   fromMilestone: string,
   toMilestone: string,
@@ -104,10 +70,6 @@ export function getMilestoneDuration(
   return end - start;
 }
 
-/**
- * Print a summary of all milestones with relative timestamps.
- * Useful at the end of a benchmark run.
- */
 export function reportAllMilestones(): void {
   if (!isTimingsEnabled() || milestones.size === 0) return;
 
@@ -115,7 +77,6 @@ export function reportAllMilestones(): void {
 
   console.error(`[timing] ======== MILESTONE SUMMARY ========`);
 
-  // Sort by timestamp
   const sorted = [...milestones.entries()].sort((a, b) => a[1] - b[1]);
 
   let prevTime = first;
@@ -132,9 +93,6 @@ export function reportAllMilestones(): void {
   console.error(`[timing] =====================================`);
 }
 
-/**
- * Clear all milestones (useful for running multiple benchmarks in sequence).
- */
 export function clearMilestones(): void {
   milestones.clear();
   firstMilestoneTime = null;
@@ -146,16 +104,11 @@ type SimpleFetch = (
   init?: RequestInit,
 ) => Promise<Response>;
 
-/**
- * Create an instrumented fetch that logs timing for every request.
- * Logs request start and end (with duration and status) to stderr.
- */
 export function createTimingFetch(baseFetch: SimpleFetch): SimpleFetch {
   return async (input, init) => {
     const start = performance.now();
     const startTime = formatTimestamp(new Date());
 
-    // Extract method and URL for logging
     const url =
       typeof input === "string"
         ? input
@@ -164,7 +117,6 @@ export function createTimingFetch(baseFetch: SimpleFetch): SimpleFetch {
           : input.url;
     const method = init?.method || "GET";
 
-    // Parse path from URL, handling potential errors
     let path: string;
     try {
       path = new URL(url).pathname;

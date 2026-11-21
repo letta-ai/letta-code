@@ -48,12 +48,10 @@ describe("auto-update ENOTEMPTY handling", () => {
   let testDir: string;
 
   beforeEach(() => {
-    // Create a temp directory for testing
     testDir = fs.mkdtempSync(path.join(os.tmpdir(), "letta-test-"));
   });
 
   afterEach(() => {
-    // Clean up
     if (fs.existsSync(testDir)) {
       fs.rmSync(testDir, { recursive: true, force: true });
     }
@@ -61,23 +59,19 @@ describe("auto-update ENOTEMPTY handling", () => {
 
   describe("cleanupOrphanedDirs logic", () => {
     test("removes directories starting with .letta-code-", async () => {
-      // Create test directories
       const lettaAiDir = path.join(testDir, "lib/node_modules/@letta-ai");
       fs.mkdirSync(lettaAiDir, { recursive: true });
 
-      // Create orphaned temp dirs (should be removed)
       const orphan1 = path.join(lettaAiDir, ".letta-code-abc123");
       const orphan2 = path.join(lettaAiDir, ".letta-code-xyz789");
       fs.mkdirSync(orphan1);
       fs.mkdirSync(orphan2);
 
-      // Create legitimate dirs (should NOT be removed)
       const legitimate = path.join(lettaAiDir, "letta-code");
       const otherPackage = path.join(lettaAiDir, "other-package");
       fs.mkdirSync(legitimate);
       fs.mkdirSync(otherPackage);
 
-      // Simulate cleanup logic
       const { readdir, rm } = await import("node:fs/promises");
       const entries = await readdir(lettaAiDir);
       for (const entry of entries) {
@@ -89,7 +83,6 @@ describe("auto-update ENOTEMPTY handling", () => {
         }
       }
 
-      // Verify
       expect(fs.existsSync(orphan1)).toBe(false);
       expect(fs.existsSync(orphan2)).toBe(false);
       expect(fs.existsSync(legitimate)).toBe(true);
@@ -100,7 +93,6 @@ describe("auto-update ENOTEMPTY handling", () => {
       const nonExistent = path.join(testDir, "does/not/exist");
       const { readdir } = await import("node:fs/promises");
 
-      // This should not throw
       let error: NodeJS.ErrnoException | null = null;
       try {
         await readdir(nonExistent);
@@ -154,7 +146,6 @@ npm error ENOTEMPTY: directory not empty`;
 
   describe("npm global path detection", () => {
     test("path structure for cleanup is correct", () => {
-      // Test that the path we construct is valid
       const globalPrefix = "/Users/test/.npm-global";
       const lettaAiDir = path.join(globalPrefix, "lib/node_modules/@letta-ai");
 

@@ -1,17 +1,3 @@
-/**
- * End-to-end coverage for cancelling a turn while an SDK external tool is
- * in flight (headless bidirectional mode). The real entrypoint runs in an
- * isolated child process with a fake backend; stdin control requests and the
- * external-tool wire protocol are real.
- *
- * Regression (PR: abort in-flight tool operations, seam 2):
- *  - Before: an interrupt during the external-tool wait mislabeled the tool
- *    result as "stdin closed" and silently dropped any user line queued
- *    while the tool ran.
- *  - After: the tool result is interruption-shaped ("Interrupted by user"),
- *    and queued lines are deferred back to the main loop and processed
- *    after the cancelled turn unwinds.
- */
 import { expect, test } from "bun:test";
 import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -135,7 +121,6 @@ test("interrupt during an in-flight external tool returns an interruption-shaped
           events.push(event);
 
           if (event.type === "system" && event.subtype === "init") {
-            // Register the external tool before the first turn.
             send({
               type: "control_request",
               request_id: "reg-ext-1",
@@ -169,7 +154,6 @@ test("interrupt during an in-flight external tool returns an interruption-shaped
             event.type === "control_request" &&
             (event.request as { subtype?: string })?.subtype === "can_use_tool"
           ) {
-            // Approve the external tool call.
             send({
               type: "control_response",
               response: {
@@ -188,8 +172,6 @@ test("interrupt during an in-flight external tool returns an interruption-shaped
             externalRequested = true;
           }
           if (externalRequested && !queuedWhileWaiting) {
-            // A user line queued while the external tool is in flight must be
-            // preserved (deferred), not silently dropped.
             queuedWhileWaiting = true;
             user("queued during external wait");
           }
@@ -208,8 +190,6 @@ test("interrupt during an in-flight external tool returns an interruption-shaped
         }
       });
     });
-    // The cancelled turn's tool result must be interruption-shaped, not the
-    // old "stdin closed" mislabel.
     const toolReturn = events.find(
       (event) =>
         event.message_type === "tool_return_message" &&
@@ -218,7 +198,6 @@ test("interrupt during an in-flight external tool returns an interruption-shaped
     expect(toolReturn).toBeDefined();
     expect(String(toolReturn?.tool_return)).toMatch(/interrupted by user/i);
     expect(String(toolReturn?.tool_return)).not.toContain("stdin closed");
-    // The turn unwinds as interrupted and the queued line still runs.
     expect(results).toEqual(["interrupted", "success"]);
     const queuedTurn = events.find(
       (event) =>

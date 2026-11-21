@@ -17,10 +17,6 @@ export type BackendMode = "api" | "local";
 
 let configuredBackendMode: BackendMode | null = null;
 
-/**
- * Resolve the active backend mode: an explicit runtime override if one was set,
- * otherwise the experimental local-backend env flag.
- */
 export function resolveBackendMode(): BackendMode {
   return (
     configuredBackendMode ?? (isLocalBackendEnvEnabled() ? "local" : "api")

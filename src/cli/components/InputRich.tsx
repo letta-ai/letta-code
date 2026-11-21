@@ -71,7 +71,6 @@ import { StreamingStatusSpinner } from "./spinners/StreamingStatusSpinner.js";
 import { Text } from "./Text";
 import { handleTranscriptDisplayShortcut } from "./transcript-display-state";
 
-// Window for double-escape to clear input
 const ESC_CLEAR_WINDOW_MS = 2500;
 const FOOTER_WIDTH_STREAMING_DELTA = 2;
 const EMPTY_COMPOSER_PROMPT_ROTATION_MS = 6000;
@@ -1064,7 +1063,6 @@ export function Input({
     debugFlicker,
   ]);
 
-  // Command history
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [temporaryInput, setTemporaryInput] = useState("");
@@ -1117,7 +1115,6 @@ export function Input({
     [releaseDiscardedDraftPlaceholders],
   );
 
-  // Restore input from error (only if current value is empty)
   useEffect(() => {
     if (restoredInput && value === "") {
       setValue(restoredInput);
@@ -1196,7 +1193,6 @@ export function Input({
     return true;
   }, [isBashMode, bashExitArmed]);
 
-  // Reset cursor position after it's been applied
   useEffect(() => {
     if (cursorPos !== undefined) {
       const timer = setTimeout(() => setCursorPos(undefined), 0);
@@ -1205,21 +1201,18 @@ export function Input({
     return undefined;
   }, [cursorPos]);
 
-  // Reset bash exit arming when leaving bash mode
   useEffect(() => {
     if (!isBashMode && bashExitArmed) {
       setBashExitArmed(false);
     }
   }, [isBashMode, bashExitArmed]);
 
-  // If user types after first backspace-at-empty, disarm exit intent
   useEffect(() => {
     if (bashExitArmed && value.length > 0) {
       setBashExitArmed(false);
     }
   }, [value, bashExitArmed]);
 
-  // Reset boundary flags and preferred column when cursor moves or value changes
   useEffect(() => {
     if (currentCursorPosition !== 0) {
       setAtStartBoundary(false);
@@ -1227,11 +1220,9 @@ export function Input({
     if (currentCursorPosition !== value.length) {
       setAtEndBoundary(false);
     }
-    // Reset preferred column - it will be set again when vertical navigation starts
     setPreferredColumn(null);
   }, [currentCursorPosition, value.length]);
 
-  // Sync with external mode changes.
   useEffect(() => {
     if (externalMode !== undefined) {
       setCurrentMode(externalMode);
@@ -1267,7 +1258,6 @@ export function Input({
     };
   }, []);
 
-  // Get server URL (same logic as client.ts)
   const settings = settingsManager.getSettings();
   const serverUrl =
     process.env.LETTA_BASE_URL ||
@@ -1280,20 +1270,16 @@ export function Input({
     if (!interactionEnabled) return;
     if (!onEscapeCancel) return;
 
-    // Enter key confirms the action - trigger submit with empty input
     if (key.return) {
       onSubmit("");
       return;
     }
 
-    // Any other key cancels
     onEscapeCancel();
   });
 
-  // Handle escape key for interrupt (when streaming) or double-escape-to-clear (when not)
   useInput((_input, key) => {
     if (!interactionEnabled) return;
-    // Debug logging for escape key detection
     if (process.env.LETTA_DEBUG_KEYS === "1" && key.escape) {
       // eslint-disable-next-line no-console
       console.error(
@@ -1304,7 +1290,6 @@ export function Input({
     if (onEscapeCancel) return;
 
     if (key.escape) {
-      // When bash command running, use Esc to interrupt (LET-7199)
       if (bashRunning && onBashInterrupt) {
         onBashInterrupt();
         return;
@@ -1327,16 +1312,13 @@ export function Input({
         return;
       }
 
-      // When input is non-empty, use double-escape to clear
       if (value) {
         if (escapePressed) {
-          // Second escape - clear input (discard: release dropped placeholders)
           releaseDiscardedDraftPlaceholders(value, "");
           setValue("");
           setEscapePressed(false);
           if (escapeTimerRef.current) clearTimeout(escapeTimerRef.current);
         } else {
-          // First escape - start timer to allow double-escape to clear
           setEscapePressed(true);
           if (escapeTimerRef.current) clearTimeout(escapeTimerRef.current);
           escapeTimerRef.current = setTimeout(() => {
@@ -1366,22 +1348,15 @@ export function Input({
       return;
     }
     if (handleTranscriptDisplayShortcut(input, key)) return;
-    // Handle CTRL-C for double-ctrl-c-to-exit
-    // In bash mode, CTRL-C wipes input but doesn't exit bash mode
     if (input === "c" && key.ctrl) {
-      // If a bash command is running, Ctrl+C interrupts it (same as Esc)
       if (bashRunning && onBashInterrupt) {
         onBashInterrupt();
         return;
       }
 
       if (ctrlCPressed) {
-        // Second CTRL-C - call onExit callback which handles stats and exit
         if (onExit) onExit();
       } else {
-        // First CTRL-C - wipe input and start 1-second timer
-        // Note: In bash mode, this clears input but keeps bash mode active
-        // Discard: release placeholders dropped with the wiped input
         releaseDiscardedDraftPlaceholders(value, "");
         setValue("");
         setBashExitArmed(false);
@@ -1397,12 +1372,9 @@ export function Input({
   // Note: bash mode entry/exit is implemented inside PasteAwareTextInput so we can
   // consume the keystroke before it renders (no flicker).
 
-  // Handle Shift+Tab for permission mode cycling
   useInput((_input, key) => {
     if (!interactionEnabled) return;
 
-    // Tab (no shift): cycle reasoning effort tiers for the current model (when idle).
-    // Only trigger when autocomplete is NOT active.
     if (
       key.tab &&
       !key.shift &&
@@ -1414,7 +1386,6 @@ export function Input({
       return;
     }
 
-    // Debug logging for shift+tab detection
     if (process.env.LETTA_DEBUG_KEYS === "1" && (key.shift || key.tab)) {
       // eslint-disable-next-line no-console
       console.error(
@@ -1423,7 +1394,6 @@ export function Input({
     }
 
     if (key.shift && key.tab) {
-      // Cycle through permission modes
       const modes: PermissionMode[] = [
         "unrestricted",
         "acceptEdits",
@@ -1433,18 +1403,15 @@ export function Input({
       const nextIndex = (currentIndex + 1) % modes.length;
       const nextMode = modes[nextIndex] ?? "unrestricted";
 
-      // Update both singleton and local state
       permissionMode.setMode(nextMode);
       setCurrentMode(nextMode);
 
-      // Notify parent of mode change
       if (onPermissionModeChange) {
         onPermissionModeChange(nextMode);
       }
     }
   });
 
-  // Handle up/down arrow keys for wrapped text navigation and command history
   useInput((_input, key) => {
     if (!interactionEnabled) return;
     // Don't interfere with autocomplete navigation, BUT allow history navigation
@@ -1454,21 +1421,17 @@ export function Input({
     }
 
     if (key.upArrow || key.downArrow) {
-      // Calculate visual lines accounting for both soft wrapping and hard newlines
       const visualLines = getVisualLines(value, contentWidth);
       const { lineIndex, column } = findCursorLine(
         currentCursorPosition,
         visualLines,
       );
 
-      // Use preferred column if set (for sticky column behavior), otherwise current column
       const targetColumn = preferredColumn ?? column;
 
       if (key.upArrow) {
         const targetLine = visualLines[lineIndex - 1];
         if (lineIndex > 0 && targetLine) {
-          // Not on first visual line - move cursor up one visual line
-          // Set preferred column if not already set
           if (preferredColumn === null) {
             setPreferredColumn(column);
           }
@@ -1479,22 +1442,16 @@ export function Input({
           return; // Don't trigger history
         }
 
-        // On first wrapped line
-        // First press: move to start, second press: queue edit or history
-        // Skip the two-step behavior if already browsing history - go straight to navigation
         if (
           currentCursorPosition > 0 &&
           !atStartBoundary &&
           historyIndex === -1
         ) {
-          // First press - move cursor to start
           setCursorPos(0);
           setAtStartBoundary(true);
           return;
         }
 
-        // Check if we should load queued messages into input for editing.
-        // Fire when already at position 0 (empty input or after first Up moved us here).
         if (
           messageQueue &&
           messageQueue.filter((m) => m.kind === "user").length > 0 &&
@@ -1513,21 +1470,17 @@ export function Input({
           return;
         }
 
-        // Otherwise, trigger history navigation
         if (history.length === 0) return;
 
         setAtStartBoundary(false); // Reset for next time
 
         if (historyIndex === -1) {
-          // Starting to navigate history - save current input
           setTemporaryInput(value);
-          // Go to most recent command
           setHistoryIndex(history.length - 1);
           const historyEntry = history[history.length - 1] ?? "";
           setValue(historyEntry);
           setCursorPos(historyEntry.length); // Cursor at end (traditional terminal behavior)
         } else if (historyIndex > 0) {
-          // Go to older command
           setHistoryIndex(historyIndex - 1);
           const olderEntry = history[historyIndex - 1] ?? "";
           setValue(olderEntry);
@@ -1536,8 +1489,6 @@ export function Input({
       } else if (key.downArrow) {
         const targetLine = visualLines[lineIndex + 1];
         if (lineIndex < visualLines.length - 1 && targetLine) {
-          // Not on last visual line - move cursor down one visual line
-          // Set preferred column if not already set
           if (preferredColumn === null) {
             setPreferredColumn(column);
           }
@@ -1548,33 +1499,26 @@ export function Input({
           return; // Don't trigger history
         }
 
-        // On last wrapped line
-        // First press: move to end, second press: navigate history
-        // Skip the two-step behavior if already browsing history - go straight to navigation
         if (
           currentCursorPosition < value.length &&
           !atEndBoundary &&
           historyIndex === -1
         ) {
-          // First press - move cursor to end
           setCursorPos(value.length);
           setAtEndBoundary(true);
           return;
         }
 
-        // Second press or already at end - trigger history navigation
         setAtEndBoundary(false); // Reset for next time
 
         if (historyIndex === -1) return; // Not in history mode
 
         if (historyIndex < history.length - 1) {
-          // Go to newer command
           setHistoryIndex(historyIndex + 1);
           const newerEntry = history[historyIndex + 1] ?? "";
           setValue(newerEntry);
           setCursorPos(newerEntry.length); // Cursor at end (traditional terminal behavior)
         } else {
-          // At the end of history - restore temporary input
           setHistoryIndex(-1);
           setValue(temporaryInput);
           setCursorPos(temporaryInput.length); // Cursor at end for user's draft
@@ -1584,7 +1528,6 @@ export function Input({
     }
   });
 
-  // Reset escape and ctrl-c state when user types (value changes)
   useEffect(() => {
     if (value !== previousValueRef.current && value !== "") {
       setEscapePressed(false);
@@ -1592,7 +1535,6 @@ export function Input({
       setCtrlCPressed(false);
       if (ctrlCTimerRef.current) clearTimeout(ctrlCTimerRef.current);
     }
-    // Reset boundary flags when value changes (user is typing)
     if (value !== previousValueRef.current) {
       setAtStartBoundary(false);
       setAtEndBoundary(false);
@@ -1600,17 +1542,13 @@ export function Input({
     previousValueRef.current = value;
   }, [value]);
 
-  // Exit history mode when user starts typing
   useEffect(() => {
-    // If user is in history mode and the value changes (they're typing)
-    // Exit history mode but keep the modified text
     if (historyIndex !== -1 && value !== history[historyIndex]) {
       setHistoryIndex(-1);
       clearParkedDraft(value);
     }
   }, [value, historyIndex, history, clearParkedDraft]);
 
-  // Clean up timers on unmount
   useEffect(() => {
     return () => {
       if (escapeTimerRef.current) clearTimeout(escapeTimerRef.current);
@@ -1622,21 +1560,17 @@ export function Input({
   }, []);
 
   const handleSubmit = useCallback(async () => {
-    // Don't submit if autocomplete is active with matches
     if (isAutocompleteActive) {
       return;
     }
 
     const previousValue = value;
 
-    // Handle bash mode submission
     if (isBashMode) {
       if (!previousValue.trim()) return;
 
-      // Input locking - don't accept new commands while one is running (LET-7199)
       if (bashRunning) return;
 
-      // Add to history if not empty and not a duplicate of the last entry
       setHistory((prev) => appendInputHistory(prev, previousValue));
 
       setHistoryIndex(-1);
@@ -1653,7 +1587,6 @@ export function Input({
       return;
     }
 
-    // Add to history if not empty and not a duplicate of the last entry
     if (previousValue.trim()) {
       setHistory((prev) => appendInputHistory(prev, previousValue));
     }
@@ -1667,7 +1600,6 @@ export function Input({
     inFlightSubmitTextRef.current = previousValue;
     try {
       const result = await onSubmit(previousValue);
-      // If message was NOT submitted (e.g. pending approval), restore it
       if (!result.submitted) {
         setValue(previousValue);
       }
@@ -1695,14 +1627,12 @@ export function Input({
     [],
   );
 
-  // Handle slash command selection from autocomplete (Enter key - execute)
   const handleCommandSelect = useCallback(
     async (selectedCommand: string) => {
       // For slash commands, submit immediately when selected via Enter
       // This provides a better UX - pressing Enter on /model should open the model selector
       const commandToSubmit = selectedCommand.trim();
 
-      // Add to history if not a duplicate of the last entry
       if (commandToSubmit) {
         setHistory((prev) => appendInputHistory(prev, commandToSubmit));
       }
@@ -1710,7 +1640,6 @@ export function Input({
       setHistoryIndex(-1);
       clearParkedDraft(commandToSubmit);
 
-      // The selected command replaces the current draft
       releaseDiscardedDraftPlaceholders(value, commandToSubmit);
       setValue(""); // Clear immediately for responsiveness
       await onSubmit(commandToSubmit);
@@ -1718,12 +1647,8 @@ export function Input({
     [onSubmit, value, releaseDiscardedDraftPlaceholders, clearParkedDraft],
   );
 
-  // Handle slash command autocomplete (Tab key - fill text only)
   const handleCommandAutocomplete = useCallback(
     (selectedCommand: string) => {
-      // Just fill in the command text without executing
-      // User can then press Enter to execute or continue typing arguments
-      // The filled command replaces the current draft
       releaseDiscardedDraftPlaceholders(value, selectedCommand);
       setValue(selectedCommand);
       setCursorPos(selectedCommand.length);
@@ -1750,7 +1675,6 @@ export function Input({
     glyph?: string;
     showExitHint?: boolean;
   } | null>(() => {
-    // Fall through to permission modes
     switch (currentMode) {
       case "acceptEdits":
         return { name: "accept edits", color: colors.status.processing };
@@ -1785,7 +1709,6 @@ export function Input({
     });
   }, [currentMode, showStatuslineTransientHint]);
 
-  // Create a horizontal line using box-drawing characters.
   const horizontalLine = useMemo(
     () => "─".repeat(Math.max(0, columns)),
     [columns],
@@ -1924,7 +1847,6 @@ export function Input({
   const lowerPane = useMemo(() => {
     return (
       <>
-        {/* Queue display - show whenever there are queued messages */}
         {messageQueue && messageQueue.length > 0 && (
           <QueuedMessages messages={messageQueue} queueMode={queueMode} />
         )}
@@ -1933,7 +1855,6 @@ export function Input({
           <Box flexDirection="column">
             {modPanelRow}
 
-            {/* Top horizontal divider */}
             {!suppressDividers && (
               <Text
                 dimColor={!isBashMode}
@@ -1943,7 +1864,6 @@ export function Input({
               </Text>
             )}
 
-            {/* Two-column layout for input, matching message components */}
             <Box flexDirection="row">
               <Box width={promptVisualWidth} flexShrink={0}>
                 <Text
@@ -1973,7 +1893,6 @@ export function Input({
               </Box>
             </Box>
 
-            {/* Bottom horizontal divider */}
             {!suppressDividers && (
               <Text
                 dimColor={!isBashMode}

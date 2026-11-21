@@ -131,7 +131,6 @@ export function canonicalizeRoot(input: string): string {
   }
 }
 
-/** Whether a canonical path is the given root or nested inside it. */
 function isWithinRoot(path: string, root: string): boolean {
   return path === root || path.startsWith(`${root}/`);
 }
@@ -156,10 +155,6 @@ function isTreeOrAncestorOfTree(
   );
 }
 
-/**
- * Resolve the caller-supplied agents trees (canonicalizing each), or fall back
- * to both backend trees when none were given. Shared by the policy builders.
- */
 function resolveAgentsTreeRootsInput(roots?: string[]): string[] {
   return roots?.length
     ? roots.map(canonicalizeRoot)

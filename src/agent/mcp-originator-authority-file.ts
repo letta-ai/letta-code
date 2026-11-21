@@ -25,7 +25,6 @@ import { fsyncDirectory } from "@/websocket/listener/durable-file-lock";
 
 export type McpOriginatorAuthorityState = "live" | "headerless" | "terminal";
 
-/** The non-live end states a retirement can target. */
 export type McpOriginatorRetirementState = Exclude<
   McpOriginatorAuthorityState,
   "live"

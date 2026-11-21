@@ -115,7 +115,6 @@ export async function resolveDiscordInboundAttachments(params: {
         localPath,
       };
 
-      // Encode images as base64 for vision
       if (kind === "image" && attachment.contentType?.startsWith("image/")) {
         entry.imageDataBase64 = buffer.toString("base64");
       }
@@ -193,9 +192,6 @@ export async function resolveDiscordThreadStarter(params: {
   }
 }
 
-/**
- * Fetch recent thread history for first-turn context hydration.
- */
 export async function resolveDiscordThreadHistory(params: {
   client: { channels: { fetch: (id: string) => Promise<unknown> } };
   threadChannelId: string;

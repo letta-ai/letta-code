@@ -796,8 +796,6 @@ export function emitStateSync(
   emitSubagentStateUpdate(socket, runtime, scope, routing);
 }
 
-// Subagent state
-
 function resolveSubagentScopeForSnapshot(
   runtime: RuntimeCarrier,
   scope?: {

@@ -15,10 +15,6 @@ import type {
 } from "@/types/protocol";
 import { resolveListMessagesRoute } from "./list-messages-routing";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Minimal backend interface — only what the handler needs
-// ─────────────────────────────────────────────────────────────────────────────
-
 export type ListMessagesHandlerBackend = Pick<
   Backend,
   "listConversationMessages"
@@ -34,10 +30,6 @@ export interface HandleListMessagesParams {
   requestId: string;
   backend: ListMessagesHandlerBackend;
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Handler
-// ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * Execute a list_messages control request and return the ControlResponse.

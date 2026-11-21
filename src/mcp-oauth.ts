@@ -57,7 +57,6 @@ interface PendingField<T> {
   baseVersion: number;
 }
 
-/** Credentials produced by a completed MCP OAuth flow. */
 export interface McpOAuthCredentialSnapshot {
   access_token: string;
   refresh_token?: string;

@@ -18,8 +18,6 @@ import { allowedUsersIncludes as whatsappAllowedUsersIncludes } from "./whatsapp
  * operator lists at least one admin.
  */
 
-// ── Scope ─────────────────────────────────────────────────────────
-
 export type ChannelAccessScope = "dm" | "group";
 
 export function resolveChannelAccessScope(
@@ -27,8 +25,6 @@ export function resolveChannelAccessScope(
 ): ChannelAccessScope {
   return chatType === "channel" ? "group" : "dm";
 }
-
-// ── Env-var allowlists ────────────────────────────────────────────
 
 const GLOBAL_ALLOWED_USERS_ENV = "LETTA_CHANNELS_ALLOWED_USERS";
 const GLOBAL_ADMIN_USERS_ENV = "LETTA_CHANNELS_ADMIN_USERS";
@@ -75,8 +71,6 @@ export function isChannelAllowAllUsersEnabled(channelId: string): boolean {
     isEnvFlagEnabled(process.env[channelEnvKey(channelId, "ALLOW_ALL_USERS")])
   );
 }
-
-// ── Sender access decisions ───────────────────────────────────────
 
 /**
  * Minimal structural view of a channel account used for access
@@ -228,8 +222,6 @@ export function buildChannelAccessDeniedMessage(channelId: string): string {
   const noun = ACCESS_DENIED_NOUNS[channelId] ?? "bot";
   return `You are not on the allowed users list for this ${noun}.`;
 }
-
-// ── Admin/user command tiers ──────────────────────────────────────
 
 /**
  * Read-only commands that stay reachable for every allowed user even

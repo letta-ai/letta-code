@@ -393,14 +393,11 @@ export function createChannelInboundRouter(deps: {
       return;
     }
 
-    // 3. Let adapters enrich inbound messages (e.g. thread context,
-    // transcription, attachment hydration), then format as XML/content parts.
     const preparedMessage = adapter.prepareInboundMessage
       ? await adapter.prepareInboundMessage(msg, { isFirstRouteTurn: false })
       : msg;
     const content = formatChannelNotification(preparedMessage);
 
-    // 4. Deliver or buffer
     deps.deliver({
       route,
       content,

@@ -76,7 +76,6 @@ export class RegistrationError extends Error {
   }
 }
 
-/** Returns true for errors that are likely transient and worth retrying. */
 function isTransientRegistrationError(error: unknown): boolean {
   if (error instanceof RegistrationError) {
     // 429 = rate limit. The server explicitly asked us to slow down, not stop.
@@ -152,7 +151,6 @@ export async function registerWithCloud(
       },
     }),
   }).catch((fetchError: unknown) => {
-    // Network-level failures (DNS, TCP, TLS, etc.)
     const msg =
       fetchError instanceof Error ? fetchError.message : String(fetchError);
     throw new RegistrationError(`Network error: ${msg}`, 0);
@@ -242,7 +240,6 @@ const REGISTER_MAX_JITTER_MS = 1_000;
 const REGISTER_JITTER_RATIO = 0.25;
 
 export interface RegisterRetryCallbacks {
-  /** Called before each retry attempt. */
   onRetry?: (attempt: number, delayMs: number, error: Error) => void;
   /** Maximum total retry duration. Defaults to two minutes. Use Infinity for long-running listeners. */
   maxDurationMs?: number;

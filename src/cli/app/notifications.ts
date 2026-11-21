@@ -8,7 +8,6 @@ export function sendDesktopNotification(
   message = "Awaiting your input",
   level: "info" | "warning" | "error" = "info",
 ) {
-  // Send terminal bell for native notification
   process.stdout.write("\x07");
   // Run Notification hooks (fire-and-forget, don't block)
   runNotificationHooks(message, level).catch((error) => {

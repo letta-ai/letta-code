@@ -96,7 +96,6 @@ function parseCloudflareEdgeError(
         rayId: obj.ray_id || undefined,
       };
     } catch {
-      // Not valid JSON, fall through to HTML parsing
     }
   }
 
@@ -172,7 +171,6 @@ function getErrorReasons(e: APIError): string[] {
     }
   }
 
-  // Fallback: infer known reasons from message text.
   const message = e.message?.toLowerCase() ?? "";
   for (const knownReason of [
     "not-enough-credits",
@@ -224,10 +222,6 @@ function getReasonText(e: APIError): string | undefined {
   return undefined;
 }
 
-/**
- * Check if the error is a rate limit error (429 with exceeded-quota)
- * Returns the timeToQuotaResetMs if it's a rate limit error, undefined otherwise
- */
 function getRateLimitResetMs(e: APIError): number | undefined {
   if (e.status !== 429) return undefined;
 
@@ -250,9 +244,6 @@ function getRateLimitResetMs(e: APIError): number | undefined {
   return undefined;
 }
 
-/**
- * Walk an error object to find and format Cloudflare HTML 52x pages.
- */
 function findAndFormatCloudflareEdgeError(e: unknown): string | undefined {
   if (typeof e === "string") return checkCloudflareEdgeError(e);
 
@@ -382,20 +373,15 @@ function findAndFormatProviderStreamDisconnectError(
   return undefined;
 }
 
-/**
- * Format a time duration in milliseconds to a human-readable string
- */
 function formatResetTime(ms: number): string {
   const now = new Date();
   const resetTime = new Date(now.getTime() + ms);
 
-  // Format the reset time
   const timeStr = resetTime.toLocaleTimeString([], {
     hour: "numeric",
     minute: "2-digit",
   });
 
-  // Calculate human-readable duration
   const totalMinutes = Math.ceil(ms / 60000);
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
@@ -412,10 +398,6 @@ function formatResetTime(ms: number): string {
   return `Resets at ${timeStr} (${durationStr})`;
 }
 
-/**
- * Check if the error is a resource limit error (402 with "You have reached your limit for X")
- * Returns the error message if it matches, undefined otherwise
- */
 function getResourceLimitMessage(e: APIError): string | undefined {
   if (e.status !== 402) return undefined;
 
@@ -430,7 +412,6 @@ function getResourceLimitMessage(e: APIError): string | undefined {
     }
   }
 
-  // Also check the message directly
   if (e.message?.includes("You have reached your limit for")) {
     // Extract just the error message part, not the full "402 {...}" string
     const match = e.message.match(/"error":"([^"]+)"/);
@@ -442,17 +423,11 @@ function getResourceLimitMessage(e: APIError): string | undefined {
   return undefined;
 }
 
-/**
- * Check if the error is an agent limit error (429 with agents-limit-exceeded)
- */
 function isAgentLimitError(e: APIError, reasons?: string[]): boolean {
   if (e.status !== 429) return false;
   return hasErrorReason(e, "agents-limit-exceeded", reasons);
 }
 
-/**
- * Check if the error is a credit exhaustion error (402 with not-enough-credits)
- */
 function isCreditExhaustedError(e: APIError, reasons?: string[]): boolean {
   // Check status code
   if (e.status !== 402) return false;
@@ -504,7 +479,6 @@ const CHATGPT_USAGE_LIMIT_HINT =
 export function checkChatGptUsageLimitError(text: string): string | undefined {
   if (!text.includes("usage_limit_reached")) return undefined;
 
-  // Try to extract the embedded JSON object
   const jsonStart = text.indexOf("{");
   if (jsonStart < 0) {
     return `ChatGPT usage limit reached. ${CHATGPT_USAGE_LIMIT_HINT}`;
@@ -515,7 +489,6 @@ export function checkChatGptUsageLimitError(text: string): string | undefined {
     const errorObj = parsed.error || parsed;
     if (errorObj.type !== "usage_limit_reached") return undefined;
 
-    // Extract plan type
     const planType = errorObj.plan_type;
     const planInfo = planType ? ` (${planType} plan)` : "";
 
@@ -535,22 +508,15 @@ export function checkChatGptUsageLimitError(text: string): string | undefined {
 
     return `ChatGPT usage limit reached${planInfo}. ${resetInfo}.\n${CHATGPT_USAGE_LIMIT_HINT}`;
   } catch {
-    // JSON parse failed — return generic message
     return `ChatGPT usage limit reached. ${CHATGPT_USAGE_LIMIT_HINT}`;
   }
 }
 
-/**
- * Walk an error object to find a ChatGPT usage_limit_reached detail string
- * and format it. Handles APIError, nested run-metadata objects, and strings.
- */
 function findAndFormatChatGptUsageLimit(e: unknown): string | undefined {
-  // Direct string
   if (typeof e === "string") return checkChatGptUsageLimitError(e);
 
   if (typeof e !== "object" || e === null) return undefined;
 
-  // APIError or Error — check .message
   if (e instanceof Error) {
     const msg = checkChatGptUsageLimitError(e.message);
     if (msg) return msg;
@@ -558,7 +524,6 @@ function findAndFormatChatGptUsageLimit(e: unknown): string | undefined {
 
   const obj = e as Record<string, unknown>;
 
-  // Check e.error.error.detail (run-metadata shape)
   if (obj.error && typeof obj.error === "object") {
     const errObj = obj.error as Record<string, unknown>;
     if (errObj.error && typeof errObj.error === "object") {
@@ -568,7 +533,6 @@ function findAndFormatChatGptUsageLimit(e: unknown): string | undefined {
         if (msg) return msg;
       }
     }
-    // Check e.error.detail
     if (typeof errObj.detail === "string") {
       const msg = checkChatGptUsageLimitError(errObj.detail);
       if (msg) return msg;
@@ -586,15 +550,10 @@ const ENCRYPTED_CONTENT_HINT = [
   "Use /clear to start a new conversation.",
 ].join("\n");
 
-/**
- * Walk the error object to find the `detail` string containing the encrypted content error.
- * Handles both direct (e.detail) and nested (e.error.error.detail) structures.
- */
 function findEncryptedContentDetail(e: unknown): string | undefined {
   if (typeof e !== "object" || e === null) return undefined;
   const obj = e as Record<string, unknown>;
 
-  // Check direct: e.detail
   if (
     typeof obj.detail === "string" &&
     obj.detail.includes("invalid_encrypted_content")
@@ -602,7 +561,6 @@ function findEncryptedContentDetail(e: unknown): string | undefined {
     return obj.detail;
   }
 
-  // Check nested: e.error.error.detail or e.error.detail
   if (obj.error && typeof obj.error === "object") {
     const errObj = obj.error as Record<string, unknown>;
     if (errObj.error && typeof errObj.error === "object") {
@@ -648,7 +606,6 @@ function checkEncryptedContentError(e: unknown): string | undefined {
     );
   }
 
-  // Try to parse the embedded JSON from the detail string for pretty-printing
   try {
     const jsonStart = detail.indexOf("{");
     if (jsonStart >= 0) {
@@ -670,7 +627,6 @@ function checkEncryptedContentError(e: unknown): string | undefined {
       }
     }
   } catch {
-    // Fall through to generic message
   }
 
   return (
@@ -740,11 +696,9 @@ export function formatErrorDetails(
     if (zaiMsg) return zaiMsg;
   }
 
-  // Handle APIError from streaming (event: error)
   if (e instanceof APIError) {
     const reasons = getErrorReasons(e);
 
-    // Check for rate limit error first - provide a friendly message with reset time
     const rateLimitResetMs = getRateLimitResetMs(e);
     if (rateLimitResetMs !== undefined) {
       const resetInfo =
@@ -754,7 +708,6 @@ export function formatErrorDetails(
       return `You've hit your usage limit. ${resetInfo}. View usage: ${LETTA_USAGE_URL}`;
     }
 
-    // Check for agent limit error (free tier agent count limit)
     if (isAgentLimitError(e, reasons)) {
       const { billingTier } = getErrorContext();
 
@@ -774,16 +727,13 @@ export function formatErrorDetails(
       return `The selected context window is not supported for this model. Switch models with /model or pick a model with a larger context window.`;
     }
 
-    // Check for resource limit error (e.g., "You have reached your limit for agents")
     const resourceLimitMsg = getResourceLimitMessage(e);
     if (resourceLimitMsg) {
-      // Extract the resource type (agents, tools, etc.) from the message
       const match = resourceLimitMsg.match(/limit for (\w+)/);
       const resourceType = match ? match[1] : "resources";
       return `${resourceLimitMsg}\nUpgrade at: ${LETTA_USAGE_URL}\nDelete ${resourceType} at: ${LETTA_AGENTS_URL}`;
     }
 
-    // Check for credit exhaustion error - provide a friendly message
     if (isCreditExhaustedError(e, reasons)) {
       const reasonText = getReasonText(e);
       if (reasonText) {
@@ -811,7 +761,6 @@ export function formatErrorDetails(
     if (hasErrorReason(e, "free-usage-exceeded", reasons)) {
       return `You've reached the Free plan hosted model usage limit. Switch to free hosted models with /model (glm-4.7 or minimax-m2.1), upgrade at ${LETTA_USAGE_URL}, or connect your own provider keys with /connect.`;
     }
-    // Check for nested error structure: e.error.error
     if (e.error && typeof e.error === "object" && "error" in e.error) {
       const errorData = e.error.error;
       if (errorData && typeof errorData === "object") {
@@ -823,7 +772,6 @@ export function formatErrorDetails(
         const errorType = type ? `[${type}] ` : "";
         const errorDetail = detail ? `\nDetail: ${detail}` : "";
 
-        // Extract run_id from e.error
         if ("run_id" in e.error && typeof e.error.run_id === "string") {
           runId = e.error.run_id;
         }
@@ -843,7 +791,6 @@ export function formatErrorDetails(
       }
     }
 
-    // Handle APIError with direct error structure: e.error.detail
     if (e.error && typeof e.error === "object") {
       const detail = "detail" in e.error ? e.error.detail : undefined;
       if ("run_id" in e.error && typeof e.error.run_id === "string") {
@@ -867,20 +814,16 @@ export function formatErrorDetails(
         : baseError;
     }
 
-    // Fallback for APIError with just message
     return fallback(e.message);
   }
 
-  // Handle regular Error objects
   if (e instanceof Error) {
     return fallback(e.message);
   }
 
-  // Fallback for any other type (e.g., plain objects thrown by SDK or other code)
   if (typeof e === "object" && e !== null) {
     const obj = e as Record<string, unknown>;
 
-    // Check common error-like properties
     if (typeof obj.message === "string") {
       return fallback(obj.message);
     }
@@ -891,7 +834,6 @@ export function formatErrorDetails(
       return fallback(obj.detail);
     }
 
-    // Last resort: JSON stringify
     try {
       return fallback(JSON.stringify(e, null, 2));
     } catch {
@@ -962,9 +904,6 @@ function getProviderDisplayName(): string {
   return ENDPOINT_TYPE_DISPLAY_NAMES[modelEndpointType] ?? modelEndpointType;
 }
 
-/**
- * Create a terminal hyperlink to the agent with run ID displayed
- */
 function createAgentLink(
   runId: string,
   agentId: string,

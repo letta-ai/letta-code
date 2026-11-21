@@ -33,11 +33,6 @@ function chunkStream(
   } as unknown as Stream<LettaStreamingResponse>;
 }
 
-/**
- * Runs a turn whose client-side tool executes and whose approval continuation
- * fails via `failContinuation`, then sends a fresh user input and returns the
- * messages that input carried.
- */
 async function runFailedContinuationThenNextInput(
   failContinuation: (runtime: ConversationRuntime) => never,
 ) {

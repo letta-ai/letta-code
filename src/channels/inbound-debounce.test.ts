@@ -141,7 +141,6 @@ describe("createInboundDebouncer", () => {
     // Neither has flushed yet — "a"'s buffer is waiting for timer, and
     // "immediate-1" reserved a slot behind "a"'s flush.
     expect(flushOrder).toEqual([]);
-    // Release "a"'s flush, which will also cause "immediate-1" to flush next.
     blocker.resolve();
     await sleep(60); // allow timer + reserved slots to drain
     await bufferedDispatch;
@@ -224,11 +223,9 @@ describe("createInboundDebouncer", () => {
       },
     });
 
-    // Fill up the two slots with buffered flushes (no timer fires yet).
     await debouncer.enqueue({ key: "a", value: "a1" });
     await debouncer.enqueue({ key: "b", value: "b1" });
     expect(flushed).toEqual([]);
-    // Third key saturates the map → falls back to immediate keyed work.
     await debouncer.enqueue({ key: "c", value: "c1" });
     await flushMicrotasks();
     expect(flushed).toEqual([["c1"]]);
@@ -253,7 +250,6 @@ describe("createInboundDebouncer", () => {
     await debouncer.enqueue({ key: "k", value: "boom" });
     await sleep(30);
     expect(errors).toEqual(["boom"]);
-    // Another item for the same key still flushes after the failure.
     await debouncer.enqueue({ key: "k", value: "ok" });
     await sleep(30);
     expect(flushed).toEqual([["ok"]]);

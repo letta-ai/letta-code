@@ -92,8 +92,6 @@ function writeTrajectory(exportDir: string, file: string, text: string) {
   );
 }
 
-// Export with two renderable sessions in one existing project, one session
-// without user messages, one whose file is missing, and one export error.
 function makeExport(project: string): string {
   const exportDir = makeTempDir();
   writeTrajectory(exportDir, "codex/a.json", "always use uv");

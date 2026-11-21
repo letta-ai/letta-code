@@ -19,12 +19,6 @@ import {
   summarizeRecentMessages,
 } from "./process-diagnostics";
 
-/**
- * Tests for --input-format stream-json bidirectional communication.
- * These verify the CLI's wire format for bidirectional communication.
- */
-
-// Prescriptive prompt to ensure single-step response without tool use
 const FAST_PROMPT =
   "This is a test. Do not call any tools. Just respond with the word OK and nothing else.";
 
@@ -72,7 +66,6 @@ async function runBidirectionalOnce(
     let initReceived = false;
     let closing = false;
 
-    // Count expected responses based on input types
     const inputTypes = inputs.map((i) => {
       try {
         const parsed = JSON.parse(i);
@@ -94,11 +87,6 @@ async function runBidirectionalOnce(
 
     const maybeClose = () => {
       if (closing) return;
-
-      // For invalid input, close after receiving error
-      // For control requests only, close after all control_responses
-      // For user messages, close after all results
-      // For mixed, close when we have all expected responses
 
       const allUserResultsDone =
         expectedUserResults === 0 || userResultsReceived >= expectedUserResults;
@@ -124,19 +112,16 @@ async function runBidirectionalOnce(
         const obj = JSON.parse(line);
         objects.push(obj);
 
-        // Check for init message - signal to start sending inputs
         if (obj.type === "system" && obj.subtype === "init" && !initReceived) {
           initReceived = true;
           sendNextInput();
         }
 
-        // Check for control_response
         if (obj.type === "control_response") {
           controlResponsesReceived++;
           maybeClose();
         }
 
-        // Check for result message
         if (obj.type === "result") {
           userResultsReceived++;
           // If more inputs to send, send next after a brief delay
@@ -144,18 +129,15 @@ async function runBidirectionalOnce(
           if (inputIndex < inputs.length) {
             setTimeout(sendNextInput, 200);
           }
-          // Always check if we should close (might have received all expected results)
           maybeClose();
         }
 
-        // Check for error message (for invalid JSON input test)
         if (obj.type === "error" && hasInvalidInput) {
           errorResponsesReceived++;
           closing = true;
           setTimeout(() => proc.stdin?.end(), 500);
         }
       } catch {
-        // Not valid JSON, ignore
       }
     };
 
@@ -183,12 +165,10 @@ async function runBidirectionalOnce(
     });
 
     proc.on("close", (code) => {
-      // Process any remaining buffer
       if (buffer.trim()) {
         processLine(buffer);
       }
 
-      // Check if we got enough results
       const gotExpectedResults =
         userResultsReceived >= expectedUserResults &&
         isBackgroundComplete(objects) &&
@@ -243,7 +223,6 @@ async function runBidirectionalOnce(
       }
     });
 
-    // Safety timeout
     const timeout = setTimeout(() => {
       proc.kill();
       reject(
@@ -366,7 +345,6 @@ describe("input-format stream-json", () => {
         }),
       ])) as WireMessage[];
 
-      // Should have init event
       const initEvent = objects.find(
         (o): o is SystemInitMessage =>
           o.type === "system" && "subtype" in o && o.subtype === "init",
@@ -377,7 +355,6 @@ describe("input-format stream-json", () => {
       expect(initEvent?.model).toBeDefined();
       expect(initEvent?.tools).toBeInstanceOf(Array);
 
-      // Should have control_response
       const controlResponse = objects.find(
         (o): o is ControlResponse => o.type === "control_response",
       );
@@ -404,26 +381,22 @@ describe("input-format stream-json", () => {
         }),
       ])) as WireMessage[];
 
-      // Should have init event
       const initEvent = objects.find(
         (o): o is SystemInitMessage =>
           o.type === "system" && "subtype" in o && o.subtype === "init",
       );
       expect(initEvent).toBeDefined();
 
-      // Should have message events
       const messageEvents = objects.filter(
         (o): o is WireMessage & { type: "message" } => o.type === "message",
       );
       expect(messageEvents.length).toBeGreaterThan(0);
 
-      // All messages should have session_id
       // uuid is present on content messages (reasoning, assistant) but not meta messages (stop_reason, usage_statistics)
       for (const msg of messageEvents) {
         expect(msg.session_id).toBeDefined();
       }
 
-      // Content messages should have uuid
       const contentMessages = messageEvents.filter(
         (m) =>
           "message_type" in m &&
@@ -434,7 +407,6 @@ describe("input-format stream-json", () => {
         expect(msg.uuid).toBeDefined();
       }
 
-      // Should have result
       const result = objects.find(
         (o): o is ResultMessage => o.type === "result",
       );
@@ -473,20 +445,17 @@ describe("input-format stream-json", () => {
         1, // one retry for transient API slowness
       )) as WireMessage[];
 
-      // Should have at least two results (one per turn)
       const results = objects.filter(
         (o): o is ResultMessage => o.type === "result",
       );
       expect(results.length).toBeGreaterThanOrEqual(2);
 
-      // Both results should be successful
       for (const result of results) {
         expect(result.subtype).toBe("success");
         expect(result.session_id).toBeDefined();
         expect(result.agent_id).toBeDefined();
       }
 
-      // The session_id should be consistent across turns (same agent)
       const firstResult = results[0];
       const lastResult = results[results.length - 1];
       expect(firstResult).toBeDefined();
@@ -509,7 +478,6 @@ describe("input-format stream-json", () => {
         }),
       ])) as WireMessage[];
 
-      // Should have control_response for interrupt
       const controlResponse = objects.find(
         (o): o is ControlResponse =>
           o.type === "control_response" && o.response?.request_id === "int_1",
@@ -599,20 +567,17 @@ describe("input-format stream-json", () => {
         ["--include-partial-messages"],
       )) as WireMessage[];
 
-      // Should have stream_event messages (not just "message" type)
       const streamEvents = objects.filter(
         (o): o is StreamEvent => o.type === "stream_event",
       );
       expect(streamEvents.length).toBeGreaterThan(0);
 
-      // Each stream_event should have the event payload and session_id
       // uuid is present on content events but not meta events (stop_reason, usage_statistics)
       for (const event of streamEvents) {
         expect(event.event).toBeDefined();
         expect(event.session_id).toBeDefined();
       }
 
-      // Content events should have uuid
       const contentEvents = streamEvents.filter(
         (e) =>
           "message_type" in e.event &&
@@ -623,7 +588,6 @@ describe("input-format stream-json", () => {
         expect(event.uuid).toBeDefined();
       }
 
-      // Should still have result
       const result = objects.find(
         (o): o is ResultMessage => o.type === "result",
       );
@@ -644,7 +608,6 @@ describe("input-format stream-json", () => {
         }),
       ])) as WireMessage[];
 
-      // Should have control_response with error
       const controlResponse = objects.find(
         (o): o is ControlResponse =>
           o.type === "control_response" &&
@@ -659,12 +622,10 @@ describe("input-format stream-json", () => {
   test(
     "invalid JSON input returns error message",
     async () => {
-      // Use raw string instead of JSON
       const objects = (await runBidirectional([
         "not valid json",
       ])) as WireMessage[];
 
-      // Should have error message
       const errorMsg = objects.find(
         (o): o is ErrorMessage => o.type === "error",
       );

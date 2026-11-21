@@ -1,9 +1,3 @@
-/**
- * Helpers for the PRQ4 TUI QueueRuntime mirror.
- *
- * These are extracted as pure functions so they are independently unit-testable
- * without importing React or App.tsx.
- */
 
 import type { QueueBlockedReason } from "@/types/protocol";
 
@@ -19,11 +13,6 @@ export type TuiQueueGatingConditions = {
   abortControllerActive: boolean;
 };
 
-/**
- * Map the TUI dequeue gating conditions to a QueueBlockedReason.
- * Priority order matches the plan — first match wins.
- * Returns null when all conditions are clear (dequeue should proceed).
- */
 export function getTuiBlockedReason(
   c: TuiQueueGatingConditions,
 ): QueueBlockedReason | null {

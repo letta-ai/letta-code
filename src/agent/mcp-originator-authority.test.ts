@@ -212,7 +212,6 @@ describe("durability", () => {
       resetMcpOriginatorAuthority();
       expect(mcpOriginatorAuthorityAllows("run-old", undefined)).toBe(true);
       expect(readMcpOriginatorAuthorityForTests("run-old")).toBeUndefined();
-      // A pruned file is rewritten without the stale record on next touch.
       noteMcpOriginatorDelivery("run-new", 1);
       const file = JSON.parse(readFileSync(path, "utf8")) as {
         records: Record<string, unknown>;
@@ -242,8 +241,6 @@ describe("cross-process durability (evil-shub round 4)", () => {
     );
     expect(getMcpOriginatorToken("run-x")).toBeUndefined();
     expect(readMcpOriginatorAuthorityForTests("run-x")?.floor).toBe(2);
-    // The gen1 zombie is now rejected by the floor even with a live-owner
-    // proof available again.
     recordMcpOriginatorDelivery(
       {
         mcp_originator_token: "token-a",
@@ -416,7 +413,6 @@ describe("degraded durable file fail-closed (evil-shub round 5 P1)", () => {
         admitted: false,
         permanent: false,
       });
-      // Operator restores a valid file: the next read heals.
       writeFileSync(path, JSON.stringify({ version: 1, records: {} }));
       expect(admitMcpOriginatorDelivery("run-a", 1)).toEqual({
         admitted: true,
@@ -495,7 +491,6 @@ describe("atomic admit and use-time recheck (evil-shub round 5 P2)", () => {
         }),
       ).toBe("denied_permanent");
     }
-    // No poisoned floor, no entry, and a well-formed delivery still admits.
     expect(readMcpOriginatorAuthorityForTests("run-bad")).toBeUndefined();
     expect(getMcpOriginatorToken("run-bad")).toBeUndefined();
     expect(admitMcpOriginatorDelivery("run-bad", 2)).toEqual({
@@ -646,14 +641,11 @@ describe("durable retirement retry (evil-shub round-8 P1)", () => {
       rmSync(path);
       mkdirSync(path);
       expect(markMcpOriginatorHeaderless("run-a", 1)).toBe(false);
-      // The in-memory overlay denies use immediately…
       expect(mcpOriginatorAuthorityPermitsUse("run-a", 1)).toBe(false);
-      // …and the retirement is registered for retry.
       expect(
         readPendingMcpOriginatorRetirementsForTests().get("run-a")?.state,
       ).toBe("headerless");
 
-      // Heal persistence and drive the retry: the mark lands durably.
       rmdirSync(path);
       retryPendingMcpOriginatorRetirements();
       expect(readPendingMcpOriginatorRetirementsForTests().size).toBe(0);
@@ -663,7 +655,6 @@ describe("durable retirement retry (evil-shub round-8 P1)", () => {
       expect(disk.records["run-a"]?.state).toBe("headerless");
       expect(disk.records["run-a"]?.floor).toBe(1);
 
-      // A reload (process restart) preserves the boundary fail-closed.
       resetMcpOriginatorAuthority();
       expect(admitMcpOriginatorDelivery("run-a", 2)).toEqual({
         admitted: false,
@@ -779,7 +770,6 @@ describe("durable retirement intent (evil-shub round-9 P1)", () => {
       expect(disk.records["run-a"]?.retiringTo).toBeUndefined();
       expect(disk.records["run-a"]?.floor).toBe(2);
 
-      // And the boundary survives another reload.
       resetMcpOriginatorAuthority();
       expect(admitMcpOriginatorDelivery("run-a", 3)).toEqual({
         admitted: false,

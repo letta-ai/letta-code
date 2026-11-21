@@ -30,7 +30,6 @@ type Props = {
   allowPersistence?: boolean;
 };
 
-// Horizontal line character for Claude Code style
 const SOLID_LINE = "─";
 
 // Rows the live area needs besides the summary and prompt while this dialog
@@ -41,11 +40,6 @@ const SOLID_LINE = "─";
 const APPROVAL_CHROME_ROWS = 15;
 const MIN_PROMPT_ROWS = 3;
 
-/**
- * InlineTaskApproval - Renders Task tool approval UI inline with pretty formatting
- *
- * Shows subagent type, description, and prompt in a readable format.
- */
 export const InlineTaskApproval = memo(
   ({
     taskInfo,
@@ -68,7 +62,6 @@ export const InlineTaskApproval = memo(
     const terminalRows = useTerminalRows();
     useProgressIndicator();
 
-    // Custom option index depends on whether "always" option is shown
     const customOptionIndex = allowPersistence ? 2 : 1;
     const maxOptionIndex = customOptionIndex;
     const isOnCustomOption = selectedOption === customOptionIndex;
@@ -79,13 +72,11 @@ export const InlineTaskApproval = memo(
       (input, key) => {
         if (!isFocused) return;
 
-        // CTRL-C: cancel (queue denial, return to input)
         if (key.ctrl && input === "c") {
           onCancel?.();
           return;
         }
 
-        // Arrow navigation always works
         if (key.upArrow) {
           setSelectedOption((prev) => Math.max(0, prev - 1));
           return;
@@ -95,7 +86,6 @@ export const InlineTaskApproval = memo(
           return;
         }
 
-        // When on custom input option
         if (isOnCustomOption) {
           if (key.return) {
             if (customReason.trim()) {
@@ -111,11 +101,9 @@ export const InlineTaskApproval = memo(
             }
             return;
           }
-          // Handle text input (arrows, backspace, typing)
           if (handleKey(input, key)) return;
         }
 
-        // When on regular options
         if (key.return) {
           if (selectedOption === 0) {
             onApprove();
@@ -129,7 +117,6 @@ export const InlineTaskApproval = memo(
           return;
         }
 
-        // Number keys for quick selection (only for fixed options, not custom text input)
         if (input === "1") {
           onApprove();
           return;
@@ -142,7 +129,6 @@ export const InlineTaskApproval = memo(
       { isActive: isFocused },
     );
 
-    // Generate horizontal line
     const solidLine = SOLID_LINE.repeat(Math.max(columns, 10));
     const contentWidth = Math.max(0, columns - 4); // 2 padding on each side
 
@@ -168,17 +154,13 @@ export const InlineTaskApproval = memo(
 
       return (
         <>
-          {/* Top solid line */}
           <Text dimColor>{solidLine}</Text>
 
-          {/* Header */}
           <Text bold color={colors.approval.header}>
             Dispatch subagent?
           </Text>
 
-          {/* Task details */}
           <Box paddingLeft={2} flexDirection="column" marginTop={1}>
-            {/* Type — Description (with optional model) */}
             <Box flexDirection="row">
               <Box flexGrow={1} width={contentWidth}>
                 <Text wrap="wrap">
@@ -195,7 +177,6 @@ export const InlineTaskApproval = memo(
               </Box>
             </Box>
 
-            {/* Prompt */}
             <Box marginTop={1}>
               <Box flexGrow={1} width={contentWidth}>
                 <Text wrap="wrap" dimColor>
@@ -208,14 +189,12 @@ export const InlineTaskApproval = memo(
       );
     }, [taskInfo, solidLine, contentWidth, terminalRows]);
 
-    // Hint text based on state
     const hintText = isOnCustomOption
       ? customReason
         ? "Enter to submit · Esc to clear"
         : "Type reason · Esc to cancel"
       : "Enter to select · Esc to cancel";
 
-    // Generate "always" text for Task tool
     const alwaysText =
       approveAlwaysText || "Yes, allow subagent operations during this session";
 
@@ -224,9 +203,7 @@ export const InlineTaskApproval = memo(
         {/* Static task content - memoized to prevent re-render on keystroke */}
         {memoizedTaskContent}
 
-        {/* Options */}
         <Box marginTop={1} flexDirection="column">
-          {/* Option 1: Yes */}
           <Box flexDirection="row">
             <Box width={5} flexShrink={0}>
               <Text
@@ -249,7 +226,6 @@ export const InlineTaskApproval = memo(
             </Box>
           </Box>
 
-          {/* Option 2: Yes, always (only if persistence allowed) */}
           {allowPersistence && (
             <Box flexDirection="row">
               <Box width={5} flexShrink={0}>
@@ -274,7 +250,6 @@ export const InlineTaskApproval = memo(
             </Box>
           )}
 
-          {/* Custom input option */}
           <Box flexDirection="row">
             <Box width={5} flexShrink={0}>
               <Text
@@ -300,7 +275,6 @@ export const InlineTaskApproval = memo(
           </Box>
         </Box>
 
-        {/* Hint */}
         <Box marginTop={1}>
           <Text dimColor>{hintText}</Text>
         </Box>

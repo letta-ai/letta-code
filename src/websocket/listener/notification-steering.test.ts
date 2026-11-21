@@ -274,7 +274,6 @@ for (const producer of [
                 { ...options, preparedToolContext: prepared, skillSources: [] },
               );
               for await (const _event of stream) {
-                /* Read the SDK response. */
               }
               return {
                 kind: "terminal",

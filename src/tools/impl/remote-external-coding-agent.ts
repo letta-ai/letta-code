@@ -243,10 +243,8 @@ export function classifyRemoteExternalWorkerControlError(
   return "other";
 }
 
-/** Longest wait between reconnect attempts while the computer is unreachable. */
 const MAX_RECONNECT_DELAY_MS = 30_000;
 
-/** Follows the computer's snapshot for one launch, reconnecting if the socket drops. */
 class RemoteSubagentFollower {
   private latest: SubagentSnapshot | undefined;
   private client: AppServerClient | undefined;
@@ -303,7 +301,6 @@ class RemoteSubagentFollower {
     this.launched = true;
   }
 
-  /** Read the worker's events after `afterSeq` over the current connection. */
   async readEvents(afterSeq: number) {
     const subagentId = this.latest?.subagent_id;
     if (!this.client || this.disconnected || !subagentId)
@@ -320,7 +317,6 @@ class RemoteSubagentFollower {
     return page;
   }
 
-  /** The worker's native ID from the most recent status update, if any. */
   latestAgentId(): string | undefined {
     return this.latest?.agent_id ?? undefined;
   }

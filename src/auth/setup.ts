@@ -12,10 +12,6 @@ interface RunSetupOptions {
   persistBackendPreference?: boolean;
 }
 
-/**
- * Run the setup flow
- * Returns a promise that resolves when setup is complete
- */
 export async function runSetup(
   options: RunSetupOptions = {},
 ): Promise<SetupResult> {

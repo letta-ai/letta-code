@@ -543,12 +543,6 @@ export async function forceToolsetSwitch(
   await loadTools(undefined, { resolvedToolset: toolsetName });
 }
 
-/**
- * Switches the loaded toolset based on the target model identifier.
- *
- * @param modelIdentifier - The model handle/id
- * @param providerType - Provider type used to refine toolset derivation
- */
 export async function switchToolsetForModel(
   modelIdentifier: string,
   providerType?: string | null,

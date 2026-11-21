@@ -1,5 +1,3 @@
-// src/agent/check-approval.ts
-// Check for pending approvals and retrieve recent message history when resuming an agent/conversation
 
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
@@ -39,7 +37,6 @@ const RESUME_BACKFILL_MESSAGE_TYPES: MessageType[] = [
  */
 function isBackfillEnabled(): boolean {
   const val = process.env.LETTA_BACKFILL;
-  // Default to enabled (true) - only disable if explicitly set to "0" or "false"
   return val !== "0" && val !== "false";
 }
 

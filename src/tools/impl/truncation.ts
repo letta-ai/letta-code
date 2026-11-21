@@ -1,15 +1,9 @@
-/**
- * Centralized truncation utilities for tool outputs.
- * Implements limits similar to Claude Code to prevent excessive token usage.
- * When outputs exceed limits, full content can be written to overflow files.
- */
 
 import { debugLog } from "@/utils/debug.js";
 import { OVERFLOW_CONFIG, writeOverflowFile } from "./overflow.js";
 
 // Limits based on Claude Code's proven production values
 export const LIMITS = {
-  // Command output limits
   BASH_OUTPUT_CHARS: 30_000, // 30K characters for bash/shell output
   BASH_FAILURE_OUTPUT_CHARS: 10_000, // Head-and-tail excerpt for failures
   TASK_OUTPUT_CHARS: 30_000, // 30K characters for subagent task output
@@ -20,12 +14,10 @@ export const LIMITS = {
   // agent actually asked for. The full transcript stays in the output file.
   BASH_NOTIFICATION_CHARS: 10_000,
 
-  // File reading limits
   READ_MAX_LINES: 2_000, // Max lines per file read
   READ_MAX_CHARS_PER_LINE: 2_000, // Max characters per line
   READ_OUTPUT_CHARS: 30_000, // 30K total characters for file read output
 
-  // Search/discovery limits
   GREP_OUTPUT_CHARS: 10_000, // Max characters for grep results
   GLOB_MAX_FILES: 2_000, // Max number of file paths
   LS_MAX_ENTRIES: 1_000, // Max directory entries
@@ -38,9 +30,6 @@ export const LIMITS = {
   TOOL_RETURN_MAX_CHARS: 32_000,
 } as const;
 
-/**
- * Options for truncation with overflow support
- */
 export interface TruncationOptions {
   /** Working directory for overflow file creation */
   workingDirectory?: string;
@@ -52,10 +41,6 @@ export interface TruncationOptions {
   secrets?: Readonly<Record<string, string>>;
 }
 
-/**
- * Writes the full output to an overflow file when overflow is enabled and a
- * working directory was provided. Returns undefined when nothing was written.
- */
 function writeOverflow(
   getContent: () => string,
   toolName: string,
@@ -105,7 +90,6 @@ export function truncateByChars(
 
   let truncated: string;
   if (useMiddleTruncation) {
-    // Middle truncation: keep beginning and end
     const halfMax = Math.floor(shownChars / 2);
     const beginning = text.slice(0, halfMax);
     const end = text.slice(-halfMax);
@@ -113,7 +97,6 @@ export function truncateByChars(
     const middleNotice = `\n... [${omittedChars.toLocaleString()} characters omitted] ...\n`;
     truncated = beginning + middleNotice + end;
   } else {
-    // Post truncation: keep beginning only
     truncated = text.slice(0, shownChars);
   }
 
@@ -150,13 +133,11 @@ export function truncateArray<T>(
     return { content: formatter(items), wasTruncated: false };
   }
 
-  // Determine if we should use middle truncation
   const useMiddleTruncation =
     options?.useMiddleTruncation ?? OVERFLOW_CONFIG.MIDDLE_TRUNCATE;
 
   let selectedItems: T[];
   if (useMiddleTruncation) {
-    // Middle truncation: keep beginning and end
     const halfMax = Math.floor(maxItems / 2);
     const beginning = items.slice(0, halfMax);
     const end = items.slice(-halfMax);
@@ -164,7 +145,6 @@ export function truncateArray<T>(
     // so we'll just show beginning and end
     selectedItems = [...beginning, ...end];
   } else {
-    // Post truncation: keep beginning only
     selectedItems = items.slice(0, maxItems);
   }
 

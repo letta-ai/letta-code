@@ -12,11 +12,9 @@ export type PhaseOverlay = "sin-pulse" | "two-sided" | null;
 export type PhaseVisual = {
   /** Sweep tick in ms. Smaller = faster bright cell. */
   tickMs: number;
-  /** Sweep direction across the text. */
   direction: "ltr" | "rtl";
   /** Color of non-shimmer characters (the resting tint). */
   baseColor: string;
-  /** Color of the bright cell. */
   shimmerColor: string;
   /** Optional whole-word color modulation layered under the sweep. */
   overlay: PhaseOverlay;

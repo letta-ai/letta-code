@@ -42,10 +42,6 @@
 
 import type { StreamDelta } from "@/types/protocol_v2";
 
-// ─────────────────────────────────────────────────────────────────────────
-// Event types
-// ─────────────────────────────────────────────────────────────────────────
-
 /**
  * Emitted once per `tool_call_id` when the first `tool_call_message` or
  * `approval_request_message` for that call arrives. Carries the tool
@@ -83,22 +79,12 @@ export interface ToolCallCompleteEvent {
   success: boolean;
 }
 
-/**
- * Union of all tool lifecycle events.
- */
 export type ToolCallEvent =
   | ToolCallStartEvent
   | ToolCallArgumentsDeltaEvent
   | ToolCallCompleteEvent;
 
-/**
- * Callback invoked for every tool lifecycle event.
- */
 export type ToolLifecycleCallback = (event: ToolCallEvent) => void;
-
-// ─────────────────────────────────────────────────────────────────────────
-// Internal tracking state
-// ─────────────────────────────────────────────────────────────────────────
 
 interface ToolCallState {
   toolCallId: string;
@@ -109,10 +95,6 @@ interface ToolCallState {
   clientManaged: boolean;
   terminalStatus: "success" | "error" | null;
 }
-
-// ─────────────────────────────────────────────────────────────────────────
-// Wire-shape helpers (operate on plain records, no Letta client dep)
-// ─────────────────────────────────────────────────────────────────────────
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -241,7 +223,6 @@ function extractToolReturns(record: UnknownRecord | null): Array<{
     output: string;
   }> = [];
 
-  // Plural form: tool_returns array
   const toolReturnsValue = record.tool_returns;
   if (Array.isArray(toolReturnsValue)) {
     for (const raw of toolReturnsValue) {
@@ -265,7 +246,6 @@ function extractToolReturns(record: UnknownRecord | null): Array<{
     }
   }
 
-  // Singular form: top-level tool_call_id + status + tool_return
   const topLevelToolCallId = stringValue(record.tool_call_id);
   const topLevelStatus = asToolReturnStatus(record.status);
   if (!topLevelToolCallId || !topLevelStatus) {
@@ -286,10 +266,6 @@ function asToolReturnStatus(value: unknown): "success" | "error" | null {
   }
   return null;
 }
-
-// ─────────────────────────────────────────────────────────────────────────
-// Tool lifecycle tracker
-// ─────────────────────────────────────────────────────────────────────────
 
 /**
  * Stateful tracker that aggregates partial tool-call and tool-return
@@ -319,12 +295,6 @@ export interface ToolLifecycleTracker {
   dispose(): void;
 }
 
-/**
- * Create a {@link ToolLifecycleTracker} that emits events through the
- * provided callback.
- *
- * @param onEvent - Callback invoked for each lifecycle event.
- */
 export function createToolLifecycleTracker(
   onEvent: ToolLifecycleCallback,
 ): ToolLifecycleTracker {
@@ -360,7 +330,6 @@ export function createToolLifecycleTracker(
     }
     const state = getOrCreate(toolCallId);
 
-    // Emit start once per tool_call_id.
     if (!state.started) {
       state.started = true;
       if (name) {
@@ -376,7 +345,6 @@ export function createToolLifecycleTracker(
       state.name = name;
     }
 
-    // Emit arguments delta if present (non-null, including empty string).
     if (argumentsDelta !== null) {
       state.arguments += argumentsDelta;
       onEvent({
@@ -492,11 +460,6 @@ export function createToolLifecycleTracker(
   return { process, failPending, dispose };
 }
 
-/**
- * Convenience wrapper: process an array of `StreamDelta` values through
- * a fresh tracker, collecting all emitted events into an array. Useful
- * for testing and one-shot batch processing.
- */
 export function collectToolLifecycleEvents(
   deltas: Iterable<StreamDelta>,
 ): ToolCallEvent[] {

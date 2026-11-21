@@ -22,16 +22,6 @@ type BashCommandLine = {
   streaming?: StreamingState;
 };
 
-/**
- * BashCommandMessage - Renders bash mode command output
- * Similar to CommandMessage but with red ! indicator instead of dot
- *
- * Features:
- * - Two-column layout with left gutter (2 chars) and right content area
- * - Red ! indicator (blinking when running)
- * - Proper terminal width calculation and wrapping
- * - Markdown rendering for output
- */
 export const BashCommandMessage = memo(
   ({ line }: { line: BashCommandLine }) => {
     const columns = useTerminalWidth();
@@ -51,7 +41,6 @@ export const BashCommandMessage = memo(
 
     return (
       <Box flexDirection="column">
-        {/* Command input */}
         <Box flexDirection="row">
           <Box width={2} flexShrink={0}>
             {getIndicatorElement()}
@@ -62,7 +51,6 @@ export const BashCommandMessage = memo(
           </Box>
         </Box>
 
-        {/* Streaming output during execution */}
         {line.phase === "running" && line.streaming && (
           <StreamingOutputDisplay
             streaming={line.streaming}
@@ -70,11 +58,9 @@ export const BashCommandMessage = memo(
           />
         )}
 
-        {/* Full output after completion (no collapse for bash mode) */}
         {line.phase === "finished" &&
           line.output &&
           (line.output === INTERRUPTED_BY_USER ? (
-            // Red styling for interrupted commands (LET-7199)
             <Box flexDirection="row">
               <Box width={5} flexShrink={0}>
                 <Text>{`  ${CLI_GLYPHS.result}  `}</Text>
@@ -85,7 +71,6 @@ export const BashCommandMessage = memo(
             <CollapsedOutputDisplay output={line.output} maxLines={Infinity} />
           ))}
 
-        {/* Fallback: show output when phase is undefined (legacy bash commands before streaming) */}
         {!line.phase && line.output && (
           <Box flexDirection="row">
             <Box width={5} flexShrink={0}>

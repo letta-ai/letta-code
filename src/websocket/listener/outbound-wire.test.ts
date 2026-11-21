@@ -9,7 +9,6 @@ import {
 } from "@/websocket/listener/outbound-wire";
 import type { ListenerTransport } from "@/websocket/listener/transport";
 
-/** Local-kind fake: settable buffer, records sends. */
 function makeLocalTransport(options?: { bufferedAmount?: number }) {
   const sent: string[] = [];
   const transport = {

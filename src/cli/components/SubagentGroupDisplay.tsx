@@ -59,10 +59,6 @@ function formatToolArgs(argsStr: string): string {
   }
 }
 
-// ============================================================================
-// Subcomponents
-// ============================================================================
-
 interface AgentRowProps {
   agent: SubagentState;
   isLast: boolean;
@@ -100,7 +96,6 @@ const AgentRow = memo(
         agent.status === "completed" || agent.status === "error";
       return (
         <Box flexDirection="column">
-          {/* Main row: tree char + description + type + model (no stats) */}
           <Box flexDirection="row">
             <Text wrap="truncate-end">
               <Text color={colors.subagent.treeChar}>
@@ -132,7 +127,6 @@ const AgentRow = memo(
               )}
             </Text>
           </Box>
-          {/* Simple status line */}
           {!hideBackgroundStatusLine && (
             <Box flexDirection="row">
               {!agent.agentURL &&
@@ -173,10 +167,8 @@ const AgentRow = memo(
       );
     }
 
-    // Full mode: all details including live tool calls
     return (
       <Box flexDirection="column">
-        {/* Main row: tree char + description + type + model + stats */}
         <Box flexDirection="row">
           <Text wrap="truncate-end">
             <Text color={colors.subagent.treeChar}>
@@ -213,7 +205,6 @@ const AgentRow = memo(
           </Text>
         </Box>
 
-        {/* Subagent URL */}
         {agent.agentURL && (
           <Box flexDirection="row">
             <Text color={colors.subagent.treeChar}>
@@ -225,7 +216,6 @@ const AgentRow = memo(
           </Box>
         )}
 
-        {/* Expanded: show all tool calls */}
         {expanded &&
           agent.toolCalls.map((tc) => {
             const formattedArgs = formatToolArgs(tc.args);
@@ -243,7 +233,6 @@ const AgentRow = memo(
             );
           })}
 
-        {/* Status line */}
         {!hideBackgroundStatusLine && (
           <Box flexDirection="row">
             {agent.status === "error" ? (
@@ -325,7 +314,6 @@ const GroupHeader = memo(
         {allCompleted ? (
           <Text color={dotColor}>{CLI_GLYPHS.bullet}</Text>
         ) : (
-          // BlinkDot now gets shouldAnimate from AnimationContext
           <BlinkDot color={runningDotColor} />
         )}
         <Text>
@@ -340,15 +328,10 @@ const GroupHeader = memo(
 
 GroupHeader.displayName = "GroupHeader";
 
-// ============================================================================
-// Main Component
-// ============================================================================
-
 export const SubagentGroupDisplay = memo(() => {
   const { agents, expanded } = useSyncExternalStore(subscribe, getSnapshot);
   const { shouldAnimate } = useAnimation();
 
-  // Handle ctrl+o for expand/collapse
   useInput((input, key) => {
     if (key.ctrl && input === "o") {
       toggleExpanded();
@@ -359,7 +342,6 @@ export const SubagentGroupDisplay = memo(() => {
   // via their own mechanisms (e.g. EventMessage).
   const visible = agents.filter((a) => !a.silent);
 
-  // Don't render if no agents
   if (visible.length === 0) {
     return null;
   }

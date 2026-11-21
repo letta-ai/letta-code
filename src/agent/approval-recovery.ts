@@ -68,7 +68,6 @@ export type {
   PreStreamErrorOptions,
   RetryDelayCategory,
 } from "./turn-recovery-policy";
-// ── Re-export pure policy helpers (single source of truth) ──────────
 export {
   buildFreshDenialApprovals,
   classifyPreStreamConflict,
@@ -107,8 +106,6 @@ export function reportBusyRetryExhausted(
     });
   }
 }
-
-// ── Async helpers (network side effects — stay here) ────────────────
 
 async function sleepWithAbort(
   delayMs: number,

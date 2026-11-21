@@ -9,10 +9,6 @@
 import { subagentScopeMatches } from "@/utils/subagent-scope.js";
 import { clearSubagentEvents } from "./subagent-events";
 
-// ============================================================================
-// Types
-// ============================================================================
-
 export interface ToolCall {
   id: string;
   name: string;
@@ -134,10 +130,6 @@ interface SubagentStore {
 
 type TimerHandle = ReturnType<typeof setTimeout>;
 
-// ============================================================================
-// Store
-// ============================================================================
-
 const store: SubagentStore = {
   agents: new Map(),
   expanded: false,
@@ -159,10 +151,6 @@ let completedSubagentRetentionMs = DEFAULT_COMPLETED_SUBAGENT_RETENTION_MS;
 export const DEFAULT_PUBLISHED_RESULT_RETENTION_MS = 30 * 60_000;
 let publishedResultRetentionMs = DEFAULT_PUBLISHED_RESULT_RETENTION_MS;
 const completedSubagentCleanupTimers = new Map<string, TimerHandle>();
-
-// ============================================================================
-// Internal Helpers
-// ============================================================================
 
 function updateSnapshot(): void {
   const agents = Array.from(store.agents.values());
@@ -254,20 +242,10 @@ function armCompletedSubagentCleanup(id: string): void {
 
 let subagentCounter = 0;
 
-// ============================================================================
-// Public API
-// ============================================================================
-
-/**
- * Generate a unique subagent ID
- */
 export function generateSubagentId(): string {
   return `subagent-${Date.now()}-${++subagentCounter}`;
 }
 
-/**
- * Get a subagent by its parent Task tool call ID
- */
 export function getSubagentByToolCallId(
   toolCallId: string,
 ): SubagentState | undefined {
@@ -279,9 +257,6 @@ export function getSubagentByToolCallId(
   return undefined;
 }
 
-/**
- * Register a new subagent when Task tool starts
- */
 export function registerSubagent(
   id: string,
   type: string,
@@ -296,7 +271,6 @@ export function registerSubagent(
   prompt?: string,
   claimsParentRuntime?: boolean,
 ): void {
-  // Capitalize type for display (recall -> Recall)
   const displayType = type.charAt(0).toUpperCase() + type.slice(1);
 
   const agent: SubagentState = {
@@ -328,9 +302,6 @@ export function registerSubagent(
   notifyListeners();
 }
 
-/**
- * Update a subagent's state
- */
 export function updateSubagent(
   id: string,
   updates: Partial<Omit<SubagentState, "id">>,
@@ -338,7 +309,6 @@ export function updateSubagent(
   const agent = store.agents.get(id);
   if (!agent) return;
 
-  // If setting agentURL, also mark as running
   if (updates.agentURL && agent.status === "pending") {
     updates.status = "running";
   }
@@ -368,9 +338,6 @@ export function updateSubagent(
   notifyListeners();
 }
 
-/**
- * Add a tool call to a subagent
- */
 export function addToolCall(
   subagentId: string,
   toolCallId: string,
@@ -380,7 +347,6 @@ export function addToolCall(
   const agent = store.agents.get(subagentId);
   if (!agent) return;
 
-  // Don't add duplicates
   if (agent.toolCalls.some((tc) => tc.id === toolCallId)) return;
 
   // Create a new object to ensure React.memo detects the change
@@ -425,9 +391,6 @@ export function addProgressText(
   notifyListeners();
 }
 
-/**
- * Mark a subagent as completed
- */
 export function completeSubagent(
   id: string,
   result: {
@@ -478,31 +441,19 @@ export function getSubagentToolCount(
   return Math.max(agent.toolCalls.length, agent.maxToolCallsSeen);
 }
 
-/**
- * Toggle expanded/collapsed state
- */
 export function toggleExpanded(): void {
   store.expanded = !store.expanded;
   notifyListeners();
 }
 
-/**
- * Get current expanded state
- */
 export function isExpanded(): boolean {
   return store.expanded;
 }
 
-/**
- * Get all active subagents (not yet cleared)
- */
 export function getSubagents(): SubagentState[] {
   return Array.from(store.agents.values());
 }
 
-/**
- * Get silent background agents that are still pending or running
- */
 export function getActiveBackgroundAgents(): SubagentState[] {
   return Array.from(store.agents.values()).filter(
     (a) =>
@@ -552,9 +503,6 @@ export function subscribeToSubagentLifecycle(listener: () => void): () => void {
   return subscribe(listener);
 }
 
-/**
- * Get subagents grouped by type
- */
 export function getGroupedSubagents(): Map<string, SubagentState[]> {
   const grouped = new Map<string, SubagentState[]>();
   for (const agent of store.agents.values()) {
@@ -565,9 +513,6 @@ export function getGroupedSubagents(): Map<string, SubagentState[]> {
   return grouped;
 }
 
-/**
- * Clear all completed subagents (call on new user message)
- */
 export function clearCompletedSubagents(): void {
   let removedAny = false;
   for (const [id, agent] of store.agents.entries()) {
@@ -589,9 +534,6 @@ export function clearCompletedSubagents(): void {
   }
 }
 
-/**
- * Clear specific subagents by their IDs (call when committing to staticItems)
- */
 export function clearSubagentsByIds(ids: string[]): void {
   let removedAny = false;
   for (const id of ids) {
@@ -614,9 +556,6 @@ export function clearSubagentsByIds(ids: string[]): void {
   }
 }
 
-/**
- * Clear all subagents
- */
 export function clearAllSubagents(): void {
   for (const id of Array.from(completedSubagentCleanupTimers.keys())) {
     clearCompletedSubagentCleanup(id);
@@ -626,9 +565,6 @@ export function clearAllSubagents(): void {
   notifyListeners();
 }
 
-/**
- * Check if there are any active subagents
- */
 export function hasActiveSubagents(): boolean {
   for (const agent of store.agents.values()) {
     if (agent.status === "pending" || agent.status === "running") {
@@ -649,7 +585,6 @@ export function registerSubagentAbortHook(id: string, hook: () => void): void {
   subagentAbortHooks.set(id, hook);
 }
 
-/** Remove a subagent's abort hook once its task has settled. */
 export function clearSubagentAbortHook(id: string): void {
   subagentAbortHooks.delete(id);
 }
@@ -765,13 +700,6 @@ export function hasStopFailedSubagents(scope?: {
   return false;
 }
 
-// ============================================================================
-// React Integration (useSyncExternalStore compatible)
-// ============================================================================
-
-/**
- * Subscribe to store changes
- */
 export function subscribe(listener: () => void): () => void {
   store.listeners.add(listener);
   return () => {
@@ -789,10 +717,6 @@ export function getSnapshot(): {
 } {
   return cachedSnapshot;
 }
-
-// ============================================================================
-// Stream Event Forwarding
-// ============================================================================
 
 /** Worker output or a harness notification after its memory push completes. */
 export type SubagentStreamEvent =

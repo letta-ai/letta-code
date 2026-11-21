@@ -37,8 +37,6 @@ export function handleRoutingPairingTargetCommand(
     updateChannelRouteLive,
   } = service;
 
-  // -- channel_pairings_list -------------------------------------------------
-
   if (parsed.type === "channel_pairings_list") {
     try {
       safeSocketSend(
@@ -84,8 +82,6 @@ export function handleRoutingPairingTargetCommand(
     }
     return true;
   }
-
-  // -- channel_pairing_bind --------------------------------------------------
 
   if (parsed.type === "channel_pairing_bind") {
     try {
@@ -134,8 +130,6 @@ export function handleRoutingPairingTargetCommand(
     return true;
   }
 
-  // -- channel_routes_list ---------------------------------------------------
-
   if (parsed.type === "channel_routes_list") {
     try {
       const channelId = parsed.channel_id ?? LEGACY_DEFAULT_CHANNEL_ID;
@@ -174,8 +168,6 @@ export function handleRoutingPairingTargetCommand(
     return true;
   }
 
-  // -- channel_targets_list --------------------------------------------------
-
   if (parsed.type === "channel_targets_list") {
     try {
       safeSocketSend(
@@ -213,8 +205,6 @@ export function handleRoutingPairingTargetCommand(
     }
     return true;
   }
-
-  // -- channel_target_bind ---------------------------------------------------
 
   if (parsed.type === "channel_target_bind") {
     try {
@@ -268,8 +258,6 @@ export function handleRoutingPairingTargetCommand(
     return true;
   }
 
-  // -- channel_route_update --------------------------------------------------
-
   if (parsed.type === "channel_route_update") {
     try {
       const route = updateChannelRouteLive(
@@ -317,7 +305,6 @@ export function handleRoutingPairingTargetCommand(
     return true;
   }
 
-  // -- channel_route_remove (fall-through) -----------------------------------
   // If none of the explicit routing type guards above matched, the command
   // must be `channel_route_remove` — `isDetachedChannelsCommand` has already
   // validated the union and the account/config/lifecycle handler has already

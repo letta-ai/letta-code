@@ -23,7 +23,6 @@ import { runWithRuntimeContext } from "@/runtime-context";
 
 async function drain(stream: AsyncIterable<unknown>): Promise<void> {
   for await (const _chunk of stream) {
-    // drain
   }
 }
 

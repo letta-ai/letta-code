@@ -17,7 +17,6 @@ const __dirname = path.dirname(__filename);
 
 const { platform, arch } = process;
 
-// Map platform/arch to binary name
 let binaryName = null;
 switch (platform) {
   case "linux":
@@ -60,13 +59,11 @@ if (!binaryName) {
 
 const binaryPath = path.join(__dirname, binaryName);
 
-// Spawn the binary with all arguments
 const child = spawn(binaryPath, process.argv.slice(2), {
   stdio: "inherit",
   env: process.env,
 });
 
-// Forward signals to child process
 function forwardSignal(signal) {
   process.on(signal, () => {
     child.kill(signal);
@@ -76,7 +73,6 @@ function forwardSignal(signal) {
 forwardSignal("SIGINT");
 forwardSignal("SIGTERM");
 
-// Exit with the same code as the child process
 child.on("exit", (code, signal) => {
   if (signal) {
     process.kill(process.pid, signal);

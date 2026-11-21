@@ -18,16 +18,6 @@ type CommandLine = {
   preformatted?: boolean;
 };
 
-/**
- * CommandMessage - Rich formatting version with two-column layout
- * Matches the formatting pattern used by other message types
- *
- * Features:
- * - Two-column layout with left gutter (2 chars) and right content area
- * - Proper terminal width calculation and wrapping
- * - Markdown rendering for output
- * - Consistent symbols (• for command, └ for result)
- */
 export const CommandMessage = memo(({ line }: { line: CommandLine }) => {
   const columns = useTerminalWidth();
   const rightWidth = Math.max(0, columns - 2); // gutter is 2 cols
@@ -35,10 +25,8 @@ export const CommandMessage = memo(({ line }: { line: CommandLine }) => {
     return null;
   }
 
-  // Determine dot state based on phase and success
   const getDotElement = () => {
     if (!line.phase || line.phase === "finished") {
-      // Show red dot for failed commands, green for successful
       if (line.success === false) {
         return <Text color={colors.command.error}>{CLI_GLYPHS.bullet}</Text>;
       }
@@ -52,7 +40,6 @@ export const CommandMessage = memo(({ line }: { line: CommandLine }) => {
 
   return (
     <Box flexDirection="column">
-      {/* Command input */}
       <Box flexDirection="row">
         <Box width={2} flexShrink={0}>
           {getDotElement()}
@@ -63,7 +50,6 @@ export const CommandMessage = memo(({ line }: { line: CommandLine }) => {
         </Box>
       </Box>
 
-      {/* Command output (if present) */}
       {line.output && (
         <Box flexDirection="row">
           <Box width={5} flexShrink={0}>

@@ -35,7 +35,6 @@ function applyFileLimit(files: string[], workingDirectory: string): GlobResult {
     { workingDirectory },
   );
 
-  // Split the content back into an array of file paths + notice
   const resultFiles = content.split("\n");
 
   return {
@@ -67,12 +66,6 @@ export async function glob(args: GlobArgs): Promise<GlobResult> {
       : path.resolve(userCwd, searchPath)
     : userCwd;
 
-  // Build ripgrep args for file listing
-  // --files: list files instead of searching content
-  // --glob: filter by pattern
-  // --hidden: include hidden files (dotfiles)
-  // --follow: follow symlinks
-  // --no-messages: suppress error messages for unreadable dirs
   const rgArgs = [
     "--files",
     "--hidden",

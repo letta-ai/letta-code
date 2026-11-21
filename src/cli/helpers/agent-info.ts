@@ -1,5 +1,3 @@
-// src/cli/helpers/agentInfo.ts
-// Generates agent info system reminder (agent identity, memory dir)
 
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { buildParentMemoryNote } from "@/agent/parent-memory-note";
@@ -20,9 +18,6 @@ export interface AgentInfoOptions {
   parentAgentId?: string;
 }
 
-/**
- * Format relative time from a date string
- */
 function getRelativeTime(dateStr: string): string {
   const date = new Date(dateStr);
   const now = new Date();
@@ -53,7 +48,6 @@ export function buildAgentInfo(options: AgentInfoOptions): string {
   try {
     const { agentInfo, conversationId } = options;
 
-    // Format last run info
     let lastRunInfo = "No previous messages";
     if (agentInfo.lastRunAt) {
       try {
@@ -97,7 +91,6 @@ export function buildAgentInfo(options: AgentInfoOptions): string {
 - **Last message**: ${lastRunInfo}
 ${SYSTEM_REMINDER_CLOSE}`;
   } catch {
-    // If anything fails catastrophically, return empty string
     // This ensures the user's message still gets sent
     return "";
   }

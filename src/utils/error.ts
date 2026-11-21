@@ -1,6 +1,3 @@
-/**
- * Error handling utilities
- */
 
 /**
  * Extract an error message without letting hostile values throw during coercion.

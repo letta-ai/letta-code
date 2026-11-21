@@ -284,8 +284,6 @@ function unixLaunchers(command: string, login: boolean): string[][] {
     trimmed,
   ]);
 
-  // Try user's preferred shell from $SHELL environment variable
-  // Use login semantics only when explicitly requested.
   const envShell = process.env.SHELL?.trim();
   if (envShell) {
     pushUnique(launchers, seen, [

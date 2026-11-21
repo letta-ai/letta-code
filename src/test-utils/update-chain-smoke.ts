@@ -127,7 +127,6 @@ async function waitForVerdaccio(timeoutMs = 45000) {
       });
       if (response.ok) return;
     } catch {
-      // retry
     }
     await sleep(500);
   }

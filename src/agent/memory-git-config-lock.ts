@@ -25,7 +25,6 @@ const GIT_CONFIG_LOCK_ERROR_RE =
 const GIT_CONFIG_LOCK_ATTEMPTS = 5;
 const GIT_CONFIG_LOCK_BASE_DELAY_MS = 25;
 
-/** Returns true when a git error is `.git/config` lock contention. */
 export function isGitConfigLockError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return GIT_CONFIG_LOCK_ERROR_RE.test(message);

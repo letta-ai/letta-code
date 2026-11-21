@@ -1,4 +1,3 @@
-// Clipboard utilities for detecting and importing images from system clipboard
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -21,10 +20,6 @@ export type ClipboardImageResult =
   | { error: string }
   | null;
 
-/**
- * Copy text to system clipboard
- * Returns true if successful, false otherwise
- */
 export function copyToClipboard(text: string): boolean {
   try {
     if (process.platform === "darwin") {
@@ -77,7 +72,6 @@ function countLines(text: string): number {
   return (text.match(/\r\n|\r|\n/g) || []).length + 1;
 }
 
-// Translate various image paste formats into [Image #N] placeholders
 export function translatePasteForImages(paste: string): string {
   let s = paste || "";
 

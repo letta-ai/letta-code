@@ -309,7 +309,6 @@ import type {
   TextContent,
 } from "@letta-ai/letta-client/resources/agents/messages";
 
-// Tool return content can be a string or array of text/image content parts
 export type ToolReturnContent = string | Array<TextContent | ImageContent>;
 
 export type ToolExecutionResult = {
@@ -463,9 +462,6 @@ export function updateToolExecutionContextWorkingDirectory(
   return true;
 }
 
-/**
- * Returns the mutable PermissionModeState for an execution context.
- */
 export function getExecutionContextPermissionModeState(
   contextId: string,
 ): PermissionModeState | undefined {
@@ -490,7 +486,6 @@ function acquireSwitchLock(): void {
   const lock = getSwitchLock();
   lock.refCount++;
 
-  // Only create a new promise if this is the first acquirer
   if (lock.refCount === 1) {
     lock.promise = new Promise((resolve) => {
       lock.resolve = resolve;
@@ -509,7 +504,6 @@ function releaseSwitchLock(): void {
     lock.refCount--;
   }
 
-  // Only resolve when all switches are done
   if (lock.refCount === 0 && lock.resolve) {
     lock.resolve();
     lock.promise = null;
@@ -561,8 +555,6 @@ function resolveInternalToolName(
   return undefined;
 }
 
-// EXTERNAL TOOLS (SDK-side execution)
-// Storage for external tool definitions and executor
 const EXTERNAL_TOOLS_KEY = Symbol.for("@letta/externalTools");
 const EXTERNAL_EXECUTOR_KEY = Symbol.for("@letta/externalToolExecutor");
 
@@ -579,9 +571,6 @@ function getExternalToolsRegistry(): Map<string, ExternalToolDefinition> {
   return global[EXTERNAL_TOOLS_KEY];
 }
 
-/**
- * Register external tools from SDK
- */
 export function registerExternalTools(tools: ExternalToolDefinition[]): void {
   const registry = getExternalToolsRegistry();
   for (const tool of tools) {
@@ -599,9 +588,6 @@ export function unregisterExternalTools(tools: ExternalToolDefinition[]): void {
   }
 }
 
-/**
- * Set the executor callback for external tools
- */
 export function setExternalToolExecutor(executor: ExternalToolExecutor): void {
   (globalThis as GlobalWithExternalTools)[EXTERNAL_EXECUTOR_KEY] = executor;
 }
@@ -610,33 +596,21 @@ function getExternalToolExecutor(): ExternalToolExecutor | undefined {
   return (globalThis as GlobalWithExternalTools)[EXTERNAL_EXECUTOR_KEY];
 }
 
-/**
- * Clear external tools (for testing or session cleanup)
- */
 export function clearExternalTools(): void {
   getExternalToolsRegistry().clear();
   delete (globalThis as GlobalWithExternalTools)[EXTERNAL_EXECUTOR_KEY];
 }
 
-/**
- * Check if a tool is external (SDK-executed)
- */
 export function isExternalTool(name: string): boolean {
   return getExternalToolsRegistry().has(name);
 }
 
-/**
- * Get external tool definition
- */
 export function getExternalToolDefinition(
   name: string,
 ): ExternalToolDefinition | undefined {
   return getExternalToolsRegistry().get(name);
 }
 
-/**
- * Get all external tools as ClientTool format
- */
 export function getExternalToolsAsClientTools(): ClientTool[] {
   return Array.from(
     selectModelFacingExternalTools(
@@ -649,7 +623,6 @@ export function getExternalToolsAsClientTools(): ClientTool[] {
   }));
 }
 
-/** Execute an external tool via SDK. */
 export async function executeExternalTool(
   toolCallId: string,
   toolName: string,
@@ -964,13 +937,6 @@ async function checkModPermissionForContext(options: {
   );
 }
 
-/**
- * Check permission for a tool execution using the full permission system.
- * @param toolName - Name of the tool
- * @param toolArgs - Tool arguments
- * @param workingDirectory - Current working directory (defaults to process.cwd())
- * @returns Permission decision: "allow", "deny", "ask", or "alwaysAsk"
- */
 export async function checkToolPermission(
   toolName: string,
   toolArgs: ToolArgs,
@@ -1032,13 +998,6 @@ export async function checkToolPermission(
   );
 }
 
-/**
- * Save a permission rule to settings
- * @param rule - Permission rule (e.g., "Read(src/**)")
- * @param ruleType - Type of rule ("allow", "deny", "ask", or "alwaysAsk")
- * @param scope - Where to save ("project", "local", "user", or "session")
- * @param workingDirectory - Current working directory
- */
 export async function savePermissionRule(
   rule: string,
   ruleType: PermissionRuleType,
@@ -1057,13 +1016,6 @@ export async function savePermissionRule(
   await save(rule, ruleType, scope, workingDirectory);
 }
 
-/**
- * Analyze approval context for a tool execution
- * @param toolName - Name of the tool
- * @param toolArgs - Tool arguments
- * @param workingDirectory - Current working directory
- * @returns Approval context with recommended rule and button text
- */
 export async function analyzeToolApproval(
   toolName: string,
   toolArgs: ToolArgs,
@@ -1228,14 +1180,12 @@ async function buildRegistryForModel(
  * @param toolNames - Array of specific tool names to load
  */
 export async function loadSpecificTools(toolNames: string[]): Promise<void> {
-  // Acquire lock to signal that a switch is in progress
   acquireSwitchLock();
 
   try {
     const newRegistry = await buildToolRegistry(toolNames);
     replaceRegistry(newRegistry);
   } finally {
-    // Always release the lock, even if an error occurred
     releaseSwitchLock();
   }
 }
@@ -1257,14 +1207,12 @@ export async function loadTools(
   modelIdentifier?: string,
   options?: ModelToolsetOptions,
 ): Promise<void> {
-  // Acquire lock to signal that a switch is in progress
   acquireSwitchLock();
 
   try {
     const newRegistry = await buildRegistryForModel(modelIdentifier, options);
     replaceRegistry(newRegistry);
   } finally {
-    // Always release the lock, even if an error occurred
     releaseSwitchLock();
   }
 }
@@ -1289,9 +1237,6 @@ export function isOpenAIModel(modelIdentifier: string): boolean {
   );
 }
 
-/**
- * Inject discovered subagent descriptions into the Task tool description
- */
 function injectSubagentsIntoTaskDescription(
   baseDescription: string,
   subagents: Array<{
@@ -1304,7 +1249,6 @@ function injectSubagentsIntoTaskDescription(
     return baseDescription;
   }
 
-  // Build subagents section
   const agentsSection = subagents
     .map((agent) => {
       return `### ${agent.name}
@@ -1313,26 +1257,19 @@ function injectSubagentsIntoTaskDescription(
     })
     .join("\n\n");
 
-  // Insert before ## Usage section
   const usageMarker = "## Usage";
   const usageIndex = baseDescription.indexOf(usageMarker);
 
   if (usageIndex === -1) {
-    // Fallback: append at the end
     return `${baseDescription}\n\n## Available Agents\n\n${agentsSection}`;
   }
 
-  // Insert agents section before ## Usage
   const before = baseDescription.slice(0, usageIndex);
   const after = baseDescription.slice(usageIndex);
 
   return `${before}## Available Agents\n\n${agentsSection}\n\n${after}`;
 }
 
-/**
- * Helper to clip tool return text to a reasonable display size
- * Used by UI components to truncate long responses for display
- */
 export function clipToolReturn(
   text: string,
   maxLines: number = 3,
@@ -1346,21 +1283,17 @@ export function clipToolReturn(
     return text;
   }
 
-  // First apply character limit to avoid extremely long text
   let clipped = text;
   if (text.length > maxChars) {
     clipped = text.slice(0, maxChars);
   }
 
-  // Then split into lines and limit line count
   const lines = clipped.split("\n");
   if (lines.length > maxLines) {
     clipped = lines.slice(0, maxLines).join("\n");
   }
 
-  // Add ellipsis if we truncated
   if (text.length > maxChars || lines.length > maxLines) {
-    // Try to break at a word boundary if possible
     const lastSpace = clipped.lastIndexOf(" ");
     if (lastSpace > maxChars * 0.8) {
       clipped = clipped.slice(0, lastSpace);
@@ -1384,9 +1317,6 @@ function isStringArray(value: unknown): value is string[] {
   );
 }
 
-/**
- * Check if an array contains multimodal content (text + images)
- */
 function isMultimodalContent(
   arr: unknown[],
 ): arr is Array<TextContent | ImageContent> {
@@ -1481,7 +1411,6 @@ function flattenToolResponse(result: unknown): ToolReturnContent {
   }
 
   if (typeof result.message === "string") {
-    // If there are other fields besides 'message', return the full object as JSON
 
     const keys = Object.keys(result);
     if (keys.length > 1) {
@@ -1490,7 +1419,6 @@ function flattenToolResponse(result: unknown): ToolReturnContent {
     return result.message;
   }
 
-  // Check for multimodal content (images) - return as-is without flattening
   if (Array.isArray(result.content) && isMultimodalContent(result.content)) {
     return result.content;
   }
@@ -1924,14 +1852,6 @@ function toolExecutionModContext(
   });
 }
 
-/**
- * Executes a tool by name with the provided arguments.
- *
- * @param name - The name of the tool to execute
- * @param args - Arguments object to pass to the tool
- * @param options - Optional execution options (abort signal, tool call ID, streaming callback)
- * @returns Promise with the tool's execution result including status and optional stdout/stderr
- */
 async function executeToolInner(
   name: string,
   args: ToolArgs,
@@ -2054,7 +1974,6 @@ async function executeToolInner(
       modEvents,
     );
   }
-  // Check if this is an external tool (SDK-executed)
   if (activeExternalTools.has(name)) {
     const externalTool = activeExternalTools.get(name);
     const { args: eventArgs, result } = await emitToolStartEvent({
@@ -2285,7 +2204,6 @@ async function executeToolInner(
         }
       }
 
-      // Extract stdout/stderr if present (for bash tools)
       const recordResult = isRecord(result) ? result : undefined;
       const stdoutValue = recordResult?.stdout;
       const stderrValue = recordResult?.stderr;
@@ -2295,7 +2213,6 @@ async function executeToolInner(
       // Check if tool returned a status (e.g., Bash returns status: "error" on abort)
       const toolStatus = recordResult?.status === "error" ? "error" : "success";
 
-      // Flatten the response to plain text
       let flattenedResponse = flattenToolResponse(result);
 
       // Scrub every tool return, including ambient runtime credentials.
@@ -2315,7 +2232,6 @@ async function executeToolInner(
         internalName,
       );
 
-      // Track tool usage (calculate size for multimodal content)
       const responseSize =
         typeof flattenedResponse === "string"
           ? flattenedResponse.length
@@ -2381,7 +2297,6 @@ async function executeToolInner(
             invocationRedactions,
           );
 
-      // Track tool usage error
       telemetry.trackToolUsage(
         internalName,
         false,
@@ -2504,7 +2419,6 @@ export async function executeTool(
     : res;
 }
 
-/** Gets loaded internal tool names. */
 export function getToolNames(): string[] {
   return Array.from(toolRegistry.keys());
 }
@@ -2517,11 +2431,6 @@ export function getAllLettaToolNames(): string[] {
   return [...TOOL_NAMES];
 }
 
-/**
- * Gets all loaded tool schemas (for inspection/debugging).
- *
- * @returns Array of tool schemas
- */
 export function getToolSchemas(): ToolSchema[] {
   const builtInSchemas = Array.from(toolRegistry.values()).map(
     (tool) => tool.schema,
@@ -2536,12 +2445,6 @@ export function getToolSchemas(): ToolSchema[] {
   return [...builtInSchemas, ...modSchemas];
 }
 
-/**
- * Gets a single tool's schema by name.
- *
- * @param name - The tool name
- * @returns The tool schema or undefined if not found
- */
 export function getToolSchema(
   name: string,
   toolContextId?: string | null,
@@ -2574,9 +2477,6 @@ export function getToolSchema(
   return undefined;
 }
 
-/**
- * Clears the tool registry (useful for testing).
- */
 export function clearTools(): void {
   toolRegistry.clear();
 }

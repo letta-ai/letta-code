@@ -48,7 +48,6 @@ type TaskAgentSelection =
   | { kind: "external"; type: ExternalCodingAgentType }
   | { kind: "letta"; subagentType: string };
 
-/** Resolve a preset first, otherwise the explicitly selected runner and context. */
 export function resolveTaskAgentSelection(args: {
   harness?: unknown;
   subagent_type?: unknown;
@@ -90,7 +89,6 @@ export function resolveTaskAgentSelection(args: {
   };
 }
 
-/** The subagent_type values to suggest, given the loaded Letta config names. */
 export function listSubagentTypes(configNames: string[]): string {
   return (
     configNames

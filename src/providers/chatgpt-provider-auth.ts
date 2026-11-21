@@ -154,8 +154,6 @@ export function responseMessage(
   return getString(raw, ["message", "error", "detail"]) ?? fallback;
 }
 
-// ── Letta Cloud credentials ─────────────────────────────────────────
-
 export async function readCloudCredentialSettings(
   getSettings?: () => Promise<CloudCredentialSettings>,
 ): Promise<
@@ -237,8 +235,6 @@ export async function resolveCloudApiKey(input: {
 export function cloudRequestHeaders(apiKey: string): Record<string, string> {
   return { ...getLettaCodeHeaders(apiKey), Accept: "application/json" };
 }
-
-// ── Local ChatGPT OAuth ─────────────────────────────────────────────
 
 export type LocalChatGPTOAuthRecord = LocalProviderRecord & {
   auth: { type: "oauth"; accountId?: string };

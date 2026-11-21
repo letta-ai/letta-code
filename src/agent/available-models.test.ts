@@ -71,22 +71,17 @@ describe("available-models cache semantics", () => {
     const preConnect = deferred<FakeModel[]>();
     listModelsImpl = () => preConnect.promise;
 
-    // Fetch A starts (e.g. boot-time list_models before any provider exists).
     const fetchA = getAvailableModelHandles();
 
-    // Provider connect clears the cache while A is still in flight.
     clearAvailableModelsCache();
 
-    // Fetch B starts post-connect and sees the new provider's models.
     const postConnect = deferred<FakeModel[]>();
     listModelsImpl = () => postConnect.promise;
     const fetchB = getAvailableModelHandles();
 
-    // A resolves late with the pre-connect (empty) snapshot.
     preConnect.resolve([]);
     await fetchA;
 
-    // The stale result must not have been committed to the cache.
     expect(getCachedModelHandles()).toBeNull();
 
     postConnect.resolve([{ handle: "openai/gpt-4o" }]);
@@ -97,7 +92,6 @@ describe("available-models cache semantics", () => {
     // nulled out B's inflight slot mid-fetch either.
     expect([...(getCachedModelHandles() ?? [])]).toEqual(["openai/gpt-4o"]);
 
-    // Subsequent calls serve B's committed cache entry.
     listModelsImpl = async () => {
       throw new Error("must be served from cache");
     };

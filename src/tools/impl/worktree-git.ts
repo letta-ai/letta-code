@@ -245,7 +245,6 @@ export async function addWorktreeSafely(params: {
   for (const key of keys) {
     const driverName = FILTER_DRIVER_KEY_PATTERN.exec(key)?.[1];
     if (!driverName) {
-      // The scan reported a key nothing above knows how to switch off.
       throw new Error(
         `The repository git config sets ${key}, which cannot be neutralized safely.`,
       );

@@ -44,7 +44,6 @@ type Props = {
   showTruncationHint?: boolean;
 };
 
-/** Styled text span with a resolved color. */
 export type StyledSpan = { text: string; color: string };
 
 export type ClippedSpans = {
@@ -80,7 +79,6 @@ export function clipStyledSpans(
   return { spans: clipped, clipped: false };
 }
 
-/** Map file extension to a Shiki language name. */
 const EXT_TO_LANG: Record<string, string> = {
   ts: "typescript",
   tsx: "typescript",
@@ -134,11 +132,9 @@ const EXT_TO_LANG: Record<string, string> = {
   wasm: "wasm",
 };
 
-/** Resolve a Shiki language name from a file path, or undefined if unknown. */
 export function languageFromPath(filePath: string): string | undefined {
   const basename = filePath.split("/").pop() ?? filePath;
   const lower = basename.toLowerCase();
-  // Handle dotfiles like "Makefile", "Dockerfile"
   if (lower === "makefile") return "makefile";
   if (lower === "dockerfile") return "dockerfile";
   const dotIdx = basename.lastIndexOf(".");
@@ -163,10 +159,8 @@ export function highlightCommand(command: string): StyledSpan[][] {
   const firstLine = allLines[0] ?? "";
   const heredocMatch = HEREDOC_RE.exec(firstLine);
 
-  // If heredoc detected and there's body content, split highlighting.
   if (heredocMatch && allLines.length > 2) {
     const marker = heredocMatch[1] ?? "EOF";
-    // Find where the heredoc body ends (the marker terminator line).
     let endIdx = allLines.length - 1;
     for (let i = allLines.length - 1; i > 0; i--) {
       if (allLines[i]?.trim() === marker) {
@@ -178,17 +172,14 @@ export function highlightCommand(command: string): StyledSpan[][] {
     const bodyLines = allLines.slice(1, endIdx);
     const terminatorLine = allLines[endIdx] ?? marker;
 
-    // Highlight the first line as bash.
     const bashSpans = highlightSingleLineBash(firstLine);
 
-    // Determine language from redirect target filename.
     const fileMatch = REDIRECT_FILE_RE.exec(
       firstLine.slice(0, heredocMatch.index),
     );
     const targetFile = fileMatch?.[1];
     const lang = targetFile ? languageFromPath(targetFile) : undefined;
 
-    // Highlight heredoc body with target language.
     let bodySpanLines: StyledSpan[][];
     if (lang) {
       bodySpanLines =
@@ -200,17 +191,14 @@ export function highlightCommand(command: string): StyledSpan[][] {
       ]);
     }
 
-    // Highlight terminator as bash.
     const termSpans = highlightSingleLineBash(terminatorLine);
 
     return [bashSpans, ...bodySpanLines, termSpans];
   }
 
-  // No heredoc: highlight full command as bash.
   return highlightFullBash(command);
 }
 
-/** Highlight a single line as bash, returning a flat StyledSpan array. */
 function highlightSingleLineBash(line: string): StyledSpan[] {
   return (
     highlightCode(line, BASH_LANGUAGE)?.[0] ?? [
@@ -219,7 +207,6 @@ function highlightSingleLineBash(line: string): StyledSpan[] {
   );
 }
 
-/** Highlight full multi-line text as bash, split at newline boundaries. */
 function highlightFullBash(command: string): StyledSpan[][] {
   return (
     highlightCode(command, BASH_LANGUAGE) ??

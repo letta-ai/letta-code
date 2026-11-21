@@ -295,7 +295,6 @@ async function runDenyLifecycleScenario(): Promise<HeadlessEvent[]> {
         try {
           onEvent(JSON.parse(line) as HeadlessEvent);
         } catch {
-          // Ignore non-protocol output.
         }
       }
     });

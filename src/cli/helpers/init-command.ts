@@ -9,8 +9,6 @@ import { getSnapshot as getSubagentSnapshot } from "@/agent/subagent-state";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { gatherGitContextSnapshot } from "./git-context";
 
-// ── Guard ──────────────────────────────────────────────────
-
 export function hasActiveInitSubagent(): boolean {
   const snapshot = getSubagentSnapshot();
   return snapshot.agents.some(
@@ -19,8 +17,6 @@ export function hasActiveInitSubagent(): boolean {
       (agent.status === "pending" || agent.status === "running"),
   );
 }
-
-// ── Git context ────────────────────────────────────────────
 
 export function gatherInitGitContext(): { context: string; identity: string } {
   try {
@@ -52,9 +48,6 @@ ${git.recentCommits || "No commits yet"}
   }
 }
 
-// ── Init subagent prompt helper ───────────────────────────
-
-/** Prompt for the init subagent. */
 export function buildShallowInitPrompt(args: {
   agentId: string;
   workingDirectory: string;
@@ -88,9 +81,6 @@ ${args.existingMemoryPaths.length > 0 ? `Paths:\n${args.existingMemoryPaths.map(
 `.trim();
 }
 
-// ── Interactive init (primary agent) ─────────────────────
-
-/** Message for the primary agent via processConversation when user runs /init. */
 export function buildInitMessage(args: {
   gitContext: string;
   memoryDir?: string;

@@ -17,8 +17,6 @@ import { fileURLToPath } from "node:url";
 
 import type { GrepInFilesMatch } from "@/types/protocol_v2";
 
-// ── Ripgrep binary resolution ──────────────────────────────────────
-
 function getRipgrepPath(): string {
   try {
     const __filename = fileURLToPath(import.meta.url);
@@ -26,14 +24,12 @@ function getRipgrepPath(): string {
     const rgPackage = require("@vscode/ripgrep");
     return rgPackage.rgPath;
   } catch (_error) {
-    // Fallback to a system ripgrep in PATH.
     return "rg";
   }
 }
 
 const rgPath = getRipgrepPath();
 
-// ── Ripgrep JSON stream shapes ─────────────────────────────────────
 //
 // Docs: https://docs.rs/grep-printer/latest/grep_printer/struct.JSON.html
 //
@@ -81,10 +77,7 @@ type RipgrepEvent =
   | RipgrepEndEvent
   | { type: string; data?: unknown };
 
-// ── Public API ─────────────────────────────────────────────────────
-
 export interface RunGrepInFilesArgs {
-  /** Absolute directory to search under. */
   searchRoot: string;
   /** Raw query string — literal unless isRegex is true. */
   query: string;
@@ -93,9 +86,7 @@ export interface RunGrepInFilesArgs {
   wholeWord: boolean;
   /** Optional ripgrep --glob filter. Empty string is ignored. */
   glob?: string;
-  /** Max match rows returned to the client. */
   maxResults: number;
-  /** Lines before/after each match to include. */
   contextLines: number;
 }
 
@@ -154,8 +145,6 @@ export async function runGrepInFiles(
   });
 }
 
-// ── Execution ──────────────────────────────────────────────────────
-
 function runRipgrep(rgArgs: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = execFile(
@@ -188,8 +177,6 @@ function runRipgrep(rgArgs: string[]): Promise<string> {
     child.on("exit", () => clearTimeout(timer));
   });
 }
-
-// ── Parsing ────────────────────────────────────────────────────────
 
 interface ParseOpts {
   searchRoot: string;
@@ -335,8 +322,6 @@ function parseRipgrepJson(
     truncated: totalMatches > matches.length,
   };
 }
-
-// ── Helpers ────────────────────────────────────────────────────────
 
 function stripTrailingNewline(text: string): string {
   if (text.endsWith("\r\n")) return text.slice(0, -2);

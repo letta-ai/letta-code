@@ -91,10 +91,6 @@ function inkStringWidth(text: string): number {
   return width;
 }
 
-/**
- * Word-wrap plain text to a given visible width.
- * Returns an array of lines, each at most `width` visible characters wide.
- */
 function wordWrap(text: string, width: number): string[] {
   if (width <= 0) return [text];
 
@@ -158,11 +154,6 @@ function wordWrap(text: string, width: number): string[] {
   return lines.length > 0 ? lines : [""];
 }
 
-/**
- * Split text into system-reminder blocks and user content blocks.
- * System-reminder blocks are identified by <system-reminder>...</system-reminder> tags.
- * Returns array of { text, isSystemReminder } objects in order.
- */
 export function splitSystemReminderBlocks(
   text: string,
 ): Array<{ text: string; isSystemReminder: boolean }> {
@@ -181,14 +172,12 @@ export function splitSystemReminderBlocks(
       .sort((a, b) => a.idx - b.idx)[0];
 
     if (!nextTag) {
-      // No more system-reminder tags, rest is user content
       if (remaining.trim()) {
         blocks.push({ text: remaining.trim(), isSystemReminder: false });
       }
       break;
     }
 
-    // Find the closing tag
     const closeIdx = remaining.indexOf(nextTag.close, nextTag.idx);
     if (closeIdx === -1) {
       // Malformed/incomplete tag - treat the whole remainder as literal user text.
@@ -199,7 +188,6 @@ export function splitSystemReminderBlocks(
       break;
     }
 
-    // Content before the tag is user content
     if (nextTag.idx > 0) {
       const before = remaining.slice(0, nextTag.idx).trim();
       if (before) {
@@ -207,7 +195,6 @@ export function splitSystemReminderBlocks(
       }
     }
 
-    // Extract the full system-reminder block (including tags)
     const sysBlock = remaining.slice(
       nextTag.idx,
       closeIdx + nextTag.close.length,
@@ -225,11 +212,6 @@ function padToColumns(text: string, columns: number): string {
   return `${text}${" ".repeat(pad)}`;
 }
 
-/**
- * Render a block of text with a prompt prefix (first line) and matching-width
- * continuation spaces on subsequent lines.
- * If highlighted, applies background and foreground colors. Otherwise plain text.
- */
 export function renderBlock(
   text: string,
   contentWidth: number,
@@ -276,16 +258,6 @@ export function renderBlock(
   return [blankLine, ...renderedLines, blankLine];
 }
 
-/**
- * UserMessageRich - Rich formatting for user messages with background highlight
- *
- * Renders user messages as pre-formatted text with ANSI background codes:
- * - Custom prompt prefix on first line, matching-width spaces on subsequent lines
- * - User content blocks: full-width highlight box extending to terminal edge
- *   with one highlighted blank row above and below
- * - Word wrapping respects the prompt prefix width
- * - System-reminder parts are shown plain (no highlight), user parts highlighted
- */
 export const UserMessage = memo(
   ({
     line,
@@ -314,7 +286,6 @@ export const UserMessage = memo(
 
     const { background, text: textColor } = colors.userMessage;
 
-    // Split into system-reminder blocks and user content blocks
     const blocks = splitSystemReminderBlocks(displayText);
 
     const allLines: RenderedBlockLine[] = [];

@@ -19,7 +19,6 @@ export interface TurnLifecycleHooks {
 
 const hooksByOtid = new Map<string, TurnLifecycleHooks>();
 
-/** Returns an unregister function. */
 export function registerTurnObserver(
   otid: string,
   hooks: TurnLifecycleHooks,

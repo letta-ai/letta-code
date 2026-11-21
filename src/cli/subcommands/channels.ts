@@ -49,8 +49,6 @@ import type {
   SupportedChannelId,
 } from "@/channels/types";
 
-// ── Usage ───────────────────────────────────────────────────────────
-
 function printUsage(): void {
   console.log(
     `
@@ -131,8 +129,6 @@ Output is JSON.
   );
 }
 
-// ── Args ────────────────────────────────────────────────────────────
-
 const CHANNELS_OPTIONS = {
   help: { type: "boolean", short: "h" },
   channel: { type: "string" },
@@ -203,8 +199,6 @@ function resolveSelectedAccountId(
     `Channel "${channelId}" has multiple accounts. Pass --account-id.`,
   );
 }
-
-// ── Handlers ────────────────────────────────────────────────────────
 
 async function handleInstall(channel: string): Promise<number> {
   let channelId: SupportedChannelId;
@@ -498,7 +492,6 @@ async function handlePair(
     return 1;
   }
 
-  // Load existing state
   loadRoutes(channelId);
   const { loadPairingStore: loadPairing } = await import("@/channels/pairing");
   loadPairing(channelId);
@@ -580,8 +573,6 @@ function handleBind(
   );
   return 0;
 }
-
-// ── Router ──────────────────────────────────────────────────────────
 
 export async function runChannelsSubcommand(argv: string[]): Promise<number> {
   const { values, positionals } = parseChannelsArgs(argv);

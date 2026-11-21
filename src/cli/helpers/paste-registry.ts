@@ -1,5 +1,3 @@
-// Clipboard paste registry - manages mappings from placeholders to actual content
-// Supports both large text pastes and image pastes (multi-modal)
 
 export interface ImageEntry {
   data: string; // base64
@@ -7,15 +5,11 @@ export interface ImageEntry {
   filename?: string;
 }
 
-// Text placeholder registry (for large pasted text collapsed into a placeholder)
 const textRegistry = new Map<number, string>();
 
-// Image placeholder registry (maps id -> base64 + mediaType)
 const imageRegistry = new Map<number, ImageEntry>();
 
 let nextId = 1;
-
-// ---------- Text placeholders ----------
 
 export function allocatePaste(content: string): number {
   const id = nextId++;
@@ -25,7 +19,6 @@ export function allocatePaste(content: string): number {
 
 export function resolvePlaceholders(text: string): string {
   if (!text) return text;
-  // First resolve text placeholders
   let result = text.replace(
     /\[Pasted text #(\d+) \+(\d+) lines\]/g,
     (_match, idStr) => {
@@ -34,7 +27,6 @@ export function resolvePlaceholders(text: string): string {
       return content !== undefined ? content : _match;
     },
   );
-  // Then convert visual newline indicators back to real newlines
   result = result.replace(/↵/g, "\n");
   return result;
 }
@@ -55,8 +47,6 @@ export function extractTextPlaceholderIds(text: string): number[] {
 export function hasAnyTextPlaceholders(text: string): boolean {
   return /\[Pasted text #\d+ \+\d+ lines\]/.test(text || "");
 }
-
-// ---------- Image placeholders ----------
 
 export function allocateImage(args: {
   data: string;
@@ -93,14 +83,10 @@ export function hasAnyImagePlaceholders(text: string): boolean {
   return /\[Image #\d+\]/.test(text || "");
 }
 
-// ---------- Cleanup ----------
-
 export function clearPlaceholdersInText(text: string): void {
-  // Clear text placeholders referenced in this text
   for (const id of extractTextPlaceholderIds(text)) {
     if (textRegistry.has(id)) textRegistry.delete(id);
   }
-  // Clear image placeholders referenced in this text
   for (const id of extractImagePlaceholderIds(text)) {
     if (imageRegistry.has(id)) imageRegistry.delete(id);
   }
@@ -138,10 +124,6 @@ export function releaseDiscardedPlaceholders(
   }
 }
 
-// ---------- Content Builder ----------
-
-// Convert display text (with placeholders) into Letta content parts
-// Text placeholders are resolved; image placeholders become image content
 type Base64ImageSource = { type: "base64"; media_type: string; data: string };
 type ContentPart =
   | { type: "text"; text: string }
@@ -185,12 +167,10 @@ export function buildMessageContentFromDisplay(text: string): ContentPart[] {
         },
       });
     } else {
-      // If mapping missing, keep the literal placeholder as text
       pushText(match[0]);
     }
     lastIdx = end;
   }
-  // Remainder
   pushText(text.slice(lastIdx));
 
   if (parts.length === 0) return [{ type: "text", text }];

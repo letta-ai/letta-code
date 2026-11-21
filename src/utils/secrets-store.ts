@@ -378,7 +378,6 @@ function resolveSecretsAgentId(explicitAgentId?: string): string | null {
       return scopedAgentId;
     }
   } catch {
-    // Fall through to env fallback below.
   }
 
   const envAgentId = (
@@ -479,9 +478,6 @@ export async function ensureSecretsLoaded(agentId: string): Promise<void> {
   await refresh;
 }
 
-/**
- * List all secret names (not values).
- */
 export function listSecretNames(agentId?: string): string[] {
   return Object.keys(loadSecrets(agentId)).sort();
 }
@@ -548,9 +544,6 @@ export async function applySecretBatch(
   return Object.keys(next).sort();
 }
 
-/**
- * Set an agent-scoped secret and update the in-memory cache.
- */
 export async function setSecretOnServer(
   key: string,
   value: string,
@@ -575,7 +568,6 @@ export async function setSecretOnServer(
 
   await initSecretsFromServer(agentId);
 
-  // Update cache first
   const secrets = { ...loadSecrets(agentId) };
   secrets[normalizedKey] = value;
 
@@ -625,9 +617,6 @@ export async function deleteSecretOnServer(
   return true;
 }
 
-/**
- * Clear the in-memory cache (useful for testing).
- */
 export function clearSecretsCache(agentId?: string | null): void {
   if (agentId === null) {
     getCache().clear();

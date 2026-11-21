@@ -8,7 +8,6 @@ import { debugWarn } from "@/utils/debug";
  */
 export const MAX_QUEUED_EVENTS = 2_000;
 
-/** Minimum interval between queue-overflow debug log lines. */
 const OVERFLOW_LOG_INTERVAL_MS = 60_000;
 
 /**

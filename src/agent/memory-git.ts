@@ -82,12 +82,10 @@ export interface CommitMemoryWriteResult {
   committed: boolean;
   sha?: string;
 }
-/** Get the agent root directory below the active product config root. */
 export function getAgentRootDir(agentId: string): string {
   return join(resolveGlobalConfigDir(), "agents", agentId);
 }
 
-/** Get the git repo directory for memory. */
 export function getMemoryRepoDir(agentId: string): string {
   return join(getAgentRootDir(agentId), "memory");
 }
@@ -110,7 +108,6 @@ export function normalizeCredentialBaseUrl(serverUrl: string): string {
     const parsed = new URL(trimmed);
     return parsed.origin;
   } catch {
-    // Fall back to a conservative slash-trimmed value if URL parsing fails.
     return trimmed;
   }
 }

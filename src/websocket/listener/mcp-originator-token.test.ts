@@ -251,7 +251,6 @@ describe("MCP originator token ingestion", () => {
       ),
     );
     await waitFor(() => getMcpOriginatorToken("sr-1") === "mst_one.secret-b");
-    // The duplicate created no new work.
     expect(processed.length).toBe(1);
   });
 
@@ -629,7 +628,6 @@ describe("MCP originator token lifecycle", () => {
 
     expect(transition.finished).toBe(true);
     expect(getMcpOriginatorToken("sr-1")).toBeUndefined();
-    // Other runs' tokens are untouched.
     expect(getMcpOriginatorToken("sr-2")).toBe("mst_two.secret-b");
   });
 

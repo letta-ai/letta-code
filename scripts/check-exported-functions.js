@@ -18,8 +18,6 @@ import { glob } from "glob";
 
 const rootDir = process.cwd();
 
-// Matches: export const name = (...) => or export const name = async (...) =>
-// Also catches: export const name = () => and export const name = async () =>
 const ARROW_EXPORT = /^export const \w+ = (async )?\(/;
 
 const files = await glob("src/**/*.ts", {

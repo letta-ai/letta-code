@@ -10,11 +10,6 @@ import {
 } from "./SyntaxHighlightedCommand";
 import { Text } from "./Text";
 
-/**
- * Formats a file path for display (matches Claude Code style):
- * - Files within cwd: relative path without ./ prefix
- * - Files outside cwd: full absolute path
- */
 function formatDisplayPath(filePath: string): string {
   const cwd = process.cwd();
   const relativePath = relative(cwd, filePath);
@@ -29,7 +24,6 @@ function countLines(str: string): number {
   return str.split("\n").length;
 }
 
-// A styled text chunk with optional color/dim for row-splitting.
 type StyledChunk = { text: string; color?: string; dimColor?: boolean };
 
 // Split styled chunks into rows of exactly `cols` characters, padding the last row.
@@ -59,7 +53,6 @@ function buildPaddedRows(
           dimColor: chunk.dimColor,
         });
         rows.push(row);
-        // Start continuation row with blank gutter indent
         row = [{ text: " ".repeat(contIndent) }];
         len = contIndent;
         rem = rem.slice(space);
@@ -71,7 +64,6 @@ function buildPaddedRows(
   return rows;
 }
 
-// Render a single diff line split into full-width rows.
 interface DiffLineProps {
   lineNumber: number;
   type: "add" | "remove";
@@ -95,7 +87,6 @@ function DiffLine({
     type === "add" ? colors.diff.addedLineBg : colors.diff.removedLineBg;
   const prefix = type === "add" ? "+" : "-";
 
-  // Build styled chunks for the full line.
   const indent = "    ";
   const numStr = showLineNumbers ? `${lineNumber} ` : "";
   const chunks: StyledChunk[] = [{ text: indent }];
@@ -110,7 +101,6 @@ function DiffLine({
     chunks.push({ text: content });
   }
 
-  // Continuation indent = indent + lineNum + sign + gap (blank, same width)
   const contIndent = indent.length + numStr.length + 1 + 2;
   const rows = buildPaddedRows(chunks, columns, contIndent);
 
@@ -196,7 +186,6 @@ export function EditRenderer({
   const additions = newLines.length;
   const removals = oldLines.length;
 
-  // Highlight old and new blocks separately for syntax coloring.
   const lang = languageFromPath(filePath);
   const oldHighlighted = lang ? highlightCode(oldString, lang) : undefined;
   const newHighlighted = lang ? highlightCode(newString, lang) : undefined;

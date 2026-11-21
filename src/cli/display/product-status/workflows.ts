@@ -30,7 +30,6 @@ const GLYPH_COLORS: Record<WorkflowExecutionSnapshot["status"], string> = {
   failed: colors.status.interrupt,
 };
 
-/** Runs worth a row right now: running, or finished very recently. */
 export function visibleWorkflowExecutions(
   executions: WorkflowExecutionSnapshot[],
   now = Date.now(),

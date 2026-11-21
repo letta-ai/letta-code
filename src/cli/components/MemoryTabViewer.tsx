@@ -10,7 +10,6 @@ import { colors } from "./colors";
 import { MarkdownDisplay } from "./MarkdownDisplay";
 import { Text } from "./Text";
 
-// Horizontal line character (matches approval dialogs)
 const SOLID_LINE = "─";
 
 const VISIBLE_LINES = 12; // Visible lines for value content
@@ -22,9 +21,6 @@ interface MemoryTabViewerProps {
   conversationId?: string;
 }
 
-/**
- * Format character count as "current / limit"
- */
 function formatCharCount(current: number, limit: number | null): string {
   if (limit === null || limit === undefined) {
     return `${current.toLocaleString()} chars`;
@@ -51,7 +47,6 @@ export function MemoryTabViewer({
   const [freshBlocks, setFreshBlocks] = useState<Block[] | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Fetch fresh memory blocks from the API when component mounts
   useEffect(() => {
     const fetchBlocks = async () => {
       try {
@@ -61,7 +56,6 @@ export function MemoryTabViewer({
         setFreshBlocks(agent.memory?.blocks || []);
       } catch (error) {
         debugLog("memory-tab", "Failed to fetch memory blocks: %O", error);
-        // Fall back to passed-in blocks if fetch fails
         setFreshBlocks(blocks);
       } finally {
         setIsLoading(false);
@@ -71,34 +65,28 @@ export function MemoryTabViewer({
     fetchBlocks();
   }, [agentId, blocks]);
 
-  // Use fresh blocks if available, otherwise fall back to passed-in blocks
   const displayBlocks = freshBlocks ?? blocks;
 
-  // Get current block
   const currentBlock = displayBlocks[selectedTabIndex];
   const valueLines = currentBlock?.value?.split("\n") || [];
   const maxScrollOffset = Math.max(0, valueLines.length - VISIBLE_LINES);
 
-  // Reset scroll when switching tabs
   const switchTab = (newIndex: number) => {
     setSelectedTabIndex(newIndex);
     setScrollOffset(0);
   };
 
   useInput((input, key) => {
-    // CTRL-C: immediately close
     if (key.ctrl && input === "c") {
       onClose();
       return;
     }
 
-    // ESC: close
     if (key.escape) {
       onClose();
       return;
     }
 
-    // Tab or left/right to switch tabs
     if (key.tab) {
       const nextIndex = (selectedTabIndex + 1) % displayBlocks.length;
       switchTab(nextIndex);
@@ -120,7 +108,6 @@ export function MemoryTabViewer({
       return;
     }
 
-    // Up/down to scroll content
     if (key.upArrow) {
       setScrollOffset((prev) => Math.max(prev - 1, 0));
     } else if (key.downArrow) {
@@ -149,7 +136,6 @@ export function MemoryTabViewer({
     </Box>
   );
 
-  // Loading state
   if (isLoading) {
     return (
       <Box flexDirection="column">
@@ -171,7 +157,6 @@ export function MemoryTabViewer({
     );
   }
 
-  // Empty state
   if (displayBlocks.length === 0) {
     return (
       <Box flexDirection="column">
@@ -203,20 +188,17 @@ export function MemoryTabViewer({
 
   return (
     <Box flexDirection="column">
-      {/* Command header */}
       <Text dimColor>{"> /memory"}</Text>
       <Text dimColor>{solidLine}</Text>
 
       <Box height={1} />
 
-      {/* Title */}
       <Box marginBottom={1}>
         <Text bold color={colors.selector.title}>
           View your agent's memory
         </Text>
       </Box>
 
-      {/* Tab bar */}
       <Box flexDirection="column" paddingLeft={1} marginBottom={1}>
         {renderTabBar()}
         {currentBlock?.description && (
@@ -227,9 +209,7 @@ export function MemoryTabViewer({
         )}
       </Box>
 
-      {/* Content area */}
       <Box flexDirection="column">
-        {/* Value content with left border */}
         <Box
           borderStyle="single"
           borderLeft
@@ -242,7 +222,6 @@ export function MemoryTabViewer({
           <Text>{visibleValueLines.join("\n") || "(empty)"}</Text>
         </Box>
 
-        {/* Scroll down indicator or phantom row */}
         {canScrollDown ? (
           <Text dimColor>
             {"  "}↓ {maxScrollOffset - scrollOffset} more line
@@ -253,7 +232,6 @@ export function MemoryTabViewer({
         ) : null}
       </Box>
 
-      {/* Footer */}
       <Box flexDirection="column" marginTop={1}>
         <Text dimColor>
           {"  "}

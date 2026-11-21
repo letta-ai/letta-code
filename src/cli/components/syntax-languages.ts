@@ -38,7 +38,6 @@ export const CORE_GRAMMARS: LanguageRegistration[] = coreGrammarModules.flatMap(
   (mod) => (Array.isArray(mod) ? mod : [mod]),
 ) as LanguageRegistration[];
 
-/** Every name the core grammars answer to, including their shiki aliases. */
 const CORE_LANG_NAMES = new Set(
   CORE_GRAMMARS.flatMap((grammar) => [
     grammar.name,
@@ -55,7 +54,6 @@ type GrammarModule = { default: LanguageRegistration | LanguageRegistration[] };
  */
 const requireGrammar = createRequire(import.meta.url);
 
-/** Long-tail grammars, loaded on first highlight of that language. */
 const TAIL_LOADERS: Record<string, () => GrammarModule> = {
   c: () => requireGrammar("@shikijs/langs/c"),
   cpp: () => requireGrammar("@shikijs/langs/cpp"),

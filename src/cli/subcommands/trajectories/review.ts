@@ -83,7 +83,6 @@ function stamp(timestamp: string | undefined): string {
   return (timestamp ?? "").slice(0, 19);
 }
 
-/** Render one normalized session as a readable conversation transcript. */
 export function renderSession(
   records: NormalizedRecord[],
   options: RenderOptions = {},

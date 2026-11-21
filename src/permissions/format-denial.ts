@@ -1,8 +1,3 @@
-// Format auto-denial messages consistently across the codebase.
-//
-// Callers previously open-coded this formatter in 10+ places (headless.ts,
-// App.tsx, recovery.ts) with subtle inconsistencies in wording and fallback
-// order. The single source of truth lives here.
 
 /**
  * Structural shape of a permission-check result — just the fields this

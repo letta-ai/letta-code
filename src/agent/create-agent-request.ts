@@ -24,7 +24,6 @@ import {
 } from "./personality-presets";
 import { buildSystemPrompt, type MemoryPromptMode } from "./prompt-assets";
 
-/** Agent type used for all Letta Code agents. */
 export const LETTA_CODE_AGENT_TYPE = "letta_v1_agent";
 
 /**
@@ -127,7 +126,6 @@ function ensureRootMemoryBlock(
     : [{ ...DEFAULT_ROOT_MEMORY_BLOCK }, ...blocks];
 }
 
-/** Build the canonical Core create-agent request for a Letta Code agent. */
 export async function buildCreateAgentRequest(
   options: BuildCreateAgentRequestOptions = {},
 ): Promise<CreateAgentRequest> {
@@ -225,7 +223,6 @@ export async function buildCreateAgentRequest(
   };
 }
 
-/** Compatibility wrapper for callers that create a personality agent. */
 export async function buildCreateAgentRequestForPersonality(params: {
   personalityId: PersonalityId;
   name?: string;

@@ -1,4 +1,3 @@
-// src/cli/app/useReasoningCycle.ts
 
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
@@ -259,7 +258,6 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
       return;
     }
 
-    // Clear any pending timer; we're flushing now.
     if (reasoningCycleTimerRef.current) {
       clearTimeout(reasoningCycleTimerRef.current);
       reasoningCycleTimerRef.current = null;
@@ -393,7 +391,6 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
           setCurrentModelId(desired.modelId);
           setCurrentModelHandle(desired.modelHandle);
 
-          // Clear pending state.
           reasoningCycleDesiredRef.current = null;
           reasoningCycleLastConfirmedRef.current = null;
           reasoningCycleLastConfirmedAgentStateRef.current = null;
@@ -412,13 +409,11 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
           const errorDetails = formatErrorDetails(error, agentId);
           cmd.fail(`Failed to set reasoning: ${errorDetails}`);
 
-          // Revert optimistic UI if we have a confirmed config snapshot.
           if (reasoningCycleLastConfirmedRef.current) {
             const prev = reasoningCycleLastConfirmedRef.current;
             reasoningCycleDesiredRef.current = null;
             reasoningCycleLastConfirmedRef.current = null;
             setLlmConfig(prev);
-            // Also revert the agentState optimistic patch
             if (
               reasoningCyclePatchedAgentStateRef.current &&
               reasoningCycleLastConfirmedAgentStateRef.current
@@ -488,7 +483,6 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
       );
       if (!modelHandle) return;
 
-      // Derive current effort from effective model settings (conversation override aware)
       const currentEffort = deriveReasoningEffort(
         modelSettingsForEffort,
         current,
@@ -516,7 +510,6 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
           capabilities?.get(modelHandle) ?? capabilities?.get(tierLookupHandle),
       });
 
-      // Only enable cycling when there are multiple tiers for the same handle.
       if (tiers.length < 2) return;
 
       const anthropicXHighEffort = supportsDistinctAnthropicXHighEffort(
@@ -563,7 +556,6 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
       setLlmConfig((prev: LlmConfig | null) =>
         prev ? ({ ...prev, reasoning_effort: next.effort } as LlmConfig) : prev,
       );
-      // Patch agentState.model_settings only when operating on agent defaults.
       if (!hasConversationModelOverrideRef.current) {
         reasoningCyclePatchedAgentStateRef.current = true;
         setAgentState((prev: AgentState | null | undefined) => {
@@ -611,7 +603,6 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
       }
       setCurrentModelId(next.id);
 
-      // Debounce the server update.
       reasoningCycleDesiredRef.current = {
         modelHandle,
         effort: next.effort,

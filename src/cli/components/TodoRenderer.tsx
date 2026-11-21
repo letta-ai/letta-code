@@ -26,24 +26,20 @@ export const TodoRenderer: React.FC<TodoRendererProps> = ({ todos }) => {
       {todos.map((todo, index) => {
         const checkbox = todo.status === "completed" ? "☒" : "☐";
 
-        // Format based on status
         let textElement: React.ReactNode;
         if (todo.status === "completed") {
-          // Green with strikethrough
           textElement = (
             <Text color={colors.todo.completed} strikethrough wrap="wrap">
               {checkbox} {todo.content}
             </Text>
           );
         } else if (todo.status === "in_progress") {
-          // Blue bold (like code formatting)
           textElement = (
             <Text color={colors.todo.inProgress} bold wrap="wrap">
               {checkbox} {todo.content}
             </Text>
           );
         } else {
-          // Plain text for pending
           textElement = (
             <Text wrap="wrap">
               {checkbox} {todo.content}
@@ -51,7 +47,6 @@ export const TodoRenderer: React.FC<TodoRendererProps> = ({ todos }) => {
           );
         }
 
-        // First item gets the prefix, others get indentation
         const prefix = index === 0 ? `  ${CLI_GLYPHS.result}  ` : "     ";
 
         return (

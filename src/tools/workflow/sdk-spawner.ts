@@ -25,7 +25,6 @@ import type {
 export interface SdkSpawnerConfig {
   /** Invoking agent supplies permissions/resources, never child history ownership. */
   parentAgentId: string;
-  /** Default model handle for subagents. */
   model: string;
   /** Resolves a handle or alias from agent() opts; null when unknown. */
   resolveModel?: (identifier: string) => string | null;
@@ -37,7 +36,6 @@ export interface SdkSpawnerConfig {
   agentScopedToolNames?: string[];
   /** Invoking session's permission mode. Omit to use the harness default. */
   permissionMode?: RuntimePermissionMode;
-  /** Working directory for subagent sessions. */
   cwd?: string;
   /** Local parent provider settings snapshotted when the workflow starts. */
   parentModelSettings?: Record<string, unknown>;
@@ -121,7 +119,6 @@ export function parseJsonReply(text: string): unknown {
  * false-flag distinct calls.
  */
 
-/** What the guard tracks for one streamed tool call. */
 interface TrackedToolCall {
   name: string;
   /** Most recent decoded `toolInput`; a last-resort identity fallback. */
@@ -271,7 +268,6 @@ const PROVIDER_STEP_STATUSES = new Set([
   "PROCESSING_API_RESPONSE",
 ]);
 
-/** Whether a model request is in flight, and who to tell when it ends. */
 interface StepState {
   inFlight: boolean;
   onStepEnd?: () => void;

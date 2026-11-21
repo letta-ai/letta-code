@@ -1,5 +1,3 @@
-// src/cli/commands/profile.ts
-// Profile command handlers for managing local agent profiles
 
 import {
   pinAgentForCurrentUser,
@@ -10,12 +8,10 @@ import type { Buffers, Line } from "@/cli/helpers/accumulator";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import { settingsManager } from "@/settings-manager";
 
-// tiny helper for unique ids
 function uid(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-// Helper type for command result
 type CommandLine = Extract<Line, { kind: "command" }>;
 
 let activeCommandId: string | null = null;
@@ -24,7 +20,6 @@ export function setActiveCommandId(id: string | null): void {
   activeCommandId = id;
 }
 
-// Context passed to profile handlers
 export interface ProfileCommandContext {
   buffersRef: { current: Buffers };
   refreshDerived: () => void;
@@ -34,7 +29,6 @@ export interface ProfileCommandContext {
   updateAgentName: (name: string) => void;
 }
 
-// Helper to add a command result to buffers
 export function addCommandResult(
   buffersRef: { current: Buffers },
   refreshDerived: () => void,
@@ -63,7 +57,6 @@ export function addCommandResult(
   return cmdId;
 }
 
-// Helper to update an existing command result
 export function updateCommandResult(
   buffersRef: { current: Buffers },
   refreshDerived: () => void,
@@ -91,7 +84,6 @@ export function updateCommandResult(
 // Get all profiles (merged from global + local, local takes precedence)
 export function getProfiles(): Record<string, string> {
   const merged = settingsManager.getMergedProfiles();
-  // Convert array format back to Record
   const result: Record<string, string> = {};
   for (const profile of merged) {
     result[profile.name] = profile.agentId;
@@ -99,7 +91,6 @@ export function getProfiles(): Record<string, string> {
   return result;
 }
 
-// Check if a profile exists, returns error message if not found
 export function validateProfileExists(
   profileName: string,
   profiles: Record<string, string>,
@@ -110,7 +101,6 @@ export function validateProfileExists(
   return null;
 }
 
-// Check if a profile name was provided, returns error message if not
 export function validateProfileNameProvided(
   profileName: string,
   action: string,
@@ -121,7 +111,6 @@ export function validateProfileNameProvided(
   return null;
 }
 
-// /profile - list all profiles
 export function handleProfileList(
   ctx: ProfileCommandContext,
   msg: string,
@@ -148,7 +137,6 @@ export function handleProfileList(
   addCommandResult(ctx.buffersRef, ctx.refreshDerived, msg, output, true);
 }
 
-// /profile save <name>
 export async function handleProfileSave(
   ctx: ProfileCommandContext,
   msg: string,
@@ -178,7 +166,6 @@ export async function handleProfileSave(
   ctx.setCommandRunning(true);
 
   try {
-    // Update agent name through the active backend.
     await getBackend().updateAgent(ctx.agentId, { name: profileName });
     ctx.updateAgentName(profileName);
 
@@ -207,14 +194,12 @@ export async function handleProfileSave(
   }
 }
 
-// Result from profile load validation
 export interface ProfileLoadValidation {
   targetAgentId: string | null;
   needsConfirmation: boolean;
   errorMessage: string | null;
 }
 
-// /profile load <name> - validation step (returns whether confirmation is needed)
 export function validateProfileLoad(
   ctx: ProfileCommandContext,
   msg: string,
@@ -250,7 +235,6 @@ export function validateProfileLoad(
   // We know the profile exists since validateProfileExists passed
   const targetAgentId = profiles[profileName] as string;
 
-  // Check if current agent is saved to any profile
   const currentAgentSaved = Object.values(profiles).includes(ctx.agentId);
 
   if (!currentAgentSaved) {
@@ -260,7 +244,6 @@ export function validateProfileLoad(
   return { targetAgentId, needsConfirmation: false, errorMessage: null };
 }
 
-// /profile delete <name>
 export function handleProfileDelete(
   ctx: ProfileCommandContext,
   msg: string,
@@ -299,7 +282,6 @@ export function handleProfileDelete(
   );
 }
 
-// Show usage help for unknown subcommand
 export function handleProfileUsage(
   ctx: ProfileCommandContext,
   msg: string,
@@ -313,8 +295,6 @@ export function handleProfileUsage(
   );
 }
 
-// /pin [name] - Pin the current agent
-// If name is provided, renames the agent first
 export async function handlePin(
   ctx: ProfileCommandContext,
   msg: string,
@@ -322,7 +302,6 @@ export async function handlePin(
 ): Promise<void> {
   const name = argsStr.trim() || undefined;
 
-  // If user provided a name, rename the agent first
   if (name && name !== ctx.agentName) {
     try {
       await getBackend().updateAgent(ctx.agentId, { name });
@@ -363,7 +342,6 @@ export async function handlePin(
   );
 }
 
-// /unpin - Unpin the current agent
 export async function handleUnpin(
   ctx: ProfileCommandContext,
   msg: string,

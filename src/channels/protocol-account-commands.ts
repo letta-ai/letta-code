@@ -48,8 +48,6 @@ export async function handleAccountConfigLifecycleCommand(
     unbindChannelAccountLive,
   } = service;
 
-  // -- channels_list --------------------------------------------------------
-
   if (parsed.type === "channels_list") {
     try {
       safeSocketSend(
@@ -79,8 +77,6 @@ export async function handleAccountConfigLifecycleCommand(
     }
     return true;
   }
-
-  // -- channel_accounts_list -------------------------------------------------
 
   if (parsed.type === "channel_accounts_list") {
     try {
@@ -147,8 +143,6 @@ export async function handleAccountConfigLifecycleCommand(
     }
     return true;
   }
-
-  // -- channel_account_create ------------------------------------------------
 
   if (parsed.type === "channel_account_create") {
     try {
@@ -227,8 +221,6 @@ export async function handleAccountConfigLifecycleCommand(
     return true;
   }
 
-  // -- channel_account_update ------------------------------------------------
-
   if (parsed.type === "channel_account_update") {
     try {
       if (
@@ -295,8 +287,6 @@ export async function handleAccountConfigLifecycleCommand(
     return true;
   }
 
-  // -- channel_account_bind --------------------------------------------------
-
   if (parsed.type === "channel_account_bind") {
     try {
       const account = bindChannelAccountLive(
@@ -344,8 +334,6 @@ export async function handleAccountConfigLifecycleCommand(
     return true;
   }
 
-  // -- channel_account_unbind ------------------------------------------------
-
   if (parsed.type === "channel_account_unbind") {
     try {
       const account = unbindChannelAccountLive(
@@ -390,8 +378,6 @@ export async function handleAccountConfigLifecycleCommand(
     }
     return true;
   }
-
-  // -- channel_account_delete ------------------------------------------------
 
   if (parsed.type === "channel_account_delete") {
     try {
@@ -451,8 +437,6 @@ export async function handleAccountConfigLifecycleCommand(
     return true;
   }
 
-  // -- channel_account_start -------------------------------------------------
-
   if (parsed.type === "channel_account_start") {
     try {
       const account = await startChannelAccountLive(
@@ -496,8 +480,6 @@ export async function handleAccountConfigLifecycleCommand(
     }
     return true;
   }
-
-  // -- channel_account_stop --------------------------------------------------
 
   if (parsed.type === "channel_account_stop") {
     try {
@@ -543,8 +525,6 @@ export async function handleAccountConfigLifecycleCommand(
     return true;
   }
 
-  // -- channel_get_config ----------------------------------------------------
-
   if (parsed.type === "channel_get_config") {
     try {
       safeSocketSend(
@@ -579,8 +559,6 @@ export async function handleAccountConfigLifecycleCommand(
     }
     return true;
   }
-
-  // -- channel_set_config ----------------------------------------------------
 
   if (parsed.type === "channel_set_config") {
     try {
@@ -644,8 +622,6 @@ export async function handleAccountConfigLifecycleCommand(
     return true;
   }
 
-  // -- channel_start ---------------------------------------------------------
-
   if (parsed.type === "channel_start") {
     try {
       const summary = await startChannelLive(
@@ -680,8 +656,6 @@ export async function handleAccountConfigLifecycleCommand(
     }
     return true;
   }
-
-  // -- channel_stop ----------------------------------------------------------
 
   if (parsed.type === "channel_stop") {
     try {

@@ -1,6 +1,3 @@
-// Shared shell for overlay UIs.
-// Renders the "> /command" header, solid line, title, and optional footer.
-// Every overlay selector/dialog uses this pattern.
 
 import { Box } from "ink";
 import type { ReactNode } from "react";
@@ -11,9 +8,7 @@ import { Text } from "./Text";
 const SOLID_LINE = "─";
 
 interface OverlayShellProps {
-  /** The command that opened this overlay, e.g. "/personality" */
   command: string;
-  /** Title displayed below the solid line */
   title: string;
   children: ReactNode;
   /** Optional footer content (e.g. hint line). If omitted, no footer is rendered. */

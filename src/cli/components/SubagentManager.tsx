@@ -1,6 +1,3 @@
-/**
- * SubagentManager component - displays available subagents
- */
 
 import { Box, useInput } from "ink";
 import { useEffect, useState } from "react";
@@ -65,7 +62,6 @@ export function SubagentManager({ onClose }: SubagentManagerProps) {
   }, []);
 
   useInput((input, key) => {
-    // CTRL-C: immediately close
     if (key.ctrl && input === "c") {
       onClose();
       return;

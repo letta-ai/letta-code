@@ -608,9 +608,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         clientPreferences,
       );
 
-      // Handle profile load confirmation (Enter to continue)
       if (profileConfirmPending && !msg && !hasOverrideContent) {
-        // User pressed Enter with empty input - proceed with loading
         const { name, agentId: targetAgentId, cmdId } = profileConfirmPending;
         const cmd = commandRunner.getHandle(cmdId, `/profile load ${name}`);
         cmd.update({ output: "Loading profile...", phase: "running" });
@@ -622,13 +620,11 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         return { submitted: true };
       }
 
-      // Cancel profile confirmation if user types something else
       if (profileConfirmPending && msg) {
         const { cmdId, name } = profileConfirmPending;
         const cmd = commandRunner.getHandle(cmdId, `/profile load ${name}`);
         cmd.fail("Cancelled");
         setProfileConfirmPending(null);
-        // Continue processing the new message
       }
 
       if (!msg && !hasOverrideContent) {
@@ -645,7 +641,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       // sending the next message so the upcoming run uses the selected tier.
       await flushPendingReasoningEffort();
 
-      // Run UserPromptSubmit hooks - can block the prompt from being processed
       const isCommand = userTextForInput.startsWith("/");
       const hookResult = isSystemOnly
         ? { blocked: false, feedback: [] as string[] }
@@ -656,7 +651,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             conversationIdRef.current,
           );
       if (!isSystemOnly && hookResult.blocked) {
-        // Show feedback from hook in the transcript
         const feedbackId = uid("status");
         const feedback = hookResult.feedback.join("\n") || "Blocked by hook";
         buffersRef.current.byId.set(feedbackId, {
@@ -671,7 +665,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         return { submitted: false };
       }
 
-      // Capture successful hook feedback to inject into agent context
       const userPromptSubmitHookFeedback =
         hookResult.feedback.length > 0
           ? `${SYSTEM_REMINDER_OPEN}\n${hookResult.feedback.join("\n")}\n${SYSTEM_REMINDER_CLOSE}`
@@ -681,7 +674,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       // This allows detecting if ESC was pressed during async operations.
       const submissionGeneration = conversationGenerationRef.current;
 
-      // Track user input (agent_id automatically added from telemetry.currentAgentId)
       if (!isSystemOnly && userTextForInput.length > 0) {
         telemetry.trackUserInput(
           userTextForInput,
@@ -703,7 +695,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           .slice(0, 100);
       }
 
-      // Block submission while approvals are pending (input is hidden anyway).
       if (pendingApprovals.length > 0) {
         return { submitted: false };
       }
@@ -744,7 +735,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         (isAgentBusy() ||
           (!hasOverrideContent && (tuiQueueRef.current?.length ?? 0) > 0))
       ) {
-        // Enqueue via QueueRuntime — onEnqueued callback updates queueDisplay.
         tuiQueueRef.current?.enqueue({
           kind: "message",
           source: "user",
@@ -757,7 +747,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
       const aliasedMsg = routedUserText;
 
-      // Handle commands (messages starting with "/")
       if (aliasedMsg.startsWith("/")) {
         const trimmed = aliasedMsg.trim();
 
@@ -771,7 +760,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             `Running /${matchedCustomCommand.id}...`,
           );
 
-          // Check for pending approvals before sending
           const approvalCheck = await checkPendingApprovalsForSlashCommand();
           if (approvalCheck.blocked) {
             cmd.fail(
@@ -780,16 +768,13 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             return { submitted: false }; // Keep custom command in input box, user handles approval first
           }
 
-          // Extract arguments (everything after command name)
           const args = trimmed
             .slice(`/${matchedCustomCommand.id}`.length)
             .trim();
 
-          // Build prompt: 1) substitute args, 2) expand bash commands
           let prompt = substituteArguments(matchedCustomCommand.content, args);
           prompt = await expandBashCommands(prompt);
 
-          // Show command in transcript (running phase for visual feedback)
           setCommandRunning(true);
 
           try {
@@ -988,7 +973,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /model command - opens selector
         if (trimmed === "/model") {
           setModelSelectorOptions({}); // Clear any filters from previous connection
           openOverlay(
@@ -1000,7 +984,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /install-github-app command - interactive setup wizard
         if (trimmed === "/install-github-app") {
           if (getBackend().capabilities.localModelCatalog) {
             const cmd = commandRunner.start(
@@ -1021,7 +1004,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /sleeptime command - opens reflection settings
         if (trimmed === "/sleeptime") {
           openOverlay(
             "sleeptime",
@@ -1032,7 +1014,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /compaction command - opens compaction mode settings
         if (trimmed === "/compaction") {
           openOverlay(
             "compaction",
@@ -1043,7 +1024,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /toolset command - opens selector
         if (trimmed === "/toolset") {
           openOverlay(
             "toolset",
@@ -1225,7 +1205,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /ade command - open agent in browser
         if (trimmed === "/ade") {
           const cmd = commandRunner.start("/ade", "Opening ADE...");
 
@@ -1241,7 +1220,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             conversationId: conversationIdRef.current,
           });
 
-          // Fire-and-forget browser open
           import("open")
             .then(({ default: open }) => open(adeUrl, { wait: false }))
             .catch(() => {
@@ -1253,7 +1231,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /system command - opens system prompt selector
         if (trimmed === "/system") {
           openOverlay(
             "system",
@@ -1264,7 +1241,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /personality command - opens personality selector
         if (trimmed === "/personality") {
           openOverlay(
             "personality",
@@ -1302,7 +1278,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /subagents command - opens subagent manager
         if (trimmed === "/subagents") {
           openOverlay(
             "subagent",
@@ -1313,7 +1288,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /memory command - opens memory viewer overlay
         if (trimmed === "/memory") {
           openOverlay(
             "memory",
@@ -1324,7 +1298,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // /palace - open Memory Palace directly in the browser (skips TUI overlay)
         if (trimmed === "/palace") {
           const cmd = commandRunner.start(
             "/palace",
@@ -1393,7 +1366,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return connectionCommandResult;
         }
 
-        // Special handling for /help command - opens help dialog
         if (trimmed === "/help") {
           openOverlay(
             "help",
@@ -1404,7 +1376,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /hooks command - opens hooks manager
         if (trimmed === "/hooks") {
           openOverlay(
             "hooks",
@@ -1494,7 +1465,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return diagnosticsCommandResult;
         }
 
-        // Special handling for /recompile command - recompile agent + current conversation
         if (trimmed === "/recompile") {
           const cmd = commandRunner.start(
             trimmed,
@@ -1534,7 +1504,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /exit command - exit without stats
         if (trimmed === "/exit") {
           const cmd = commandRunner.start(trimmed, "See ya!");
           cmd.finish("See ya!", true);
@@ -1542,13 +1511,11 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /login command - sign in with Letta
         if (trimmed === "/login") {
           openOverlay("login", "/login", "Opening login...", "Login dismissed");
           return { submitted: true };
         }
 
-        // Special handling for /logout command
         if (trimmed === "/logout") {
           if (isAgentBusy()) {
             const cmd = commandRunner.start(
@@ -1586,7 +1553,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               conversationIdRef.current ?? "default";
             const currentAgentIsLocal = isLocalAgentId(currentAgentId);
 
-            // Revoke refresh token on server if we have one
             if (currentSettings.refreshToken) {
               const { revokeToken } = await import("@/auth/oauth");
               await revokeToken(currentSettings.refreshToken);
@@ -1595,7 +1561,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             (await import("@/agent/organization-id")).clearOrganizationId();
             await settingsManager.logout();
 
-            // Logged out while already using a local agent → stay in place.
             if (currentAgentIsLocal) {
               const localAgentLabel = agentName ?? currentAgentId;
               const baseMessage = `Logged out successfully. You're still using your local agent ${localAgentLabel}.`;
@@ -1613,11 +1578,9 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
             await prepareSessionExit(currentConversationId);
 
-            // Track session end explicitly (before exit) with stats
             const stats = sessionStatsRef.current.getSnapshot();
             telemetry.trackSessionEnd(stats, "logout");
 
-            // Record session to local history file
             try {
               recordSessionEnd(
                 agentId,
@@ -1639,7 +1602,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               // Non-critical, don't fail the exit
             }
 
-            // Flush telemetry before exit
             await telemetry.flush();
 
             // No valid local session to return to after logging out of cloud.
@@ -1648,7 +1610,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           } catch (error) {
             let errorOutput = formatErrorDetails(error, agentId);
 
-            // Add helpful tip for summarization failures
             if (errorOutput.includes("Summarization failed")) {
               errorOutput +=
                 "\n\nTip: Use /clear instead to clear the current message buffer.";
@@ -1661,43 +1622,35 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /stream command - toggle and save
         if (msg.trim() === "/stream") {
           const newValue = !tokenStreamingEnabled;
 
-          // Immediately add command to transcript with "running" phase and loading message
           const cmd = commandRunner.start(
             msg.trim(),
             `${newValue ? "Enabling" : "Disabling"} token streaming...`,
           );
 
-          // Lock input during async operation
           setCommandRunning(true);
 
           try {
             setTokenStreamingEnabled(newValue);
 
-            // Save to settings
             const { settingsManager } = await import("@/settings-manager");
             settingsManager.updateSettings({ tokenStreaming: newValue });
 
-            // Update the same command with final result
             cmd.finish(
               `Token streaming ${newValue ? "enabled" : "disabled"}`,
               true,
             );
           } catch (error) {
-            // Mark command as failed
             const errorDetails = formatErrorDetails(error, agentId);
             cmd.fail(`Failed: ${errorDetails}`);
           } finally {
-            // Unlock input
             setCommandRunning(false);
           }
           return { submitted: true };
         }
 
-        // Special handling for /reasoning-tab command - opt-in toggle for Tab tier cycling
         if (
           trimmed === "/reasoning-tab" ||
           trimmed.startsWith("/reasoning-tab ")
@@ -1743,7 +1696,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /new command - start new conversation
         const newMatch = msg.trim().match(/^\/new(?:\s+(.+))?$/);
         if (newMatch) {
           const conversationName = newMatch[1]?.trim();
@@ -1760,13 +1712,11 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
           const prevConversationId = conversationIdRef.current;
 
-          // Run SessionEnd hooks for current session before starting new one
           await runEndHooks("new");
 
           try {
             const backend = getBackend();
 
-            // Create a new conversation for the current agent
             const conversation = await backend.createConversation({
               agent_id: agentId,
               ...(conversationName && { summary: conversationName }),
@@ -1785,16 +1735,12 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               isDefault: false,
             };
 
-            // Save the new session to settings
             settingsManager.persistSession(agentId, conversation.id);
 
-            // Reset context tokens for new conversation
             resetContextHistory(contextTrackerRef.current);
 
-            // Ensure bootstrap reminders are re-injected for the new conversation.
             resetBootstrapReminderState(true);
 
-            // Re-run SessionStart hooks for new conversation
             sessionHooksRanRef.current = false;
             runSessionStartHooks(
               true, // isNewSession
@@ -1821,7 +1767,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               modAdapter.context,
             );
 
-            // Update command with success
             cmd.finish(
               "Started new conversation (use /resume to change convos)",
               true,
@@ -1835,7 +1780,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /fork command - fork the current conversation
         const forkMatch = msg.trim().match(/^\/fork(?:\s+(.+))?$/);
         if (forkMatch) {
           const conversationSummary = forkMatch[1]?.trim();
@@ -1854,7 +1798,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           await runEndHooks("fork");
 
           try {
-            // For default conversation, pass agent_id
             const isDefault = conversationIdRef.current === "default";
             const backend = getBackend();
             const forked = await backend.forkConversation(
@@ -1864,7 +1807,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               },
             );
 
-            // If we forked with an explicit summary, update it
             if (conversationSummary) {
               await backend.updateConversation(forked.id, {
                 summary: conversationSummary,
@@ -1926,7 +1868,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /btw command - fork in background, stream response to ephemeral pane
         const btwMatch = msg.trim().match(/^\/btw\s+(.+)$/);
         if (btwMatch?.[1]) {
           const question = btwMatch[1].trim();
@@ -2035,8 +1976,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /compact command - summarize conversation history
-        // Supports: /compact, /compact all, /compact sliding_window, /compact self_compact_all, /compact self_compact_sliding_window
         if (msg.trim().startsWith("/compact")) {
           const parts = msg.trim().split(/\s+/);
           const rawModeArg = parts[1];
@@ -2076,7 +2015,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             | "self_compact_sliding_window"
             | undefined;
 
-          // Validate mode if provided
           if (modeArg && !validModes.includes(modeArg)) {
             const cmd = commandRunner.start(
               msg.trim(),
@@ -2095,7 +2033,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           setCommandRunning(true);
 
           try {
-            // Run PreCompact hooks - can block the compact operation
             const preCompactResult = await runPreCompactHooks(
               undefined, // context_length - not available here
               undefined, // max_context_length - not available here
@@ -2245,7 +2182,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /rename command - rename agent or conversation
         if (msg.trim().startsWith("/rename")) {
           const parts = msg.trim().split(/\s+/);
           const subcommand = parts[1]?.toLowerCase();
@@ -2322,7 +2258,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             return { submitted: true };
           }
 
-          // Rename agent (default behavior)
           const validationError = validateAgentName(newValue);
           if (validationError) {
             cmd.fail(validationError);
@@ -2353,7 +2288,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /description command - update agent description
         if (msg.trim().startsWith("/description")) {
           const parts = msg.trim().split(/\s+/);
           const newDescription = parts.slice(1).join(" ");
@@ -2404,7 +2338,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /agents command - routed through navigation commands.
         const navigationCommandResult = await handleNavigationCommand(trimmed, {
           agentId,
           agentState,
@@ -2448,7 +2381,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return profileCommandResult;
         }
 
-        // Special handling for /bg command - show background shell processes
         if (msg.trim() === "/bg") {
           const { backgroundProcesses } = await import(
             "@/tools/impl/process_manager"
@@ -2479,7 +2411,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /memfs command - manage filesystem-backed memory
         if (trimmed.startsWith("/memfs")) {
           const [, subcommand] = trimmed.split(/\s+/);
           const cmd = commandRunner.start(
@@ -2506,7 +2437,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           }
 
           if (subcommand === "status") {
-            // Show status
             const enabled = isActiveMemfsEnabled(agentId);
             let output: string;
             if (enabled) {
@@ -2558,7 +2488,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           }
 
           if (subcommand === "sync") {
-            // Check if memfs is enabled for this agent
             if (!isActiveMemfsEnabled(agentId)) {
               cmd.fail(
                 "Memory filesystem is disabled. Run `/memfs enable` first.",
@@ -2681,14 +2610,12 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             return { submitted: true };
           }
 
-          // Unknown subcommand
           cmd.fail(
             `Unknown subcommand: "${subcommand}". Run /memfs help for usage.`,
           );
           return { submitted: true };
         }
 
-        // /skills - browse available skills overlay
         if (trimmed === "/skills") {
           openOverlay(
             "skills",
@@ -2699,7 +2626,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // /skill-creator - enter skill creation mode
         if (
           trimmed === "/skill-creator" ||
           trimmed.startsWith("/skill-creator ")
@@ -2713,7 +2639,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
           const cmd = commandRunner.start(msg, initialOutput);
 
-          // Check for pending approvals before sending
           const approvalCheck = await checkPendingApprovalsForSlashCommand();
           if (approvalCheck.blocked) {
             cmd.fail(
@@ -2725,25 +2650,21 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           setCommandRunning(true);
 
           try {
-            // Import the skill-creation prompt
             const { SKILL_CREATOR_PROMPT } = await import(
               "@/agent/prompt-assets.js"
             );
 
-            // Build system-reminder content for skill creation
             const userDescriptionLine = description
               ? `\n\nUser-provided skill description:\n${description}`
               : "\n\nThe user did not provide a description with /skill-creator. Ask what kind of skill they want to create before proceeding.";
 
             const skillMessage = `${SYSTEM_REMINDER_OPEN}\n${SKILL_CREATOR_PROMPT}${userDescriptionLine}\n${SYSTEM_REMINDER_CLOSE}`;
 
-            // Mark command as finished before sending message
             cmd.finish(
               "Entered skill creation mode. Answer the assistant’s questions to design your new skill.",
               true,
             );
 
-            // Process conversation with the skill-creation prompt
             await processConversationWithQueuedApprovals([
               {
                 type: "message",
@@ -2762,7 +2683,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Experimental reflection arena - blind A/B reflection model comparison
         if (
           trimmed === "/reflect-arena" ||
           trimmed.startsWith("/reflect-arena ")
@@ -2868,7 +2788,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
           return { submitted: true };
         }
-        // All manual aliases resolve ownership before entering any legacy mode.
         if (/^\/(dream|reflect|reflection)(?:\s|$)/.test(trimmed)) {
           const agentId = commandScope.agentId;
           const cmd = commandRunner.start(msg, "Starting reflection...");
@@ -3272,7 +3191,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /init command
         if (trimmed === "/init") {
           const cmd = commandRunner.start(msg, "Gathering project context...");
 
@@ -3365,7 +3283,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // === /empanada command ===
         if (trimmed.startsWith("/empanada")) {
           const cmd = commandRunner.start(msg, "Checking Empanada Empire...");
 
@@ -3452,7 +3369,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Check if this is a known command before treating it as a slash command
         const { commands, executeCommand } = await import(
           "@/cli/commands/registry"
         );
@@ -3463,7 +3379,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           : null;
         const result = await executeCommand(aliasedMsg, commandScope);
 
-        // If command not found, try user-invocable skills before falling through.
         if (result.notFound) {
           if (registryCmd) {
             registryCmd.fail(`Unknown command: ${registryCommandName}`);
@@ -3532,9 +3447,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
             return { submitted: true };
           }
-          // Don't treat as command - continue to regular message handling below
         } else {
-          // Known command - show in transcript and handle result
           if (result.success && result.refreshSecretsInfo) {
             markSecretsInfoReminderPending(sharedReminderStateRef.current);
           }
@@ -3545,15 +3458,9 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         }
       }
 
-      // Build message content from display value (handles placeholders for text/images)
       const contentParts =
         overrideContentParts ?? buildMessageContentFromDisplay(msg);
 
-      // Append the optimistic user message and trigger a render immediately —
-      // before any async work (reminder building, hooks, etc.) so the user
-      // sees their message appear without delay. Ink uses React legacy mode
-      // which doesn't auto-batch async state updates, so we do this synchronously
-      // while still inside the React event handler to get a single render cycle.
       const userOtid = createClientOtid();
       const optimisticUserLineId = appendOptimisticUserLine(
         buffersRef.current,
@@ -3572,7 +3479,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       openTrajectorySegment();
       refreshDerived();
 
-      // Inject SessionStart hook feedback (stdout on exit 2) into first message only
       let sessionStartHookFeedback = "";
       if (sessionStartFeedbackRef.current.length > 0) {
         sessionStartHookFeedback = `${SYSTEM_REMINDER_OPEN}\n[SessionStart hook context]:\n${sessionStartFeedbackRef.current.join("\n")}\n${SYSTEM_REMINDER_CLOSE}\n\n`;
@@ -3580,7 +3486,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         sessionStartFeedbackRef.current = [];
       }
 
-      // Build bash command prefix if there are cached commands
       let bashCommandPrefix = "";
       if (bashCommandCacheRef.current.length > 0) {
         bashCommandPrefix = `${SYSTEM_REMINDER_OPEN}
@@ -3591,11 +3496,9 @@ ${SYSTEM_REMINDER_CLOSE}
         for (const cmd of bashCommandCacheRef.current) {
           bashCommandPrefix += `<bash-input>${cmd.input}</bash-input>\n<bash-output>${cmd.output}</bash-output>\n`;
         }
-        // Clear the cache after building the prefix
         bashCommandCacheRef.current = [];
       }
 
-      // Build git memory sync reminder if uncommitted changes or unpushed commits
       let memoryGitReminder = "";
       const gitStatus = pendingGitReminderRef.current;
       if (gitStatus) {
@@ -3620,7 +3523,6 @@ ${SYSTEM_REMINDER_CLOSE}
 
       // Combine reminders with content as separate text parts.
       // This preserves each reminder boundary in the API payload.
-      // Note: Task notifications now come through queueDisplay directly (added by messageQueueBridge)
       const reminderParts: Array<{ type: "text"; text: string }> = [];
       const pushReminder = (text: string) => {
         if (!text) return;
@@ -3646,7 +3548,6 @@ ${SYSTEM_REMINDER_CLOSE}
       for (const part of sharedReminderParts) {
         reminderParts.push(part);
       }
-      // Build conversation switch alert if a switch is pending (behind feature flag)
       let conversationSwitchAlert = "";
       if (
         pendingConversationSwitchRef.current &&
@@ -3671,7 +3572,6 @@ ${SYSTEM_REMINDER_CLOSE}
         reminderParts,
       );
 
-      // Append task notifications (if any) as event lines before the user message
       appendTaskNotificationEvents(taskNotifications);
 
       const transcriptStartLineIndex = userTextForInput
@@ -3680,21 +3580,17 @@ ${SYSTEM_REMINDER_CLOSE}
 
       // Check for pending approvals before sending message (skip if we already have
       // a queued approval response to send first).
-      // Only do eager check when resuming a session (LET-7101) - otherwise lazy recovery handles it
       let eagerRecoveryDenials: ApprovalResult[] | null = null;
       if (needsEagerApprovalCheck && !queuedApprovalResults) {
         try {
-          // Fetch fresh agent state to check for pending approvals with accurate in-context messages
           const agent = await getBackend().retrieveAgent(agentId);
           const { pendingApprovals: existingApprovals } =
             await getResumeDataFromBackend(agent, conversationIdRef.current);
 
-          // Check if user cancelled while we were fetching approval state
           if (
             userCancelledRef.current ||
             abortControllerRef.current?.signal.aborted
           ) {
-            // User hit ESC during the check - abort and clean up
             if (optimisticUserLineId) {
               buffersRef.current.byId.delete(optimisticUserLineId);
               const orderIndex =
@@ -3741,7 +3637,6 @@ ${SYSTEM_REMINDER_CLOSE}
         isEnabled: isActiveMemfsEnabled,
       });
 
-      // Clean up placeholders after submission
       clearPlaceholdersInText(msg);
 
       return { submitted: true };

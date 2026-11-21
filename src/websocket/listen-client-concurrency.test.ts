@@ -358,8 +358,6 @@ function makeIncomingMessage(
   };
 }
 
-// Keep listener/runtime setup consistent across tests without repeating the
-// full construction sequence at every handleIncomingMessage boundary.
 function createRuntime(
   agentId: string,
   conversationId: string,
@@ -412,7 +410,6 @@ describe("listen-client multi-worker concurrency", () => {
     );
     process.env.LETTA_TRANSCRIPT_ROOT = testTranscriptRoot;
 
-    // No-op stubs for providers that need settingsManager / process.cwd
     sharedReminderProviders["session-context"] = async () => null;
     sharedReminderProviders["agent-info"] = async () => null;
     (settingsManager as typeof settingsManager).getSettings = (() =>
