@@ -5,7 +5,10 @@ import {
   getCachedAvailableModels,
   getCachedModelReasoningCapabilities,
 } from "@/agent/available-models";
-import { getReasoningTierOptionsFromCapabilities } from "@/agent/model";
+import {
+  getReasoningTierOptionsFromCapabilities,
+  REASONING_EFFORT_ORDER,
+} from "@/agent/model";
 import {
   type CatalogModel,
   models,
@@ -37,7 +40,8 @@ Options:
   --default            Use the agent default instead of the current conversation
   --agent <id>          Agent defaults; ignore the session conversation
   --conversation <id>   One conversation's model override (--conv is an alias)
-  --reasoning <level>   Use a level advertised by model list for this model
+  --reasoning <level>   Use a level advertised by model list for this model;
+                        BYOK models that report no levels accept any standard one
   --model-settings <json>
                         Shallow-merge a JSON object into the target's current
                         model_settings, e.g. '{"temperature":0.2}'.
@@ -338,15 +342,36 @@ function reasoningLevels(handle: string, contextWindow?: unknown): string[] {
   ];
 }
 
+/**
+ * Parity with the TUI's BYOK reasoning picker: a BYOK model that reports no
+ * reasoning capabilities accepts any standard level and lets the provider
+ * decide. A capability set the backend did report stays authoritative even
+ * when it advertises no levels.
+ */
+export function settableReasoningLevels(
+  advertised: readonly string[],
+  options: {
+    providerCategory?: string;
+    capabilitiesReported?: boolean;
+  } = {},
+): readonly string[] {
+  return options.providerCategory === "byok" &&
+    options.capabilitiesReported !== true &&
+    advertised.length === 0
+    ? [...REASONING_EFFORT_ORDER]
+    : advertised;
+}
+
 async function resolveSelection(model: string, reasoning?: string) {
   await initializeModelCatalog();
   const handle = resolveModel(model);
   if (!handle) throw new Error(`Unknown or ambiguous model: ${model}`);
   const preset = resolveCatalogModel(model);
   let updateArgs = { ...preset?.updateArgs };
+  let available: AvailableModel | undefined;
   if (!preset) {
     await getAvailableModelHandles();
-    const available = availableModel(handle);
+    available = availableModel(handle);
     if (!available)
       throw new Error(`Model is not available on this backend: ${model}`);
     updateArgs = {
@@ -357,7 +382,14 @@ async function resolveSelection(model: string, reasoning?: string) {
     };
   }
   if (reasoning !== undefined) {
-    const levels = reasoningLevels(handle, updateArgs.context_window);
+    const levels = settableReasoningLevels(
+      reasoningLevels(handle, updateArgs.context_window),
+      {
+        providerCategory: available?.providerCategory,
+        capabilitiesReported:
+          getCachedModelReasoningCapabilities()?.has(handle) === true,
+      },
+    );
     if (!levels.includes(reasoning)) {
       throw new Error(
         `Unsupported reasoning level '${reasoning}' for ${handle}. Supported: ${levels.join(", ") || "none advertised"}`,

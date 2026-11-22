@@ -44,7 +44,7 @@ type ReasoningCapabilities = {
   mandatory?: boolean;
 };
 
-const REASONING_EFFORT_ORDER: ModelReasoningEffort[] = [
+export const REASONING_EFFORT_ORDER: ModelReasoningEffort[] = [
   "none",
   "minimal",
   "low",
