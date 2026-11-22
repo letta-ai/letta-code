@@ -5,6 +5,7 @@ import type {
 } from "node:http";
 import { getBackend } from "@/backend";
 import { authorizeUpgrade } from "@/websocket/app-server-auth";
+import { OpenAiChatBindingError } from "@/websocket/app-server-openai-bindings";
 import {
   chatKeyFromHeaders,
   createConversationSerialized,
@@ -15,8 +16,8 @@ import {
   idempotencyKeyFromHeaders,
   type OpenAiChatMessage,
   type OpenAiCompatOptions,
+  openAiInputHasHistory,
   readJsonBody,
-  rememberConversation,
   rememberIdempotentOutcome,
   resetOpenAiCompatState,
   resolveAgentForModel,
@@ -170,9 +171,11 @@ async function handleChatCompletions(
     try {
       if (headerChatKey) {
         const chatKey = `chat-key:${agent.id}:${headerChatKey}`;
-        conversationId = await resolveConversationId(agent.id, chatKey);
-        // Pin immediately so concurrent requests for this chat reuse it.
-        rememberConversation(chatKey, conversationId);
+        conversationId = await resolveConversationId(
+          agent.id,
+          chatKey,
+          openAiInputHasHistory(body.messages),
+        );
       } else {
         conversationId = await createConversationSerialized(agent.id);
       }
@@ -183,9 +186,14 @@ async function handleChatCompletions(
       );
       sendOpenAiError(
         response,
-        500,
-        "failed to create a conversation for this chat",
+        error instanceof OpenAiChatBindingError ? 503 : 500,
+        error instanceof OpenAiChatBindingError
+          ? "Letta could not restore this chat's conversation binding. No input was submitted."
+          : "failed to create a conversation for this chat",
         "server_error",
+        error instanceof OpenAiChatBindingError
+          ? "conversation_binding_unavailable"
+          : null,
       );
       return;
     }
@@ -251,7 +259,12 @@ async function handleChatCompletions(
 
   let outcome: TurnOutcome;
   try {
-    let turnPromise = replayPromise;
+    // The conversation lookup can wait behind another chat's creation. A
+    // matching retry may publish its outcome meanwhile, so recheck here with
+    // no await between this lookup and starting/registering a new turn.
+    let turnPromise =
+      replayPromise ??
+      (idempotencyKey ? getIdempotentOutcome(idempotencyKey) : undefined);
     const ownsTurn = !turnPromise;
     if (!turnPromise) {
       turnPromise = runBridgeTurn({

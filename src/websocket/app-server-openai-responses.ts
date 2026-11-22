@@ -4,6 +4,7 @@ import type {
   ServerResponse,
 } from "node:http";
 import { getBackend } from "@/backend";
+import { OpenAiChatBindingError } from "@/websocket/app-server-openai-bindings";
 import {
   chatKeyFromHeaders,
   createConversationSerialized,
@@ -11,6 +12,7 @@ import {
   extractUserContentParts,
   type OpenAiChatMessage,
   type OpenAiCompatOptions,
+  openAiInputHasHistory,
   readJsonBody,
   rememberConversation,
   resolveAgentForModel,
@@ -657,8 +659,11 @@ export async function handleResponses(
       }
     } else if (headerChatKey) {
       const key = `chat-key:${agent.id}:${headerChatKey}`;
-      conversationId = await resolveConversationId(agent.id, key);
-      rememberConversation(key, conversationId);
+      conversationId = await resolveConversationId(
+        agent.id,
+        key,
+        openAiInputHasHistory(input),
+      );
     } else {
       conversationId = await createConversationSerialized(agent.id);
     }
@@ -670,9 +675,14 @@ export async function handleResponses(
     );
     sendOpenAiError(
       response,
-      500,
-      "failed to create a conversation for this response",
+      error instanceof OpenAiChatBindingError ? 503 : 500,
+      error instanceof OpenAiChatBindingError
+        ? "Letta could not restore this chat's conversation binding. No input was submitted."
+        : "failed to create a conversation for this response",
       "server_error",
+      error instanceof OpenAiChatBindingError
+        ? "conversation_binding_unavailable"
+        : null,
     );
     return;
   }
