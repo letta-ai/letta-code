@@ -12,6 +12,7 @@ import {
   type InboundDebouncer,
 } from "@/channels/inbound-debounce";
 import { formatChannelControlRequestPrompt } from "@/channels/interactive";
+import { resolveChannelErrorRepliesMode } from "@/channels/lifecycle-error";
 import {
   buildChannelLifecycleErrorReport,
   submitChannelLifecycleErrorReport,
@@ -528,6 +529,13 @@ export function createTelegramAdapter(
     errorText: string,
     runId?: string | null,
   ): Promise<void> {
+    const mode = resolveChannelErrorRepliesMode(
+      source.errorReplies,
+      config.errorReplies,
+    );
+    if (mode === "off") {
+      return;
+    }
     if (!rememberLifecycleErrorReply(dedupeKey)) {
       return;
     }
@@ -547,24 +555,26 @@ export function createTelegramAdapter(
       ...(threadId ? { message_thread_id: Number(threadId) } : {}),
       ...(reply_parameters ? { reply_parameters } : {}),
     };
-    options.reply_markup = {
-      inline_keyboard: [
-        [
-          {
-            text: "Report error",
-            callback_data: rememberLifecycleErrorReport(
-              source,
-              errorText,
-              runId,
-            ),
-          },
+    if (mode !== "generic") {
+      options.reply_markup = {
+        inline_keyboard: [
+          [
+            {
+              text: "Report error",
+              callback_data: rememberLifecycleErrorReport(
+                source,
+                errorText,
+                runId,
+              ),
+            },
+          ],
         ],
-      ],
-    };
+      };
+    }
 
     await telegramBot.api.sendMessage(
       source.chatId,
-      formatTelegramLifecycleErrorMessage(errorText, runId),
+      formatTelegramLifecycleErrorMessage(errorText, runId, mode),
       options,
     );
   }

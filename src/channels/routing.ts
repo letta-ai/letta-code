@@ -89,6 +89,7 @@ export function loadRoutes(channelId: string): void {
             conversationId: route.conversationId,
             enabled: route.enabled !== false,
             outboundEnabled: route.outboundEnabled !== false,
+            ...(route.errorReplies ? { errorReplies: route.errorReplies } : {}),
             detached: route.detached === true,
             createdAt: route.createdAt ?? new Date().toISOString(),
             updatedAt:
@@ -116,6 +117,7 @@ export function loadRoutes(channelId: string): void {
             conversationId: route.conversationId,
             enabled: route.enabled !== false,
             outboundEnabled: route.outboundEnabled !== false,
+            ...(route.errorReplies ? { errorReplies: route.errorReplies } : {}),
             detached: route.detached === true,
             createdAt: route.createdAt ?? new Date().toISOString(),
             updatedAt:

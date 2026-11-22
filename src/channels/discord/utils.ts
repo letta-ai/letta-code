@@ -1,4 +1,7 @@
-import { formatChannelLifecycleErrorMessage } from "@/channels/lifecycle-error";
+import {
+  type ChannelErrorRepliesMode,
+  formatChannelLifecycleErrorMessage,
+} from "@/channels/lifecycle-error";
 import type { DiscordChannelAccount } from "@/channels/types";
 import { formatDiscordDeliveryError } from "./error-reply";
 import type {
@@ -156,10 +159,12 @@ export function buildDiscordReplyOptions(
 export function formatDiscordLifecycleErrorMessage(
   errorText: string,
   runId?: string | null,
+  mode?: ChannelErrorRepliesMode,
 ): string {
   return formatChannelLifecycleErrorMessage(errorText, {
     codeBlock: true,
     maxLength: DISCORD_LIFECYCLE_ERROR_TEXT_MAX,
+    mode,
     runId,
   });
 }
