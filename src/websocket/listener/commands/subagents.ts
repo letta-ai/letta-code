@@ -77,6 +77,10 @@ export async function handleLaunchSubagentCommand(
             launch(
               {
                 ...toSubagentLaunchArgs(command.args),
+                // Forwarded launches have already reached their destination.
+                // Its default computer could route the same command back here.
+                ...(command.notify === "caller" &&
+                  command.args.computer === undefined && { computer: "local" }),
                 signal,
                 toolCallId: command.tool_call_id,
                 notifyCaller: command.notify === "caller",
