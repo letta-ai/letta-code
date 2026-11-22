@@ -6,6 +6,7 @@ Executes a shell command and returns its output.
 - `timeout` is in milliseconds; foreground timeouts max out at 600000. Without it, a command that can't continue in the background times out after 120000; others run until they exit.
 - If the output exceeds 30000 characters, you receive only the first 2000 characters plus the path of a file containing the full output. A failed command whose output exceeds 10000 characters returns a head-and-tail excerpt plus that file path. Read or search that file when you need the rest instead of re-running the command.
 - Commands still running after a brief wait continue in the background automatically: you receive a task ID and one completion notification. Do not predict command duration, set `run_in_background` merely because a command may be slow, or poll for completion. Set `run_in_background` only when you want the task ID immediately; no `&` needed.
+- Stop processes with TaskStop/KillBash, a captured `$!`, or a PID identified by port. Broad `pkill -f` or `killall` can match the CLI’s own command line.
 - Foreground `sleep` is blocked. To wait for a condition, use Monitor.
 - Run independent commands as parallel tool calls; chain dependent ones with `&&`.
 

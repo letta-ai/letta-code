@@ -64,7 +64,10 @@ function tryConsumeSafeRedirect(input: string, pos: number): number {
  * - redirects (>, >>) outside quotes (unless targeting /dev/null or fd duplication)
  * - command substitution ($(), backticks) outside single quotes
  */
-export function splitShellSegments(input: string): string[] | null {
+export function splitShellSegments(
+  input: string,
+  options: { splitBackground?: boolean } = {},
+): string[] | null {
   const segments: string[] = [];
   let current = "";
   let i = 0;
@@ -159,7 +162,7 @@ export function splitShellSegments(input: string): string[] | null {
       continue;
     }
 
-    if (ch === ";") {
+    if (ch === ";" || (options.splitBackground && ch === "&")) {
       segments.push(current);
       current = "";
       i += 1;
