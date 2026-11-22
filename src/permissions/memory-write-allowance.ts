@@ -1,11 +1,12 @@
 import { getCurrentAgentId } from "@/agent/context";
+import { expandFilePath } from "@/utils/file-path";
 import { extractApplyPatchPaths, extractFilePath } from "./cross-agent-guard";
 import {
   isPathWithinRoots,
   resolveAllowedMemoryRoots,
   resolveMemoryTargetPath,
 } from "./memory-paths";
-import { canonicalizeRoot } from "./sandbox-policy";
+import { resolvePermissionPath } from "./resolved-path-args";
 
 type ToolArgs = Record<string, unknown>;
 
@@ -47,13 +48,19 @@ export function isOwnMemoryWrite(
     const { roots } = resolveAllowedMemoryRoots({
       currentAgentId: agentId ?? getCurrentAgentId(),
     });
-    const realRoots = roots.map(canonicalizeRoot);
+    const realRoots = roots
+      .map(resolvePermissionPath)
+      .filter((root): root is string => root !== null);
     return targets.every((target) => {
       const resolved = resolveMemoryTargetPath(target, workingDirectory);
+      const real = resolvePermissionPath(
+        expandFilePath(target, workingDirectory, process.env, undefined, true),
+      );
       return (
         resolved !== null &&
         isPathWithinRoots(resolved, roots) &&
-        isPathWithinRoots(canonicalizeRoot(resolved), realRoots)
+        real !== null &&
+        isPathWithinRoots(real, realRoots)
       );
     });
   } catch {

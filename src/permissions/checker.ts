@@ -34,6 +34,7 @@ import {
 import { isOwnMemoryWrite } from "./memory-write-allowance";
 import { permissionMode } from "./mode";
 import { isMemoryDirCommand, isReadOnlyShellCommand } from "./read-only-shell";
+import { resolvedPathArgs, resolvePermissionPath } from "./resolved-path-args";
 import { sessionPermissions } from "./session";
 import type {
   PermissionCheckResult,
@@ -126,10 +127,17 @@ export function checkPermission(
   agentId?: string,
   modTools: Map<string, ModToolDefinition> = getAvailableModToolsRegistry(),
 ): PermissionCheckResult {
+  // Check filesystem traversal and the execution path's normalized spelling.
+  const resolvedArgs = [true, false].map((preserve) =>
+    resolvedPathArgs(toolName, toolArgs, workingDirectory, preserve),
+  );
+  if (resolvedArgs.some((args) => args === null))
+    return { decision: "deny", reason: "Unable to resolve file path" };
   toolArgs = expandPathArgs(toolName, toolArgs, workingDirectory);
   const engine: PermissionEngine = isPermissionsV2Enabled() ? "v2" : "v1";
   const primary = checkPermissionForEngine(
     engine,
+    resolvedArgs,
     toolName,
     toolArgs,
     permissions,
@@ -162,6 +170,7 @@ export function checkPermission(
     const shadowEngine: PermissionEngine = engine === "v2" ? "v1" : "v2";
     const shadow = checkPermissionForEngine(
       shadowEngine,
+      resolvedArgs,
       toolName,
       toolArgs,
       permissions,
@@ -239,6 +248,7 @@ function traceEvent(
 
 function checkPermissionForEngine(
   engine: PermissionEngine,
+  resolvedArgs: (ToolArgs | null)[],
   toolName: string,
   toolArgs: ToolArgs,
   permissions: PermissionRules,
@@ -257,7 +267,24 @@ function checkPermissionForEngine(
     permissionToolName === toolName
       ? query
       : buildPermissionQuery(originalQueryTool, toolArgs);
+  const resolvedCwd =
+    resolvePermissionPath(workingDirectory) ?? workingDirectory;
+  const resolvedQueries = resolvedArgs.map((args) =>
+    buildPermissionQuery(queryTool, args ?? {}),
+  );
   const matchesRule = (pattern: string, includeOriginal = false): boolean =>
+    (includeOriginal &&
+      resolvedQueries.some((resolvedQuery) =>
+        [workingDirectory, resolvedCwd].some((cwd) =>
+          matchesPattern(
+            permissionToolName,
+            resolvedQuery,
+            pattern,
+            cwd,
+            engine,
+          ),
+        ),
+      )) ||
     matchesPattern(
       permissionToolName,
       query,
@@ -277,12 +304,20 @@ function checkPermissionForEngine(
   const trace = createTrace(engine, toolName, canonicalTool, query);
   const sessionRules = sessionPermissions.getRules();
 
-  const workspaceGuardResult = evaluateWorkspaceSandboxGuard(
-    permissionToolName,
+  const pathCandidates = [
     toolArgs,
-    workingDirectory,
-    getRuntimeContext()?.workspaceSandbox,
-  );
+    ...resolvedArgs.filter((args): args is ToolArgs => args !== null),
+  ];
+  const workspaceGuardResult = pathCandidates
+    .map((args) =>
+      evaluateWorkspaceSandboxGuard(
+        permissionToolName,
+        args,
+        workingDirectory,
+        getRuntimeContext()?.workspaceSandbox,
+      ),
+    )
+    .find(Boolean);
   if (workspaceGuardResult) {
     traceEvent(trace, "workspace-sandbox", workspaceGuardResult.reason);
     return {
@@ -298,12 +333,13 @@ function checkPermissionForEngine(
   // Cross-agent guard — when enabled, denies any tool call targeting another
   // agent's memory unless that agent is in the allowed set. Unbypassable by
   // any mode, rule, or flag.
-  const guardResult = evaluateCrossAgentGuard(
-    permissionToolName,
-    toolArgs,
-    workingDirectory,
-    { currentAgentId: agentId },
-  );
+  const guardResult = pathCandidates
+    .map((args) =>
+      evaluateCrossAgentGuard(permissionToolName, args, workingDirectory, {
+        currentAgentId: agentId,
+      }),
+    )
+    .find(Boolean);
   if (guardResult) {
     traceEvent(trace, "cross-agent-guard", guardResult.reason);
     return {
@@ -648,8 +684,18 @@ function isWithinAllowedDirectories(
 ): boolean {
   const absolutePath = resolve(workingDirectory, filePath);
 
+  const realPath = resolvePermissionPath(filePath);
+  const inside = (root: string): boolean => {
+    const realRoot = resolvePermissionPath(resolve(root));
+    return (
+      realPath !== null &&
+      realRoot !== null &&
+      isPathWithin(absolutePath, resolve(root)) &&
+      isPathWithin(realPath, realRoot)
+    );
+  };
   // Check if within working directory
-  if (isPathWithin(absolutePath, resolve(workingDirectory))) {
+  if (inside(workingDirectory)) {
     return true;
   }
 
@@ -657,7 +703,7 @@ function isWithinAllowedDirectories(
   if (permissions.additionalDirectories) {
     for (const dir of permissions.additionalDirectories) {
       const resolvedDir = resolve(workingDirectory, dir);
-      if (isPathWithin(absolutePath, resolvedDir)) {
+      if (inside(resolvedDir)) {
         return true;
       }
     }
@@ -863,7 +909,6 @@ export async function checkPermissionWithHooks(
   modTools: Map<string, ModToolDefinition> = getAvailableModToolsRegistry(),
   modPermissionOptions: ModPermissionCheckOptions = {},
 ): Promise<PermissionCheckResult> {
-  toolArgs = expandPathArgs(toolName, toolArgs, workingDirectory);
   // First, check permission using normal rules
   let result = checkPermission(
     toolName,
@@ -875,6 +920,7 @@ export async function checkPermissionWithHooks(
     modTools,
   );
 
+  toolArgs = expandPathArgs(toolName, toolArgs, workingDirectory);
   if (result.decision !== "deny") {
     const modDecision = await checkModPermissions(
       {

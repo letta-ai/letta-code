@@ -26,6 +26,7 @@ export function expandPathArgs(
   workingDirectory: string,
   env: NodeJS.ProcessEnv = process.env,
   homeDir?: string,
+  preserveTraversal = false,
 ): ToolArgs {
   if (!CWD_FILE_PATH_TOOLS.has(canonicalToolName(toolName))) return toolArgs;
   let expandedArgs = toolArgs;
@@ -44,6 +45,7 @@ export function expandPathArgs(
         workingDirectory,
         env,
         homeDir ?? env.HOME ?? homedir(),
+        preserveTraversal,
       ),
     };
   }
