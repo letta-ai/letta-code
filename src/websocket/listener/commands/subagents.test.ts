@@ -6,6 +6,7 @@ import {
   type RuntimeContextSnapshot,
   runWithRuntimeContext,
 } from "@/runtime-context";
+import { resolveSubagentComputer } from "@/tools/impl/subagent-computer";
 import { getWorkingDirectoryScopeKey } from "@/websocket/listener/cwd";
 import { createRuntime } from "@/websocket/listener/lifecycle";
 import { createConversationRuntime } from "@/websocket/listener/runtime";
@@ -185,6 +186,50 @@ describe("subagent command context", () => {
     expect(parent.turnLifecycle.currentLease).toBe(lease);
     parent.turnLifecycle.finish(lease, "end_turn");
   });
+
+  test.each([
+    { harness: "claude-code", fork_context: false },
+    { subagent_type: "claude-code" },
+  ])(
+    "runs forwarded external launches on the receiving computer (%j)",
+    async (wireArgs) => {
+      const parent = createConversationRuntime(
+        createRuntime(),
+        "agent-a",
+        "conv-a",
+      );
+      const response = await handleLaunchSubagentCommand(
+        {
+          type: "launch_subagent",
+          request_id: "forwarded-launch",
+          runtime: { agent_id: "agent-a", conversation_id: "conv-a" },
+          args: { ...wireArgs, prompt: "Work", description: "Work" },
+          tool_call_id: "call-1",
+          notify: "caller",
+        },
+        parent,
+        undefined,
+        async (input) => {
+          const { computer } = resolveSubagentComputer({
+            requested: input.computer,
+            subagentType: "claude-code",
+            config: { fork: false, launchProfile: "default" },
+            env: { LETTA_DEFAULT_SUBAGENT_COMPUTER: "this-computer" },
+          });
+          return computer
+            ? { success: false, error: "Forwarded again to the same computer" }
+            : {
+                success: true,
+                task_id: "task",
+                agent_id: "agent-worker",
+                conversation_id: "conv-worker",
+                output_file: "out",
+              };
+        },
+      );
+      expect(response).toMatchObject({ success: true });
+    },
+  );
 
   test("notify caller launches skip self-notification and return a scoped reply", async () => {
     const parent = createConversationRuntime(

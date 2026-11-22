@@ -223,7 +223,9 @@ describe("Workflow tool (background launch)", () => {
             });
             try {
               expect(retrieveAgent).toHaveBeenCalledWith("agent-parent");
-              expect(retrieveConversation).toHaveBeenCalledWith("conv-child");
+              expect(retrieveConversation).toHaveBeenCalledWith("conv-child", {
+                query: { include_context_message_ids: false },
+              });
             } finally {
               await handle.cleanup();
             }

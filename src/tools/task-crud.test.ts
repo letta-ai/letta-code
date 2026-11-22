@@ -36,6 +36,17 @@ describe("Task CRUD family", () => {
     expect(a.blocks).toEqual([]);
     expect(a.blockedBy).toEqual([]);
     expect(a.metadata).toEqual({});
+    expect(
+      a.tasks.map((t) => [
+        t.taskId,
+        t.subject,
+        t.description,
+        t.status,
+        t.order,
+      ]),
+    ).toEqual([["task_1", "First", "Do the first thing", "pending", 0]]);
+    expect(b.tasks.map((t) => t.taskId)).toEqual([a.taskId, b.taskId]);
+    expect(a.tasks).toHaveLength(1);
   });
 
   test("TaskCreate preserves activeForm and metadata", async () => {
@@ -73,6 +84,7 @@ describe("Task CRUD family", () => {
     const fetched = await task_get({ taskId: created.taskId });
     expect(fetched.taskId).toBe(created.taskId);
     expect(fetched.subject).toBe("x");
+    expect(fetched.tasks).toEqual((await task_list({})).tasks);
   });
 
   test("TaskGet throws for unknown taskId", async () => {
@@ -98,6 +110,7 @@ describe("Task CRUD family", () => {
     });
 
     expect(deleted.status).toBe("deleted");
+    expect(deleted.tasks.map((t) => [t.subject, t.order])).toEqual([["b", 0]]);
     const { tasks } = await task_list({});
     expect(tasks.map((t) => t.subject)).toEqual(["b"]);
     await expect(task_get({ taskId: a.taskId })).rejects.toThrow(/not found/);
@@ -111,6 +124,8 @@ describe("Task CRUD family", () => {
 
     const p2 = await task_update({ taskId: t.taskId, status: "completed" });
     expect(p2.status).toBe("completed");
+    expect(p1.tasks[0]?.status).toBe("in_progress");
+    expect(p2.tasks[0]?.status).toBe("completed");
   });
 
   test("TaskUpdate rejects unknown status values", async () => {

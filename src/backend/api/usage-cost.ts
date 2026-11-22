@@ -10,7 +10,9 @@ export async function conversationCostModel(
 ): Promise<string | null> {
   if (overrideModel) return overrideModel;
   if (conversationId !== "default") {
-    const conversation = await client.conversations.retrieve(conversationId);
+    const conversation = await client.conversations.retrieve(conversationId, {
+      query: { include_context_message_ids: false },
+    });
     if (conversation.model) return conversation.model;
     agentId = conversation.agent_id;
   }

@@ -297,8 +297,12 @@ export async function prepareListenerTurn(params: {
   let overrideModel: string | undefined;
   if (turnStartEmission.handlerCount > 0) {
     try {
-      const conversation =
-        await getBackend().retrieveConversation(conversationId);
+      const conversation = await getBackend().retrieveConversation(
+        conversationId,
+        {
+          query: { include_context_message_ids: false },
+        },
+      );
       overrideModel = conversation.model ?? undefined;
     } catch {
       // Model refresh is best-effort; mod failures must not block the turn.
