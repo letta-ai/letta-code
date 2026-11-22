@@ -1662,7 +1662,6 @@ Use MessageDisplay to:
 
 * strip markdown for a minimal display
 * transform the text an Agent SDK application shows its users
-* redact API keys or internal hostnames from Claude's responses
 
 Claude Code holds each batch until your hook returns, so keep the hook fast. If the hook fails or times out, Claude Code displays the original text. The default timeout for this event is 10 seconds; if your hook needs more time, set the `timeout` field in the hook entry.
 
@@ -2509,7 +2508,9 @@ Returning `decision: "block"` or `continue: false` stops the agentic loop before
 
 ### PermissionDenied
 
-Runs when [auto mode](https://code.claude.com/docs/en/permission-modes.md#eliminate-prompts-with-auto-mode) denies a tool call, including when it denies without a classifier verdict because [a safety check separate from auto mode refused the classifier's own request](https://code.claude.com/docs/en/errors.md#auto-mode-cannot-determine-the-safety-of-an-action) or its response didn't parse. This hook only fires in auto mode: it doesn't run when you manually deny a permission dialog, when a `PreToolUse` hook blocks a call, or when a `deny` rule matches. Use it to log denials, adjust configuration, or tell the model it may retry the tool call.
+Runs when the [auto mode](https://code.claude.com/docs/en/permission-modes.md#eliminate-prompts-with-auto-mode) classifier denies a tool call. That includes a denial with no verdict because [a safety check separate from auto mode refused the classifier's own request](https://code.claude.com/docs/en/errors.md#auto-mode-cannot-determine-the-safety-of-an-action) or the classifier's response didn't parse. Use PermissionDenied to log denials, adjust configuration, or tell the model it may retry the tool call.
+
+The hook doesn't run when you deny a permission dialog, when a `PreToolUse` hook blocks a call, or when a `deny` rule matches.
 
 Matches on tool name, same values as PreToolUse.
 

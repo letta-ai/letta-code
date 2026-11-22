@@ -23,6 +23,7 @@ Symptoms tied to a feature, such as a hook not firing or a skill not being used,
 | `CLINotFoundError`, `CLIConnectionError`, `ProcessError`, `Claude Code process exited with code N`, `Claude Code returned an error result`, `CLIJSONDecodeError`, `structured_output` is `None` | [CLI startup](#cli-startup), [CLI process exit](#cli-process-exit), [Large tool calls and results](#large-tool-calls-and-results), and [Structured outputs](#structured-outputs) on this page |
 | `Operation aborted`, `Claude Code process aborted by user`, `Prompt stream failed; closing stdin`, or a Python `query()` loop that stops, with no exception, before all your messages are answered | [Streaming input](#streaming-input) on this page |
 | `Image could not be processed` | [Image could not be processed](#image-could-not-be-processed) on this page |
+| `option can't be sent to Claude Code` in TypeScript | [`Options`](https://code.claude.com/docs/en/agent-sdk/typescript#options): fix the option the message names |
 
 ## CLI startup
 

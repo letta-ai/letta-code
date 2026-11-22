@@ -809,7 +809,7 @@ async def main():
 asyncio.run(main())
 ```
 
-A remote server's status can also change after it reports `"connected"`. When the connection to it drops mid-session, Claude Code moves the server back to `"pending"` while [reconnecting](https://code.claude.com/docs/en/mcp.md#automatic-reconnection). A later `mcpServerStatus()` call in TypeScript, or [`ClaudeSDKClient.get_mcp_status()`](https://code.claude.com/docs/en/agent-sdk/python#methods) in Python, can then report `"pending"` for a server you saw connected earlier, with no configuration change on your side.
+A remote server's status can also change after it reports `"connected"`. Claude Code moves the server back to `"pending"` while [reconnecting](https://code.claude.com/docs/en/mcp.md#automatic-reconnection). A later `mcpServerStatus()` call in TypeScript, or [`ClaudeSDKClient.get_mcp_status()`](https://code.claude.com/docs/en/agent-sdk/python#methods) in Python, can then report `"pending"` for a server you saw connected earlier, with no configuration change on your side.
 
 After five reconnection attempts fail, the server reports `"failed"`, or `"needs-auth"` when it needs authorizing again. A `"failed"` HTTP or SSE server can still return to `"connected"` without a call from you, because Claude Code keeps [retrying in the background](https://code.claude.com/docs/en/mcp.md#mid-session-drops-of-a-remote-server) after a transient error. To retry manually, call [`reconnectMcpServer()`](https://code.claude.com/docs/en/agent-sdk/typescript#methods) in TypeScript or [`ClaudeSDKClient.reconnect_mcp_server()`](https://code.claude.com/docs/en/agent-sdk/python#methods) in Python.
 
