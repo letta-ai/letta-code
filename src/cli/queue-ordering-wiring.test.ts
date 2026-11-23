@@ -9,12 +9,8 @@ function readAppSource(): string {
 describe("queue ordering wiring", () => {
   test("dequeue effect keeps all sensitive safety gates", () => {
     const source = readAppSource();
-    const start = source.indexOf(
-      "// Process queued messages when streaming ends.",
-    );
-    const end = source.indexOf(
-      "// Helper to send all approval results when done",
-    );
+    const start = source.indexOf("void dequeueEpoch;");
+    const end = source.indexOf("const sendAllResults = useCallback(");
 
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
@@ -57,9 +53,7 @@ describe("queue ordering wiring", () => {
   test("onSubmit allows override-only queued submissions", () => {
     const source = readAppSource();
     const start = source.indexOf("const onSubmit = useCallback(");
-    const end = source.indexOf(
-      "// Process queued overlay actions when streaming ends",
-    );
+    const end = source.indexOf("queuedOverlayAction !== null");
 
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
@@ -94,11 +88,11 @@ describe("queue ordering wiring", () => {
 
   test("queued overlay effect only runs when idle and clears action before processing", () => {
     const source = readAppSource();
-    const start = source.indexOf(
-      "// Process queued overlay actions when streaming ends",
-    );
+    const guard = source.indexOf("queuedOverlayAction !== null");
+    expect(guard).toBeGreaterThan(-1);
+    const start = source.lastIndexOf("useEffect(() => {", guard);
     const end = source.indexOf(
-      "// Handle escape when profile confirmation is pending",
+      "const { handleFeedbackSubmit } = useFeedbackHandler(",
     );
 
     expect(start).toBeGreaterThan(-1);

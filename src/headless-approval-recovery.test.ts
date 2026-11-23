@@ -11,7 +11,7 @@ describe("headless approval recovery wiring", () => {
     expect(start).toBeGreaterThan(-1);
 
     const end = source.indexOf(
-      "// Check for pending approval blocking new messages",
+      'if (preStreamAction === "resolve_approval_pending")',
       start,
     );
     expect(end).toBeGreaterThan(start);
@@ -83,7 +83,10 @@ describe("headless approval recovery wiring", () => {
     const start = source.indexOf(
       "async function recoverPendingApprovalsFromControlRequest(",
     );
-    const end = source.indexOf("// Main processing loop", start);
+    const end = source.indexOf(
+      "while (true) {\n    const line = await getNextLine();",
+      start,
+    );
 
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
@@ -117,7 +120,10 @@ describe("headless approval recovery wiring", () => {
 
   test("invalid-ID recovery replaces stale input before retrying", () => {
     const start = source.indexOf("const invalidIdsDetected =");
-    const end = source.indexOf("// Unexpected stop reason", start);
+    const end = source.indexOf(
+      "const nonRetriableReasons: StopReasonType[]",
+      start,
+    );
 
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);

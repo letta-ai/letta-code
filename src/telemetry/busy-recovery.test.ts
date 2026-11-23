@@ -112,9 +112,7 @@ test("real caller busy branches recover before reporting final exhaustion", asyn
       "const blockingRunId = extractConversationBusyRunId(errorDetail);",
     );
     const end = source.indexOf(
-      surface === "tui"
-        ? "// Retry pre-stream transient errors"
-        : 'if (preStreamAction === "retry_transient")',
+      'if (preStreamAction === "retry_transient")',
       start,
     );
     const finalStart = source.indexOf(
@@ -125,6 +123,7 @@ test("real caller busy branches recover before reporting final exhaustion", asyn
     );
     const finalEnd = source.indexOf("throw preStreamError;", finalStart);
     expect(start).toBeGreaterThan(0);
+    expect(end).toBeGreaterThan(start);
     expect(finalStart).toBeGreaterThan(end);
     const code = new Bun.Transpiler({ loader: "ts" }).transformSync(
       `async function run() { do { ${source.slice(start, end)} ${source.slice(finalStart, finalEnd + "throw preStreamError;".length)} ${surface === "tui" ? "}" : ""} return "replayed"; } while (false); return "settled"; }`,

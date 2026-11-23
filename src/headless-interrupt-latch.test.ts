@@ -117,10 +117,10 @@ describe("headless interrupt latch wiring", () => {
       'if (parsedLine?.type === "user") turnStarting = true;',
     );
     expect(source).toContain(
-      "// Controller now exists — close the pre-controller race window.",
+      "turnStarting = false;\n      turnInProgress = true;",
     );
     expect(source).toContain(
-      "Wake that waiter so the aborted turn can unwind.",
+      "const resolve = lineResolver;\n          lineResolver = null;\n          resolve(null);",
     );
   });
 });
