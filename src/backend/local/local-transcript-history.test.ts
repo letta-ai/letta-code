@@ -52,7 +52,6 @@ describe("countLocalTranscriptMessagesOutsideContext", () => {
       { type: "session", version: 3, id: "s", timestamp: TIMESTAMP, cwd: "/" },
       messageEntry("m1", null),
       messageEntry("m2", "entry-m1-"),
-      // A later snapshot of m2 is the same message.
       messageEntry("m2", "entry-m2-", "edited"),
       {
         type: "compaction",
@@ -135,7 +134,6 @@ function lettaStreamFromChunks(
 
 async function drain(stream: AsyncIterable<unknown>): Promise<void> {
   for await (const _chunk of stream) {
-    // drain
   }
 }
 
@@ -201,8 +199,6 @@ describe("local system prompt recall count", () => {
       await compact();
       await turn("third");
 
-      // Compaction 1 takes the first turn out of context. Compaction 2 adds
-      // the first summary and the second turn.
       expect(systemPrompts.map(recallLine)).toEqual([
         "- 0 previous messages between you and the user are stored in recall memory",
         "- 2 previous messages between you and the user are stored in recall memory",

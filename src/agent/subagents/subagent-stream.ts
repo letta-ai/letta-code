@@ -1,12 +1,3 @@
-// Parsing of a subagent's headless `--output-format stream-json` output: the
-// per-line event handlers, the streaming state they mutate, and the final
-// result parsed from stdout.
-//
-// Extracted from `manager.ts`. `executeSubagent` owns an `ExecutionState`,
-// feeds each stdout line to `processStreamEvent`, and falls back to
-// `parseResultFromStdout`. These helpers depend only on lower-level state/URL
-// helpers and the shared `SubagentResult` type — never back on the manager.
-
 import {
   addToolCall,
   emitStreamEvent,
@@ -23,19 +14,11 @@ import { debugWarn } from "@/utils/debug";
 import { getErrorMessage } from "@/utils/error";
 import type { SubagentResult } from ".";
 
-/**
- * State tracked during subagent execution
- */
 export interface ExecutionState {
   agentId: string | null;
   conversationId: string | null;
   finalResult: string | null;
   finalError: string | null;
-  /**
-   * Set when the child submitted a computer-routed send with `--no-wait` and
-   * exited with the enqueue receipt instead of a reply. The parent tracks the
-   * remote turn from this receipt.
-   */
   enqueueReceipt: EnqueueReceipt | null;
   resultStats: {
     durationMs: number;
@@ -44,17 +27,9 @@ export interface ExecutionState {
   } | null;
   displayedToolCalls: Set<string>;
   toolCallStatuses: Map<string, "success" | "error">;
-  /**
-   * Assistant or reasoning text streamed so far for the current message. The
-   * child emits one chunk per token batch, all with the same ID; the whole
-   * message goes to the task's progress log once it ends.
-   */
   pendingText?: { id: string; kind: "text" | "reasoning"; text: string };
 }
 
-/**
- * Record a tool call to the state store and the task's progress log
- */
 function recordToolCall(
   subagentId: string,
   toolCallId: string,
@@ -85,11 +60,6 @@ function assistantChunkText(content: unknown): string {
     .join("");
 }
 
-/**
- * Write the assistant message streamed so far to the task's progress log.
- * Called when the message ends: another message or the result arrives, or the
- * child's stdout closes.
- */
 export function flushPendingProgressText(
   state: ExecutionState,
   subagentId: string,
@@ -129,9 +99,6 @@ function handleTextChunk(
   };
 }
 
-/**
- * Handle an init event from the subagent stream
- */
 function handleInitEvent(
   event: { agent_id?: string; conversation_id?: string },
   state: ExecutionState,
@@ -156,12 +123,6 @@ function handleInitEvent(
   }
 }
 
-/**
- * Handle a tool_call_message event. The subagent runs headless with
- * --output-format stream-json and emits a tool_call_message (with complete
- * arguments) for every tool it calls — both server-side tools and locally
- * executed ones. Record each so the subagent's tool-call list stays in sync.
- */
 function handleToolCallEvent(
   event: {
     date?: string;
@@ -209,7 +170,6 @@ type ToolReturnEvent = ToolReturnFields & {
   tool_returns?: ToolReturnFields[] | null;
 };
 
-/** Write each tool return of a `tool_return_message`, in full, to the task's logs. */
 export function recordToolReturnProgress(
   event: ToolReturnEvent,
   subagentId: string,
@@ -257,9 +217,6 @@ function handleToolReturnEvent(
   recordToolReturnProgress(event, subagentId);
 }
 
-/**
- * Handle a result event
- */
 function isEnqueueReceipt(event: {
   status?: unknown;
   agent_id?: unknown;
@@ -286,10 +243,6 @@ function isEnqueueReceipt(event: {
   );
 }
 
-/**
- * Error text of a failed result envelope. Cloud-routed sends emit
- * `{ result: null, error: "<text>" }`; local turns put the text in `result`.
- */
 export function getResultEnvelopeError(event: {
   result?: string | null;
   error?: string | null;
@@ -297,9 +250,6 @@ export function getResultEnvelopeError(event: {
   return event.error || event.result || "Unknown error";
 }
 
-/**
- * Handle a result event
- */
 function handleResultEvent(
   event: {
     subtype?: string;
@@ -361,16 +311,12 @@ function handleResultEvent(
     state.finalError = getResultEnvelopeError(event);
   }
 
-  // Update state store with final stats
   updateSubagent(subagentId, {
     totalTokens: state.resultStats.totalTokens,
     durationMs: state.resultStats.durationMs,
   });
 }
 
-/**
- * Process a single JSON event from the subagent stream
- */
 export function processStreamEvent(
   line: string,
   state: ExecutionState,
@@ -382,16 +328,12 @@ export function processStreamEvent(
     switch (event.type) {
       case "init":
       case "system":
-        // Handle both legacy "init" type and new "system" type with subtype "init"
         if (event.type === "init" || event.subtype === "init") {
           handleInitEvent(event, state, subagentId);
         }
         break;
 
       case "message":
-        // Record tool calls, results, and text so the subagent's tool-call
-        // list and the task's logs stay in sync, then forward the message
-        // for WS streaming to the web UI.
         if (
           event.message_type === "assistant_message" ||
           event.message_type === "reasoning_message"
@@ -419,12 +361,9 @@ export function processStreamEvent(
         state.finalError = event.error || event.message || "Unknown error";
         break;
     }
-  } catch {
-    // Not valid JSON, ignore
-  }
+  } catch {}
 }
 
-/** Whether at least one identified tool call reached a successful terminal state. */
 export function hasSuccessfulToolCall(state: ExecutionState): boolean {
   for (const toolCallId of state.displayedToolCalls) {
     if (state.toolCallStatuses.get(toolCallId) === "success") {
@@ -434,15 +373,6 @@ export function hasSuccessfulToolCall(state: ExecutionState): boolean {
   return false;
 }
 
-/**
- * Whether a subagent's stream-json stdout ends mid-line: the final segment has
- * no line terminator and is non-empty but not valid JSON. A healthy stream ends
- * with a complete result envelope, so a partial trailing line is unambiguous
- * evidence the tail was truncated in transit (#3257). Complete-but-unexpected
- * output (the final line parses, has a terminator, or stdout is empty) is NOT
- * treated as truncation — the child may have already performed side effects,
- * so callers only retry the clear case.
- */
 export function looksLikeTruncatedStreamJson(stdout: string): boolean {
   const lines = stdout.split(/\r?\n/);
   const lastLine = (lines[lines.length - 1] ?? "").trim();
@@ -455,9 +385,6 @@ export function looksLikeTruncatedStreamJson(stdout: string): boolean {
   }
 }
 
-/**
- * Parse the final result from stdout if not captured during streaming
- */
 export function parseResultFromStdout(
   stdout: string,
   agentId: string | null,
@@ -519,11 +446,6 @@ export function parseResultFromStdout(
 
 const STDERR_TAIL_CHARS = 2_000;
 
-/**
- * Error text for a child that exited without delivering a result envelope.
- * Names the exit code or signal first; the stderr tail is supporting detail,
- * because on a normal startup it holds only progress logging.
- */
 export function describeSubagentExit(
   exitCode: number | null,
   exitSignal: NodeJS.Signals | null,

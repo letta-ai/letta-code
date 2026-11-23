@@ -110,7 +110,6 @@ test("listener approval preserves a completed MessageChannel reply in the transc
       resultOk: true,
     }),
   ]);
-  // Ensure the production turn supplies its own transcript accumulator too.
   const source = readFileSync(new URL("./turn.ts", import.meta.url), "utf8");
   expect(source).toContain("onChunk: (chunk) => onChunk(buffers, chunk)");
 });

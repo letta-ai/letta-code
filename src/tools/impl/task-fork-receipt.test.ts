@@ -25,9 +25,6 @@ import { settingsManager } from "@/settings-manager";
 import { backgroundTasks } from "./process_manager";
 import * as wakes from "./wake";
 
-// Keep task(), the manager, and the state store real. Stub backend/credential I/O
-// and the child process, which emits no init event and exits only when requested.
-// Module mocks run in a dedicated process via isolated-unit-tests.json.
 mock.module("@/backend/api/metadata", () => ({
   getBillingTier: async () => null,
 }));
@@ -194,7 +191,6 @@ describe("prepared conversation launch", () => {
           );
         } else {
           expect(spawnProcess).toHaveBeenCalledTimes(2);
-          // The retry is a fresh subagent: an ephemeral Cloud conversation.
           expect(childInputs[1]?.args).toContain("--ephemeral");
           expect(childInputs[1]?.args).not.toContain("--new-agent");
           expect(childInputs[1]?.args).toContain("anthropic/test");
@@ -380,7 +376,6 @@ describe("nested Agent launch", () => {
     process.env.LETTA_SUBAGENT_RESULT_REMINDER = "Keep this work internal.";
     process.env.LETTA_SUBAGENT_DEPTH = "1";
     try {
-      // The stubbed child never exits, so a blocking call would time out.
       const receipt = await runWithRuntimeContext(
         { workingDirectory: testHome },
         () =>

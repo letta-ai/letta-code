@@ -1,13 +1,5 @@
 #!/usr/bin/env node
 
-/**
- * Unified entry point for the Letta CLI.
- * Detects the platform and spawns the appropriate compiled binary.
- *
- * Note: Uses #!/usr/bin/env node (not bun) for maximum compatibility
- * when users install via npm/npx. Bun can still run this file.
- */
-
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,7 +9,6 @@ const __dirname = path.dirname(__filename);
 
 const { platform, arch } = process;
 
-// Map platform/arch to binary name
 let binaryName = null;
 switch (platform) {
   case "linux":
@@ -60,13 +51,11 @@ if (!binaryName) {
 
 const binaryPath = path.join(__dirname, binaryName);
 
-// Spawn the binary with all arguments
 const child = spawn(binaryPath, process.argv.slice(2), {
   stdio: "inherit",
   env: process.env,
 });
 
-// Forward signals to child process
 function forwardSignal(signal) {
   process.on(signal, () => {
     child.kill(signal);
@@ -76,7 +65,6 @@ function forwardSignal(signal) {
 forwardSignal("SIGINT");
 forwardSignal("SIGTERM");
 
-// Exit with the same code as the child process
 child.on("exit", (code, signal) => {
   if (signal) {
     process.kill(process.pid, signal);

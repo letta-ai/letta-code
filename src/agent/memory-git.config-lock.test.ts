@@ -31,7 +31,6 @@ describe("isGitConfigLockError", () => {
     expect(isGitConfigLockError(new Error("fatal: not a git repository"))).toBe(
       false,
     );
-    // A lock on a *different* file is a different failure with a different fix.
     expect(
       isGitConfigLockError(
         new Error("fatal: Unable to create '/tmp/repo/.git/index.lock'"),
@@ -42,11 +41,6 @@ describe("isGitConfigLockError", () => {
 });
 
 describe("concurrent local git config mutations", () => {
-  // Regression test: memory-repo bootstrap has several independent config
-  // writers (identity reconciliation, git-ops preparation, credential helper).
-  // `git config` takes an exclusive .git/config.lock and fails instead of
-  // waiting, so unserialized writes lost the race ~80% of the time and failed
-  // agent creation with "could not lock config file .git/config: File exists".
   test("all writes land when issued concurrently against one repo", async () => {
     const dir = mkdtempSync(join(tmpdir(), "letta-config-lock-"));
     try {
@@ -70,7 +64,6 @@ describe("concurrent local git config mutations", () => {
     try {
       execFileSync("git", ["init", "--quiet"], { cwd: dir });
 
-      // An invalid key name is rejected by git itself, not by lock contention.
       const results = await Promise.allSettled([
         setLocalGitConfig(dir, "not-a-section", "x"),
         setLocalGitConfig(dir, "letta.after", "survived"),

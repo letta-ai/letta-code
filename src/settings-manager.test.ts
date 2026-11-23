@@ -7,7 +7,6 @@ import type { CommandHookConfig, HookCommand } from "@/hooks/types";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 
-// Type-safe helper to extract command from a hook (tests only use command hooks)
 function asCommand(
   hook: HookCommand | undefined,
 ): CommandHookConfig | undefined {
@@ -26,7 +25,6 @@ import {
 
 const keychainAvailablePrecompute = await isKeychainAvailable();
 
-// Store original HOME to restore after tests
 const originalHome = process.env.HOME;
 const originalLocalBackendFlag = process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
 const originalLocalBackendDir = process.env.LETTA_LOCAL_BACKEND_DIR;
@@ -34,32 +32,24 @@ let testHomeDir: string;
 let testProjectDir: string;
 
 beforeEach(async () => {
-  // Use a test-specific keychain service name to avoid deleting real credentials
   setServiceName("letta-code-test");
 
-  // Reset settings manager FIRST before changing HOME
   await settingsManager.reset();
 
-  // Create temporary directories for testing
   testHomeDir = await mkdtemp(join(tmpdir(), "letta-test-home-"));
   testProjectDir = await mkdtemp(join(tmpdir(), "letta-test-project-"));
 
-  // Override HOME for tests (must be done BEFORE initialize is called)
   process.env.HOME = testHomeDir;
   delete process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
   delete process.env.LETTA_LOCAL_BACKEND_DIR;
 });
 
 afterEach(async () => {
-  // Wait for all pending writes to complete BEFORE restoring HOME
-  // This prevents test writes from leaking into real settings after HOME is restored
   await settingsManager.reset();
 
-  // Clean up test directories
   await rm(testHomeDir, { recursive: true, force: true });
   await rm(testProjectDir, { recursive: true, force: true });
 
-  // Restore original HOME AFTER reset completes
   process.env.HOME = originalHome;
   if (originalLocalBackendFlag === undefined) {
     delete process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
@@ -72,36 +62,27 @@ afterEach(async () => {
     process.env.LETTA_LOCAL_BACKEND_DIR = originalLocalBackendDir;
   }
 
-  // Restore the real service name
   setServiceName("letta-code");
 });
-
-// ============================================================================
-// Initialization Tests
-// ============================================================================
 
 describe("Settings Manager - Initialization", () => {
   test("Initialize makes settings accessible", async () => {
     await settingsManager.initialize();
 
-    // Settings should be accessible immediately after initialization
     const settings = settingsManager.getSettings();
     expect(settings).toBeDefined();
     expect(typeof settings.tokenStreaming).toBe("boolean");
   });
 
   test("Initialize loads existing settings from disk", async () => {
-    // First initialize and set some settings
     await settingsManager.initialize();
     settingsManager.updateSettings({
       tokenStreaming: true,
       lastAgent: "agent-123",
     });
 
-    // Wait for persist to complete
     await new Promise((resolve) => setTimeout(resolve, 100));
 
-    // Reset and re-initialize
     await settingsManager.reset();
     await settingsManager.initialize();
 
@@ -114,11 +95,9 @@ describe("Settings Manager - Initialization", () => {
     await settingsManager.initialize();
     const settings1 = settingsManager.getSettings();
 
-    // Call initialize again
     await settingsManager.initialize();
     const settings2 = settingsManager.getSettings();
 
-    // Should be same instance
     expect(settings1).toEqual(settings2);
   });
 
@@ -171,27 +150,20 @@ describe("Settings Manager - Initialization", () => {
   });
 });
 
-// ============================================================================
-// Global Settings Tests
-// ============================================================================
-
 describe("Settings Manager - Global Settings", () => {
   let keychainSupported: boolean = false;
 
   beforeEach(async () => {
     await settingsManager.initialize();
-    // Check if secrets are available on this system
     keychainSupported = await isKeychainAvailable();
 
     if (keychainSupported) {
-      // Clean up any existing test tokens
       await deleteSecureTokens();
     }
   });
 
   afterEach(async () => {
     if (keychainSupported) {
-      // Clean up after each test
       await deleteSecureTokens();
     }
   });
@@ -201,7 +173,7 @@ describe("Settings Manager - Global Settings", () => {
     const settings2 = settingsManager.getSettings();
 
     expect(settings1).toEqual(settings2);
-    expect(settings1).not.toBe(settings2); // Different object instances
+    expect(settings1).not.toBe(settings2);
   });
 
   test("Get specific setting", () => {
@@ -225,7 +197,6 @@ describe("Settings Manager - Global Settings", () => {
   });
 
   test("Update single setting", () => {
-    // Verify initial state first
     const initialSettings = settingsManager.getSettings();
     const initialLastAgent = initialSettings.lastAgent;
 
@@ -233,7 +204,7 @@ describe("Settings Manager - Global Settings", () => {
 
     const settings = settingsManager.getSettings();
     expect(settings.tokenStreaming).toBe(true);
-    expect(settings.lastAgent).toBe(initialLastAgent); // Other settings unchanged
+    expect(settings.lastAgent).toBe(initialLastAgent);
   });
 
   test("Update multiple settings", () => {
@@ -258,7 +229,6 @@ describe("Settings Manager - Global Settings", () => {
     });
 
     const settings = settingsManager.getSettings();
-    // LETTA_API_KEY should not be in settings file (moved to keychain)
     expect(settings.env).toEqual({
       CUSTOM_VAR: "value",
     });
@@ -267,7 +237,6 @@ describe("Settings Manager - Global Settings", () => {
   test.skipIf(!keychainAvailablePrecompute)(
     "Get settings with secure tokens (async method)",
     async () => {
-      // This test verifies the async method that includes keychain tokens
       settingsManager.updateSettings({
         env: {
           LETTA_API_KEY: "sk-test-async-123",
@@ -280,7 +249,6 @@ describe("Settings Manager - Global Settings", () => {
       const settingsWithTokens =
         await settingsManager.getSettingsWithSecureTokens();
 
-      // Should include the environment variables and other settings
       expect(settingsWithTokens.env?.CUSTOM_VAR).toBe("async-value");
       expect(typeof settingsWithTokens.tokenExpiresAt).toBe("number");
     },
@@ -325,12 +293,9 @@ describe("Settings Manager - Global Settings", () => {
   });
 
   test("LETTA_BASE_URL should not be cached in settings", () => {
-    // This test verifies that LETTA_BASE_URL is NOT persisted to settings
-    // It should only come from environment variables
     settingsManager.updateSettings({
       env: {
         LETTA_API_KEY: "sk-test-123",
-        // LETTA_BASE_URL should not be included here
       },
     });
 
@@ -344,10 +309,8 @@ describe("Settings Manager - Global Settings", () => {
       lastAgent: "agent-789",
     });
 
-    // Wait for async persist
     await new Promise((resolve) => setTimeout(resolve, 100));
 
-    // Reset and reload
     await settingsManager.reset();
     await settingsManager.initialize();
 
@@ -356,10 +319,6 @@ describe("Settings Manager - Global Settings", () => {
     expect(settings.lastAgent).toBe("agent-789");
   });
 });
-
-// ============================================================================
-// Project Settings Tests (.letta/settings.json)
-// ============================================================================
 
 describe("Settings Manager - Project Settings", () => {
   beforeEach(async () => {
@@ -381,7 +340,7 @@ describe("Settings Manager - Project Settings", () => {
     const settings2 = settingsManager.getProjectSettings(testProjectDir);
 
     expect(settings1).toEqual(settings2);
-    expect(settings1).not.toBe(settings2); // Different instances
+    expect(settings1).not.toBe(settings2);
   });
 
   test("Update project settings", async () => {
@@ -408,10 +367,8 @@ describe("Settings Manager - Project Settings", () => {
       testProjectDir,
     );
 
-    // Wait for persist
     await new Promise((resolve) => setTimeout(resolve, 100));
 
-    // Clear cache and reload
     await settingsManager.reset();
     await settingsManager.initialize();
     const reloaded = await settingsManager.loadProjectSettings(testProjectDir);
@@ -428,7 +385,6 @@ describe("Settings Manager - Project Settings", () => {
   test("When cwd is HOME, project settings resolve to defaults (no global collision)", async () => {
     await settingsManager.initialize();
 
-    // Seed a global windowTitle config in ~/.letta/settings.json
     settingsManager.updateSettings({
       windowTitle: { items: ["agent-name"] },
     });
@@ -443,7 +399,6 @@ describe("Settings Manager - Project Settings", () => {
   test("When cwd is HOME, project hook/windowTitle updates route to global settings", async () => {
     await settingsManager.initialize();
 
-    // Load project settings for HOME (will be defaults due to collision guard)
     await settingsManager.loadProjectSettings(testHomeDir);
 
     settingsManager.updateProjectSettings(
@@ -471,14 +426,9 @@ describe("Settings Manager - Project Settings", () => {
       asCommand(globalSettings.hooks?.Notification?.[0]?.hooks[0])?.command,
     ).toBe("echo routed-hook");
 
-    // Ensure project-only field is not written into global file by this route
     expect(globalSettings).not.toHaveProperty("localSharedBlockIds");
   });
 });
-
-// ============================================================================
-// Local Project Settings Tests (.letta/settings.local.json)
-// ============================================================================
 
 describe("Settings Manager - Local Project Settings", () => {
   beforeEach(async () => {
@@ -580,10 +530,8 @@ describe("Settings Manager - Local Project Settings", () => {
       testProjectDir,
     );
 
-    // Wait for persist
     await new Promise((resolve) => setTimeout(resolve, 100));
 
-    // Clear cache and reload
     await settingsManager.reset();
     await settingsManager.initialize();
     const reloaded =
@@ -602,10 +550,6 @@ describe("Settings Manager - Local Project Settings", () => {
   });
 });
 
-// ============================================================================
-// Multiple Projects Tests
-// ============================================================================
-
 describe("Settings Manager - Multiple Projects", () => {
   let testProjectDir2: string;
 
@@ -619,11 +563,9 @@ describe("Settings Manager - Multiple Projects", () => {
   });
 
   test("Can manage settings for multiple projects independently", async () => {
-    // Load settings for both projects
     await settingsManager.loadLocalProjectSettings(testProjectDir);
     await settingsManager.loadLocalProjectSettings(testProjectDir2);
 
-    // Update different values
     settingsManager.updateLocalProjectSettings(
       { lastAgent: "agent-project-1" },
       testProjectDir,
@@ -633,7 +575,6 @@ describe("Settings Manager - Multiple Projects", () => {
       testProjectDir2,
     );
 
-    // Verify independence
     const settings1 = settingsManager.getLocalProjectSettings(testProjectDir);
     const settings2 = settingsManager.getLocalProjectSettings(testProjectDir2);
 
@@ -696,10 +637,6 @@ describe("Settings Manager - Session Persistence", () => {
   });
 });
 
-// ============================================================================
-// Reset Tests
-// ============================================================================
-
 describe("Settings Manager - Reset", () => {
   test("Reset clears all cached data", async () => {
     await settingsManager.initialize();
@@ -707,7 +644,6 @@ describe("Settings Manager - Reset", () => {
 
     await settingsManager.reset();
 
-    // Should throw error after reset
     expect(() => settingsManager.getSettings()).toThrow();
   });
 
@@ -715,7 +651,6 @@ describe("Settings Manager - Reset", () => {
     await settingsManager.initialize();
     settingsManager.updateSettings({ tokenStreaming: true });
 
-    // Wait for persist
     await new Promise((resolve) => setTimeout(resolve, 100));
 
     await settingsManager.reset();
@@ -730,22 +665,17 @@ describe("Settings Manager - Reset", () => {
     const settingsDir = join(testHomeDir, ".letta");
     await mkdir(settingsDir, { recursive: true });
 
-    // First session: write a setting that will be tracked in managedKeys
     await settingsManager.initialize();
     settingsManager.updateSettings({ lastAgent: "agent-first-session" });
     await new Promise((resolve) => setTimeout(resolve, 100));
     await settingsManager.reset();
 
-    // Second session: write a completely fresh file with a different key
     await writeFile(
       join(settingsDir, "settings.json"),
       JSON.stringify({ tokenStreaming: true }),
     );
     await settingsManager.initialize();
 
-    // After re-init, managedKeys should only contain keys from the new file.
-    // Persisting should write tokenStreaming but NOT ghost-write lastAgent from
-    // the previous session's managedKeys.
     settingsManager.updateSettings({ reasoningTabCycleEnabled: false });
     await new Promise((resolve) => setTimeout(resolve, 100));
 
@@ -754,14 +684,9 @@ describe("Settings Manager - Reset", () => {
 
     const settings = settingsManager.getSettings();
     expect(settings.tokenStreaming).toBe(true);
-    // lastAgent was only set in the first session — should not reappear
     expect(settings.lastAgent).toBeNull();
   });
 });
-
-// ============================================================================
-// Hooks Configuration Tests
-// ============================================================================
 
 describe("Settings Manager - Hooks", () => {
   beforeEach(async () => {
@@ -789,24 +714,20 @@ describe("Settings Manager - Hooks", () => {
   test("Hooks configuration persists to disk", async () => {
     settingsManager.updateSettings({
       hooks: {
-        // Tool event with HookMatcher[]
         PreToolUse: [
           {
             matcher: "*",
             hooks: [{ type: "command", command: "echo persisted" }],
           },
         ],
-        // Simple event with SimpleHookMatcher[]
         SessionStart: [
           { hooks: [{ type: "command", command: "echo session" }] },
         ],
       },
     });
 
-    // Wait for async persist
     await new Promise((resolve) => setTimeout(resolve, 100));
 
-    // Reset and reload
     await settingsManager.reset();
     await settingsManager.initialize();
 
@@ -847,7 +768,6 @@ describe("Settings Manager - Hooks", () => {
     settingsManager.updateLocalProjectSettings(
       {
         hooks: {
-          // Simple event uses SimpleHookMatcher[] (hooks wrapper)
           UserPromptSubmit: [
             { hooks: [{ type: "command", command: "echo local-hook" }] },
           ],
@@ -867,24 +787,20 @@ describe("Settings Manager - Hooks", () => {
     settingsManager.updateLocalProjectSettings(
       {
         hooks: {
-          // Simple event uses SimpleHookMatcher[] (hooks wrapper)
           Stop: [{ hooks: [{ type: "command", command: "echo stop-hook" }] }],
         },
       },
       testProjectDir,
     );
 
-    // Wait for persist
     await new Promise((resolve) => setTimeout(resolve, 100));
 
-    // Clear cache and reload
     await settingsManager.reset();
     await settingsManager.initialize();
     const reloaded =
       await settingsManager.loadLocalProjectSettings(testProjectDir);
 
     expect(reloaded.hooks?.Stop).toHaveLength(1);
-    // Simple event hooks are in SimpleHookMatcher format with hooks array
     expect(asCommand(reloaded.hooks?.Stop?.[0]?.hooks[0])?.command).toBe(
       "echo stop-hook",
     );
@@ -936,7 +852,6 @@ describe("Settings Manager - Hooks", () => {
       },
     });
 
-    // Update only PreToolUse
     settingsManager.updateSettings({
       hooks: {
         PreToolUse: [
@@ -949,29 +864,20 @@ describe("Settings Manager - Hooks", () => {
     });
 
     const settings = settingsManager.getSettings();
-    // PreToolUse should be updated (replaced)
     expect(settings.hooks?.PreToolUse?.[0]?.matcher).toBe("Bash");
-    // Note: This test documents current behavior - hooks object is replaced entirely
   });
 });
 
-// ============================================================================
-// Edge Cases and Error Handling
-// ============================================================================
-
 describe("Settings Manager - Edge Cases", () => {
   test("Handles corrupted settings file gracefully", async () => {
-    // Create corrupted settings file
     const { writeFile, mkdir } = await import("@/utils/fs.js");
     const settingsDir = join(testHomeDir, ".letta");
     await mkdir(settingsDir, { recursive: true });
     await writeFile(join(settingsDir, "settings.json"), "{ invalid json");
 
-    // Should fall back to defaults
     await settingsManager.initialize();
     const settings = settingsManager.getSettings();
 
-    // Should have default values (not corrupt)
     expect(settings).toBeDefined();
     expect(settings.tokenStreaming).toBeDefined();
     expect(typeof settings.tokenStreaming).toBe("boolean");
@@ -988,7 +894,6 @@ describe("Settings Manager - Edge Cases", () => {
     settings.lastAgent = "modified-agent";
     settings.tokenStreaming = false;
 
-    // Internal state should be unchanged
     const actualSettings = settingsManager.getSettings();
     expect(actualSettings.lastAgent).toBe("agent-123");
     expect(actualSettings.tokenStreaming).toBe(true);
@@ -1003,21 +908,16 @@ describe("Settings Manager - Edge Cases", () => {
       reasoningTabCycleEnabled: true,
     });
 
-    // Partial update
     settingsManager.updateSettings({
       lastAgent: "agent-2",
     });
 
     const settings = settingsManager.getSettings();
-    expect(settings.tokenStreaming).toBe(true); // Preserved
-    expect(settings.reasoningTabCycleEnabled).toBe(true); // Preserved
-    expect(settings.lastAgent).toBe("agent-2"); // Updated
+    expect(settings.tokenStreaming).toBe(true);
+    expect(settings.reasoningTabCycleEnabled).toBe(true);
+    expect(settings.lastAgent).toBe("agent-2");
   });
 });
-
-// ============================================================================
-// Agents Array Migration Tests
-// ============================================================================
 
 describe("Settings Manager - Agents Array Migration", () => {
   const originalSubagentRole = process.env.LETTA_CODE_AGENT_ROLE;
@@ -1059,7 +959,6 @@ describe("Settings Manager - Agents Array Migration", () => {
   test("isMemfsEnabled returns false for agents without memfs flag", async () => {
     await settingsManager.initialize();
 
-    // Manually set up agents array
     settingsManager.updateSettings({
       agents: [
         { agentId: "agent-with-memfs", pinned: true, memfs: true },
@@ -1253,10 +1152,8 @@ describe("Settings Manager - Agents Array Migration", () => {
 
     settingsManager.setMemfsEnabled("agent-persist-test", true);
 
-    // Wait for async persist
     await new Promise((resolve) => setTimeout(resolve, 100));
 
-    // Reset and reload
     await settingsManager.reset();
     await settingsManager.initialize();
 
@@ -1268,8 +1165,6 @@ describe("Settings Manager - Pinned Agents", () => {
   test("getPinnedAgents excludes a local-backend agent id from a cloud session", async () => {
     await settingsManager.initialize();
 
-    // Both pins land in the cloud bucket (no baseUrl), but the local-style id
-    // is incompatible with the cloud server key and must be filtered out.
     settingsManager.updateSettings({
       agents: [
         { agentId: "agent-cloud-1", pinned: true },
@@ -1288,8 +1183,6 @@ describe("Settings Manager - Pinned Agents", () => {
     process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "1";
     process.env.LETTA_LOCAL_BACKEND_DIR = storageDir;
 
-    // Both pins land in the local bucket (baseUrl === localKey), but the
-    // cloud-style id is incompatible with the local server key.
     settingsManager.updateSettings({
       agents: [
         { agentId: "agent-local-1", baseUrl: localKey, pinned: true },
@@ -1305,8 +1198,6 @@ describe("Settings Manager - Pinned Agents", () => {
 
     const storageDir = join(testHomeDir, "lc-local-backend");
     const localKey = `local:${resolve(storageDir)}`;
-    // Make the local server key deterministic without switching the active
-    // session into local mode.
     process.env.LETTA_LOCAL_BACKEND_DIR = storageDir;
 
     settingsManager.updateSettings({
@@ -1316,10 +1207,7 @@ describe("Settings Manager - Pinned Agents", () => {
       ],
     });
 
-    // Active session is cloud.
     expect(settingsManager.getPinnedAgents()).toEqual(["agent-cloud-1"]);
-    // ...but we can still look up the local pins by mode (the old
-    // configureBackendMode dance returned [] here).
     expect(settingsManager.getPinnedAgentsForBackendMode("local")).toEqual([
       "agent-local-1",
     ]);
@@ -1346,8 +1234,6 @@ describe("Settings Manager - Pinned Agents", () => {
         ],
       });
 
-      // Only the pin for the active self-hosted server is returned; the
-      // api.letta.com pin belongs to a different server bucket.
       expect(settingsManager.getPinnedAgentsForBackendMode("api")).toEqual([
         "agent-selfhost-1",
       ]);
@@ -1361,17 +1247,12 @@ describe("Settings Manager - Pinned Agents", () => {
   });
 });
 
-// ============================================================================
-// Managed Keys / Settings Preservation Tests
-// ============================================================================
-
 describe("Settings Manager - Managed Keys Preservation", () => {
   test("Unknown top-level keys in the file are preserved across writes", async () => {
     const { writeFile, mkdir } = await import("@/utils/fs.js");
     const settingsDir = join(testHomeDir, ".letta");
     await mkdir(settingsDir, { recursive: true });
 
-    // Simulate a user manually adding a key that Letta Code doesn't know about
     await writeFile(
       join(settingsDir, "settings.json"),
       JSON.stringify({
@@ -1382,11 +1263,9 @@ describe("Settings Manager - Managed Keys Preservation", () => {
 
     await settingsManager.initialize();
 
-    // Update an unrelated setting — should not clobber myCustomFlag
     settingsManager.updateSettings({ lastAgent: "agent-abc" });
     await new Promise((resolve) => setTimeout(resolve, 100));
 
-    // Read the raw file to confirm myCustomFlag survived
     const { readFile } = await import("@/utils/fs.js");
     const raw = JSON.parse(
       await readFile(join(settingsDir, "settings.json")),
@@ -1413,8 +1292,6 @@ describe("Settings Manager - Managed Keys Preservation", () => {
 
     await settingsManager.initialize();
 
-    // Simulate another process appending a new pin while this process
-    // is still running with stale in-memory settings.
     const externallyUpdated = JSON.parse(
       await readFile(settingsPath),
     ) as Record<string, unknown>;
@@ -1427,7 +1304,6 @@ describe("Settings Manager - Managed Keys Preservation", () => {
 
     await writeFile(settingsPath, JSON.stringify(externallyUpdated));
 
-    // Trigger an unrelated write from this process.
     settingsManager.updateSettings({ lastAgent: "agent-current" });
     await settingsManager.flush();
 
@@ -1458,7 +1334,6 @@ describe("Settings Manager - Managed Keys Preservation", () => {
 
     await settingsManager.initialize();
 
-    // Simulate another process removing managed pin keys.
     const externallyUpdated = JSON.parse(
       await readFile(settingsPath),
     ) as Record<string, unknown>;
@@ -1466,7 +1341,6 @@ describe("Settings Manager - Managed Keys Preservation", () => {
     delete externallyUpdated.pinnedAgentsByServer;
     await writeFile(settingsPath, JSON.stringify(externallyUpdated));
 
-    // Trigger an unrelated write from this process.
     settingsManager.updateSettings({ lastAgent: "agent-current" });
     await settingsManager.flush();
 
@@ -1480,14 +1354,8 @@ describe("Settings Manager - Managed Keys Preservation", () => {
   });
 
   test("No-keychain fallback persists refreshToken and LETTA_API_KEY to file", async () => {
-    // On machines with a keychain, tokens go to the keychain, not the file.
-    // On machines without a keychain, tokens must fall back to the file.
-    // Both paths are exercised here depending on the environment.
     const secretsAvail = await isKeychainAvailable();
     if (secretsAvail) {
-      // On machines with a keychain, tokens go to the keychain, not the file.
-      // Test the fallback indirectly: if secrets are available the tokens
-      // should NOT be in the file (they're in the keychain).
       await settingsManager.initialize();
       settingsManager.updateSettings({ refreshToken: "rt-keychain-test" });
       await new Promise((resolve) => setTimeout(resolve, 100));
@@ -1498,10 +1366,8 @@ describe("Settings Manager - Managed Keys Preservation", () => {
         await readFile(join(settingsDir, "settings.json")),
       ) as Record<string, unknown>;
 
-      // With keychain available, refreshToken goes to keychain not file
       expect(raw.refreshToken).toBeUndefined();
     } else {
-      // No keychain: tokens fall back to the settings file and must be persisted
       await settingsManager.initialize();
       settingsManager.updateSettings({
         refreshToken: "rt-fallback-test",
@@ -1516,7 +1382,6 @@ describe("Settings Manager - Managed Keys Preservation", () => {
       ) as Record<string, unknown>;
 
       expect(raw.refreshToken).toBe("rt-fallback-test");
-      // LETTA_API_KEY also falls back to the file when keychain is unavailable
       expect((raw.env as Record<string, unknown>)?.LETTA_API_KEY).toBe(
         "sk-fallback-test",
       );
@@ -1569,7 +1434,6 @@ describe("Settings Manager - Managed Keys Preservation", () => {
   });
 });
 
-// ============================================================================
 describe("readStartupBackendSettingsSync", () => {
   let tmpHome: string;
   const savedHome = process.env.HOME;

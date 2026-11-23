@@ -4,7 +4,6 @@ import {
   SUBAGENT_DEPTH_ENV,
 } from "@/utils/subagent-depth-env";
 
-/** CLI execution options owned by one listener conversation, never process.env. */
 export interface RuntimeExecutionSettings {
   tools?: string[];
   preload_skills?: string[];
@@ -15,7 +14,6 @@ export interface RuntimeExecutionSettings {
   parent_agent_id?: string;
   parent_conversation_id?: string;
   agent_role?: "subagent";
-  /** Harness-owned nesting depth; see SUBAGENT_DEPTH_ENV. */
   subagent_depth?: number;
   transcript_path?: string;
   memory_directory?: string;
@@ -64,7 +62,6 @@ export function getRuntimeExecutionEnv(
 ): NodeJS.ProcessEnv {
   if (!settings) return env;
   const scoped = { ...env };
-  // Absence is meaningful: a child must not inherit another turn's identity.
   delete scoped.LETTA_PARENT_AGENT_ID;
   delete scoped.LETTA_PARENT_CONVERSATION_ID;
   delete scoped.LETTA_CODE_AGENT_ROLE;
@@ -88,7 +85,6 @@ export function getRuntimeExecutionEnv(
   return scoped;
 }
 
-/** Subagent identity a headless child forwards when its turn runs on a listener. */
 export function subagentExecutionSettings(
   env: NodeJS.ProcessEnv,
 ): Pick<

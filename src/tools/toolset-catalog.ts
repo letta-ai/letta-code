@@ -14,7 +14,6 @@ export const WORKTREE_TOOL_NAMES = new Set<ToolName>([
   "ExitWorktree",
 ]);
 
-/** Presets in picker order. Availability filters and explicit allowlists apply afterward. */
 export const TOOLSET_CATALOG: Readonly<Record<ToolsetName, ToolsetDefinition>> =
   {
     letta: {
@@ -110,7 +109,6 @@ export const TOOLSET_CATALOG: Readonly<Record<ToolsetName, ToolsetDefinition>> =
     },
   };
 
-/** Auto selects a preset; client-facing options omit the internal tool lists. */
 export const TOOLSET_OPTIONS: readonly ToolsetOption[] = [
   {
     id: "auto",

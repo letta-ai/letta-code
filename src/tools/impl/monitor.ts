@@ -232,8 +232,6 @@ function normalizeMonitorArgs(args: MonitorArgs): NormalizedMonitorArgs {
     throw new Error("Monitor script must be a string");
   }
 
-  // Some tool calls include every source field with an empty value for the
-  // unused ones.
   const hasScript =
     typeof normalized.script === "string" && normalized.script.trim() !== "";
   const hasCommand =
@@ -429,9 +427,6 @@ function startCommandMonitor(args: MonitorSourceArgs): MonitorResult {
     args.parentScope?.agentId,
     args.secretEnv ?? {},
   );
-  // Per-stream scrubbers hold back potential partial secret matches so a
-  // credential split across output chunks never reaches the retained output,
-  // the output file, or emitted monitor events unredacted.
   const streamScrubbers = {
     stdout: createSecretStreamScrubber(secrets),
     stderr: createSecretStreamScrubber(secrets),
@@ -465,10 +460,6 @@ function startCommandMonitor(args: MonitorSourceArgs): MonitorResult {
       const rest = streamScrubbers[stream].flush();
       if (!rest) continue;
       if (stream === "stdout") {
-        // The held-back tail is still monitor output: route it through the
-        // event stream (before events.finish() flushes a final partial line)
-        // as well as the output file, or a command whose final unterminated
-        // output ends with a secret prefix would silently lose those bytes.
         if (/[^\n]/.test(rest)) {
           producedOutput = true;
         }
@@ -499,9 +490,7 @@ function startCommandMonitor(args: MonitorSourceArgs): MonitorResult {
         markMonitorFinished(taskId, processState, "failed", null);
         try {
           runningProcess.process.kill("SIGTERM");
-        } catch {
-          // Process may have already exited.
-        }
+        } catch {}
         return;
       }
       if (stream === "stdout") {
@@ -636,9 +625,7 @@ function startWebSocketMonitor(args: MonitorSourceArgs): MonitorResult {
     }
     try {
       socket.terminate();
-    } catch {
-      // The socket is already closed.
-    }
+    } catch {}
   };
 
   const events = createMonitorEventStream({
@@ -867,9 +854,7 @@ export async function monitor(args: MonitorArgs): Promise<MonitorResult> {
       args.persistent = false;
     }
   }
-  // Hooks may have yielded since approval execution checked cancellation.
   args.signal?.throwIfAborted();
-  // A url monitor runs in Letta Cloud; nothing is started or retained here.
   const cloud = experimentManager.isEnabled("cloud_monitors");
   const forbidden = cloud
     ? [
@@ -944,7 +929,6 @@ export async function monitor(args: MonitorArgs): Promise<MonitorResult> {
 }
 
 export function stopMonitorsForProcessExit(): void {
-  // Leave backup wakes armed: they exist for exactly this case.
   detachMonitorBackupsForProcessExit();
   for (const processState of backgroundProcesses.values()) {
     if (processState.kind !== "monitor" || processState.status !== "running") {
@@ -957,9 +941,7 @@ export function stopMonitorsForProcessExit(): void {
     processState.status = "failed";
     try {
       processState.process.kill("SIGKILL");
-    } catch {
-      // Process exit is already underway.
-    }
+    } catch {}
   }
 }
 

@@ -159,8 +159,6 @@ test("resolveSlackThreadStarter downloads Slack files for thread context", async
     sizeBytes: 4,
     localPath: expect.stringContaining("root.png"),
   });
-  // Images are not inlined as base64; the agent Reads local_path on demand
-  // (LET-9517 — inlined attachments accumulated past provider byte limits).
   expect(attachment.imageDataBase64).toBeUndefined();
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });

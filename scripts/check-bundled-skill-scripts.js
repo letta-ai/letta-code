@@ -1,16 +1,5 @@
 #!/usr/bin/env node
 
-/**
- * Enforces that bundled skill scripts are self-contained.
- *
- * Built-in skills are shipped as standalone resources, including inside app
- * bundles where they can live below node_modules/. A script that imports a bare
- * package specifier can fail there because Bun disables auto-install when any
- * node_modules directory exists up the tree. Keep bundled scripts limited to
- * relative imports and runtime built-ins, or invoke lazy resolvers explicitly
- * from SKILL.md (npx/uvx/uv run/etc.) instead of relying on a manifest install.
- */
-
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { builtinModules } from "node:module";
 import { join } from "node:path";

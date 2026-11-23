@@ -1,24 +1,6 @@
-/**
- * Handler-level tests for list_messages using mock backends.
- *
- * These tests call handleListMessages() directly with mock implementations
- * of backend.listConversationMessages.  They verify:
- *
- * 1. Which backend method is called for each routing case (explicit conv,
- *    omitted+named session conv, omitted+default session conv)
- * 2. The arguments passed to each backend method
- * 3. The shape and content of the returned ControlResponse
- * 4. Error path — backend throws, handler returns error envelope
- *
- * No network. No CLI subprocess. No process.stdout.
- */
 import { describe, expect, mock, test } from "bun:test";
 import type { ListMessagesHandlerBackend } from "@/agent/list-messages-handler";
 import { handleListMessages } from "@/agent/list-messages-handler";
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Mock factory
-// ─────────────────────────────────────────────────────────────────────────────
 
 function makeBackend(convMessages: unknown[] = []): {
   backend: ListMessagesHandlerBackend;
@@ -40,10 +22,6 @@ const BASE = {
   sessionId: "sess-test",
   requestId: "req-test-001",
 } as const;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Routing: which backend method is called
-// ─────────────────────────────────────────────────────────────────────────────
 
 describe("handleListMessages — routing (which backend method is called)", () => {
   test("explicit conversation_id → calls backend.listConversationMessages with that id", async () => {
@@ -84,7 +62,7 @@ describe("handleListMessages — routing (which backend method is called)", () =
 
     const resp = await handleListMessages({
       ...BASE,
-      listReq: { subtype: "list_messages" }, // no conversation_id
+      listReq: { subtype: "list_messages" },
       sessionConversationId: "conv-session-xyz",
       sessionAgentId: "agent-session",
       backend,
@@ -107,7 +85,7 @@ describe("handleListMessages — routing (which backend method is called)", () =
 
     const resp = await handleListMessages({
       ...BASE,
-      listReq: { subtype: "list_messages" }, // no conversation_id
+      listReq: { subtype: "list_messages" },
       sessionConversationId: "default",
       sessionAgentId: "agent-def",
       backend,
@@ -136,10 +114,6 @@ describe("handleListMessages — routing (which backend method is called)", () =
     expect(opts.agent_id).toBe("agent-override");
   });
 });
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Args forwarding: limit, order, cursor options
-// ─────────────────────────────────────────────────────────────────────────────
 
 describe("handleListMessages — backend call arguments", () => {
   test("passes limit and order to conversations path", async () => {
@@ -244,10 +218,6 @@ describe("handleListMessages — backend call arguments", () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Response shape
-// ─────────────────────────────────────────────────────────────────────────────
-
 describe("handleListMessages — response shape", () => {
   test("success response has correct envelope", async () => {
     const msgs = [{ id: "m1" }, { id: "m2" }];
@@ -272,8 +242,8 @@ describe("handleListMessages — response shape", () => {
         next_before: string | null;
       };
       expect(payload.messages).toHaveLength(2);
-      expect(payload.has_more).toBe(false); // 2 < 50
-      expect(payload.next_before).toBe("m2"); // last item id
+      expect(payload.has_more).toBe(false);
+      expect(payload.next_before).toBe("m2");
     }
   });
 
@@ -316,10 +286,6 @@ describe("handleListMessages — response shape", () => {
     }
   });
 });
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Error path
-// ─────────────────────────────────────────────────────────────────────────────
 
 describe("handleListMessages — error path", () => {
   test("backend Error → error control_response with message", async () => {

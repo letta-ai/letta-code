@@ -5,9 +5,6 @@ import { DEFAULT_TITLE_SUMMARIZATION_MODEL } from "@/constants";
 import { settingsManager } from "@/settings-manager";
 import { isDebugEnabled } from "@/utils/debug";
 
-/**
- * Maximum characters allowed for an auto-generated conversation title.
- */
 export const CONVERSATION_TITLE_MAX_LENGTH = 100;
 
 export type ConversationTitleMessage = {
@@ -36,15 +33,8 @@ export function setConversationTitleSettings(
   return getConversationTitleSettings();
 }
 
-/**
- * Hard timeout on title generation. Title generation is best-effort and we
- * fall back to a heuristic on timeout.
- */
 const CONVERSATION_TITLE_TIMEOUT_MS = 30_000;
 
-/**
- * System prompt for server-side title summarization.
- */
 const CONVERSATION_TITLE_SYSTEM_PROMPT = `You are a conversation title generator.
 
 Output ONLY a short, descriptive title for the conversation above.
@@ -55,14 +45,9 @@ Rules:
 - never call any tools — reply with plain text only
 - avoid generic titles like "New conversation" or "Help request"`;
 
-/**
- * Strip whitespace, surrounding quotes, and clamp to {@link CONVERSATION_TITLE_MAX_LENGTH}.
- * Returns null when the input doesn't yield a usable title (empty, slash command, etc.).
- */
 export function normalizeConversationTitle(value: string): string | null {
   let normalized = value.replace(/\s+/g, " ").trim();
 
-  // Drop a single layer of surrounding quotes if the model added them despite the prompt.
   if (
     (normalized.startsWith('"') && normalized.endsWith('"')) ||
     (normalized.startsWith("'") && normalized.endsWith("'"))

@@ -218,7 +218,6 @@ describe("maybeLaunchPostTurnReflection", () => {
         }),
       };
 
-      // No completed turns recorded yet — below threshold.
       expect(await maybeLaunchPostTurnReflection(params)).toBe(false);
 
       for (let index = 0; index < 2; index += 1) {

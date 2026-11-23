@@ -324,12 +324,6 @@ function numberWithinBounds(
   return true;
 }
 
-/**
- * Parse a JSON-like value into a {@link ChannelConfigSchema}. Returns `null`
- * when the value violates the strict v1 contract, in which case callers should
- * silently drop the schema (the channel still loads, just without dynamic
- * config UI).
- */
 export function parseChannelConfigSchema(
   value: unknown,
 ): ChannelConfigSchema | null {
@@ -364,30 +358,16 @@ export type SchemaValidationResult =
   | { ok: true }
   | { ok: false; reason: string };
 
-/**
- * Strictly validate a plugin config payload against a declared schema.
- *
- * - Unknown keys are rejected.
- * - Each declared field's type must match the value type.
- * - Required string fields, when present in the patch, must be non-empty.
- * - Partial patches are allowed (omitted keys mean "no change").
- */
 export function validateConfigAgainstSchema(
   schema: ChannelConfigSchema,
   config: ChannelProtocolConfig,
 ): SchemaValidationResult {
   const fieldsByKey = new Map(schema.fields.map((field) => [field.key, field]));
-  // Reserved JSON-bucket keys are always permitted regardless of whether
-  // the plugin's schema declares them — they back the dedicated Accounts /
-  // Config / Metadata tabs and are stored as opaque strings.
-  // Reserved string-bucket keys: always accepted regardless of schema.
   const reservedStringKeys = new Set([
     "accounts_json",
     "configs_json",
     "metadata_json",
   ]);
-  // Reserved nullable-string keys (e.g. agent binding) — also always
-  // accepted, but allow null as well as string.
   const reservedNullableStringKeys = new Set(["agent_id"]);
   for (const key of Object.keys(config)) {
     if (fieldsByKey.has(key)) continue;
@@ -535,14 +515,6 @@ export function validateConfigAgainstSchema(
   return { ok: true };
 }
 
-/**
- * Build a redacted, client-safe view of a stored plugin config.
- *
- * - `secret` fields collapse to `has_<key>: boolean` (Slack pattern).
- * - `text` / `select` / `boolean` fields fall through to their stored value,
- *   or the schema default when nothing is stored and a default exists.
- * - Stored keys not declared in the schema are omitted.
- */
 export function redactConfigForSnapshot(
   schema: ChannelConfigSchema,
   storedConfig: Record<string, unknown>,
@@ -609,7 +581,6 @@ export function redactConfigForSnapshot(
       continue;
     }
 
-    // text / select
     if (typeof stored === "string") {
       result[field.key] = stored;
     } else if (typeof field.default === "string") {
@@ -619,10 +590,6 @@ export function redactConfigForSnapshot(
     }
   }
 
-  // Always pass through Letta's reserved JSON-bucket keys regardless of
-  // whether the plugin declared them in its schema. These power the
-  // dedicated Accounts / Config / Metadata tabs in the desktop dialog
-  // and round-trip as opaque strings on the snapshot.
   for (const reservedKey of [
     "accounts_json",
     "configs_json",
@@ -633,8 +600,6 @@ export function redactConfigForSnapshot(
     result[reservedKey] = typeof stored === "string" ? stored : "";
   }
 
-  // Reserved nullable-string keys: agent_id powers the Connected agent
-  // tab and must round-trip regardless of schema.
   if (result.agent_id === undefined) {
     const stored = storedConfig.agent_id;
     result.agent_id =

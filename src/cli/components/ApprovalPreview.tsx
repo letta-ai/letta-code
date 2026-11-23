@@ -20,16 +20,12 @@ type Props = {
   toolCallId?: string;
 };
 
-/**
- * Get a human-readable header for file edit tools
- */
 function getFileEditHeader(toolName: string, toolArgs: string): string {
   const t = toolName.toLowerCase();
 
   try {
     const args = JSON.parse(toolArgs);
 
-    // Handle patch tools
     if (t === "applypatch") {
       if (args.input) {
         const operations = parsePatchOperations(args.input);
@@ -52,7 +48,6 @@ function getFileEditHeader(toolName: string, toolArgs: string): string {
       return "Apply patch?";
     }
 
-    // Handle single-file edit/write tools
     const filePath = args.file_path || "";
     const { relative } = require("node:path");
     const cwd = process.cwd();
@@ -65,9 +60,7 @@ function getFileEditHeader(toolName: string, toolArgs: string): string {
         if (existsSync(filePath)) {
           return `Overwrite ${displayPath}?`;
         }
-      } catch {
-        // Ignore
-      }
+      } catch {}
       return `Write to ${displayPath}?`;
     }
 
@@ -78,27 +71,17 @@ function getFileEditHeader(toolName: string, toolArgs: string): string {
     ) {
       return `Update ${displayPath}?`;
     }
-  } catch {
-    // Fall through
-  }
+  } catch {}
 
   return `${toolName} requires approval`;
 }
 
-/**
- * ApprovalPreview - Renders the preview content for an eagerly-committed approval
- *
- * This component renders the "preview" part of an approval that was committed
- * early to enable flicker-free approval UI. It ensures visual parity with
- * what the inline approval components show.
- */
 export const ApprovalPreview = memo(
   ({ toolName, toolArgs, precomputedDiff, allDiffs, toolCallId }: Props) => {
     const columns = useTerminalWidth();
     const solidLine = SOLID_LINE.repeat(Math.max(columns, 10));
     const dottedLine = DOTTED_LINE.repeat(Math.max(columns, 10));
 
-    // Bash/Shell: Use BashPreview component
     if (isShellTool(toolName)) {
       try {
         const args = JSON.parse(toolArgs);
@@ -130,12 +113,9 @@ export const ApprovalPreview = memo(
             <BashPreview command={command} description={description} />
           </Box>
         );
-      } catch {
-        // Fall through to generic
-      }
+      } catch {}
     }
 
-    // File Edit tools: Render diff preview
     if (
       toolName === "Edit" ||
       toolName === "Write" ||
@@ -148,7 +128,6 @@ export const ApprovalPreview = memo(
       try {
         const args = JSON.parse(toolArgs);
 
-        // Handle ApplyPatch (can have multiple files)
         if (args.input && toolName === "ApplyPatch") {
           const operations = parsePatchOperations(args.input);
 
@@ -228,7 +207,6 @@ export const ApprovalPreview = memo(
           );
         }
 
-        // Single file edit/write
         const filePath = args.file_path || "";
 
         return (
@@ -239,7 +217,6 @@ export const ApprovalPreview = memo(
             </Text>
             <Text dimColor>{dottedLine}</Text>
 
-            {/* Write */}
             {args.content !== undefined && (
               <AdvancedDiffRenderer
                 precomputed={precomputedDiff}
@@ -249,7 +226,6 @@ export const ApprovalPreview = memo(
               />
             )}
 
-            {/* Single edit */}
             {args.old_string !== undefined && (
               <AdvancedDiffRenderer
                 precomputed={precomputedDiff}
@@ -264,12 +240,9 @@ export const ApprovalPreview = memo(
             <Text dimColor>{dottedLine}</Text>
           </Box>
         );
-      } catch {
-        // Fall through to generic
-      }
+      } catch {}
     }
 
-    // Generic fallback
     return (
       <Box flexDirection="column">
         <Text dimColor>{solidLine}</Text>

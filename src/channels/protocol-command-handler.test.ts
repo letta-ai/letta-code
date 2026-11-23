@@ -711,8 +711,6 @@ describe("channel account list responses", () => {
         account_id: "telegram-bot",
         deleted: true,
       });
-      // Delete is intentionally non-hydrating for the LCD command path, so it
-      // should not enqueue another keyring operation before responding.
       expect(pendingSecretOperations).toHaveLength(2);
     } finally {
       for (const resolveSecretOperation of pendingSecretOperations.splice(0)) {

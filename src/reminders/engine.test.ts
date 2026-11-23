@@ -216,7 +216,6 @@ describe("subagent secret names", () => {
           ),
       );
       expect(names).toEqual(["GITHUB_TOKEN", "OWN_KEY"]);
-      // Without subagent linkage only the agent's own names are listed.
       const ownOnly = await runWithRuntimeContext(
         {
           executionSettings: {

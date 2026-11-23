@@ -21,7 +21,6 @@ const providerAliases: Readonly<Record<string, string>> = {
 
 export type CostModel = string | Model<Api> | undefined | null;
 
-/** Resolve exact catalog IDs only; never guess prices from a model-name prefix. */
 export function resolveCostModel(handle: string): Model<Api> | undefined {
   const slash = handle.indexOf("/");
   if (slash < 1) return undefined;
@@ -33,18 +32,14 @@ export function resolveCostModel(handle: string): Model<Api> | undefined {
 }
 
 export interface CostUsage {
-  /** Uncached input tokens; cache counts are separate, as in pi-ai Usage. */
   input: number;
-  /** Includes reasoning tokens unless reasoningSeparate is supplied. */
   output: number;
   cacheRead?: number;
   cacheWrite?: number;
   cacheWrite1h?: number;
-  /** Additional reasoning tokens billed at the output rate. */
   reasoningSeparate?: number;
 }
 
-/** Client list-price estimate, including pi-ai context tiers and cache retention. */
 export function calculateUsageCost(
   model: CostModel,
   usage: CostUsage,
@@ -91,7 +86,6 @@ export function calculateUsageCost(
   return Number.isFinite(cost) && cost >= 0 ? cost : null;
 }
 
-/** Add the client-computed api_cost_usd before raw stream consumers (including budgets) see it. */
 export function priceUsageEvent<T extends { message_type?: string }>(
   event: T,
   model: CostModel,
@@ -108,8 +102,6 @@ export function priceUsageEvent<T extends { message_type?: string }>(
   const output = count("completion_tokens", Number.NaN);
   const cacheRead = count("cached_input_tokens");
   const cacheWrite = count("cache_write_tokens");
-  // API usage can include cache tokens in prompt_tokens; local pi-ai chunks
-  // keep them separate. total_tokens disambiguates without guessing by provider.
   const total = count("total_tokens", Number.NaN);
   const cached = cacheRead + cacheWrite;
   let input = prompt;

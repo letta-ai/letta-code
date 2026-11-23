@@ -616,7 +616,6 @@ export function extractAutoModeDefaults(output: string): unknown | null {
   try {
     return normalizeVolatile(JSON.parse(normalized));
   } catch {
-    // Older releases may print the defaults as text rather than JSON.
     const lines = normalized
       .split(/\r?\n/)
       .map((line) => line.trim())
@@ -739,10 +738,6 @@ async function runProbe(
   };
 }
 
-/**
- * Installs and captures one exact Claude release in its own disposable root.
- * Dry-run returns null before creating directories or invoking install/auth commands.
- */
 export async function captureClaudeRuntime(
   options: CaptureClaudeRuntimeOptions,
 ): Promise<ClaudeRuntimeSnapshot | null> {

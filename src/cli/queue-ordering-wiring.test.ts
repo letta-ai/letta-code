@@ -9,12 +9,8 @@ function readAppSource(): string {
 describe("queue ordering wiring", () => {
   test("dequeue effect keeps all sensitive safety gates", () => {
     const source = readAppSource();
-    const start = source.indexOf(
-      "// Process queued messages when streaming ends.",
-    );
-    const end = source.indexOf(
-      "// Helper to send all approval results when done",
-    );
+    const start = source.indexOf("void dequeueEpoch;");
+    const end = source.indexOf("const sendAllResults = useCallback(");
 
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
@@ -29,8 +25,6 @@ describe("queue ordering wiring", () => {
     expect(segment).toContain("!userCancelledRef.current");
     expect(segment).toContain("!abortControllerRef.current");
     expect(segment).toContain("queuedOverlayAction=");
-    // Queue is now drained via QueueRuntime.consumeItems; setQueueDisplay is
-    // updated automatically via the onDequeued callback — no direct setState here.
     expect(segment).toContain("tuiQueueRef.current?.consumeItems(queueLen)");
     expect(segment).toMatch(
       /onSubmitRef\s*\.current\(concatenatedMessage, submitOptions\)/,
@@ -50,8 +44,6 @@ describe("queue ordering wiring", () => {
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
 
-    // A dequeue may skip Esc-parked user messages ahead of the consumed items,
-    // so trimming the display by count would drop the wrong entries.
     const segment = source.slice(start, end);
     expect(segment).toContain("batch.items.map((item) => item.id)");
     expect(segment).toContain("consumed.has(msg.queueItemId)");
@@ -61,15 +53,12 @@ describe("queue ordering wiring", () => {
   test("onSubmit allows override-only queued submissions", () => {
     const source = readAppSource();
     const start = source.indexOf("const onSubmit = useCallback(");
-    const end = source.indexOf(
-      "// Process queued overlay actions when streaming ends",
-    );
+    const end = source.indexOf("queuedOverlayAction !== null");
 
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
 
     const segment = source.slice(start, end);
-    // Empty input is rejected unless it resumes an Esc-parked queue.
     expect(segment).toContain("if (!msg && !hasOverrideContent) {");
     expect(segment).toContain("if (paused === 0) return { submitted: false };");
     expect(segment).toContain(
@@ -99,11 +88,11 @@ describe("queue ordering wiring", () => {
 
   test("queued overlay effect only runs when idle and clears action before processing", () => {
     const source = readAppSource();
-    const start = source.indexOf(
-      "// Process queued overlay actions when streaming ends",
-    );
+    const guard = source.indexOf("queuedOverlayAction !== null");
+    expect(guard).toBeGreaterThan(-1);
+    const start = source.lastIndexOf("useEffect(() => {", guard);
     const end = source.indexOf(
-      "// Handle escape when profile confirmation is pending",
+      "const { handleFeedbackSubmit } = useFeedbackHandler(",
     );
 
     expect(start).toBeGreaterThan(-1);

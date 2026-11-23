@@ -29,15 +29,6 @@ type OriginCarrying = Pick<
   "mcpOriginatorSuperRunId" | "mcpOriginatorTokenPresent"
 >;
 
-/**
- * Apply an origin swap when a parked turn consumes a queued turn from
- * another super run (or an unattributed one): retire both runs' held
- * originator tokens, then rebind the continuation's live (park-frozen) tool
- * context to the consumed turn's origin. The rebind is what makes the swap
- * a stable boundary — without it a late redelivery repopulating the parked
- * run's deleted key would be picked up by the very next tool call, since
- * per-call token lookups read the frozen context (evil-shub r4300657672).
- */
 export function applyTurnOriginSwap(
   parkedInput: OriginCarrying,
   consumedTurn: OriginCarrying,
@@ -53,11 +44,6 @@ export function applyTurnOriginSwap(
   );
 }
 
-/**
- * Build the queued-continuation hooks for a parked turn. Recovery inputs
- * contain only approval results, so they never append queued messages.
- * Consumed inputs are origin-swapped and checkpointed before continuation.
- */
 export function createQueuedTurnConsumer(params: {
   parkedInput: IncomingMessage;
   turnToolContextId: string | null;
@@ -102,15 +88,10 @@ export function createTurnFinalizer(params: {
   conversationId: string;
   terminalCommitGuard?: () => boolean;
   interruptedRevisionRef?: { current: string | undefined };
-  /** Recovery keeps execution evidence until its remote claim completion is ACKed. */
   deferInterruptedCleanup?: boolean;
   recoveryLineageId?: string;
   recoveryTerminalRevision?: string;
   recoveryAuthorityStore?: RecoveryAuthorityStore;
-  /**
-   * Super run owning this turn, when the relay delivered one. Its held MCP
-   * originator token is dropped the moment the turn reaches a terminal state.
-   */
   mcpOriginatorSuperRunId?: string;
 }) {
   const recoveryLineageId = params.recoveryLineageId;
@@ -181,8 +162,6 @@ export function createTurnFinalizer(params: {
           : {}),
       }),
     );
-    // Terminal run states (success/error/cancel) retire the run's held MCP
-    // originator token. Rejected/duplicate commits leave the store alone.
     if (transition.finished && params.mcpOriginatorSuperRunId) {
       retireMcpOriginatorTokenOnTerminal(params.mcpOriginatorSuperRunId);
     }
@@ -237,7 +216,6 @@ export function createTurnFinalizer(params: {
   return {
     finishIfInterrupted,
     finishTurn,
-    /** Commit a teleport already claimed by the caller without claiming it twice. */
     finishClaimedTurn: commitTurn,
     noteFinalization,
     get finalized() {

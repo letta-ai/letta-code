@@ -13,30 +13,20 @@ type Props = {
   description?: string;
 };
 
-/**
- * BashPreview - Renders the bash command preview (no interactive options)
- *
- * Used by:
- * - InlineBashApproval for memoized content
- * - Static area for eagerly-committed command previews
- */
 export const BashPreview = memo(({ command, description }: Props) => {
   const columns = useTerminalWidth();
   const solidLine = SOLID_LINE.repeat(Math.max(columns, 10));
 
   return (
     <>
-      {/* Top solid line */}
       <Text dimColor>{solidLine}</Text>
 
-      {/* Header */}
       <Text bold color={colors.approval.header}>
         Run this command?
       </Text>
 
       <Box height={1} />
 
-      {/* Command preview */}
       <Box paddingLeft={2} flexDirection="column">
         <SyntaxHighlightedCommand
           command={command}

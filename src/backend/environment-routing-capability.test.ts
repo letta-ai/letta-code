@@ -62,8 +62,6 @@ describe("environmentRouting capability", () => {
   });
 
   test("a Cloud sandbox reaching Cloud through another hostname can route", () => {
-    // Cloud names its sandbox listeners sandbox:<id>; a test deployment
-    // serves the Cloud API from its own hostname.
     process.env.LETTA_BASE_URL = "https://cloud-api.example.test";
     markManagedCloudRuntimeFromListenerIdentity("sandbox:sbx-1");
     expect(new APIBackend().capabilities.environmentRouting).toBe(true);

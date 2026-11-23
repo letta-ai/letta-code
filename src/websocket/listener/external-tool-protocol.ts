@@ -45,8 +45,6 @@ function isStringList(value: unknown): value is string[] {
   );
 }
 
-// A legacy scope_id is still accepted so older controllers are not rejected;
-// registration ignores it.
 export function isRuntimeStartExternalToolsGroup(value: unknown): boolean {
   if (!isRecord(value)) return false;
   return (

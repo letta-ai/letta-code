@@ -26,15 +26,6 @@ import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
 import { applyToolsetUpdateForRuntime } from "@/websocket/listener/commands/model-toolset";
 
-/**
- * Tests for the model update command logic.
- *
- * These tests deliberately avoid mock.module to prevent mock leakage
- * across bun's shared test module graph. Pure function tests cover the
- * conditional status message and error handling; structural assertions
- * verify wiring that can't be tested without mocking API calls.
- */
-
 function readModelToolsetCommandSource(): string {
   const commandPath = fileURLToPath(
     new URL("./listener/commands/model-toolset.ts", import.meta.url),
@@ -209,7 +200,6 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
       "preparedToolContext.preparedToolContext.loadedToolNames;",
     );
 
-    // Tool refresh failures should still degrade cleanly to a warning.
     expect(source).toContain("toolsetError =");
     expect(source).toContain(
       'error instanceof Error ? error.message : "Failed to switch toolset"',
@@ -219,20 +209,13 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
   test("routes default conversations to agent update and non-default to conversation update", () => {
     const source = readModelToolsetCommandSource();
 
-    // Agent-scoped update for default conversation
     expect(source).toContain('conversationId === "default"');
     expect(source).toContain("updateAgentLLMConfig(");
     expect(source).toContain('appliedTo = "agent"');
 
-    // Conversation-scoped update for non-default
     expect(source).toContain("updateConversationLLMConfig(");
     expect(source).toContain('appliedTo = "conversation"');
 
-    // Context-window preservation must RE-SEND the current value explicitly
-    // (contextWindowOverride), never omit the field (an omitted
-    // context_window_limit makes the server re-derive and clamp it to a
-    // legacy 128k default — LET-9786), and must not preserve a value that
-    // looks like that server clamp (contextWindowToPreserveForModelSelection).
     expect(source).not.toContain("avoidOverwritingExistingContextWindow");
     expect(source).not.toContain("delete updateArgsForRequest.context_window");
     expect(source).toContain("contextWindowToPreserveForModelSelection(");
@@ -800,7 +783,6 @@ describe("listen-client list_models response wiring", () => {
   test("buildListModelsResponse is async and uses Promise.allSettled for parallel fetches", () => {
     const source = readModelToolsetCommandSource();
 
-    // The response builder should use Promise.allSettled for parallel fetches
     expect(source).toContain("Promise.allSettled");
     expect(source).toContain("getAvailableModelHandles(");
     expect(source).toContain("listProviders()");
@@ -810,16 +792,12 @@ describe("listen-client list_models response wiring", () => {
   test("handler uses async pattern with buildListModelsResponse", () => {
     const source = readModelToolsetCommandSource();
 
-    // Handler should be wrapped in void (async () => { ... })() pattern
     expect(source).toContain("buildListModelsResponse(parsed.request_id, {");
   });
 
   test("user-initiated force refresh bypasses the availability cache", () => {
     const source = readModelToolsetCommandSource();
 
-    // The WS command's force flag must reach getAvailableModelHandles as
-    // forceRefresh — otherwise "Refresh model list" can be answered from a
-    // stale-but-within-TTL cache snapshot (LET-9479).
     expect(source).toContain("forceRefresh: parsed.force === true");
     expect(source).toContain(
       "getAvailableModelHandles(\n      options.forceRefresh === true ? { forceRefresh: true } : undefined,\n    )",
@@ -829,7 +807,6 @@ describe("listen-client list_models response wiring", () => {
   test("response type includes available_handles and byok_provider_aliases fields", () => {
     const source = readModelToolsetCommandSource();
 
-    // The response payload should include the new fields
     expect(source).toContain("available_handles: availableHandles");
     expect(source).toContain("byok_provider_aliases: byokProviderAliases");
   });
@@ -837,9 +814,7 @@ describe("listen-client list_models response wiring", () => {
   test("available_handles is null when availability fetch fails (degraded path)", () => {
     const source = readModelToolsetCommandSource();
 
-    // Should handle rejected availability fetch by returning null
     expect(source).toContain('handlesResult.status === "fulfilled"');
-    // Null fallback when fetch fails
     expect(source).toContain(": null");
   });
 
@@ -849,7 +824,6 @@ describe("listen-client list_models response wiring", () => {
     expect(Array.isArray(entries)).toBe(true);
     expect(entries.length).toBeGreaterThan(0);
 
-    // Every entry should have required fields
     for (const entry of entries) {
       expect(typeof entry.id).toBe("string");
       expect(typeof entry.handle).toBe("string");
@@ -861,13 +835,11 @@ describe("listen-client list_models response wiring", () => {
   test("buildListModelsEntries preserves updateArgs when present", () => {
     const entries = __listenClientTestUtils.buildListModelsEntries();
 
-    // At least some entries should have updateArgs (models with config)
     const withUpdateArgs = entries.filter(
       (e) => e.updateArgs && Object.keys(e.updateArgs).length > 0,
     );
     expect(withUpdateArgs.length).toBeGreaterThan(0);
 
-    // At least some entries with updateArgs should have reasoning_effort
     const withReasoningEffort = withUpdateArgs.filter(
       (e) => "reasoning_effort" in (e.updateArgs as Record<string, unknown>),
     );

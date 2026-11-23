@@ -222,7 +222,6 @@ describe("buildCreateAgentRequestForPersonality", () => {
       });
       const personality = getPersonalityOption(personalityId);
 
-      // Same content the CLI's createAgent() would send for this personality.
       expect(request.name).toBe(cliOptions.name as string);
       expect(request.description).toBe(cliOptions.description as string);
       expect(request.memory_blocks).toEqual([
@@ -234,8 +233,6 @@ describe("buildCreateAgentRequestForPersonality", () => {
         : getDefaultModel();
       expect(request.model).toBe(expectedModel);
 
-      // Direct Cloud creation and the CLI Cloud path both delegate the default
-      // prompt to the service. Local CLI creation still resolves it client-side.
       expect(cliOptions.memoryPromptMode).toBe("root-memfs");
       expect(request.system).toBeNull();
 

@@ -1,4 +1,3 @@
-/** Memory access refusals last for this process, never in persisted settings. */
 const unavailableAgents = new Set<string>();
 
 export function isMemoryUnavailable(agentId: string): boolean {

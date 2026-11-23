@@ -38,7 +38,6 @@ describe("subagent tool count stability", () => {
     }
     expect(getSubagentToolCount(before)).toBe(2);
 
-    // Simulate a stale overwrite (should not reduce displayed count).
     updateSubagent("sub-1", {
       toolCalls: before.toolCalls.slice(0, 1),
     });
@@ -75,7 +74,6 @@ describe("subagent tool count stability", () => {
       throw new Error("Expected subagent for tc-task before grouping");
     }
 
-    // Simulate stale reduction right before grouping.
     updateSubagent("sub-1", {
       toolCalls: subagent.toolCalls.slice(0, 1),
     });
@@ -154,11 +152,9 @@ describe("cloud tool return clipping", () => {
       LIMITS.TOOL_RETURN_MAX_CHARS + 1_000,
     );
     expect(resultText).toContain("[Output truncated: showing");
-    // Middle truncation keeps both ends available for display and ctrl+o.
     expect(resultText.startsWith("HEAD-")).toBe(true);
     expect(resultText).toContain("-TAIL");
 
-    // The full output lands in an overflow file; verify, then clean it up.
     const match = resultText.match(/Full output written to: (.+\.txt)/);
     expect(match).toBeDefined();
     if (match?.[1]) {
@@ -169,8 +165,6 @@ describe("cloud tool return clipping", () => {
   });
 
   test("passes through output already clamped by a per-tool 30K limit", () => {
-    // Local tool returns arrive pre-clamped (30K + notice) and must not be
-    // re-truncated on the way into the transcript.
     const alreadyClamped = `${"b".repeat(30_000)}\n\n[Output truncated: showing 30,000 of 100,000 characters.]`;
     const line = sendToolCallAndReturn(createBuffers(), alreadyClamped);
     expect(line.kind === "tool_call" && line.resultText).toBe(alreadyClamped);

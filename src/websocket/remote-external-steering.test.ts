@@ -106,8 +106,6 @@ input.on("line", (line) => {
 });
 `;
 
-// The fake executable uses a POSIX shebang. Windows protocol behavior is
-// covered by unit tests; this E2E test exercises real child-process signaling.
 test.skipIf(process.platform === "win32")(
   "steers, resumes, stops, and scopes a remote external agent over a real websocket",
   async () => {

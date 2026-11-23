@@ -14,11 +14,6 @@ export type PostTurnReflectionLauncher = (
   triggerSource: Exclude<ReflectionTrigger, "off">,
 ) => Promise<boolean>;
 
-/**
- * Evaluate reflection triggers at turn end and launch the reflection subagent
- * if one fires. Call after the turn's transcript delta has been appended so
- * step counts include the just-finished turn.
- */
 export async function maybeLaunchPostTurnReflection(params: {
   agentId?: string | null;
   conversationId: string;
@@ -30,8 +25,6 @@ export async function maybeLaunchPostTurnReflection(params: {
   onCompaction?: () => Promise<void>;
   getTranscriptState?: typeof getReflectionTranscriptState;
 }): Promise<boolean> {
-  // Reminder restoration is client context maintenance, not reflection work.
-  // Always consume compaction state even when MemFS or reflection is disabled.
   syncReminderStateFromContextTracker(
     params.reminderState,
     params.contextTracker,

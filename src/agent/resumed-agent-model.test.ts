@@ -41,8 +41,6 @@ afterEach(() => {
   __testSetBackend(null);
 });
 
-// The SDK's conversation create type doesn't declare context_window_limit,
-// though the API accepts it.
 function contextWindowLimit(
   conversationModel: Partial<ConversationCreateBody> | undefined,
 ): unknown {

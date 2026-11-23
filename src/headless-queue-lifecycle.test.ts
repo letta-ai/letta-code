@@ -1,18 +1,3 @@
-/**
- * Tests for PRQ3: queue lifecycle event emission in headless bidirectional mode.
- *
- * Invariants verified:
- *  - parseUserLine: correctly classifies lines
- *  - blocked events fire directly at arrival time (not via QueueRuntime),
- *    once per turn, on first user/task arrival while turnInProgress
- *  - enqueued + dequeued events fire together at coalescing-loop time
- *    (not at arrival), eliminating orphans from external-tool drop
- *  - external-tool drop scenario: blocked fires at arrival, no enqueued
- *    event for the dropped item
- *  - exit paths emit queue_cleared
- *  - control lines produce no events
- */
-
 import { describe, expect, test } from "bun:test";
 import type { BidirectionalQueuedInput } from "@/headless";
 import type {
@@ -22,8 +7,6 @@ import type {
   QueueItem,
 } from "@/queue/queue-runtime";
 import { QueueRuntime } from "@/queue/queue-runtime";
-
-// ── Helpers mirroring production logic ───────────────────────────
 
 type ParsedLine =
   | { kind: "message"; content: string }
@@ -69,8 +52,6 @@ function makeControlLine(requestId = "req-1"): string {
   });
 }
 
-// ── Shared queue builder ──────────────────────────────────────────
-
 type Recorded = {
   enqueued: Array<{ item: QueueItem; queueLen: number }>;
   dequeued: DequeuedBatch[];
@@ -96,7 +77,6 @@ function buildRuntime(): { q: QueueRuntime; rec: Recorded } {
   return { q, rec };
 }
 
-/** Mirrors enqueueForTracking() from headless. */
 function enqueueForTracking(
   q: QueueRuntime,
   input: BidirectionalQueuedInput,
@@ -122,7 +102,6 @@ function enqueueForTracking(
   }
 }
 
-/** Mirrors maybeNotifyBlocked(): emits queue_blocked directly on first busy arrival. */
 type BlockedState = { emitted: boolean };
 
 function maybeNotifyBlocked(
@@ -141,8 +120,6 @@ function maybeNotifyBlocked(
   );
   blocked.push({ reason: "runtime_busy", queueLen });
 }
-
-// ── Tests ─────────────────────────────────────────────────────────
 
 describe("parseUserLine", () => {
   test("returns null for control_response", () => {
@@ -170,17 +147,15 @@ describe("parseUserLine", () => {
 describe("idle path — enqueued + dequeued fire together at coalescing time", () => {
   test("no enqueued at arrival, enqueued+dequeued together in coalescing loop", () => {
     const { q, rec } = buildRuntime();
-    // Simulate: line arrives while idle → no enqueue at arrival
     const lineQueue: string[] = [];
     const blocked: Array<{ reason: string; queueLen: number }> = [];
     const bstate: BlockedState = { emitted: false };
     const raw = makeUserLine("hello");
     lineQueue.push(raw);
-    maybeNotifyBlocked(raw, false /* idle */, bstate, blocked, lineQueue);
-    expect(rec.enqueued).toHaveLength(0); // not yet
-    expect(blocked).toHaveLength(0); // idle: no blocked
+    maybeNotifyBlocked(raw, false, bstate, blocked, lineQueue);
+    expect(rec.enqueued).toHaveLength(0);
+    expect(blocked).toHaveLength(0);
 
-    // Coalescing loop consumes the item
     const input: BidirectionalQueuedInput = { kind: "user", content: "hello" };
     enqueueForTracking(q, input);
     q.consumeItems(1);
@@ -199,24 +174,20 @@ describe("busy path — blocked fires at arrival, enqueued+dequeued at next turn
     const blocked: Array<{ reason: string; queueLen: number }> = [];
     const bstate: BlockedState = { emitted: false };
 
-    // Turn 1 in progress
     const raw = makeUserLine("msg-during-turn");
     lineQueue.push(raw);
-    maybeNotifyBlocked(raw, true /* busy */, bstate, blocked, lineQueue);
+    maybeNotifyBlocked(raw, true, bstate, blocked, lineQueue);
     expect(blocked).toHaveLength(1);
     expect(blocked.at(0)?.reason).toBe("runtime_busy");
-    expect(rec.enqueued).toHaveLength(0); // NOT enqueued yet at arrival
+    expect(rec.enqueued).toHaveLength(0);
 
-    // Second arrival — no new blocked (dedup)
     const raw2 = makeUserLine("msg2");
     lineQueue.push(raw2);
     maybeNotifyBlocked(raw2, true, bstate, blocked, lineQueue);
-    expect(blocked).toHaveLength(1); // still 1
+    expect(blocked).toHaveLength(1);
 
-    // Turn ends, bstate resets
     bstate.emitted = false;
 
-    // Turn 2 coalescing loop consumes both
     for (const input of [
       { kind: "user" as const, content: "msg-during-turn" },
       { kind: "user" as const, content: "msg2" },
@@ -239,23 +210,19 @@ describe("external-tool drop scenario — no orphaned items", () => {
     const blocked: Array<{ reason: string; queueLen: number }> = [];
     const bstate: BlockedState = { emitted: false };
 
-    // User line arrives during turn (external-tool wait in progress)
     const raw = makeUserLine("user-msg-during-ext-tool");
     lineQueue.push(raw);
     maybeNotifyBlocked(raw, true, bstate, blocked, lineQueue);
-    expect(blocked).toHaveLength(1); // blocked fires on arrival
+    expect(blocked).toHaveLength(1);
 
-    // External-tool wait loop DROPS the line (not deferred back, just consumed)
-    lineQueue.shift(); // simulates getNextLine() consuming without deferring
+    lineQueue.shift();
 
-    // QueueRuntime should have NO items (arrival never enqueued)
     expect(q.length).toBe(0);
     expect(rec.enqueued).toHaveLength(0);
 
-    // consumeItems(0) — nothing was in the coalescing loop (no user items)
     const result = q.consumeItems(0);
     expect(result).toBeNull();
-    expect(rec.dequeued).toHaveLength(0); // no dequeue event
+    expect(rec.dequeued).toHaveLength(0);
   });
 });
 

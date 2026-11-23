@@ -1,7 +1,3 @@
-// Shared tab bar for overlay selectors.
-// Renders a row of tabs with the active one highlighted.
-// Does NOT own tab state or handle input — the parent controls activeTab.
-
 import { Box } from "ink";
 import { colors } from "./colors";
 import { Text } from "./Text";

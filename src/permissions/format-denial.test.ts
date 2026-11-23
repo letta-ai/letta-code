@@ -71,7 +71,6 @@ describe("formatPermissionDenial", () => {
   });
 
   test("works with extra unrelated fields on the permission object", () => {
-    // Mirrors real-world ToolPermission shape which has a `decision` field too
     const result = formatPermissionDenial({
       reason: "detailed",
       matchedRule: "rule",

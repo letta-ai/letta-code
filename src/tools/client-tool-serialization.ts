@@ -20,7 +20,6 @@ interface ExternallyOwnedNamedToolShape extends NamedToolShape {
   connectionId?: string;
 }
 
-/** Collapse internal registrations to one model-facing tool per name. */
 export function selectModelFacingExternalTools<
   T extends ExternallyOwnedNamedToolShape,
 >(
@@ -30,9 +29,6 @@ export function selectModelFacingExternalTools<
   const modelFacingTools = new Map<string, T>();
   for (const tool of externalTools.values()) {
     const existing = modelFacingTools.get(tool.name);
-    // Routed turns must keep the submitting controller even when a proactive
-    // fallback registered the same tool name later. Equal ownership and
-    // process-owned turns retain the existing later-registration behavior.
     if (
       preferredConnectionId != null &&
       existing?.connectionId === preferredConnectionId &&

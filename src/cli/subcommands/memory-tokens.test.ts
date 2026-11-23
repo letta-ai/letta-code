@@ -170,9 +170,7 @@ describe("letta memory tokens", () => {
   });
 
   test("--memory-dir takes precedence over $MEMORY_DIR", async () => {
-    // Populate tmpRoot (used via --memory-dir), leave the env var pointing
-    // at a nonexistent path to confirm the flag wins.
-    writeSystemFile("persona.md", "a".repeat(8)); // 2 tokens
+    writeSystemFile("persona.md", "a".repeat(8));
     process.env.MEMORY_DIR = "/nonexistent/does-not-exist";
     const { capture, restore } = captureConsole();
     try {
@@ -256,7 +254,6 @@ describe("letta memory tokens", () => {
       const parsed = JSON.parse(capture.stdout.join("\n"));
       expect(parsed.total_tokens).toBe(1);
       expect(parsed.files).toEqual([{ path: "system/persona.md", tokens: 1 }]);
-      // No policy fields.
       expect(parsed.status).toBeUndefined();
       expect(parsed.threshold_warn).toBeUndefined();
       expect(parsed.threshold_fail).toBeUndefined();
@@ -266,8 +263,8 @@ describe("letta memory tokens", () => {
   });
 
   test("text output includes top files sorted by tokens desc", async () => {
-    writeSystemFile("small.md", "a".repeat(4)); // 1 token
-    writeSystemFile("large.md", "a".repeat(40)); // 10 tokens
+    writeSystemFile("small.md", "a".repeat(4));
+    writeSystemFile("large.md", "a".repeat(40));
     const { capture, restore } = captureConsole();
     try {
       const code = await runMemorySubcommand([

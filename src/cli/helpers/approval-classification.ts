@@ -63,7 +63,6 @@ function typeAllowsNull(schema: unknown): boolean {
   return type === "null" || (Array.isArray(type) && type.includes("null"));
 }
 
-/** True if the property schema (or one of its anyOf/oneOf branches) admits null. */
 function schemaAllowsNull(schema: unknown): boolean {
   if (typeAllowsNull(schema)) return true;
   if (!schema || typeof schema !== "object") return false;
@@ -84,10 +83,6 @@ function formatMissingRequiredArgsReason(
     `${toolName} tool missing required parameter${missingRequiredArgs.length > 1 ? "s" : ""}: ` +
     `${missingRequiredArgs.join(", ")}. Received parameters: ${received}`;
 
-  // No arguments at all reached the client. That is almost never the model
-  // omitting them: the payload was dropped or truncated in transit. Say so,
-  // otherwise the model "fixes" a call that was already correct and retries
-  // byte-identically until it burns the turn budget.
   if (argsParse?.parseFailed) {
     return (
       `${base}. The raw arguments (${argsParse.rawLength} chars) were not valid JSON, ` +
@@ -107,9 +102,7 @@ function formatMissingRequiredArgsReason(
 
 type ParsedToolArgs = {
   parsedArgs: Record<string, unknown>;
-  /** Raw arguments were non-empty but could not be parsed as JSON. */
   parseFailed: boolean;
-  /** Raw arguments were absent, empty, or parsed to an object with no keys. */
   argsEmpty: boolean;
   rawLength: number;
 };

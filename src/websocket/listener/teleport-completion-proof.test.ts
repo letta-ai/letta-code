@@ -140,8 +140,6 @@ test.each(["completed", "queued", "started"] as const)(
       expect(realStore.read("agent-1", "conv-1")).toBeNull();
       expect(teleportStatus).toHaveBeenCalledTimes(1);
 
-      // No delayed convergence window exists: durable continuation restore can
-      // run immediately without inheriting predecessor teleport metadata.
       expect(restoreDurableQueuedInputs(restarted)).toBe(
         proof === "completed" ? 0 : 1,
       );
