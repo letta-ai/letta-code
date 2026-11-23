@@ -37,12 +37,6 @@ import {
   isWhatsAppChannelAccount,
 } from "./types";
 
-/**
- * Known snake_case → camelCase key mappings for migration.
- * When both forms exist on a loaded account, snake_case wins and a
- * warning is logged. Only the camelCase form is kept in the runtime
- * account object; the canonicalized snake_case form is emitted on save.
- */
 const SNAKE_TO_CAMEL: Record<string, string> = {
   account_uuid: "accountUuid",
   admin_users: "adminUsers",
@@ -182,13 +176,7 @@ function applySecretPlaceholders(account: ChannelAccount): void {
 }
 
 function queueSecretWrite(promise: Promise<unknown>): void {
-  pendingSecretWrites.push(
-    promise.catch(() => {
-      // Best-effort background secret persistence. Foreground commands that
-      // need to validate credentials surface errors explicitly; detached secret
-      // writes should not spam startup logs or crash the process.
-    }),
-  );
+  pendingSecretWrites.push(promise.catch(() => {}));
 }
 
 function prepareAccountForStorage(account: ChannelAccount): ChannelAccount {
@@ -293,9 +281,6 @@ function cloneAccount<T extends ChannelAccount>(account: T): T {
 function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
   const next = cloneAccount(account);
 
-  // ── Key migration: accept snake_case keys from accounts.json ──
-  // Runtime code uses camelCase throughout. On read, accept both forms;
-  // if both exist, snake_case wins (log warning once).
   const raw = account as unknown as Record<string, unknown>;
   for (const [snakeKey, camelKey] of Object.entries(SNAKE_TO_CAMEL)) {
     const hasSnake = snakeKey in raw;
@@ -315,12 +300,8 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     if (hasSnake && !hasCamel) {
       (next as unknown as Record<string, unknown>)[camelKey] = raw[snakeKey];
     }
-    // hasCamel && !hasSnake → already on the object, nothing to do
   }
 
-  // Both the "custom" first-party channel and all user-installed channels use
-  // the generic `config: Record<string, unknown>` shape, so make sure that
-  // field is present and well-formed before downstream code reads it.
   if (isCustomChannelAccount(next) || !isFirstPartyChannelId(next.channel)) {
     (next as CustomChannelAccount).config = isRecord(
       (next as Partial<CustomChannelAccount>).config,
@@ -380,9 +361,6 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
       (next as DiscordChannelAccount).allowBots,
     );
 
-    // Compatibility migration: existing accounts created before this field was
-    // persisted auto-threaded on mentions by default. Keep that behavior for
-    // accounts that lack an explicit setting, while new accounts write false.
     if (!("auto_thread_on_mention" in raw) && !("autoThreadOnMention" in raw)) {
       (next as DiscordChannelAccount).autoThreadOnMention = true;
     }
@@ -621,12 +599,9 @@ function saveChannelAccounts(channelId: string): void {
   const store = getStore(channelId);
   const writeAccounts = store.accounts.map((account) => {
     const cloned = prepareAccountForStorage(account);
-    // Canonicalize: convert camelCase keys to snake_case for storage
     for (const [snakeKey, camelKey] of Object.entries(SNAKE_TO_CAMEL)) {
       const value = (cloned as unknown as Record<string, unknown>)[camelKey];
-      // Remove camelCase key
       delete (cloned as unknown as Record<string, unknown>)[camelKey];
-      // Set snake_case key (only if value is not undefined — omit absent fields)
       if (value !== undefined) {
         (cloned as unknown as Record<string, unknown>)[snakeKey] = value;
       }

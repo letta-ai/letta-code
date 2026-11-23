@@ -6,7 +6,6 @@ type DeviceStatusScope = {
   conversation_id?: string | null;
 };
 
-/** Per-transport, per-scope cache naturally released with the transport. */
 const lastDeviceStatusByTransport = new WeakMap<
   ListenerTransport,
   Map<string, string>

@@ -113,14 +113,9 @@ describe("recordMcpOriginatorDelivery", () => {
   });
 
   test("a tokenless redelivery clears stale authority for its run", () => {
-    // The producer re-mints per delivery and revokes the prior token, so a
-    // frame carrying the id but no token is authoritative: the run currently
-    // has no listener-side authority, and an older token must not be reused.
     setMcpOriginatorToken("sr-1", "mst_one.secret-a");
     recordMcpOriginatorDelivery({ super_run_id: "sr-1" });
     expect(getMcpOriginatorToken("sr-1")).toBeUndefined();
-    // Other runs are untouched, and a tokenless id on an empty store is a
-    // no-op.
     setMcpOriginatorToken("sr-2", "mst_two.secret-b");
     recordMcpOriginatorDelivery({ super_run_id: "sr-3" });
     expect(getMcpOriginatorToken("sr-2")).toBe("mst_two.secret-b");
@@ -134,9 +129,6 @@ describe("recordMcpOriginatorDelivery", () => {
   });
 
   test("refresh-only deliveries update live entries but never create new ones", () => {
-    // Duplicate re-acks and accepted approval/teleport payloads create no
-    // new owning turn, so they may refresh a live run's re-minted token but
-    // must not create an entry of their own (evil-shub r4300657683).
     setMcpOriginatorToken("sr-1", "mst_one.secret-a");
     recordMcpOriginatorDelivery(
       { super_run_id: "sr-1", mcp_originator_token: "mst_one.secret-b" },
@@ -153,12 +145,8 @@ describe("recordMcpOriginatorDelivery", () => {
   });
 
   test("a post-terminal duplicate cannot resurrect its run's retired token", () => {
-    // The owning turn's finalizer retires the token at terminal state; a
-    // duplicate re-ack arriving afterwards must not re-insert an orphaned
-    // token no finalizer will ever clean up — and an origin-swap deletion
-    // stays a stable boundary against late redeliveries.
     setMcpOriginatorToken("sr-1", "mst_one.secret-a");
-    deleteMcpOriginatorToken("sr-1"); // finalizer retirement
+    deleteMcpOriginatorToken("sr-1");
     recordMcpOriginatorDelivery(
       { super_run_id: "sr-1", mcp_originator_token: "mst_one.secret-b" },
       { allowCreate: false },
@@ -168,8 +156,6 @@ describe("recordMcpOriginatorDelivery", () => {
   });
 
   test("refresh-only still honors the tokenless clear for a live run", () => {
-    // A duplicate of a tokenless frame is authoritative about the run now
-    // having no listener-side authority, same as a fresh tokenless accept.
     setMcpOriginatorToken("sr-1", "mst_one.secret-a");
     recordMcpOriginatorDelivery(
       { super_run_id: "sr-1" },
@@ -186,8 +172,6 @@ describe("retireMcpOriginatorTokensOnOriginSwap", () => {
   });
 
   test("a cross-run approval swap retires both runs' tokens", () => {
-    // The original turn (sr-1) consumed a queued input from sr-2: neither
-    // run's authority may carry into the continuation (evil-shub r4300499685).
     setMcpOriginatorToken("sr-1", "mst_one.secret-a");
     setMcpOriginatorToken("sr-2", "mst_two.secret-b");
     setMcpOriginatorToken("sr-unrelated", "mst_three.secret-c");
@@ -236,7 +220,6 @@ describe("MCP originator mint-generation ordering", () => {
     expect(getMcpOriginatorToken("sr-1")).toBe("mst_a.secret");
     recordMcpOriginatorDelivery(frame("sr-1", "mst_b.secret", 4));
     expect(getMcpOriginatorToken("sr-1")).toBe("mst_b.secret");
-    // Zombie from a superseded delivery attempt: dropped.
     recordMcpOriginatorDelivery(frame("sr-1", "mst_zombie.secret", 2));
     expect(getMcpOriginatorToken("sr-1")).toBe("mst_b.secret");
   });
@@ -259,20 +242,16 @@ describe("MCP originator mint-generation ordering", () => {
     expect(getMcpOriginatorToken("sr-1")).toBe("mst_older.secret");
     recordMcpOriginatorDelivery(frame("sr-1", "mst_newer.secret", 2));
     expect(getMcpOriginatorToken("sr-1")).toBe("mst_newer.secret");
-    // ...and once upgraded, legacy deliveries are rejected.
     recordMcpOriginatorDelivery(frame("sr-1", "mst_legacy2.secret"));
     expect(getMcpOriginatorToken("sr-1")).toBe("mst_newer.secret");
   });
 
   test("a stale tokenless frame cannot clear a generated entry", () => {
     recordMcpOriginatorDelivery(frame("sr-1", "mst_a.secret", 5));
-    // Legacy tokenless clear: rejected.
     recordMcpOriginatorDelivery(frame("sr-1"));
     expect(getMcpOriginatorToken("sr-1")).toBe("mst_a.secret");
-    // Older-generated clear: rejected.
     recordMcpOriginatorDelivery(frame("sr-1", undefined, 4));
     expect(getMcpOriginatorToken("sr-1")).toBe("mst_a.secret");
-    // Same-generation tokenless frame clears into a tombstone.
     recordMcpOriginatorDelivery(frame("sr-1", undefined, 5));
     expect(getMcpOriginatorToken("sr-1")).toBeUndefined();
     expect(mcpOriginatorTokenCount()).toBe(0);
@@ -282,10 +261,8 @@ describe("MCP originator mint-generation ordering", () => {
     recordMcpOriginatorDelivery(frame("sr-1", "mst_a.secret", 5));
     recordMcpOriginatorDelivery(frame("sr-1", undefined, 6));
     expect(getMcpOriginatorToken("sr-1")).toBeUndefined();
-    // Stale create below the tombstone generation: dropped.
     recordMcpOriginatorDelivery(frame("sr-1", "mst_zombie.secret", 5));
     expect(getMcpOriginatorToken("sr-1")).toBeUndefined();
-    // Newer create revives (last-write-wins across the tombstone).
     recordMcpOriginatorDelivery(frame("sr-1", "mst_live.secret", 7));
     expect(getMcpOriginatorToken("sr-1")).toBe("mst_live.secret");
   });
@@ -318,24 +295,20 @@ describe("MCP originator mint-generation ordering", () => {
   test("refresh-only deliveries need a live durable owner to recreate", () => {
     recordMcpOriginatorDelivery(frame("sr-1", "mst_a.secret", 3));
     deleteMcpOriginatorToken("sr-1");
-    // No predicate: refresh cannot create.
     recordMcpOriginatorDelivery(frame("sr-1", "mst_b.secret", 4), {
       allowCreate: false,
     });
     expect(getMcpOriginatorToken("sr-1")).toBeUndefined();
-    // Predicate proving a terminal tombstone (false): still cannot create.
     recordMcpOriginatorDelivery(frame("sr-1", "mst_b.secret", 4), {
       allowCreate: false,
       mayRecreateOwner: () => false,
     });
     expect(getMcpOriginatorToken("sr-1")).toBeUndefined();
-    // Predicate proving a live owner (crash recovery): recreate allowed.
     recordMcpOriginatorDelivery(frame("sr-1", "mst_b.secret", 4), {
       allowCreate: false,
       mayRecreateOwner: () => true,
     });
     expect(getMcpOriginatorToken("sr-1")).toBe("mst_b.secret");
-    // Refresh of an EXISTING entry needs no predicate but keeps ordering.
     recordMcpOriginatorDelivery(frame("sr-1", "mst_zombie.secret", 2), {
       allowCreate: false,
     });
@@ -360,8 +333,6 @@ describe("round-8 verdict split + sanitized denial logging (evil-shub round-8 P1
       errors.push(args.map((a) => String(a)).join(" "));
     };
     try {
-      // A bearer-shaped string in the generation field: untrusted wire
-      // content that must never be echoed into logs.
       const verdict = recordMcpOriginatorDelivery({
         mcp_originator_token: "mst_r8tok_malformed",
         super_run_id: "run-r8tok-malformed",

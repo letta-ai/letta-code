@@ -1,15 +1,3 @@
-/**
- * Shared system-prompt size estimator.
- *
- * Used by:
- *   - The `letta memory tokens` CLI command (for subagents + scripts)
- *   - The startup system-prompt warning
- *   - The bundled `context-doctor` skill script (via CLI)
- *
- * Heuristic: ~4 bytes per token
- * (codex-rs/core/src/truncate.rs APPROX_BYTES_PER_TOKEN = 4)
- */
-
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { detectMemoryFormat } from "@/agent/memory-format";
@@ -45,7 +33,6 @@ function walkMarkdownFiles(dir: string): string[] {
   const entries = readdirSync(dir, { withFileTypes: true });
 
   for (const entry of entries) {
-    // Skip hidden entries (.git, .DS_Store, etc.)
     if (entry.name.startsWith(".")) {
       continue;
     }
@@ -62,15 +49,6 @@ function walkMarkdownFiles(dir: string): string[] {
   return out;
 }
 
-/**
- * Estimate total token usage of core memory Markdown, with a per-file breakdown.
- *
- * MemFS v1 counts Markdown files recursively under `system/`. MemFS v2 counts
- * root-level Markdown files. A root `MEMORY.md` selects v2 only for API-backed
- * memory; local MemFS remains v1.
- *
- * Returns { total: 0, files: [] } when the core memory path does not exist.
- */
 export function estimateSystemPromptSize(
   memoryDir: string,
   localMemfs = false,
@@ -104,9 +82,6 @@ export function estimateSystemPromptSize(
   return { total, files: rows };
 }
 
-/**
- * Backward-compatible helper returning just the total.
- */
 export function estimateSystemPromptTokensFromMemoryDir(
   memoryDir: string,
   localMemfs = false,

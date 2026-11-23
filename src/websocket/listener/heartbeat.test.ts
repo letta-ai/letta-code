@@ -31,10 +31,6 @@ async function waitFor(
   throw new Error(message);
 }
 
-/**
- * Relay/app-server socket stand-in. Deliberately has no `kind` field so the
- * listener treats it as a real WebSocket, which is what arms the watchdog.
- */
 class FakeSocket {
   readonly readyState = 1;
   readonly bufferedAmount = 0;
@@ -189,12 +185,6 @@ describe("listener heartbeat watchdog", () => {
 });
 
 describe("cloud heartbeat with a second live connection", () => {
-  /**
-   * `letta listen --channels` attaches an app-server connection to the same
-   * runtime as the cloud relay socket. Two live connections leave the legacy
-   * `runtime.socket` handle null, so a watchdog keyed on that handle sees no
-   * pong at all and kills a perfectly healthy relay socket.
-   */
   function openCloudAndAppServerConnections(
     runtime: ReturnType<typeof __listenClientTestUtils.createListenerRuntime>,
     cloud: FakeSocket,
@@ -217,7 +207,6 @@ describe("cloud heartbeat with a second live connection", () => {
 
   test("keeps a ponging cloud socket alive while channels are attached", async () => {
     const runtime = __listenClientTestUtils.createListenerRuntime();
-    // Answer each probe the way the relay does, on the socket it arrived on.
     const cloud = new FakeSocket((socket) =>
       recordListenerPong(runtime, asTransport(socket)),
     );
@@ -233,7 +222,6 @@ describe("cloud heartbeat with a second live connection", () => {
         { intervalMs: 5 },
       );
 
-      // Well past the three-missed-pong budget the watchdog enforces.
       await waitFor(
         () => cloud.sent.length >= 8,
         "cloud heartbeat did not keep probing",
@@ -241,7 +229,6 @@ describe("cloud heartbeat with a second live connection", () => {
 
       expect(cloud.terminateCount).toBe(0);
       expect(reported).not.toContain("listener_pong_timeout");
-      // The legacy runtime-wide handle stays null; the fix must not depend on it.
       expect(runtime.socket).toBeNull();
     } finally {
       clearRuntimeTimers(runtime);
@@ -270,7 +257,6 @@ describe("cloud heartbeat with a second live connection", () => {
 
       expect(cloud.sent.length).toBeGreaterThanOrEqual(3);
       expect(reported).toContain("listener_pong_timeout");
-      // Only the starved socket is torn down, never the app-server connection.
       expect(appServer.terminateCount).toBe(0);
     } finally {
       clearRuntimeTimers(runtime);

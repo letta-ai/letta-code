@@ -45,7 +45,6 @@ export type SlackStatusController = {
   deactivate: (source: ChannelTurnSource) => Promise<void>;
   clearStale: (source: ChannelTurnSource) => Promise<void>;
   markAutoCleared: (source: ChannelTurnSource) => void;
-  /** Transfer ownership without allowing old writes to clear the new owner. */
   relinquish: (source: ChannelTurnSource) => void;
   markAutoClearedForMessage: (
     msg: Pick<
@@ -159,8 +158,6 @@ export function createSlackStatusController(params: {
     const threadTs = resolveSlackProgressThreadTs(source);
     if (!stateKey || !replyKey || !threadTs) return false;
 
-    // State objects are mutable. Capture a revision before either asynchronous
-    // preparation or the write queue, rather than comparing object identity.
     const revision = currentRevision(stateKey);
     const revocationKey = JSON.stringify([stateKey, replyKey]);
     const canWrite = (): boolean => {
@@ -178,8 +175,6 @@ export function createSlackStatusController(params: {
           ownedReplyKey(stateKey) === replyKey
         );
       }
-      // An obsolete clear may still clean its OLD thread, but must never blank
-      // newer activity occupying that same Slack thread.
       return (
         current === revision || !active || ownedReplyKey(stateKey) !== replyKey
       );
@@ -189,8 +184,6 @@ export function createSlackStatusController(params: {
       return true;
     }
 
-    // Normal reply cleanup drops activeSources, but a later handoff still
-    // needs the exact identity of writes that can issue a correction.
     const writes = outstandingWrites.get(stateKey) ?? new Set();
     const pendingWrite = { replyKey, revision };
     writes.add(pendingWrite);
@@ -207,7 +200,6 @@ export function createSlackStatusController(params: {
       const previous =
         writePromiseByConversation.get(stateKey) ?? Promise.resolve();
       const operation = previous.then(async () => {
-        // Source, title, reply or completion may have changed while queued.
         if (!canWrite()) {
           if (signatureByConversation.get(stateKey) === signature) {
             signatureByConversation.delete(stateKey);
@@ -221,8 +213,6 @@ export function createSlackStatusController(params: {
             status: footerText,
             ...(footerText ? { loading_messages: [loadingText] } : {}),
           });
-          // The request may have applied after a reply auto-cleared Slack. Keep
-          // this correction in the same write queue, ahead of any new activity.
           const state = stateByConversation.get(stateKey);
           if (
             footerText &&
@@ -445,8 +435,6 @@ export function createSlackStatusController(params: {
         revocationKey,
         Math.max(relinquishedThroughRevision.get(revocationKey) ?? 0, cutoff),
       );
-      // A late relinquish of A may invalidate A's outstanding work, never B's
-      // newer active state or keepalive.
       if (ownsCurrent) markAutoClearedByKey(key);
     },
     markAutoCleared(source): void {
@@ -462,8 +450,6 @@ export function createSlackStatusController(params: {
       ) {
         const key = `${msg.agentId}:${msg.conversationId}`;
         const anchor = firstNonEmptyString(msg.threadId, msg.replyToMessageId);
-        // Anchored completion belongs to the thread that was actually posted
-        // to. Preserve the existing agent-level behavior for unanchored sends.
         if (
           anchor &&
           ownedReplyKey(key) !==

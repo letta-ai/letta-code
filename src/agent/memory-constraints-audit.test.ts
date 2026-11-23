@@ -112,8 +112,6 @@ describe("committed MemFS constraints audit", () => {
     execFileSync("git", ["add", "."], { cwd: repo });
     execFileSync("git", ["commit", "-qm", "valid memory"], { cwd: repo });
 
-    // Desktop installs have git but no system node. Keep PATH entries that
-    // provide git and drop every directory that provides node.
     const nodeName = process.platform === "win32" ? "node.exe" : "node";
     const pathWithoutNode = (process.env.PATH ?? "")
       .split(delimiter)

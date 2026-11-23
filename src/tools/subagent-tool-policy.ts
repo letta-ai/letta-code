@@ -1,7 +1,3 @@
-// Tool policy for agents launched through Agent. Applied when a turn's tool
-// snapshot is captured, after toolsets, `tools: all`, and allowlists resolve,
-// so it covers local child processes and listener-hosted subagent turns alike.
-
 import { canLaunchSubagentsAtDepth } from "@/agent/subagents/subagent-depth";
 import {
   functionToolForm,
@@ -36,9 +32,6 @@ export function resolvedModelForm(
   });
 }
 
-/**
- * Remove Agent (internal `Task`) at the maximum depth.
- */
 export function applySubagentToolPolicy<T extends PolicyToolDefinition>(
   registry: Map<string, T>,
   depth: number,

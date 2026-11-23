@@ -1,11 +1,3 @@
-/**
- * Canonical WhatsApp inbound identity resolver.
- *
- * Pure with respect to LidStore: only calls `store.resolve()`, never
- * `record()` or `flush()`. Returns validated `observedMappings` that the
- * caller may persist.
- */
-
 import {
   isGroupJid,
   isStrictLidJid,
@@ -37,8 +29,6 @@ export interface ResolvedIdentity {
   observedMappings: ObservedMapping[];
 }
 
-// -- helpers --;
-
 function toStrictPhoneJid(candidate: string | null | undefined): string | null {
   if (!candidate || !isStrictPhoneJid(candidate)) return null;
   return stripDeviceSuffix(candidate);
@@ -65,10 +55,6 @@ function resolveFromStore(
   return toStrictPhoneJid(mapped);
 }
 
-/**
- * Collect role-consistent identity candidates. Direct-chat fields and
- * group-sender fields have different semantics, so they must not be mixed.
- */
 function collectCandidates(
   transport: InboundTransport,
   direct: boolean,
@@ -103,10 +89,6 @@ function collectCandidates(
   return { lids, phones };
 }
 
-/**
- * Validate the observed candidates against one canonical phone identity.
- * Returns only previously-unmapped LIDs; it never mutates the store.
- */
 function resolveCandidates(
   lids: string[],
   phones: string[],
@@ -134,8 +116,6 @@ function resolveCandidates(
   return { phoneJid, observedMappings };
 }
 
-// -- resolver --;
-
 export function resolveInboundIdentity(
   transport: InboundTransport,
   store: LidStore | null = null,
@@ -152,7 +132,6 @@ function resolveDirect(
 ): ResolvedIdentity | null {
   const { selfPhoneJid, selfLid, remoteJid } = transport;
 
-  // Self-chat: phone-to-phone.
   if (
     isStrictPhoneJid(remoteJid) &&
     isStrictPhoneJid(selfPhoneJid) &&
@@ -162,7 +141,6 @@ function resolveDirect(
     return make(c, c);
   }
 
-  // Self-chat: LID-to-LID.
   if (
     isStrictLidJid(remoteJid) &&
     isStrictLidJid(selfLid) &&

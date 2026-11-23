@@ -9,6 +9,8 @@ Generate images via Letta's hosted endpoint `POST /v1/images/generations`. The A
 usually returns base64 image bytes, but some providers return signed image URLs;
 save either form to a local image file before replying.
 
+If the ask names a real thing (a product, place, meme, emoji or person), look up what it actually looks like before drawing it. If the real image is all they asked for, post it (slackmojis.com for Slack emoji); otherwise pass it to the generator as a reference so the thing looks right in the new image. A name you don't recognize may be newer than you know, so search it rather than guessing from the words.
+
 ## Example
 
 Generate the image, save it locally, then show it inline:
@@ -157,7 +159,8 @@ and refine one thing at a time.
 9. **Edits: separate the change from what must stay.** "Change only X", then
    list what to preserve (identity, face, pose, geometry, layout, lighting,
    labels, camera angle) and what to exclude. Repeat the preserve list on every
-   follow-up edit.
+   follow-up edit. When matching a reference's look, also describe what is wrong
+   with the current image so the model knows what to correct.
 10. **Give each reference image a role by number**: "image 1 is the scene,
     image 2 is the dog; put the dog on the sofa in image 1, keep everything else
     unchanged". For style references, say which part to borrow (palette,

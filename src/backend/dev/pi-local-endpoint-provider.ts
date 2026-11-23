@@ -12,47 +12,22 @@ const LOCAL_ENDPOINT_DISCOVERY_TIMEOUT_MS = 2_000;
 
 export type LocalEndpointModel = Model<"openai-completions">;
 
-/**
- * Engine metadata for one discovered model. `vision`/`thinking` left
- * undefined mean the engine did not report the capability — the model is
- * published conservatively (text-only, non-reasoning), never guessed from
- * the model name.
- */
 export interface LocalEndpointModelMetadata {
   id: string;
   vision?: boolean;
   thinking?: boolean;
-  /** Engine-reported available window; the shared builder applies its default cap. */
   contextLength?: number;
-  /** Engine-specific output cap; defaults to the shared constant. */
   maxTokens?: number;
-  /** Engine-specific OpenAI-compat overrides merged over the defaults. */
   compat?: Model<"openai-completions">["compat"];
 }
 
 export interface LocalEndpointDiscoveryContext {
-  /** GET (or POST when `body` is set) returning parsed JSON; throws on !ok. */
   fetchJson(url: string, init?: { body?: unknown }): Promise<unknown>;
-  /** Engine-native base URL (no trailing `/v1`). */
   nativeBaseURL: string;
-  /** OpenAI-compatible base URL (with `/v1`), used for turn requests. */
   openAIBaseURL: string;
-  /**
-   * Models from the last successful refresh, read from the pi-ai
-   * ModelsStore — the single source of last-known retention.
-   */
   lastKnown: ReadonlyMap<string, LocalEndpointModel>;
-  /**
-   * Engine metadata fingerprints (e.g. Ollama tag digests) from the
-   * previous refresh, keyed by model id. Provider-instance-scoped: a
-   * connection change rebuilds the provider and discards them. Engines use
-   * this to skip expensive per-model metadata fetches when the installed
-   * artifact is unchanged; it never stores Model/capability data.
-   */
   metadataFingerprints: ReadonlyMap<string, string>;
-  /** Fingerprints to persist for the next refresh; engines fill this in. */
   nextMetadataFingerprints: Map<string, string>;
-  /** Builds the complete pi-ai Model from engine metadata. */
   buildModel(metadata: LocalEndpointModelMetadata): LocalEndpointModel;
 }
 
@@ -63,7 +38,6 @@ export type LocalEndpointDiscover = (
 export interface LocalEndpointPiProviderOptions {
   id: string;
   name: string;
-  /** Base URL as configured; `/v1` is appended/stripped as needed. */
   baseURL: string;
   apiKey?: string;
   fetchImpl?: typeof fetch;
@@ -71,7 +45,6 @@ export interface LocalEndpointPiProviderOptions {
   discover: LocalEndpointDiscover;
 }
 
-/** Strips a trailing `/v1` to reach the engine-native API surface. */
 export function localEndpointNativeBaseURL(baseURL: string): string {
   const trimmed = baseURL.replace(/\/+$/, "");
   return trimmed.endsWith("/v1") ? trimmed.slice(0, -"/v1".length) : trimmed;
@@ -95,19 +68,6 @@ export function modelIdsFromOpenAICompatibleList(data: unknown): string[] {
     .filter((id): id is string => id !== undefined);
 }
 
-/**
- * Real dynamic pi-ai Provider for an OpenAI-compatible local engine. The
- * provider owns keyless/keyed auth, model discovery, complete Model
- * construction from authoritative engine metadata, and stream dispatch; the
- * same Model instance serves /model listing and turn execution.
- *
- * Only the `discover` callback is engine-specific: each engine exposes its
- * capability metadata on a different native API (Ollama `POST /api/show`,
- * llama.cpp `GET /props`, LM Studio `GET /api/v0/models`), so discovery is
- * a per-engine translation into `LocalEndpointModelMetadata`. Everything
- * else — timeout/auth handling, last-known retention on refresh failure,
- * provider wiring — is shared here.
- */
 export function createLocalEndpointPiProvider(
   options: LocalEndpointPiProviderOptions,
 ): Provider<"openai-completions"> {
@@ -116,8 +76,6 @@ export function createLocalEndpointPiProvider(
     options.discoveryTimeoutMs ?? LOCAL_ENDPOINT_DISCOVERY_TIMEOUT_MS;
   const nativeBaseURL = localEndpointNativeBaseURL(options.baseURL);
   const openAIBaseURL = localEndpointOpenAIBaseURL(options.baseURL);
-  // Provider-instance-scoped fingerprint cache (see
-  // LocalEndpointDiscoveryContext.metadataFingerprints).
   let metadataFingerprints = new Map<string, string>();
 
   async function fetchJson(
@@ -152,9 +110,6 @@ export function createLocalEndpointPiProvider(
   function buildModel(
     metadata: LocalEndpointModelMetadata,
   ): LocalEndpointModel {
-    // Engine catalogs mix loaded runtime windows with architectural maxima.
-    // Publish a conservative harness default either way; an explicit
-    // /context-limit setting can still clone the Model with a larger window.
     const contextWindow = Math.min(
       metadata.contextLength ?? LOCAL_ENDPOINT_DEFAULT_CONTEXT_WINDOW,
       LOCAL_ENDPOINT_DEFAULT_CONTEXT_WINDOW,
@@ -185,8 +140,6 @@ export function createLocalEndpointPiProvider(
   async function fetchModels(
     context: RefreshModelsContext,
   ): Promise<readonly LocalEndpointModel[]> {
-    // Last-known models come solely from the pi-ai stored snapshot (the same
-    // entry createProvider restores and persists); no parallel model cache.
     const stored = context.stored?.models ?? [];
     const lastKnown = new Map(
       stored
@@ -215,9 +168,6 @@ export function createLocalEndpointPiProvider(
     auth: {
       apiKey: {
         name: `${options.name} API key`,
-        // Keyless local daemons pass "not-needed" through the connection's
-        // fallback key; a remote endpoint with no key at all resolves
-        // undefined so pi-ai treats it as unconfigured.
         resolve: async ({ credential }) => {
           const apiKey = credential?.key ?? options.apiKey;
           return apiKey
@@ -232,9 +182,6 @@ export function createLocalEndpointPiProvider(
         },
       },
     },
-    // Static baseline stays empty: pi-ai merges the baseline with the
-    // dynamic overlay by id, and discovered engine models must disappear
-    // when the engine no longer lists them.
     models: [],
     fetchModels,
     api: openAICompletionsApi(),

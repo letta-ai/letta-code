@@ -58,7 +58,6 @@ interface BrowserDeviceMcpOAuthCommandDependencies {
   ) => boolean;
   socket: WebSocket;
   owner: ListenerRuntime;
-  /** Stable across physical WebSocket replacements, unlike connection IDs. */
   lineageId: string;
   monotonicNow?: () => number;
 }
@@ -89,9 +88,6 @@ export function handleBrowserDeviceMcpOAuthProtocolCommand(
       enforceRetainedOperationLimits(dependencies.owner);
       return true;
     }
-    // The original credential-free terminal is the application-level cancel
-    // acknowledgement. Abort only live work owned by this runtime; a terminal
-    // that already won the race remains retained for reconnect delivery.
     if (
       operation?.owner === dependencies.owner &&
       !operation.response &&
@@ -108,8 +104,6 @@ export function handleBrowserDeviceMcpOAuthProtocolCommand(
   const key = operationKey(dependencies.lineageId, command.request_id);
   const existing = operations.get(key);
   if (existing) {
-    // Only the same runtime on this explicit replacement lineage may consume a
-    // pending cancel or adopt a successor socket.
     if (existing.owner !== dependencies.owner) {
       sendTerminalResponse(command.request_id, "invalid_request", dependencies);
       return true;
@@ -122,7 +116,6 @@ export function handleBrowserDeviceMcpOAuthProtocolCommand(
       deliverTerminal(existing);
       return true;
     }
-    // Retain a digest rather than the bearer handoff for exact replay matching.
     if (existing.requestDigest !== digest) {
       sendTerminalResponse(command.request_id, "invalid_request", dependencies);
       return true;

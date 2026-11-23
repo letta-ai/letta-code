@@ -189,11 +189,6 @@ export async function removeProviderByName(
   }
 }
 
-/**
- * Refresh connected BYOK providers before listing models. The cloud API treats
- * refresh as best-effort, so this helper logs per-provider failures but keeps
- * the caller's model refresh path moving.
- */
 export async function refreshByokProviders(): Promise<void> {
   try {
     const providers = await listProviders();

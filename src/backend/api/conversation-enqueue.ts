@@ -8,7 +8,6 @@ import { ApiRequestError, apiFetch, apiRequest } from "./request";
 const SHUTDOWN_MAX_RETRIES = 3;
 const SHUTDOWN_DEFAULT_DELAY_MS = 1000;
 
-/** Only the server's explicit pre-admission rejection proves a POST was not accepted. */
 export function isProvenCloudApiShutdownRejection(
   error: unknown,
 ): error is ApiRequestError {
@@ -63,11 +62,8 @@ export interface EnqueueReceipt {
   client_message_id: string;
   workflow_id: string;
   super_run_id: string;
-  /** Listener selected for a managed Agent launch, used only for cancellation. */
   connection_id?: string;
-  /** Parent used for Cloud status and cancellation, never for history ownership. */
   parent_agent_id?: string;
-  /** Original enqueue attribution; preserve null so cancellation suppresses fallback. */
   acting_user_id?: string | null;
 }
 
@@ -78,7 +74,6 @@ export function getEnqueueAgentId(receipt: EnqueueReceipt): string {
 }
 
 export interface EnqueueConversationInput {
-  /** Required only for `default`; other conversation IDs identify their agent. */
   agentId?: string;
   conversationId: string;
   clientMessageId: string;
@@ -87,7 +82,6 @@ export interface EnqueueConversationInput {
   actingUserId?: string | null;
 }
 
-/** Cloud owns delivery after this request returns 202. Never retry by executing locally. */
 export async function enqueueConversationMessage(
   input: EnqueueConversationInput,
   signal?: AbortSignal,
@@ -148,7 +142,6 @@ export async function enqueueConversationMessage(
   };
 }
 
-/** Remove this input from either the Cloud delivery queue or listener queue. */
 export async function dequeueConversationMessage(
   input: Pick<
     EnqueueConversationInput,
@@ -174,7 +167,6 @@ export async function dequeueConversationMessage(
   );
 }
 
-/** Relevant fields from the existing Cloud conversation Super Run feed. */
 export interface ConversationSendStatus {
   conversation_id: string;
   active_super_runs: Array<{ id: string; status: string }>;
@@ -245,11 +237,9 @@ export interface ExactSuperRun extends LatestConversationSuperRun {
     code: string;
     message: string;
   } | null;
-  /** Associated child runs, newest first. */
   run_ids: string[];
 }
 
-/** Read the accepted Super Run and its server-owned result correlation. */
 export async function getExactSuperRun(
   agentId: string,
   superRunId: string,

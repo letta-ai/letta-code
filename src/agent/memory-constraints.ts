@@ -1,30 +1,3 @@
-/**
- * Self-contained validator installed beside the MemFS pre-commit hook.
- *
- * It runs under Node because Letta Code requires Node ^22.23.4, ^24.22.1, or ^26.12.1. Keeping
- * the validator dependency-free lets Git execute it from agent and shared
- * memory repositories without resolving the Letta Code package at commit time.
- *
- * The optional tracked `.memfs.config.json` file accepts:
- * - `version`: the required config format version (currently 1)
- * - `maxFileCharacters`: a default cap for each projected memory Markdown file
- * - `maxCoreMemoryCharacters`: a cap for all root Markdown loaded into a v2
- *   agent's system prompt
- * - `fileCharacterLimits`: ordered glob overrides; the first match wins, and a
- *   null limit leaves matching files uncapped
- * - `maxDepth`: the number of directories allowed between the repo root and a
- *   projected memory file
- * - `readOnlyFiles`: repo-relative globs protecting any matching file's contents,
- *   path and Git mode against changes relative to HEAD
- *
- * File limits count the complete staged file, including frontmatter.
- *
- * Commits are blocked only by problems in files they add, change or remove.
- * Problems confined to untouched files predate the commit and print as
- * warnings, matching server-side push validation. `--audit`, a repository's
- * first commit and an approved config change validate the whole tree.
- */
-
 import {
   DEFAULT_MEMORY_CONSTRAINTS_CONFIG,
   MEMORY_CONSTRAINTS_CONFIG_PATH,

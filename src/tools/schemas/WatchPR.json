@@ -3,7 +3,7 @@
   "properties": {
     "url": {
       "type": "string",
-      "description": "Open github.com pull request URL ending at the PR number, for example https://github.com/owner/repo/pull/123. Remove sub-page suffixes such as /files or /commits. Also accepts https://github.com/owner/repo/actions/runs/123."
+      "description": "Open github.com pull request URL ending at the PR number, for example https://github.com/owner/repo/pull/123. Remove sub-page suffixes such as /files or /commits. Also accepts https://github.com/owner/repo/actions/runs/123. Required unless `resume` is set."
     },
     "notify_on": {
       "type": "array",
@@ -23,9 +23,13 @@
         ]
       },
       "description": "PR events to report; omitted reports all. checks_done reports when no checks remain pending, including pass/fail. Workflow runs always report status and completion."
+    },
+    "resume": {
+      "type": "string",
+      "description": "Resume a paused monitor by its saved monitor id. Omit the other arguments."
     }
   },
-  "required": ["url"],
   "additionalProperties": false,
-  "$schema": "http://json-schema.org/draft-07/schema#"
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "required": []
 }

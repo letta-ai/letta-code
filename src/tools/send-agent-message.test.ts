@@ -162,7 +162,6 @@ test.each(computers)("HTTP send: computer %j", async (computer) => {
       expect(request?.path).toBe(
         `/v1/conversations/${CONV.recipient}/messages/enqueue`,
       );
-      // The server derives the agent from the conversation ID.
       expect(request?.body).not.toHaveProperty("agent_id");
       if (computer?.trim()) {
         expect(request?.body.computer).toBe(computer.trim());

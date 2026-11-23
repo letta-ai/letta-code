@@ -1,18 +1,3 @@
-/**
- * SubagentGroupStatic - Frozen snapshot of completed subagents
- *
- * Used in Ink's <Static> area for historical/committed items that have
- * scrolled up and should no longer re-render. Pure props-based component
- * with NO hooks (no store subscriptions, no keyboard handlers).
- *
- * This separation from SubagentGroupDisplay is necessary because:
- * - Static area components shouldn't have active subscriptions (memory leaks)
- * - Keyboard handlers would stack up across frozen components
- * - We only need a simple snapshot, not live updates
- *
- * Shows: "Ran N subagents" with final stats (tool count, tokens).
- */
-
 import { Box } from "ink";
 import { memo } from "react";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
@@ -24,10 +9,6 @@ import {
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width.js";
 import { colors } from "./colors.js";
 import { Text } from "./Text";
-
-// ============================================================================
-// Types
-// ============================================================================
 
 export interface StaticSubagent {
   id: string;
@@ -45,10 +26,6 @@ export interface StaticSubagent {
 interface SubagentGroupStaticProps {
   agents: StaticSubagent[];
 }
-
-// ============================================================================
-// Subcomponents
-// ============================================================================
 
 interface AgentRowProps {
   agent: StaticSubagent;
@@ -74,7 +51,6 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
 
   return (
     <Box flexDirection="column">
-      {/* Main row: tree char + description + type + model + stats */}
       <Box flexDirection="row">
         <Text wrap="truncate-end">
           <Text color={colors.subagent.treeChar}>
@@ -111,7 +87,6 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
         </Text>
       </Box>
 
-      {/* Subagent URL */}
       {agent.agentURL && (
         <Box flexDirection="row">
           <Text color={colors.subagent.treeChar}>
@@ -123,7 +98,6 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
         </Box>
       )}
 
-      {/* Status line */}
       {!hideBackgroundStatusLine && (
         <Box flexDirection="row">
           {agent.status === "error" ? (
@@ -165,10 +139,6 @@ const AgentRow = memo(({ agent, isLast }: AgentRowProps) => {
 
 AgentRow.displayName = "AgentRow";
 
-// ============================================================================
-// Main Component
-// ============================================================================
-
 export const SubagentGroupStatic = memo(
   ({ agents }: SubagentGroupStaticProps) => {
     if (agents.length === 0) {
@@ -180,7 +150,6 @@ export const SubagentGroupStatic = memo(
     const label = hasRunning ? "Running" : "Ran";
     const suffix = agents.length !== 1 ? "agents" : "agent";
 
-    // Use error color for dot if any subagent errored
     const dotColor = hasErrors
       ? colors.subagent.error
       : hasRunning
@@ -189,7 +158,6 @@ export const SubagentGroupStatic = memo(
 
     return (
       <Box flexDirection="column">
-        {/* Header */}
         <Box flexDirection="row">
           <Text color={dotColor}>{CLI_GLYPHS.bullet}</Text>
           <Text>
@@ -198,7 +166,6 @@ export const SubagentGroupStatic = memo(
           </Text>
         </Box>
 
-        {/* Agent rows */}
         {agents.map((agent, index) => (
           <AgentRow
             key={agent.id}

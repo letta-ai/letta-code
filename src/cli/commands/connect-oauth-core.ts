@@ -92,12 +92,8 @@ export async function openOAuthBrowser(
   try {
     const { default: open } = await import("open");
     const subprocess = await open(authorizationUrl, { wait: false });
-    subprocess.on("error", () => {
-      // Ignore browser launch errors. The user can still open the URL manually.
-    });
-  } catch {
-    // Ignore browser launch failures. The user can still open the URL manually.
-  }
+    subprocess.on("error", () => {});
+  } catch {}
 }
 
 export async function isChatGPTOAuthConnected(

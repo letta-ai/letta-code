@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-/** Validates and encodes one agent-authored review result for the runner. */
 
 import { readAnalysis, readReviewResult } from "./update-tracker.ts";
 

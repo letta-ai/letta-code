@@ -72,9 +72,7 @@ async function flushListenerTelemetryEnd(exitReason: string): Promise<void> {
   try {
     telemetry.trackSessionEnd(undefined, exitReason);
     await telemetry.flush();
-  } catch {
-    // Best-effort only.
-  }
+  } catch {}
 }
 
 type ListenerStartupMode =
@@ -93,10 +91,6 @@ async function resolveListenerStartupMode(
   const settings = await settingsManager.getSettingsWithSecureTokens();
   const serverUrl = getListenerServerUrl(settings);
 
-  // When running under the desktop app (which sets LETTA_DESKTOP_MODE),
-  // the local proxy has a full environment server that expects device
-  // registration. Treat it as "remote" so the listener registers and connects
-  // via WebSocket, even when channels are active.
   if (process.env.LETTA_DESKTOP_MODE === "1") {
     return { kind: "remote", serverUrl };
   }
@@ -175,6 +169,7 @@ export async function runListenSubcommand(
   argv: string[],
   appServer?: AppServerCliOptions,
 ): Promise<number> {
+  process.env.LETTA_RUNTIME_SESSION_SOURCE = "listen";
   const lifecycleRequested = hasJsonlLifecycleIntent(argv);
   if (lifecycleRequested) suppressStartupLogMarker();
   let values: ReturnType<
@@ -230,10 +225,6 @@ export async function runListenSubcommand(
   telemetry.setSurface(getListenerTelemetrySurface());
   telemetry.init({ handleSigint: false });
 
-  // Register signal handlers so the listener can clean up child processes
-  // (subagents, bash commands, PTY sessions) before exiting. Without these,
-  // SIGTERM from the desktop app only kills the listener process itself,
-  // orphaning its descendants which accumulate over time.
   let isShuttingDown = false;
   let manualListenerLock: ManualListenerLockHandle | null = null;
   let channelGatewaySupervisor: ChannelGatewaySupervisor | null = null;
@@ -276,9 +267,7 @@ export async function runListenSubcommand(
       if (isListenerActive()) {
         stopListenerClient();
       }
-    } catch {
-      // Best-effort cleanup — don't block exit
-    }
+    } catch {}
     await cancelBackgroundMemoryTasks();
     await shutdownMonitors();
     await flushRemoteSettingsWrites();
@@ -297,9 +286,7 @@ export async function runListenSubcommand(
   ): Promise<never> => {
     try {
       await closeChannelGateway();
-    } catch {
-      // Best effort — don't block exit on channel cleanup failure
-    }
+    } catch {}
     await cancelBackgroundMemoryTasks();
     await shutdownMonitors();
     await flushRemoteSettingsWrites();
@@ -310,8 +297,6 @@ export async function runListenSubcommand(
 
   await settingsManager.loadLocalProjectSettings();
 
-  // Initialize channels if explicitly requested, or restore persisted enabled
-  // channels when a desktop wrapper opts into boot-time channel restore.
   const scopedRestoreAgentScope = getScopedChannelRestoreAgentScope();
   const restoreEnabledChannels =
     !values.channels &&
@@ -359,8 +344,6 @@ export async function runListenSubcommand(
     if (savedName) {
       connectionName = savedName;
     } else {
-      // No saved name - default to hostname so a first run (e.g. pasted from
-      // onboarding) registers without an interactive prompt.
       connectionName = hostname() || "my-computer";
       settingsManager.setListenerEnvName(connectionName);
       if (!lifecycleOutput) printFirstRunWelcome(connectionName);
@@ -404,8 +387,6 @@ export async function runListenSubcommand(
       startupMode.kind === "remote" &&
       isCloudListenerServerUrl(startupMode.serverUrl)
     ) {
-      // Cloud handoffs carry API agent IDs, regardless of this computer's
-      // saved preference. Keep local App Server and channel listeners local.
       configureBackendMode("api");
     }
 
@@ -454,9 +435,6 @@ export async function runListenSubcommand(
         return 1;
       }
 
-      // A spawner owns Desktop child lifecycle. Standalone `letta server`
-      // and its `letta remote` alias instead claim their exact local
-      // registration slot before starting channel adapters or registering.
       if (shouldAcquireStandaloneListenerLock()) {
         const listenerInstanceId = registerOptions.listenerInstanceId;
         if (!listenerInstanceId) {
@@ -717,8 +695,6 @@ export async function runListenSubcommand(
 
     const reregister = async (): Promise<RegisterResult> => {
       sessionLog.log("Re-registering with retry...");
-      // The connect token was redeemed at startup; reconnects use the
-      // credentials it wrote to the organization slot.
       const nextRegisterOptions = await resolveListenerRegistrationOptions(
         deviceId,
         connectionName,
@@ -773,7 +749,7 @@ export async function runListenSubcommand(
     };
 
     if (shouldUseNonInteractiveListenerOutput(debugMode, !!lifecycleOutput)) {
-      const printPlainLines = debugMode || !lifecycleOutput; // lifecycle owns stdout
+      const printPlainLines = debugMode || !lifecycleOutput;
       const startNonInteractiveClient = async (
         connId: string,
         url: string,

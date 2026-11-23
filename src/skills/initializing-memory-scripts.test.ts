@@ -23,7 +23,6 @@ const scriptsDir = join(
   "initializing-memory",
   "scripts",
 );
-// Render through the real `letta trajectories view` implementation.
 const lettaCmd: [string, string] = [
   process.execPath,
   join(repoRoot, "src", "index.ts"),
@@ -92,8 +91,6 @@ function writeTrajectory(exportDir: string, file: string, text: string) {
   );
 }
 
-// Export with two renderable sessions in one existing project, one session
-// without user messages, one whose file is missing, and one export error.
 function makeExport(project: string): string {
   const exportDir = makeTempDir();
   writeTrajectory(exportDir, "codex/a.json", "always use uv");

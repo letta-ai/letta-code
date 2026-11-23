@@ -11,15 +11,9 @@ interface ChatGPTResetCreditPickerProps {
   credits: readonly ChatGPTRateLimitResetCredit[];
   selectedIndex: number;
   phase: ResetPickerPhase;
-  /** Credit chosen for the confirm/consuming phases. */
   chosen?: ChatGPTRateLimitResetCredit;
 }
 
-/**
- * Explicit, user-driven reset flow: pick a credit, then confirm with a second
- * keypress. Spending a reset affects the ChatGPT account everywhere it is
- * used, so nothing here redeems automatically.
- */
 export function ChatGPTResetCreditPicker({
   providerName,
   credits,

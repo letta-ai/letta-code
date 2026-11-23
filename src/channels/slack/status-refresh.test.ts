@@ -71,7 +71,7 @@ test("in-flight and queued refreshes cannot leave activity visible after a reply
     source: h.source,
   });
   await Bun.sleep(0);
-  visible = ""; // Slack auto-clears when the reply is posted.
+  visible = "";
   h.controller.markAutoClearedForMessage({ ...h.source });
   release.resolve();
   await Promise.all([firstRefresh, secondRefresh]);

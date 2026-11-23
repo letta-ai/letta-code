@@ -364,8 +364,6 @@ describe("listener auth lifecycle", () => {
     );
     await startClient({
       onRetrying,
-      // Startup reaches an initialized connection, then stalls before the
-      // pong heartbeat starts (as a hung recovery or ready hook would).
       onConnectionReady: () =>
         new Promise<void>((resolve) => releaseStalledStartups.push(resolve)),
     });

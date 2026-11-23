@@ -4,6 +4,7 @@ import {
   runOutsideRuntimeContext,
   runWithRuntimeContext,
 } from "@/runtime-context";
+import { REMOTE_SUBAGENT_MESSAGE_DEDUPE_PENDING_TTL_MS } from "@/tools/impl/claude-steer-timeouts";
 import {
   sendClaudeMessage,
   stopClaudeSession,
@@ -83,11 +84,6 @@ function findOwnedTask(runtime: ConversationRuntime, agentId: string) {
   );
 }
 
-/**
- * Completed background tasks and their subagent rows are evicted within
- * minutes, but the native session stays resumable on disk. Fall back to the
- * record of which agent launched it.
- */
 function nativeSessionOwner(agentId: string) {
   const target = parseExternalCodingAgentId(agentId);
   if (!target || target.computer) return undefined;
@@ -178,6 +174,9 @@ export async function handleSubagentMessageCommand(
       if (!target.sessionId)
         throw new Error("External coding agent ID has no session ID");
       const sessionId = target.sessionId;
+      const cloudSkillRepositories = nativeSessionOwner(
+        command.agent_id,
+      )?.cloudSkillRepositories;
       const traceContext = {
         parent_agent_id: parent.agentId,
         parent_conversation_id: parent.conversationId,
@@ -193,7 +192,6 @@ export async function handleSubagentMessageCommand(
         target.type === "cursor"
           ? await resolveExternalCodingAgentSecretEnv(parent.agentId)
           : {};
-      // A resumed worker process needs the same environment as a launch.
       let worker: ExternalWorkerLaunchEnv | undefined;
       const receipt = await runOutsideRuntimeContext(() =>
         runWithRuntimeContext(runtimeContext(parent, command), async () => {
@@ -228,6 +226,7 @@ export async function handleSubagentMessageCommand(
                     parentAgentId: command.runtime.agent_id,
                     cwd: getCurrentWorkingDirectory(),
                     mcpReminder: worker?.mcpReminder,
+                    cloudSkillRepositories,
                     beforeStart: async () => {
                       captureReservation = await (
                         deps.reserveCapture ?? reserveNativeSessionCapture
@@ -251,6 +250,7 @@ export async function handleSubagentMessageCommand(
                     parentAgentId: command.runtime.agent_id,
                     cwd: getCurrentWorkingDirectory(),
                     mcpReminder: worker?.mcpReminder,
+                    cloudSkillRepositories,
                     beforeStart: async () => {
                       captureReservation = await (
                         deps.reserveCapture ?? reserveNativeSessionCapture
@@ -266,7 +266,12 @@ export async function handleSubagentMessageCommand(
         }),
       );
       if (receipt.mode === "steered")
-        return { ...base, success: true, delivery: "steered" };
+        return {
+          ...base,
+          success: true,
+          delivery:
+            "queued" in receipt && receipt.queued ? "queued" : "steered",
+        };
       if (!receipt.completion || !receipt.interrupt)
         throw new Error("External coding agent returned an incomplete receipt");
       const secretEnv = worker?.secretEnv;
@@ -290,13 +295,6 @@ export async function handleSubagentMessageCommand(
           interrupt: receipt.interrupt,
           captureReservation,
           toolCallId: command.tool_call_id,
-          // This handler always runs on the worker, for a parent runtime that
-          // only exists here as a sideband control scope. Mirror the
-          // `notify: "caller"` launch contract: publish the result back to the
-          // caller and let its own listener raise the notice. Emitting it here
-          // would start a turn on the caller's conversation from the worker's
-          // machine, and claiming the runtime would make Cloud route the
-          // caller's deliveries to this sandbox.
           publishResult: true,
           emitCompletionNotification: false,
           claimsParentRuntime: false,
@@ -321,12 +319,18 @@ export async function handleSubagentMessageCommand(
     }
   })();
   responses.set(key, {
-    expiresAt: now + DEDUPE_TTL_MS,
+    expiresAt: now + REMOTE_SUBAGENT_MESSAGE_DEDUPE_PENDING_TTL_MS,
     response,
   });
   const result = await response;
-  if (!result.success && responses.get(key)?.response === response)
-    responses.delete(key);
+  if (responses.get(key)?.response === response) {
+    if (!result.success) responses.delete(key);
+    else
+      responses.set(key, {
+        expiresAt: (deps.now ?? Date.now)() + DEDUPE_TTL_MS,
+        response,
+      });
+  }
   return result;
 }
 
@@ -366,7 +370,6 @@ export async function handleSubagentStopCommand(
     }
   }
   if (!owned) {
-    // Its task was evicted after it finished: nothing is left to stop.
     if (ownsNativeSession(parent, command.agent_id))
       return {
         ...base,
