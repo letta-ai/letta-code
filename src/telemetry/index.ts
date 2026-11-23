@@ -16,6 +16,7 @@ import {
 import { extractInputChannel } from "./channel";
 import { isPermanentRejection, TelemetryEventQueueCap } from "./event-queue";
 import { installFatalErrorHandlers } from "./fatal-error-handler";
+import type { PermissionModeChangedData } from "./permission-mode";
 
 export type TelemetrySurface =
   | "letta_code_tui"
@@ -33,7 +34,6 @@ export type TelemetryBackend =
 export interface TelemetryInitOptions {
   handleSigint?: boolean;
 }
-
 export interface TelemetryEvent {
   type:
     | "session_start"
@@ -45,23 +45,22 @@ export interface TelemetryEvent {
     | "reflection_start"
     | "reflection_end"
     | "reflection_worktree_cleanup"
-    | "reflection_arena_vote";
+    | "reflection_arena_vote"
+    | "permission_mode_changed";
   timestamp: string;
   data: Record<string, unknown>;
 }
-
 export interface SessionStartData {
   startup_command: string;
   version: string;
   platform: string;
   node_version: string;
 }
-
 export interface SessionEndData {
-  duration: number; // in seconds
+  duration: number;
   message_count: number;
   tool_call_count: number;
-  exit_reason?: string; // e.g., "exit_command", "logout", "sigint", "process_exit"
+  exit_reason?: string;
   total_api_ms?: number;
   total_wall_ms?: number;
   prompt_tokens?: number;
@@ -74,7 +73,6 @@ export interface SessionEndData {
   context_tokens?: number;
   step_count?: number;
 }
-
 export interface ToolUsageData {
   tool_name: string;
   channel?: string;
@@ -85,7 +83,6 @@ export interface ToolUsageData {
   error_type?: string;
   stderr?: string;
 }
-
 export interface ErrorData {
   error_type: string;
   error_message: string;
@@ -277,15 +274,6 @@ export function resolveTelemetryBackend(options?: {
   return "self_hosted_api";
 }
 
-/**
- * Returns true for error messages that are non-actionable noise:
- * - Billing/plan limit responses (premium-unavailable, usage-exceeded, not-enough-credits)
- * - User-initiated actions (cancelled, Ctrl+Z)
- * - Transient connection errors (DNS, SSL, socket hang up) — NOT Cloudflare 521/520 (filtered in PostHog)
- * - Environment issues (git/npm not installed)
- * - Expected concurrency (409 CONFLICT)
- * - Placeholder agent names (@author/agent)
- */
 function isNonActionableError(message: string): boolean {
   return (
     /premium-unavailable|not-enough-credits|usage-exceeded/i.test(message) ||
@@ -301,7 +289,6 @@ function isNonActionableError(message: string): boolean {
 
 class TelemetryManager {
   private events: TelemetryEvent[] = [];
-  // Transport-only snapshots: never serialize identity into telemetry JSON.
   private eventActingUsers = new WeakMap<TelemetryEvent, string | undefined>();
   private sessionId: string;
   private deviceId: string | null = null;
@@ -317,7 +304,6 @@ class TelemetryManager {
   private removeSigintHandler: (() => void) | null = null;
   private removeFatalErrorHandlers: (() => void) | null = null;
   private serverVersion: string | null = null;
-  /** Deduplicates concurrent flushes (prevents the 429 double-flush race on shutdown). */
   private inflightFlush: Promise<void> | null = null;
   private eventQueueCap = new TelemetryEventQueueCap();
 
@@ -346,20 +332,15 @@ class TelemetryManager {
         this.deviceId = generated;
         return generated;
       }
-    } catch {
-      // Settings may not be initialized in some early/exit flush paths. Fall
-      // back to a process-local UUID so cloud pass-through telemetry never
-      // sends an empty organization/device id.
-    }
+    } catch {}
 
     const fallback = randomUUID();
     this.deviceId = fallback;
     return fallback;
   }
 
-  private readonly FLUSH_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
+  private readonly FLUSH_INTERVAL_MS = 2 * 60 * 1000;
   private readonly MAX_BATCH_SIZE = 50;
-  /** Max time to drain queued events on exit (bounded so we never hang the shell). */
   private readonly DRAIN_TIMEOUT_MS = 3_000;
   private sessionStatsGetter?: () => {
     totalWallMs: number;
@@ -385,13 +366,7 @@ class TelemetryManager {
     return `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
   }
 
-  /**
-   * Check if telemetry is enabled based on environment variables.
-   * Enabled by default unless explicitly disabled.
-   */
   private isTelemetryEnabled(): boolean {
-    // LETTA_CODE_TELEM is Letta Code's specific opt-out. DO_NOT_TRACK is a
-    // broader convention also honored by install-time analytics packages.
     const envValue = process.env.LETTA_CODE_TELEM;
     if (envValue === "0" || envValue === "false") {
       return false;
@@ -404,14 +379,10 @@ class TelemetryManager {
     return true;
   }
 
-  /**
-   * Check if the user is connected to Letta Cloud (api.letta.com)
-   */
   private isCloudUser(): boolean {
     try {
       return getServerUrl().includes("api.letta.com");
     } catch {
-      // Settings not initialized yet — check env var directly
       return (
         !process.env.LETTA_BASE_URL ||
         process.env.LETTA_BASE_URL.includes("api.letta.com")
@@ -419,46 +390,35 @@ class TelemetryManager {
     }
   }
 
-  /**
-   * Initialize telemetry and start periodic flushing
-   */
   init(options: TelemetryInitOptions = {}) {
     if (!this.isTelemetryEnabled() || this.initialized) {
       return;
     }
     this.initialized = true;
 
-    // Initialize device ID (persistent across sessions)
     this.deviceId = settingsManager.getOrCreateDeviceId();
 
     this.trackSessionStart();
 
-    // Fetch server version for diagnostics (best-effort, non-blocking)
     this.fetchServerVersion().catch(() => {});
 
-    // Set up periodic flushing
     this.flushInterval = setInterval(() => {
       this.flush().catch((err) => {
-        // Silently fail - we don't want telemetry to interfere with user experience
         if (isDebugEnabled()) {
           console.error("Telemetry flush error:", err);
         }
       });
     }, this.FLUSH_INTERVAL_MS);
 
-    // Don't let the interval prevent process from exiting
     this.flushInterval.unref();
 
     if (options.handleSigint !== false) {
-      // Await drain() (bounded by DRAIN_TIMEOUT_MS) so the final batch ships before exit.
       const sigintHandler = () => {
         void (async () => {
           try {
             this.trackSessionEnd(undefined, "sigint");
             await this.drain();
-          } catch {
-            // Silently ignore - don't prevent process from exiting
-          }
+          } catch {}
           process.exit(0);
         })();
       };
@@ -474,15 +434,8 @@ class TelemetryManager {
         this.trackError(errorType, message, context);
       },
     });
-
-    // Fatal handlers can only make a bounded flush attempt. Persisting unsent
-    // events for delivery on the next startup would make crash telemetry more
-    // reliable without extending the fatal shutdown deadline.
   }
 
-  /**
-   * Track a telemetry event
-   */
   private track(
     type: TelemetryEvent["type"],
     data:
@@ -493,6 +446,7 @@ class TelemetryManager {
       | ErrorData
       | UserInputData
       | ChannelGatewayLifecycleData
+      | PermissionModeChangedData
       | ReflectionStartData
       | ReflectionEndData
       | ReflectionWorktreeCleanupData
@@ -508,7 +462,10 @@ class TelemetryManager {
       data: {
         ...data,
         session_id: this.sessionId,
-        agent_id: this.currentAgentId || undefined,
+        agent_id:
+          type === "permission_mode_changed"
+            ? (data as PermissionModeChangedData).agent_id
+            : this.currentAgentId || undefined,
         agent_origin: this.currentAgentOrigin || undefined,
         surface: this.surface,
         backend: resolveTelemetryBackend(),
@@ -517,10 +474,8 @@ class TelemetryManager {
 
     this.eventActingUsers.set(event, getRuntimeActingUserId());
     this.events.push(event);
-    // Drop the oldest events if failed re-queues have grown the queue to its bound.
     this.eventQueueCap.enforce(this.events);
 
-    // Flush if batch size is reached
     if (this.events.length >= this.MAX_BATCH_SIZE) {
       this.flush().catch((err) => {
         if (isDebugEnabled()) {
@@ -530,19 +485,11 @@ class TelemetryManager {
     }
   }
 
-  /**
-   * Set the current agent ID (called from App.tsx when agent changes)
-   * This is automatically added to all telemetry events
-   */
   setCurrentAgentId(agentId: string | null) {
     this.currentAgentId = agentId;
     this.currentAgentOrigin = null;
   }
 
-  /**
-   * Attach safe analytics fields from an agent that the caller already loaded.
-   * Events queued during startup are enriched without another API request.
-   */
   setCurrentAgent(
     agentId: string | null,
     tags: readonly string[] | null | undefined,
@@ -571,9 +518,6 @@ class TelemetryManager {
     this.surface = surface;
   }
 
-  /**
-   * Fetch and cache server version from /v1/health (fire-and-forget, best-effort)
-   */
   async fetchServerVersion(): Promise<void> {
     try {
       const data = await getServerHealth({
@@ -583,20 +527,13 @@ class TelemetryManager {
       if (data.version) {
         this.serverVersion = data.version;
       }
-    } catch {
-      // Best-effort — don't let this affect startup
-    }
+    } catch {}
   }
 
   getServerVersion(): string | null {
     return this.serverVersion;
   }
 
-  /**
-   * Set a getter function for session stats (called from App.tsx)
-   * This allows safety net handlers to access stats even if not explicitly passed
-   * Pass undefined to clear the getter (for cleanup)
-   */
   setSessionStatsGetter(
     getter?: () => {
       totalWallMs: number;
@@ -616,32 +553,19 @@ class TelemetryManager {
     this.sessionStatsGetter = getter;
   }
 
-  /**
-   * Get the current session ID
-   */
   getSessionId(): string {
     return this.sessionId;
   }
 
-  /**
-   * Get the current message count
-   */
   getMessageCount(): number {
     return this.messageCount;
   }
 
-  /**
-   * Get the current tool call count
-   */
   getToolCallCount(): number {
     return this.toolCallCount;
   }
 
-  /**
-   * Track session start
-   */
   trackSessionStart() {
-    // Extract agent ID from startup args if --agent or -a is provided
     const args = process.argv.slice(2);
     const agentFlagIndex = args.findIndex(
       (arg) => arg === "--agent" || arg === "-a",
@@ -662,11 +586,6 @@ class TelemetryManager {
     this.track("session_start", data);
   }
 
-  /**
-   * Track session end
-   * @param stats Optional session stats (from sessionStatsRef.current.getSnapshot() in App.tsx)
-   * @param exitReason Optional reason for exit (e.g., "exit_command", "logout", "sigint", "process_exit")
-   */
   trackSessionEnd(
     stats?: {
       totalWallMs: number;
@@ -684,20 +603,16 @@ class TelemetryManager {
     },
     exitReason?: string,
   ) {
-    // Prevent double-tracking (can be called from both handleExit and process.on("exit"))
     if (this.sessionEndTracked) {
       return;
     }
     this.sessionEndTracked = true;
 
-    // Try to get stats from getter if not provided (for safety net handlers)
     let sessionStats = stats;
     if (!sessionStats && this.sessionStatsGetter) {
       try {
         sessionStats = this.sessionStatsGetter();
-      } catch {
-        // Ignore errors - stats will be undefined
-      }
+      } catch {}
     }
 
     const duration = Math.floor((Date.now() - this.sessionStartTime) / 1000);
@@ -706,7 +621,6 @@ class TelemetryManager {
       message_count: this.messageCount,
       tool_call_count: this.toolCallCount,
       exit_reason: exitReason,
-      // Include optional stats if available
       total_api_ms: sessionStats?.totalApiMs,
       total_wall_ms: sessionStats?.totalWallMs,
       prompt_tokens: sessionStats?.usage.promptTokens,
@@ -722,9 +636,6 @@ class TelemetryManager {
     this.track("session_end", data);
   }
 
-  /**
-   * Track tool usage
-   */
   trackToolUsage(
     toolName: string,
     success: boolean,
@@ -755,6 +666,10 @@ class TelemetryManager {
       version: getVersion(),
       platform: process.platform,
     });
+  }
+
+  trackPermissionModeChanged(data: PermissionModeChangedData) {
+    this.track("permission_mode_changed", data);
   }
 
   trackError(
@@ -802,7 +717,6 @@ class TelemetryManager {
     this.track("error", data);
   }
 
-  /** Agent ID is automatically added to user input from currentAgentId. */
   trackUserInput(input: string, messageType: string, modelId: string) {
     this.messageCount++;
 
@@ -820,9 +734,6 @@ class TelemetryManager {
     this.track("user_input", data);
   }
 
-  /**
-   * Track reflection start events (manual and auto-triggered).
-   */
   trackReflectionStart(
     triggerSource: ReflectionTriggerSource,
     options?: {
@@ -846,9 +757,6 @@ class TelemetryManager {
     this.track("reflection_start", data);
   }
 
-  /**
-   * Track reflection completion events.
-   */
   trackReflectionEnd(
     triggerSource: ReflectionTriggerSource,
     success: boolean,
@@ -897,7 +805,6 @@ class TelemetryManager {
     });
   }
 
-  /** Concurrent callers share one in-flight POST (prevents 429 double-flush race on shutdown). */
   async flush(): Promise<void> {
     if (this.inflightFlush) {
       return this.inflightFlush;
@@ -943,25 +850,20 @@ class TelemetryManager {
             { signal: AbortSignal.timeout(5000), actingUserId },
           );
         } catch (error) {
-          // Permanent 4xx rejections fail on every retry, so drop the group.
           if (isPermanentRejection(error)) return;
           for (const event of events) failed.add(event);
         }
       }),
     );
-    // Keep failed snapshots in their original order, ahead of late arrivals.
-    // Successful groups must not be duplicated when another identity fails.
     this.events.unshift(...eventsToSend.filter((event) => failed.has(event)));
     this.eventQueueCap.enforce(this.events);
   }
 
-  /** Await in-flight flush and drain remaining queue (bounded by DRAIN_TIMEOUT_MS). Replaces fire-and-forget flush on exit. */
   async drain(): Promise<void> {
     if (!this.isTelemetryEnabled()) {
       return;
     }
     const deadline = Date.now() + this.DRAIN_TIMEOUT_MS;
-    // Loop in case new events arrive mid-drain (e.g. trackError from uncaughtException).
     while (this.events.length > 0 || this.inflightFlush) {
       if (Date.now() >= deadline) {
         return;
@@ -969,15 +871,11 @@ class TelemetryManager {
       try {
         await this.flush();
       } catch {
-        // Swallow — already logged inside performFlush; don't block exit.
         return;
       }
     }
   }
 
-  /**
-   * Clean up resources
-   */
   cleanup() {
     this.removeSigintHandler?.();
     this.removeSigintHandler = null;
@@ -991,5 +889,4 @@ class TelemetryManager {
   }
 }
 
-// Export singleton instance
 export const telemetry = new TelemetryManager();

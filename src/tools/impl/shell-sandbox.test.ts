@@ -17,7 +17,6 @@ import { applyShellSandbox } from "@/tools/impl/shell-sandbox";
 const SEATBELT: SandboxAvailability = { backend: "seatbelt", reason: "test" };
 const NO_BACKEND: SandboxAvailability = { backend: null, reason: "test" };
 const LAUNCHER = ["/bin/zsh", "-c", "echo hi"];
-// The parent agent's cwd is the repo — outside ~/.letta/agents.
 const REPO_CWD = process.cwd();
 
 function defineValue(args: string[], prefix: string): string | undefined {
@@ -143,7 +142,6 @@ test("wraps an agent shell launcher: denies agents tree, carves self, sets senti
 
   expect(result.backend).toBe("seatbelt");
   expect(result.launcher[0]).toBe(SANDBOX_EXEC_PATH);
-  // The inner launcher is preserved verbatim at the tail, after the `--`.
   expect(result.launcher).toContain("--");
   expect(result.launcher.slice(-3)).toEqual(LAUNCHER);
   expect(result.env[SANDBOX_ENV_VAR]).toBe("seatbelt");
@@ -182,8 +180,6 @@ test("api backend: also walls off the local memfs tree", () => {
 });
 
 test("local backend: walls off both local memfs and ~/.letta/agents", () => {
-  // A local-backend parent agent keeps its memory under lc-local-backend/memfs,
-  // but it still must not read cloud/API memory projected under ~/.letta/agents.
   const storageDir = join(REPO_CWD, "custom-local-backend");
   const memfsTree = getLocalBackendCrossAgentTreeRoot(storageDir);
   const memDir = join(memfsTree, "local-agent-xyz", "memory");
@@ -207,8 +203,6 @@ test("local backend: walls off both local memfs and ~/.letta/agents", () => {
       `2=${canonicalizeRoot(getLocalBackendCrossAgentTreeRoot())}`,
     ]),
   );
-  // Self agent dir carved writable (both /memory and /memory-worktrees collapse
-  // to the single agent dir).
   const writables = result.launcher.filter((a) => a.startsWith("-DWRITABLE_"));
   expect(writables).toEqual([
     `-DWRITABLE_0=${canonicalizeRoot(join(memfsTree, "local-agent-xyz"))}`,
@@ -232,8 +226,6 @@ test("carves the whole self agent dir for an in-tree memory root", () => {
   );
 
   expect(result.backend).toBe("seatbelt");
-  // Both the /memory root and its /memory-worktrees sibling collapse to the
-  // single agent directory — so there is exactly one writable carve-out.
   const writables = result.launcher.filter((a) => a.startsWith("-DWRITABLE_"));
   expect(writables).toEqual([`-DWRITABLE_0=${canonicalizeRoot(agentDir)}`]);
 });

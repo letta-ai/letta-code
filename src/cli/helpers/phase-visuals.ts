@@ -10,27 +10,14 @@ export type ExecutionPhase =
 export type PhaseOverlay = "sin-pulse" | "two-sided" | null;
 
 export type PhaseVisual = {
-  /** Sweep tick in ms. Smaller = faster bright cell. */
   tickMs: number;
-  /** Sweep direction across the text. */
   direction: "ltr" | "rtl";
-  /** Color of non-shimmer characters (the resting tint). */
   baseColor: string;
-  /** Color of the bright cell. */
   shimmerColor: string;
-  /** Optional whole-word color modulation layered under the sweep. */
   overlay: PhaseOverlay;
-  /** Whole-word overlay period in ms. Larger = slower light/dark breathing. */
   overlayPeriodMs?: number;
-  /**
-   * Whether the bright-cell sweep is rendered. Defaults to true. Set false
-   * for phases where the row should breathe color without any horizontal
-   * traversal — useful when the breathe alone communicates activity.
-   */
   hasSweep?: boolean;
-  /** `two-sided` overlay: color reached on the upper lobe of the sin curve. */
   lighterColor?: string;
-  /** `two-sided` overlay: color reached on the lower lobe of the sin curve. */
   deeperColor?: string;
 };
 
@@ -48,11 +35,6 @@ const REQUESTING: PhaseVisual = {
 const THINKING: PhaseVisual = {
   tickMs: 200,
   direction: "ltr",
-  // Shared base across all phases so phase entry doesn't cause a color jump.
-  // The thinking-specific "breath" comes from the two-sided overlay below,
-  // which oscillates symmetrically toward a near-white anchor on one lobe and
-  // a deep-saturated-purple anchor on the other. Anchors intentionally far
-  // from the base to give the row a visible "deep contemplation" sway.
   baseColor: colors.status.processing,
   shimmerColor: colors.status.processingShimmer,
   overlay: "two-sided",
@@ -71,8 +53,6 @@ const TOOL_USE: PhaseVisual = {
 };
 
 const RESPONDING: PhaseVisual = {
-  // Between requesting (50ms) and thinking/toolUse (200ms) — the model is
-  // producing tokens, the row should feel responsive rather than contemplative.
   tickMs: 100,
   direction: "rtl",
   baseColor: colors.status.processing,
@@ -129,11 +109,6 @@ function toHex(c: { r: number; g: number; b: number }): string {
   return `#${h(c.r)}${h(c.g)}${h(c.b)}`;
 }
 
-/**
- * Linear-RGB blend of two hex colors. Falls back to `a` if either side is
- * unparseable (e.g. a named color like "cyan"), which keeps the existing
- * behavior unchanged when overlays are off.
- */
 export function blendHex(a: string, b: string, t: number): string {
   const ca = parseHex(a);
   const cb = parseHex(b);
@@ -146,19 +121,6 @@ export function blendHex(a: string, b: string, t: number): string {
   });
 }
 
-/**
- * Compute the effective base color for a phase at phase-local time `t` (ms).
- * Caller is responsible for passing time measured from phase-entry, not from
- * a global clock — that way the curve always begins at its anchor when the
- * phase becomes active, instead of landing mid-cycle.
- *
- *  - `sin-pulse`: blends baseColor → shimmerColor on a 2s cos curve by
- *    default. Anchored at baseColor (calm) and breathes lighter.
- *  - `two-sided`: 3s sin curve by default. Positive lobe blends baseColor → lighterColor,
- *    negative lobe blends baseColor → deeperColor. Crosses through unblended
- *    baseColor twice per period — so phase entry and every half-period look
- *    identical to neighboring phases' resting color (no jump).
- */
 export function effectiveBaseColor(visual: PhaseVisual, t: number): string {
   if (!visual.overlay) return visual.baseColor;
   if (visual.overlay === "sin-pulse") {

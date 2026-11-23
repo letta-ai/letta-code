@@ -4,10 +4,9 @@ import {
   getCachedAvailableModels,
 } from "@/agent/available-models";
 import {
+  contextWindowToPreserveForModelSelection,
   getModelInfo,
   models,
-  preservableContextWindow,
-  shouldPreserveContextWindowForModelSelection,
 } from "@/agent/model";
 import {
   updateAgentLLMConfig,
@@ -161,6 +160,7 @@ async function getCurrentModelScopeSnapshot(params: {
   if (!params.agentId) {
     const conversation = await backend.retrieveConversation(
       params.conversationId,
+      { query: { include_context_message_ids: false } },
     );
     const record = conversation as unknown as Record<string, unknown>;
     return {
@@ -201,6 +201,7 @@ async function getCurrentModelScopeSnapshot(params: {
 
   const conversation = await backend.retrieveConversation(
     params.conversationId,
+    { query: { include_context_message_ids: false } },
   );
   const conversationRecord = conversation as unknown as Record<string, unknown>;
   const conversationModel =
@@ -243,8 +244,6 @@ function resolveModelForUpdateBase(
   if (typeof payload.model_id === "string" && payload.model_id.length > 0) {
     const byId = getModelInfo(payload.model_id);
     if (byId) {
-      // Channels echo the picker ID into both fields. Resolve that ID through
-      // the catalog; preserve a distinct explicit handle for BYOK tier changes.
       const explicitHandle =
         typeof payload.model_handle === "string" &&
         payload.model_handle !== byId.id &&
@@ -339,9 +338,6 @@ export async function resolveModelForUpdateWithInventory(
   payload: UpdateModelPayload,
 ): Promise<ResolvedModelForUpdate | null> {
   const handle = payload.model_handle ?? payload.model_id;
-  // A first-contact /model <BYOK handle>, or a click after a listener restart,
-  // has not necessarily listed models. Load its provider identity before
-  // constructing settings; hosted catalog selections need no inventory probe.
   if (
     resolveBackendMode() === "api" &&
     isCloudServerUrl() &&
@@ -448,28 +444,12 @@ export async function applyModelUpdateForRuntime(params: {
     agentId,
     conversationId,
   });
-  // Switching to a different model (or a different context-window variant of
-  // the same model, e.g. base <-> 1M dual listings) resets the context window
-  // to the selected catalog entry's preset. Only a tier change within the
-  // same variant preserves the current window — and it preserves by
-  // RE-SENDING the current value explicitly, never by omitting the field:
-  // the server treats an omitted context_window_limit as "re-derive from the
-  // handle" and clamps it to a legacy global default (128k). A current value
-  // that looks like that clamp is not preservable, so poisoned agents heal
-  // to the preset even on same-variant tier changes. See LET-9786.
-  const shouldPreserveContextWindow =
-    shouldPreserveContextWindowForModelSelection({
-      currentModelHandle: currentModelScope.modelHandle,
-      currentLlmConfig: currentModelScope.llmConfig,
-      selectedModelHandle: model.handle,
-      selectedContextWindow,
-    });
-  const preservedContextWindow = shouldPreserveContextWindow
-    ? preservableContextWindow(
-        currentModelScope.llmConfig?.context_window,
-        model.handle,
-      )
-    : undefined;
+  const preservedContextWindow = contextWindowToPreserveForModelSelection({
+    currentModelHandle: currentModelScope.modelHandle,
+    currentLlmConfig: currentModelScope.llmConfig,
+    selectedModelHandle: model.handle,
+    selectedContextWindow,
+  });
   const updateOptions =
     preservedContextWindow !== undefined
       ? { contextWindowOverride: preservedContextWindow }
@@ -666,31 +646,21 @@ export async function applyToolsetUpdateForRuntime(params: {
   };
 }
 
-/**
- * Build the full list_models_response payload, including availability data.
- * Fetches available handles and BYOK provider aliases in parallel (best-effort).
- */
 export async function buildListModelsResponse(
   requestId: string,
   options: { forceRefresh?: boolean } = {},
 ): Promise<ListModelsResponseMessage> {
   const cloud = resolveBackendMode() === "api" && isCloudServerUrl();
   const [handlesResult, providersResult] = await Promise.allSettled([
-    // User-initiated refreshes bypass the availability cache: within the
-    // cache TTL a stale snapshot would otherwise make every "Refresh model
-    // list" click return the same wrong answer.
     getAvailableModelHandles(
       options.forceRefresh === true ? { forceRefresh: true } : undefined,
     ),
     listProviders(),
-    // Refresh the runtime catalog alongside availability. API mode keeps the
-    // persisted cloud catalog on temporary failures; local mode projects pi-ai.
     refreshModelCatalog(
       options.forceRefresh === true ? { force: true } : undefined,
     ),
   ]);
 
-  // listProviders already degrades to [] on failure, but handle rejection too
   const providers =
     providersResult.status === "fulfilled" ? providersResult.value : [];
   const byokProviderAliases = buildByokProviderAliases(providers);
@@ -717,8 +687,6 @@ export async function buildListModelsResponse(
     };
   });
 
-  // Channel clients use this list as selectable inventory, not just a hint.
-  // In Cloud mode it must not reintroduce legacy hosted rows or gate presets.
   const availableHandles: string[] | null = cloud
     ? [...new Set(entries.map((entry) => entry.handle))]
     : handlesResult.status === "fulfilled"

@@ -1,8 +1,8 @@
 import { basename } from "node:path";
 import * as Diff from "diff";
 
-export const ADV_DIFF_CONTEXT_LINES = 1; // easy to adjust later
-export const ADV_DIFF_IGNORE_WHITESPACE = false; // previews must show exact edits, including tab/space-only changes
+export const ADV_DIFF_CONTEXT_LINES = 1;
+export const ADV_DIFF_IGNORE_WHITESPACE = false;
 
 export interface AdvancedEditInput {
   kind: "edit";
@@ -21,13 +21,13 @@ export interface AdvancedWriteInput {
 export type AdvancedDiffInput = AdvancedEditInput | AdvancedWriteInput;
 
 export interface AdvancedHunkLine {
-  raw: string; // original line from structuredPatch (includes prefix)
+  raw: string;
 }
 
 export interface AdvancedHunk {
   oldStart: number;
   newStart: number;
-  lines: AdvancedHunkLine[]; // pass through; renderer will compute numbers/word pairs
+  lines: AdvancedHunkLine[];
 }
 
 export interface AdvancedDiffSuccess {
@@ -55,7 +55,6 @@ export type AdvancedDiffResult =
 
 function readFileOrNull(p: string): string | null {
   try {
-    // Fall back to node:fs for sync reading
     return require("node:fs").readFileSync(p, "utf-8");
   } catch {
     return null;
@@ -91,7 +90,6 @@ export function computeAdvancedDiff(
 ): AdvancedDiffResult {
   const fileName = basename(input.filePath || "");
 
-  // Fetch current content (oldStr). For write on new file, treat missing as '' and continue.
   const fileContent =
     opts?.oldStrOverride !== undefined
       ? opts.oldStrOverride
@@ -141,14 +139,8 @@ export function computeAdvancedDiff(
   return { mode: "advanced", fileName, oldStr, newStr, hunks };
 }
 
-/**
- * Parse a patch operation's hunks directly into AdvancedDiffSuccess format.
- * This bypasses the "read file -> find oldString" flow since the patch IS the diff.
- * Used for ApplyPatch tool previews where multi-hunk patches can't be found as
- * contiguous blocks in the file.
- */
 export function parsePatchToAdvancedDiff(
-  patchLines: string[], // Lines for this file operation (after "*** Update File:" or "*** Add File:")
+  patchLines: string[],
   filePath: string,
 ): AdvancedDiffSuccess | null {
   const fileName = basename(filePath);
@@ -160,12 +152,10 @@ export function parsePatchToAdvancedDiff(
 
   for (const line of patchLines) {
     if (line.startsWith("@@")) {
-      // Start new hunk - try to parse line numbers from @@ -old,count +new,count @@
       if (currentHunk && currentHunk.lines.length > 0) {
         hunks.push(currentHunk);
       }
 
-      // Try standard unified diff format: @@ -10,5 +10,7 @@
       const match = line.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
       currentHunk = {
         oldStart: match?.[1] ? parseInt(match[1], 10) : oldLine,
@@ -176,13 +166,10 @@ export function parsePatchToAdvancedDiff(
     }
 
     if (!currentHunk) {
-      // Create implicit first hunk if no @@ header seen yet
       currentHunk = { oldStart: 1, newStart: 1, lines: [] };
     }
 
-    // Parse diff line (prefix + content)
     if (line.length === 0) {
-      // Empty line - treat as context
       currentHunk.lines.push({ raw: " " });
       oldLine++;
       newLine++;
@@ -205,8 +192,8 @@ export function parsePatchToAdvancedDiff(
   return {
     mode: "advanced",
     fileName,
-    oldStr: "", // Not needed for rendering when hunks are provided
-    newStr: "", // Not needed for rendering when hunks are provided
+    oldStr: "",
+    newStr: "",
     hunks,
   };
 }

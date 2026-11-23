@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -10,6 +10,7 @@ import { type BackendMode, resolveBackendMode } from "@/backend/backend-mode";
 import { setLocalOAuthProvider } from "@/backend/local/local-provider-auth-store";
 import { useChatGPTRateLimitState } from "@/cli/hooks/use-chatgpt-rate-limit-state";
 import { settingsManager } from "@/settings-manager";
+import { removeTestDir } from "@/test-utils/test-fs";
 import { ProviderSelector } from "./ProviderSelector";
 
 class CaptureStream extends Writable {
@@ -64,12 +65,9 @@ async function press(stdin: NodeJS.ReadStream, key: string, times = 1) {
 
 const DOWN = "\u001b[B";
 const ENTER = "\r";
-// Usage and inventory are cached in module memory by provider name for 30s,
-// so each test gets its own account name to start from a cold cache.
 let testIndex = 0;
 let PROVIDER_NAME = "";
 
-/** Fake ChatGPT backend: one banked reset that lifts a reached weekly limit. */
 function fakeChatGPT() {
   const state = { limited: true, credits: 2, consumeBodies: [] as unknown[] };
   const handler = async (
@@ -137,8 +135,6 @@ beforeEach(async () => {
   process.env.LETTA_LOCAL_BACKEND_DIR = storageDir;
   configureBackendMode("local");
   await settingsManager.initialize();
-  // The Local tab label is only shown when Cloud credentials are present.
-  // Keep that UI state independent of the host and other tests' credentials.
   settingsSpy = spyOn(
     settingsManager,
     "getSettingsWithSecureTokens",
@@ -171,7 +167,7 @@ afterEach(async () => {
   if (previousLocalDir === undefined)
     delete process.env.LETTA_LOCAL_BACKEND_DIR;
   else process.env.LETTA_LOCAL_BACKEND_DIR = previousLocalDir;
-  await rm(storageDir, { recursive: true, force: true });
+  await removeTestDir(storageDir);
 });
 
 async function openResetConfirmation(
@@ -183,7 +179,6 @@ async function openResetConfirmation(
     (screen) => screen.includes("Filter:") && screen.includes("[ Local ]"),
     "provider list",
   );
-  // Search narrows the list so selection does not depend on catalog order.
   for (const character of "chatgpt") await press(stdin, character);
   await waitForScreen(
     stdout,
@@ -246,7 +241,6 @@ describe("ProviderSelector ChatGPT reset credits", () => {
 
     const manage = await openResetConfirmation(stdin, stdout);
     expect(manage).toContain("0% left");
-    // Choosing a credit alone never spends it.
     expect(chatgpt.state.consumeBodies).toHaveLength(0);
 
     await press(stdin, ENTER);
@@ -282,8 +276,6 @@ describe("ProviderSelector ChatGPT reset credits", () => {
     });
     if (!api) throw new Error("hook did not render");
 
-    // Same render, same closure: React state could not have changed between
-    // these calls, which is the window Amelia's review describes.
     const [first, second] = await Promise.all([
       api.consume(PROVIDER_NAME, "RateLimitResetCredit_1"),
       api.consume(PROVIDER_NAME, "RateLimitResetCredit_1"),
@@ -300,8 +292,6 @@ describe("ProviderSelector ChatGPT reset credits", () => {
     const { stdin, stdout } = renderSelector();
 
     await openResetConfirmation(stdin, stdout);
-    // Key repeat or a double-tap: the second Enter arrives while the first
-    // spend is in flight, then again once the manage menu is back.
     stdin.push(ENTER);
     await new Promise((resolve) => setTimeout(resolve, 0));
     stdin.push(ENTER);

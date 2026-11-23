@@ -627,8 +627,6 @@ describe("credential helper reset", () => {
   test("resets inherited helpers before the repo-local Letta helper", async () => {
     const { repo } = makeSyncedRepo();
 
-    // Run twice to prove the two-entry write is idempotent rather than
-    // accumulating another helper on every sync.
     await refreshCredentialConfig(repo);
     await refreshCredentialConfig(repo);
 
@@ -640,8 +638,6 @@ describe("credential helper reset", () => {
     expect(helpers).toHaveLength(2);
     expect(helpers[0]).toBe("");
 
-    // Model a system/global helper such as osxkeychain returning a stale Letta
-    // identity. Git must skip it after seeing the host-scoped empty reset.
     const globalConfig = join(repo, "global.gitconfig");
     const systemConfig = join(repo, "system.gitconfig");
     writeFileSync(
@@ -672,8 +668,6 @@ describe("credential helper reset", () => {
     const { repo } = makeSyncedRepo();
     const key = "credential.https://api.letta.com.helper";
     git(repo, `config --local --add ${key} ""`);
-    // Argv array instead of a shell string: cmd.exe on Windows does not strip
-    // single quotes, so a quoted helper value would split into extra args.
     execFileSync(
       "git",
       [

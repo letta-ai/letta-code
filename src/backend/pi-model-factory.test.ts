@@ -95,11 +95,6 @@ describe("pi model factory", () => {
   });
 
   test("pi-ai 0.84.4+ generates thinkingLevelMap for OpenRouter mandatory-reasoning models", () => {
-    // pi-ai 0.84.4 fixed https://github.com/earendil-works/pi/issues/8454:
-    // the generated OpenRouter catalog now derives thinkingLevelMap from
-    // OpenRouter's reasoning metadata, so the temporary local patch is no
-    // longer needed. Verify the catalog includes the map for a model that
-    // previously required the workaround.
     const model = getModels("openrouter").find(
       (entry) => entry.id === "google/gemini-3.7-flash",
     );
@@ -290,6 +285,70 @@ describe("pi model factory", () => {
         expect(resolved.apiKey).toBeUndefined();
       },
     );
+  });
+
+  test("moves the saved Kimi built-in URL to Chat Completions and keeps custom URLs", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-kimi-url-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "moonshot_coding",
+        providerName: "lc-kimi-code",
+        apiKey: "test-key",
+        baseURL: "https://api.kimi.com/coding",
+      });
+      const old = await resolvePiModelForAgent(
+        "moonshot_coding/kimi-for-coding",
+        { provider_type: "moonshot_coding" },
+        { localProviderAuthStorageDir: storageDir },
+      );
+      expect(old.model).toMatchObject({
+        api: "openai-completions",
+        baseUrl: "https://api.kimi.com/coding/v1",
+      });
+
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "moonshot_coding",
+        providerName: "lc-kimi-code",
+        apiKey: "test-key",
+        baseURL: "https://proxy.example.test/kimi/v1",
+      });
+      const custom = await resolvePiModelForAgent(
+        "moonshot_coding/kimi-for-coding",
+        { provider_type: "moonshot_coding" },
+        { localProviderAuthStorageDir: storageDir },
+      );
+      expect(custom.model.baseUrl).toBe("https://proxy.example.test/kimi/v1");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("legacy Azure handle and credential resolve to canonical provider", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-azure-alias-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "azure-openai-responses",
+        providerName: "azure-openai-responses",
+        apiKey: "test-key",
+      });
+      const resolved = await resolvePiModelForAgent(
+        "azure-openai-responses/gpt-4.1",
+        { provider_type: "azure-openai-responses" },
+        { localProviderAuthStorageDir: storageDir },
+      );
+      expect(resolved.provider).toBe("azure");
+      expect(resolved.apiKey).toBe("test-key");
+      expect(resolved.model).toMatchObject({
+        api: "azure-openai-responses",
+        provider: "azure",
+        id: "gpt-4.1",
+      });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("resolves ChatGPT OAuth through pi OAuth credentials", async () => {
@@ -729,8 +788,6 @@ describe("pi model factory", () => {
         provider: "kilo",
         baseUrl: "https://refreshed-token.kilo.dev/v1",
       });
-      // Connection auth is per-request state carried in stream options, not
-      // baked into the provider-published Model.
       expect(resolved.headers).toMatchObject({
         Authorization: "Bearer oauth:refreshed-token",
       });

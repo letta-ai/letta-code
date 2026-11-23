@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
@@ -15,6 +15,7 @@ import { __testSetBackend, type AgentCreateBody } from "@/backend";
 import { createAssistantMessageStream } from "@/backend/dev/headless-turn-executor";
 import { LocalBackend } from "@/backend/local";
 import { settingsManager } from "@/settings-manager";
+import { removeTestDir } from "@/test-utils/test-fs";
 import { backgroundTasks } from "@/tools/impl/process_manager";
 import type { LaunchSubagentResponse } from "@/types/subagent-protocol";
 import { type AppServerHandle, startAppServer } from "./app-server";
@@ -44,7 +45,7 @@ afterEach(async () => {
     else process.env[key] = value;
   }
   savedEnv.clear();
-  if (home) await rm(home, { recursive: true, force: true });
+  if (home) await removeTestDir(home);
 });
 
 test("external tool launches a prepared child through the real App Server and child CLI", async () => {

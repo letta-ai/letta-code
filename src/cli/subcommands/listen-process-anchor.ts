@@ -29,9 +29,5 @@ export function createListenerProcessAnchorPromise(
 
   activeListenerProcessAnchors.add(anchor);
 
-  return new Promise<number>(() => {
-    // Never resolves - runs until the process receives a shutdown signal.
-    // The ref'ed MessageChannel above is a zero-wakeup process anchor for
-    // channel-only listeners whose adapters may not own a persistent handle.
-  });
+  return new Promise<number>(() => {});
 }

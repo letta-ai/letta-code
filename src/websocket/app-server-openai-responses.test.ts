@@ -553,8 +553,6 @@ describe("app-server Responses API", () => {
     expect(first.status).toBe(200);
     const firstBody = (await first.json()) as { id: string };
 
-    // Stored response IDs carry a durable conversation cursor rather than
-    // relying on an App Server process-local lookup table.
     await handle.close();
     handle = await startAppServer({
       listen: "ws://127.0.0.1:0",

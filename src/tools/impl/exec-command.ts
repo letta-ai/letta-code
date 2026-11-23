@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import { isUsableDirectory } from "@/helpers/usable-directory";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { resolveForegroundYieldMs } from "@/tools/foreground-yield";
 import {
   captureSecretRedactions,
   createSecretStreamScrubber,
@@ -20,6 +21,7 @@ import {
   backgroundProcesses,
   createBackgroundOutputFile,
   getNextExecSessionId,
+  notifyBackgroundProcessStateChanged,
   scheduleBackgroundProcessCleanup,
   scrubCompletedBackgroundOutput,
 } from "./process_manager.js";
@@ -40,7 +42,6 @@ import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
 import { assertSafeWindowsCommand } from "./windows-command-safety.js";
 
-const DEFAULT_EXEC_YIELD_TIME_MS = 10_000;
 const DEFAULT_WRITE_STDIN_YIELD_TIME_MS = 250;
 const MIN_YIELD_TIME_MS = 250;
 const MIN_EMPTY_WRITE_STDIN_YIELD_TIME_MS = 5_000;
@@ -61,14 +62,10 @@ interface ExecCommandArgs {
   yield_time_ms?: number;
   max_output_tokens?: number;
   login?: boolean;
-  // Upstream Codex also exposes sandbox-escalation fields here:
-  // sandbox_permissions, justification, prefix_rule, additional_permissions.
-  // Letta Code intentionally omits them from the model-facing schema because
-  // this harness has no Codex sandbox override / permission-profile layer;
-  // the regular Letta Code approval system still gates command execution.
   signal?: AbortSignal;
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
   secretEnv?: Record<string, string>;
+  variableEnv?: Record<string, string>;
   parentScope?: { agentId: string; conversationId: string };
 }
 
@@ -82,6 +79,7 @@ interface WriteStdinArgs {
 }
 
 interface ExecCommandResult {
+  status?: "error";
   output: string;
 }
 
@@ -97,6 +95,7 @@ interface ExecSession {
   readOffset: number;
   status: ExecSessionStatus;
   exitCode: number | null;
+  terminationSignal?: string | number | null;
   tty: boolean;
   secrets: Readonly<Record<string, string>>;
   streamScrubbers: {
@@ -298,6 +297,7 @@ function formatExecOutput(params: {
   wallTimeMs: number;
   exitCode: number | null;
   sessionId: string | null;
+  terminationSignal?: string | number | null;
   output: string;
   originalTokenCount: number;
   maxOutputTokens?: number;
@@ -310,6 +310,14 @@ function formatExecOutput(params: {
 
   if (params.exitCode !== null) {
     sections.push(`Process exited with code ${params.exitCode}`);
+  }
+  if (params.exitCode === null && params.sessionId === null) {
+    const signal = params.terminationSignal
+      ? ` (${params.terminationSignal})`
+      : "";
+    sections.push(
+      `Command was terminated${signal}; it may not have completed.`,
+    );
   }
   if (params.sessionId !== null) {
     sections.push(`Process running with session ID ${params.sessionId}`);
@@ -375,13 +383,14 @@ function buildExplicitShellLauncher(
 
 function buildExecLaunchers(args: ExecCommandArgs): string[][] {
   const login = args.login ?? true;
-  const envAliases = args.secretEnv ? Object.keys(args.secretEnv) : undefined;
+  const envAliases =
+    args.secretEnv || args.variableEnv
+      ? Object.keys({ ...args.variableEnv, ...args.secretEnv })
+      : undefined;
   if (!args.shell?.trim() || isPowerShell(args.shell)) {
     assertSafeWindowsCommand(args.cmd, {
       cwd: resolveShellWorkdir(args.workdir),
-      env: args.secretEnv
-        ? { ...getShellEnv(), ...args.secretEnv }
-        : getShellEnv(),
+      env: { ...getShellEnv(), ...args.variableEnv, ...args.secretEnv },
     });
   }
   if (args.shell?.trim()) {
@@ -405,9 +414,6 @@ function createSessionOutputAppender(params: {
   outputFile: string;
 }): (text: string, stream: "stdout" | "stderr") => void {
   return (text: string, stream: "stdout" | "stderr") => {
-    // The per-stream scrubber holds back potential partial secret matches so
-    // a credential split across output chunks stays redacted in the session
-    // buffer and the output file.
     const sanitizedText = params.session.streamScrubbers[stream].push(text);
     if (!sanitizedText) return;
     appendSessionOutput(params.session, sanitizedText, stream);
@@ -427,9 +433,7 @@ function createSessionOutputAppender(params: {
       if (bgProc) {
         try {
           bgProc.process.kill("SIGTERM");
-        } catch {
-          // Process may have already exited.
-        }
+        } catch {}
       }
     }
   };
@@ -488,12 +492,6 @@ function notifyExecCompletion(session: ExecSession): void {
   });
 }
 
-/**
- * Emit any bytes the stream scrubbers held back as potential partial secret
- * matches. The process's completion promise settles after its final output
- * events, so on session close/fail this is the last chance to route the
- * remainder into the same sinks as ordinary output.
- */
 function flushSessionStreamScrubbers(session: ExecSession): void {
   for (const stream of ["stdout", "stderr"] as const) {
     const rest = session.streamScrubbers[stream].flush();
@@ -515,15 +513,21 @@ function markSessionFailed(session: ExecSession, detail: string): void {
     scheduleBackgroundProcessCleanup(session.id);
   }
   notifyExecCompletion(session);
+  if (bgProcess) notifyBackgroundProcessStateChanged(bgProcess.runtimeScope);
   scheduleExecSessionCleanup(session.id);
 }
 
-function markSessionClosed(session: ExecSession, code: number | null): void {
+function markSessionClosed(
+  session: ExecSession,
+  code: number | null,
+  signal?: string | number | null,
+): void {
   if (session.status !== "running") return;
   flushSessionStreamScrubbers(session);
   session.status =
     code === 0 && !session.outputWriteFailed ? "completed" : "failed";
   session.exitCode = code;
+  session.terminationSignal = signal;
   session.completionDetail =
     code === null
       ? "Terminated by signal before exiting"
@@ -536,6 +540,7 @@ function markSessionClosed(session: ExecSession, code: number | null): void {
     scheduleBackgroundProcessCleanup(session.id);
   }
   notifyExecCompletion(session);
+  if (bgProcess) notifyBackgroundProcessStateChanged(bgProcess.runtimeScope);
   scheduleExecSessionCleanup(session.id);
 }
 
@@ -600,7 +605,7 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
   const id = getNextExecSessionId();
   const outputFile = createBackgroundOutputFile(`exec_${id}`);
   const cwd = resolveShellWorkdir(args.workdir);
-  const env = { ...getShellEnv(), ...(args.secretEnv ?? {}) };
+  const env = { ...getShellEnv(), ...args.variableEnv, ...args.secretEnv };
   const redactions = captureSecretRedactions(
     args.parentScope?.agentId,
     args.secretEnv ?? {},
@@ -610,10 +615,6 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
   if (!rawLauncher) {
     throw new Error("Command must be a non-empty string");
   }
-  // Confine the session (pipe or PTY) under the cross-agent shell sandbox.
-  // The spawn helpers re-note the launcher for worktree ownership, but the
-  // wrapper hides the inner shell from that inspection, so note the unwrapped
-  // launcher here first.
   const sandboxed = applyShellSandbox(rawLauncher, cwd, env);
   if (sandboxed.backend) {
     noteExpectedWorktreeForLauncher(rawLauncher, cwd);
@@ -667,6 +668,8 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
 
   backgroundProcesses.set(id, {
     process: runningProcess.process,
+    completion: runningProcess.completion,
+    terminate: runningProcess.terminate,
     command: args.cmd,
     status: session.status,
     exitCode: session.exitCode,
@@ -678,14 +681,12 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
   if (session.status !== "running") {
     try {
       runningProcess.process.kill("SIGTERM");
-    } catch {
-      // Process may have already exited.
-    }
+    } catch {}
     scheduleBackgroundProcessCleanup(id);
   }
 
   void runningProcess.completion.then(
-    ({ exitCode }) => markSessionClosed(session, exitCode),
+    ({ exitCode, signal }) => markSessionClosed(session, exitCode, signal),
     (error: unknown) => {
       if (error instanceof ShellExecutionError) {
         appendOutput(error.message, "stderr");
@@ -711,7 +712,7 @@ export async function exec_command(
   const session = await startExecSession(args);
   const yieldTimeMs = clampYieldTime(
     args.yield_time_ms,
-    DEFAULT_EXEC_YIELD_TIME_MS,
+    resolveForegroundYieldMs(),
   );
   const { output, wallTimeMs } = await waitForSessionOutput({
     session,
@@ -729,6 +730,7 @@ export async function exec_command(
     chunkId: generateChunkId(),
     wallTimeMs,
     exitCode: session.exitCode,
+    terminationSignal: session.terminationSignal,
     sessionId,
     output,
     originalTokenCount: estimateTokenCount(output),
@@ -740,6 +742,9 @@ export async function exec_command(
   }
 
   return {
+    ...(session.status !== "running" && session.exitCode === null
+      ? { status: "error" as const }
+      : {}),
     output: scrubSecretsFromString(formattedOutput, session.secrets),
   };
 }
@@ -801,6 +806,7 @@ export async function write_stdin(
     chunkId: generateChunkId(),
     wallTimeMs,
     exitCode: session.exitCode,
+    terminationSignal: session.terminationSignal,
     sessionId: nextSessionId,
     output,
     originalTokenCount: estimateTokenCount(output),
@@ -812,6 +818,9 @@ export async function write_stdin(
   }
 
   return {
+    ...(session.status !== "running" && session.exitCode === null
+      ? { status: "error" as const }
+      : {}),
     output: scrubSecretsFromString(formattedOutput, session.secrets),
   };
 }

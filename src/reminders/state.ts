@@ -7,7 +7,6 @@ export interface CommandIoReminder {
   input: string;
   output: string;
   success: boolean;
-  /** Extra context appended only in the agent-facing reminder, not shown in the UI. */
   agentHint?: string;
 }
 
@@ -29,21 +28,19 @@ export interface SharedReminderState {
   hasSentSessionContext: boolean;
   hasSentConversationBootstrap: boolean;
   pendingConversationBootstrap: boolean;
+  hasSentVariablesInfo: boolean;
+  lastSentVariablesKey: string | null;
   hasSentSecretsInfo: boolean;
   pendingSecretsInfoRefresh: boolean;
   lastSentSecretNamesKey: string | null;
   hasSentMcpServersInfo: boolean;
   lastSentMcpServerNamesKey: string | null;
-  /** Counts may be cached, but attachment discovery must run every turn. */
-  mcpToolCounts: Map<string, { toolCount: number | null; fetchedAtMs: number }>;
   lastNotifiedPermissionMode: PermissionMode | null;
   turnCount: number;
   pendingReflectionTrigger: boolean;
   pendingCommandIoReminders: CommandIoReminder[];
   pendingToolsetChangeReminders: ToolsetChangeReminder[];
-  /** True once the current low-disk episode has been reported. */
   hasNotifiedLowDiskSpace: boolean;
-  /** When set, the next session-context reminder uses this reason for its intro text. */
   pendingSessionContextReason?: SessionContextReason;
 }
 
@@ -53,12 +50,13 @@ export function createSharedReminderState(): SharedReminderState {
     hasSentSessionContext: false,
     hasSentConversationBootstrap: false,
     pendingConversationBootstrap: false,
+    hasSentVariablesInfo: false,
+    lastSentVariablesKey: null,
     hasSentSecretsInfo: false,
     pendingSecretsInfoRefresh: false,
     lastSentSecretNamesKey: null,
     hasSentMcpServersInfo: false,
     lastSentMcpServerNamesKey: null,
-    mcpToolCounts: new Map(),
     lastNotifiedPermissionMode: null,
     turnCount: 0,
     pendingReflectionTrigger: false,
@@ -72,19 +70,15 @@ export function resetSharedReminderState(state: SharedReminderState): void {
   Object.assign(state, createSharedReminderState());
 }
 
-/**
- * Re-arm one-shot execution-context reminders that compaction can evict.
- * Preserve queued reminders and change-specific refresh state.
- */
 export function markPostCompactionContextRemindersPending(
   state: SharedReminderState,
 ): void {
   state.hasSentAgentInfo = false;
   state.hasSentSessionContext = false;
   state.pendingSessionContextReason ??= "post_compaction";
+  state.hasSentVariablesInfo = false;
   state.hasSentSecretsInfo = false;
   state.hasSentMcpServersInfo = false;
-  state.mcpToolCounts.clear();
   state.lastNotifiedPermissionMode = null;
   state.hasNotifiedLowDiskSpace = false;
 }
@@ -125,6 +119,7 @@ export function enqueueToolsetChangeReminder(
 export function markSecretsInfoReminderPending(
   state: SharedReminderState,
 ): void {
+  state.hasSentVariablesInfo = false;
   state.hasSentSecretsInfo = false;
   state.pendingSecretsInfoRefresh = true;
 }

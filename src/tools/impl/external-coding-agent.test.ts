@@ -126,11 +126,13 @@ describe("external coding agent MCP metadata", () => {
 
   test("inherits local and cloud MCP discovery by default, with explicit opt-out", async () => {
     const deps = {
+      lookupParentAgent: async () => undefined,
       getLocalServerNames: (id: string) => {
         expect(id).toBe("parent");
         return ["filesystem"];
       },
-      listServerSideServers: async (id: string) => {
+      listServerSideServers: async (id: string, timeoutMs?: number) => {
+        expect(timeoutMs).toBe(5_000);
         expect(id).toBe("parent");
         return inventory;
       },
@@ -183,7 +185,6 @@ describe("external coding agent output and preflight", () => {
       const bin = join(home, ".local", "bin");
       const executable = type === "claude-code" ? "claude" : "codex";
       mkdirSync(bin, { recursive: true });
-      // Exercise real OS executable lookup, not a mocked preflight.
       const script = (source: string) =>
         `#!/bin/sh\nprintf '%s\\n' '{"loggedIn":true,"session_id":"${SESSION_ID}","result":"${source}"}'\n`;
       writeFileSync(join(bin, executable), script("native"), { mode: 0o755 });
@@ -407,7 +408,12 @@ describe("external coding agent output and preflight", () => {
     async (type, auth, output) => {
       let receivedEnv: NodeJS.ProcessEnv | undefined;
       const result = await runExternalCodingAgent(
-        { type, prompt: "test", parentAgentId: "parent" },
+        {
+          type,
+          prompt: "test",
+          parentAgentId: "parent",
+          parentConversationId: "conversation-parent",
+        },
         {
           env: { ...process.env, LETTA_ACTING_USER_ID: "ambient-user" },
           runPreflight: async () => ({ exitCode: 0, stdout: auth, stderr: "" }),
@@ -427,6 +433,9 @@ describe("external coding agent output and preflight", () => {
       expect(receivedEnv?.AGENT_ID).toBe("parent");
       expect(receivedEnv?.LETTA_AGENT_ID).toBe("parent");
       expect(receivedEnv?.LETTA_PARENT_AGENT_ID).toBe("parent");
+      expect(receivedEnv?.LETTA_PARENT_CONVERSATION_ID).toBe(
+        "conversation-parent",
+      );
       expect(receivedEnv?.LETTA_CODE_AGENT_ROLE).toBe("subagent");
       expect(receivedEnv?.LETTA_ACTING_USER_ID).toBe("ambient-user");
     },
@@ -589,7 +598,6 @@ describe("external coding agent vault secrets", () => {
     expect(result.report).toContain("the token is");
   });
 
-  // Each secret's last 16 characters must not appear anywhere, raw or escaped.
   test.each([
     ["a plain token", "ghp_exported_vault_value_123"],
     [
@@ -609,7 +617,6 @@ describe("external coding agent vault secrets", () => {
       { DEPLOY_KEY: secret },
     );
     const input = { command: `printf '%s' "${secret}" > key` };
-    // Workers send `args` as serialized JSON, where the value is escaped.
     listeners.onToolCall?.({
       id: "c1",
       name: "Bash",

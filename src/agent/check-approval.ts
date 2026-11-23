@@ -1,6 +1,3 @@
-// src/agent/check-approval.ts
-// Check for pending approvals and retrieve recent message history when resuming an agent/conversation
-
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
@@ -12,13 +9,9 @@ import { getBackend } from "@/backend";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
 
-// Backfill should feel like "the last turn(s)", not "the last N raw messages".
-// Fetch every renderable message type so the TUI can reconstruct the transcript.
-const BACKFILL_PRIMARY_MESSAGE_LIMIT = 10; // user/assistant/reasoning/event/summary
-const BACKFILL_MAX_RENDERABLE_MESSAGES = 40; // safety cap
+const BACKFILL_PRIMARY_MESSAGE_LIMIT = 10;
+const BACKFILL_MAX_RENDERABLE_MESSAGES = 40;
 
-// We fetch more than we render so tool-heavy turns don't push the last
-// user-visible assistant message out of the backfill window.
 const BACKFILL_PAGE_LIMIT = 50;
 const BACKFILL_MIN_ASSISTANT = 1;
 
@@ -33,18 +26,13 @@ const RESUME_BACKFILL_MESSAGE_TYPES: MessageType[] = [
   "approval_response_message",
 ];
 
-/**
- * Check if message backfilling is enabled via LETTA_BACKFILL env var.
- * Defaults to true. Set LETTA_BACKFILL=0 or LETTA_BACKFILL=false to disable.
- */
 function isBackfillEnabled(): boolean {
   const val = process.env.LETTA_BACKFILL;
-  // Default to enabled (true) - only disable if explicitly set to "0" or "false"
   return val !== "0" && val !== "false";
 }
 
 export interface ResumeData {
-  pendingApproval: ApprovalRequest | null; // Deprecated: use pendingApprovals
+  pendingApproval: ApprovalRequest | null;
   pendingApprovals: ApprovalRequest[];
   messageHistory: Message[];
   conversation?: Conversation;
@@ -63,15 +51,7 @@ export function isResumedConversation(
 }
 
 export interface GetResumeDataOptions {
-  /**
-   * Controls whether backfill message history should be fetched.
-   * Defaults to true to preserve existing /resume behavior.
-   */
   includeMessageHistory?: boolean;
-  /**
-   * Recovery decides from pending approvals, so it must see a failed read
-   * rather than an empty one. Interactive resume keeps the empty fallback.
-   */
   throwOnReadError?: boolean;
 }
 
@@ -93,21 +73,17 @@ function approvalRequestsFromMessage(
 ): ApprovalRequest[] {
   const approvalMsg = messageToCheck as ApprovalMessage;
 
-  // Use tool_calls array (new) or fallback to tool_call (deprecated)
   const toolCalls = Array.isArray(approvalMsg.tool_calls)
     ? approvalMsg.tool_calls
     : approvalMsg.tool_call
       ? [approvalMsg.tool_call]
       : [];
 
-  // Extract ALL tool calls for parallel approval support
   type ToolCallEntry = {
     tool_call_id?: string;
     name?: string;
     arguments?: string;
   };
-  // The approval_request_message's server-assigned id rides along so
-  // downstream emissions about these tool calls reuse it (LET-10608).
   const messageId =
     "id" in messageToCheck && typeof messageToCheck.id === "string"
       ? messageToCheck.id
@@ -135,10 +111,6 @@ function logPendingApprovals(pendingApprovals: ApprovalRequest[]): void {
   }
 }
 
-/**
- * Extract approval requests from an approval_request_message.
- * Exported for testing parallel tool call handling.
- */
 export function extractApprovals(messageToCheck: Message): {
   pendingApproval: ApprovalRequest | null;
   pendingApprovals: ApprovalRequest[];
@@ -310,11 +282,6 @@ async function retrieveMessageVariantsForPendingApproval(
   }
 }
 
-/**
- * Prepare message history for backfill, trimming orphaned tool returns.
- * Messages should already be in chronological order (oldest first).
- */
-// Exported for tests: resume UX depends on deterministic message-type filtering.
 export function prepareMessageHistory(messages: Message[]): Message[] {
   const isRenderable = (msg: Message): boolean => {
     const t = msg.message_type;
@@ -329,16 +296,12 @@ export function prepareMessageHistory(messages: Message[]): Message[] {
     ) {
       return true;
     }
-    // Newer servers may include extra message types (event/summary) that we render in backfill.
     const ts = t as string | undefined;
     return ts === "event_message" || ts === "summary_message";
   };
 
   const renderable = messages.filter(isRenderable);
 
-  // Walk backwards until we've captured enough "primary" messages to anchor
-  // the replay (user/assistant/reasoning + high-level events), but include tool
-  // messages in-between so the last turn still makes sense.
   const isPrimary = (msg: Message): boolean => {
     const t = msg.message_type;
     return (
@@ -370,7 +333,6 @@ export function prepareMessageHistory(messages: Message[]): Message[] {
     messageHistory = messageHistory.slice(-BACKFILL_MAX_RENDERABLE_MESSAGES);
   }
 
-  // Skip any leading orphaned tool returns (incomplete turn after tail clipping).
   while (messageHistory[0]?.message_type === "tool_return_message") {
     messageHistory = messageHistory.slice(1);
   }
@@ -378,10 +340,6 @@ export function prepareMessageHistory(messages: Message[]): Message[] {
   return messageHistory;
 }
 
-/**
- * Sort messages chronologically (oldest first) by date.
- * The API doesn't guarantee order, so we must sort explicitly.
- */
 function sortChronological(messages: Message[]): Message[] {
   const messageTypeRank = (messageType: string | undefined): number => {
     switch (messageType) {
@@ -407,7 +365,6 @@ function sortChronological(messages: Message[]): Message[] {
   };
 
   return [...messages].sort((a, b) => {
-    // All message types *should* have 'date', but be defensive.
     const ta = a.date ? new Date(a.date).getTime() : 0;
     const tb = b.date ? new Date(b.date).getTime() : 0;
     if (!Number.isFinite(ta) && !Number.isFinite(tb)) return 0;
@@ -429,8 +386,6 @@ function collectResumeTailMessages(
   for (const m of tailMessages) {
     if (!m?.id) continue;
 
-    // Prefer otid when available (it is unique across variants). Otherwise,
-    // include message_type to avoid dropping variants that share ids.
     const key =
       "otid" in m && (m as { otid?: unknown }).otid
         ? `otid:${String((m as { otid?: unknown }).otid)}`
@@ -504,17 +459,6 @@ async function pendingApprovalsFromTailOrRetrieve(
   return pendingApprovalsFromMessageVariants(retrievedMessages);
 }
 
-/**
- * Gets data needed to resume an agent session.
- * Checks for pending approvals and retrieves recent message history for backfill.
- *
- * The source of truth for pending approvals is `conversation.in_context_message_ids`.
- * We anchor our message fetch to that, not arbitrary recent cursor messages.
- *
- * @param agent - The agent state
- * @param conversationId - Optional conversation ID (uses conversations API)
- * @returns Pending approval (if any) and recent message history
- */
 export async function getResumeDataFromBackend(
   agent: AgentState,
   conversationId?: string,
@@ -636,7 +580,6 @@ export async function getResumeDataFromBackend(
       messageHistory: prepareMessageHistory(messages),
     };
   } catch (error) {
-    // Let callers distinguish a failed read from genuinely empty approval state.
     if (error instanceof APIError && isNotFoundError(error)) {
       throw error;
     }

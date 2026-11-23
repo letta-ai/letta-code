@@ -1,12 +1,3 @@
-// src/utils/debug.ts
-// Debug logging utility.
-//
-// Screen output: controlled by LETTA_DEBUG=1 (or DEBUG=1 for legacy compatibility),
-// or LETTA_DEBUG_FILE for a custom path.
-// File output:   always written to ~/.letta/logs/debug/{agent-id}/{session-id}.log
-//                once debugLogFile.init() has been called.  Before init, lines are
-//                silently dropped (no file path yet).
-
 import {
   appendFileSync,
   existsSync,
@@ -19,14 +10,6 @@ import { join } from "node:path";
 import { format } from "node:util";
 import { resolveGlobalConfigDir } from "@/utils/settings-path";
 
-// ---------------------------------------------------------------------------
-// Screen-output helpers (unchanged behaviour)
-// ---------------------------------------------------------------------------
-
-/**
- * Check if debug mode is enabled via LETTA_DEBUG env var.
- * Also accepts DEBUG=1|true for legacy compatibility.
- */
 export function isDebugEnabled(): boolean {
   const lettaDebug = process.env.LETTA_DEBUG;
   const legacyDebug = process.env.DEBUG;
@@ -43,37 +26,28 @@ function getDebugFile(): string | null {
   return path && path.trim().length > 0 ? path : null;
 }
 
-/** Print to screen (or LETTA_DEBUG_FILE). Only called when LETTA_DEBUG=1. */
 function printDebugLine(line: string, level: "log" | "warn" = "log"): void {
   const debugFile = getDebugFile();
   if (debugFile) {
     try {
       appendFileSync(debugFile, line, { encoding: "utf8" });
       return;
-    } catch {
-      // Fall back to console if file write fails
-    }
+    } catch {}
   }
   const colored =
     level === "warn"
-      ? `\x1b[38;5;167m${line.trimEnd()}\x1b[0m` // muted red
-      : `\x1b[38;5;179m${line.trimEnd()}\x1b[0m`; // muted golden yellow
+      ? `\x1b[38;5;167m${line.trimEnd()}\x1b[0m`
+      : `\x1b[38;5;179m${line.trimEnd()}\x1b[0m`;
   console.error(colored);
 }
 
-// ---------------------------------------------------------------------------
-// Always-on debug log file
-// ---------------------------------------------------------------------------
-
 const DEBUG_LOG_DIR = join(resolveGlobalConfigDir(), "logs", "debug");
 const MAX_SESSION_FILES = 5;
-const MAX_LOG_BYTES = 10 * 1024 * 1024; // 10 MB per session file
+const MAX_LOG_BYTES = 10 * 1024 * 1024;
 const DEFAULT_TAIL_LINES = 50;
 
 interface DebugLogFileOptions {
-  /** Override the log root (tests). Defaults to ~/.letta/logs/debug. */
   dir?: string;
-  /** Override the per-file size cap in bytes (tests). */
   maxBytes?: number;
 }
 
@@ -85,11 +59,6 @@ class DebugLogFile {
   private maxBytes = MAX_LOG_BYTES;
   private truncationNoted = false;
 
-  /**
-   * Initialize for an agent + session. Call once at session start.
-   * After this, every debugLog/debugWarn call is persisted to disk.
-   * Respects LETTA_CODE_TELEM=0 — skips file logging when telemetry is disabled.
-   */
   init(
     agentId: string,
     sessionId: string,
@@ -107,12 +76,8 @@ class DebugLogFile {
     this.pruneOldSessions();
   }
 
-  /** Append a single line to the log file (best-effort, sync). */
   appendLine(line: string): void {
     if (!this.logPath) return;
-    // Cap per-file size so a long session cannot fill the disk. Unlike the
-    // listener session log we do not rotate here: the file is addressed by
-    // session id, and getTail() reads this exact path.
     if (this.bytesWritten >= this.maxBytes) {
       if (!this.truncationNoted) {
         this.truncationNoted = true;
@@ -131,12 +96,9 @@ class DebugLogFile {
     try {
       appendFileSync(this.logPath, line, { encoding: "utf8" });
       this.bytesWritten += Buffer.byteLength(line, "utf8");
-    } catch {
-      // Best-effort — never crash the app for debug logging
-    }
+    } catch {}
   }
 
-  /** Read the last N lines from the current log file. */
   getTail(maxLines = DEFAULT_TAIL_LINES): string | undefined {
     if (!this.logPath) return undefined;
     try {
@@ -156,9 +118,7 @@ class DebugLogFile {
         mkdirSync(this.agentDir, { recursive: true });
       }
       this.dirCreated = true;
-    } catch {
-      // Silently ignore — will retry on next append
-    }
+    } catch {}
   }
 
   private pruneOldSessions(): void {
@@ -173,23 +133,14 @@ class DebugLogFile {
         for (const file of toDelete) {
           try {
             unlinkSync(join(this.agentDir, file));
-          } catch {
-            // best-effort cleanup
-          }
+          } catch {}
         }
       }
-    } catch {
-      // best-effort cleanup
-    }
+    } catch {}
   }
 }
 
-/** Singleton — import and call init() once per session. */
 export const debugLogFile = new DebugLogFile();
-
-// ---------------------------------------------------------------------------
-// Core write function
-// ---------------------------------------------------------------------------
 
 function writeDebugLine(
   prefix: string,
@@ -201,23 +152,13 @@ function writeDebugLine(
   const body = format(`[${prefix}] ${message}`, ...args);
   const line = `${ts} ${body}\n`;
 
-  // Always persist to the session log file
   debugLogFile.appendLine(line);
 
-  // Screen output only when LETTA_DEBUG is on
   if (isDebugEnabled()) {
     printDebugLine(line, level);
   }
 }
 
-// ---------------------------------------------------------------------------
-// Public API (unchanged signatures)
-// ---------------------------------------------------------------------------
-
-/**
- * Log a debug message. Always written to the session log file.
- * Only printed to screen when LETTA_DEBUG=1.
- */
 export function debugLog(
   prefix: string,
   message: string,
@@ -226,10 +167,6 @@ export function debugLog(
   writeDebugLine(prefix, message, args);
 }
 
-/**
- * Log a debug warning. Always written to the session log file.
- * Only printed to screen when LETTA_DEBUG=1.
- */
 export function debugWarn(
   prefix: string,
   message: string,

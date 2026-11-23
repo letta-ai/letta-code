@@ -13,7 +13,7 @@ import {
   DEFAULT_ROOT_MEMORY_BLOCK,
   LETTA_CODE_AGENT_TYPE,
 } from "@/agent/create-agent-request";
-import { resolveModel } from "@/agent/model-catalog";
+import { getDefaultModel, resolveModel } from "@/agent/model-catalog";
 import { updateAgentSystemPromptMemfs } from "@/agent/modify";
 import { buildCreateAgentOptionsForPersonality } from "@/agent/personality";
 import {
@@ -49,7 +49,7 @@ describe("buildCreateAgentRequest", () => {
       include_base_tool_rules: false,
       initial_message_sequence: [],
       parallel_tool_calls: true,
-      compaction_settings: { model: "letta/auto" },
+      compaction_settings: { model: "openai/gpt-5.2" },
     });
     expect(request).not.toHaveProperty("name");
     expect(request).not.toHaveProperty("description");
@@ -222,19 +222,17 @@ describe("buildCreateAgentRequestForPersonality", () => {
       });
       const personality = getPersonalityOption(personalityId);
 
-      // Same content the CLI's createAgent() would send for this personality.
       expect(request.name).toBe(cliOptions.name as string);
       expect(request.description).toBe(cliOptions.description as string);
       expect(request.memory_blocks).toEqual([
         DEFAULT_ROOT_MEMORY_BLOCK,
         ...(cliOptions.memoryBlocks as typeof request.memory_blocks),
       ]);
-      expect(request.model).toBe(
-        resolveModel(personality.defaultModel ?? "auto") as string,
-      );
+      const expectedModel = personality.defaultModel
+        ? (resolveModel(personality.defaultModel) as string)
+        : getDefaultModel();
+      expect(request.model).toBe(expectedModel);
 
-      // Direct Cloud creation and the CLI Cloud path both delegate the default
-      // prompt to the service. Local CLI creation still resolves it client-side.
       expect(cliOptions.memoryPromptMode).toBe("root-memfs");
       expect(request.system).toBeNull();
 
@@ -252,7 +250,7 @@ describe("buildCreateAgentRequestForPersonality", () => {
       expect(request.include_base_tool_rules).toBe(false);
       expect(request.initial_message_sequence).toEqual([]);
       expect(request.parallel_tool_calls).toBe(true);
-      expect(request.compaction_settings).toEqual({ model: "letta/auto" });
+      expect(request.compaction_settings).toEqual({ model: expectedModel });
     }
   });
 

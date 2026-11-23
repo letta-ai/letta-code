@@ -85,10 +85,6 @@ export async function discoverFallbackRunIdWithTimeout(
   );
 }
 
-/**
- * Attempt to discover a run ID to resume when the initial stream failed before
- * any run_id-bearing chunk arrived.
- */
 export async function discoverFallbackRunIdForResume(
   client: RunsListClient,
   ctx: StreamRequestContext,
@@ -109,9 +105,6 @@ export async function discoverFallbackRunIdForResume(
     return toRunsArray(response).filter((run) => {
       if (!run.id) return false;
       if (run.status !== "running") return false;
-      // Best-effort temporal filter: only consider runs created after
-      // this send request started. In rare concurrent-send races within
-      // the same conversation, this heuristic can still pick a neighbor run.
       return parseRunCreatedAtMs(run) >= requestStartedAtMs;
     });
   };
@@ -122,13 +115,10 @@ export async function discoverFallbackRunIdForResume(
   }> = [];
 
   if (ctx.conversationId === "default") {
-    // Default conversation lookup by conversation id first.
     lookupQueries.push({ conversation_id: ctx.resolvedConversationId });
   } else {
-    // Named conversation: first use the explicit conversation id.
     lookupQueries.push({ conversation_id: ctx.conversationId });
 
-    // Keep resolved route as backup only when it differs.
     if (ctx.resolvedConversationId !== ctx.conversationId) {
       lookupQueries.push({ conversation_id: ctx.resolvedConversationId });
     }

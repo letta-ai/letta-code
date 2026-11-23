@@ -97,7 +97,6 @@ function parseTimestamp(value: unknown): number | undefined {
   }
 }
 
-/** Parse one Baileys `messages.reaction` entry without resolving identities. */
 export function parseWhatsAppReactionEntry(
   entry: unknown,
 ): WhatsAppReaction | null {

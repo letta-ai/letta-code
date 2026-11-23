@@ -22,10 +22,6 @@ describe("updateToolExecutionContextMcpOriginator", () => {
   });
 
   test("rebinds a live context's originator id and clears it on null", () => {
-    // A parked turn that consumes queued work from another super run keeps
-    // executing with its frozen tool context; rebinding is what makes the
-    // origin swap a stable boundary for subsequent per-call token lookups
-    // (evil-shub r4300657672).
     contexts().set("ctx-originator-test", {
       runtimeContext: { mcpOriginatorSuperRunId: "sr-a" },
     });

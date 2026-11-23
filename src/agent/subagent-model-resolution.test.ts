@@ -6,11 +6,7 @@ import {
   estimateStartupContextTokens,
   REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT,
 } from "@/agent/subagents/context-budget";
-import {
-  buildSubagentArgs,
-  recallPromptForBackend,
-  shouldPrependDeploySystemReminder,
-} from "@/agent/subagents/manager";
+import { buildSubagentArgs } from "@/agent/subagents/manager";
 import {
   resolveSubagentLauncher,
   resolveSubagentWorkingDirectory,
@@ -19,6 +15,10 @@ import {
   getModelHandleFromAgent,
   resolveSubagentModel,
 } from "@/agent/subagents/subagent-model";
+import {
+  recallPromptForBackend,
+  shouldPrependDeploySystemReminder,
+} from "@/agent/subagents/subagent-reminders";
 
 describe("recallPromptForBackend", () => {
   test("uses separate API and local recall prompts", () => {
@@ -354,7 +354,6 @@ describe("buildSubagentArgs", () => {
     );
 
     expect(args[args.indexOf("--computer") + 1]).toBe("office-mac");
-    // The child submits and exits; the parent follows the remote turn.
     expect(args).toContain("--no-wait");
   });
 
@@ -592,7 +591,6 @@ describe("buildSubagentArgs", () => {
       "agent-existing-reflection",
     );
 
-    // --base-tools requires --new and only applies to fresh agent creation.
     expect(args).not.toContain("--base-tools");
   });
   test("adds MessageChannel to fork subagent scoped tools when inheriting a channel tool context", () => {
@@ -758,14 +756,14 @@ describe("resolveSubagentModel", () => {
     expect(result).toBe("openai/parent-model");
   });
 
-  test("explicit user inherit still allows default fallback without a parent model", async () => {
+  test("explicit user inherit without a parent model skips Letta-hosted defaults", async () => {
     const result = await resolveSubagentModel({
       userModel: "inherit",
       recommendedModel: "inherit",
-      availableHandles: new Set(["letta/auto"]),
+      availableHandles: new Set(["letta/glm"]),
     });
 
-    expect(result).toBe("letta/auto");
+    expect(result).toBeNull();
   });
 
   test("inherits parent when recommended is inherit", async () => {
@@ -778,19 +776,19 @@ describe("resolveSubagentModel", () => {
     expect(result).toBe("lc-anthropic/parent-model");
   });
 
-  test("uses auto default when available", async () => {
+  test("does not default to a Letta-hosted model", async () => {
     const result = await resolveSubagentModel({
       recommendedModel: "sonnet-4.5",
-      availableHandles: new Set(["letta/auto", "anthropic/test-model"]),
+      availableHandles: new Set(["letta/glm", "anthropic/test-model"]),
     });
 
-    expect(result).toBe("letta/auto");
+    expect(result).toBeNull();
   });
 
   test("uses auto-fast default for free tier when available", async () => {
     const result = await resolveSubagentModel({
       billingTier: "free",
-      availableHandles: new Set(["letta/auto-fast", "letta/auto"]),
+      availableHandles: new Set(["letta/auto-fast", "letta/glm"]),
     });
 
     expect(result).toBe("letta/auto-fast");
@@ -802,19 +800,19 @@ describe("resolveSubagentModel", () => {
       recommendedModel: "inherit",
       parentModelHandle: "openai/gpt-5",
       billingTier: "free",
-      availableHandles: new Set(["letta/auto-fast", "letta/auto"]),
+      availableHandles: new Set(["letta/auto-fast", "letta/glm"]),
     });
 
     expect(result).toBe("openai/gpt-5");
   });
 
-  test("free tier falls back to auto when auto-fast is unavailable", async () => {
+  test("free tier does not fall back to a Letta-hosted default", async () => {
     const result = await resolveSubagentModel({
       billingTier: "free",
-      availableHandles: new Set(["letta/auto"]),
+      availableHandles: new Set(["letta/glm"]),
     });
 
-    expect(result).toBe("letta/auto");
+    expect(result).toBeNull();
   });
 
   test("falls back when auto is unavailable", async () => {
@@ -840,7 +838,7 @@ describe("resolveSubagentModel", () => {
     const result = await resolveSubagentModel({
       userModel: "openai/gpt-5",
       recommendedModel: "sonnet-4.5",
-      availableHandles: new Set(["letta/auto", "openai/gpt-5"]),
+      availableHandles: new Set(["letta/glm", "openai/gpt-5"]),
     });
 
     expect(result).toBe("openai/gpt-5");
@@ -897,14 +895,14 @@ describe("resolveSubagentModel", () => {
   test("user-configured models override local parent inheritance", async () => {
     const result = await resolveSubagentModel({
       subagentType: "reflection",
-      recommendedModel: "auto",
+      recommendedModel: "anthropic/test-model",
       recommendedModelSource: "user",
       parentModelHandle: "lmstudio/local-model",
       backendMode: "local",
-      availableHandles: new Set(["letta/auto"]),
+      availableHandles: new Set(["anthropic/test-model"]),
     });
 
-    expect(result).toBe("letta/auto");
+    expect(result).toBe("anthropic/test-model");
   });
 
   test("explicit Task models override user-configured models", async () => {
@@ -915,7 +913,7 @@ describe("resolveSubagentModel", () => {
       recommendedModelSource: "user",
       parentModelHandle: "lmstudio/local-model",
       backendMode: "local",
-      availableHandles: new Set(["letta/auto", "openai/gpt-5"]),
+      availableHandles: new Set(["letta/glm", "openai/gpt-5"]),
     });
 
     expect(result).toBe("openai/gpt-5");
@@ -945,11 +943,11 @@ describe("resolveSubagentModel", () => {
   test("resolves reflection subagent model aliases before honoring overrides", async () => {
     const result = await resolveSubagentModel({
       subagentType: "reflection",
-      recommendedModel: "auto",
-      availableHandles: new Set(["letta/auto"]),
+      recommendedModel: "auto-fast",
+      availableHandles: new Set(["letta/auto-fast"]),
     });
 
-    expect(result).toBe("letta/auto");
+    expect(result).toBe("letta/auto-fast");
   });
 
   test("does not override an explicit user model for reflection subagents", async () => {
@@ -967,7 +965,7 @@ describe("resolveSubagentModel", () => {
     const result = await resolveSubagentModel({
       subagentType: "general-purpose",
       recommendedModel: "anthropic/test-model",
-      availableHandles: new Set(["letta/auto", "anthropic/test-model"]),
+      availableHandles: new Set(["letta/glm", "anthropic/test-model"]),
     });
 
     expect(result).toBe("anthropic/test-model");

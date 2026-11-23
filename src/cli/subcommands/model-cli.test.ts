@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
   filterStructuredOutputRows,
   structuredOutputSupport,
 } from "@/cli/subcommands/model";
+import { removeTestDir } from "@/test-utils/test-fs";
 
 test("a BYOK model's capability overrides a matching hosted preset", () => {
   const preset = {
@@ -46,7 +47,6 @@ test("the structured-output filter keeps only explicit support", () => {
   });
 });
 
-// Real CLI subprocesses and disk-backed local backend; no inference or mocks.
 describe("model CLI", () => {
   let home: string;
   let env: NodeJS.ProcessEnv;
@@ -99,8 +99,6 @@ describe("model CLI", () => {
     args: string[] = [],
     overrides: NodeJS.ProcessEnv = {},
   ) {
-    // Inspect persisted state directly; don't retain a public diagnostic
-    // command just to compare both scopes in regression tests.
     const explicitAgent = args[0] === "--agent" ? args[1] : undefined;
     const explicitConversation = ["--conversation", "--conv"].includes(
       args[0] ?? "",
@@ -184,7 +182,7 @@ describe("model CLI", () => {
   }, 30000);
 
   afterAll(async () => {
-    if (home) await rm(home, { recursive: true, force: true });
+    if (home) await removeTestDir(home);
   });
 
   test("removes agents config and its help/options", async () => {
@@ -676,7 +674,6 @@ describe("model CLI", () => {
       const otherScope = await config(
         scope === "agent" ? ["--agent", agentId] : ["--agent", otherAgentId],
       );
-      // No handle: only the given fields change, from a separate CLI process.
       const result = await cli([
         "set",
         "--model-settings",
@@ -697,7 +694,6 @@ describe("model CLI", () => {
         parallel_tool_calls: false,
       });
       expect(after.effective.model_settings.temperature).toBe(0.42);
-      // The other scope is untouched.
       expect(
         await config(
           scope === "agent" ? ["--agent", agentId] : ["--agent", otherAgentId],
@@ -708,7 +704,6 @@ describe("model CLI", () => {
       expect(JSON.parse(got.stdout).model_settings.max_output_tokens).toBe(
         16384,
       );
-      // Unredacted secret survives the merge on disk.
       const secret = await run([
         "-e",
         `

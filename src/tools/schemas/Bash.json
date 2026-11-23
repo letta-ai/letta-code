@@ -7,7 +7,7 @@
     },
     "timeout": {
       "type": "number",
-      "description": "Commands run until they exit unless you pass a timeout in milliseconds. Foreground timeouts have a maximum of 600000."
+      "description": "Timeout in milliseconds; foreground timeouts have a maximum of 600000. Without it, a command that can't continue in the background times out after 120000; others run until they exit."
     },
     "description": {
       "type": "string",
@@ -18,7 +18,7 @@
       "description": "Set to true only when the command should return a task ID immediately. Ordinary commands already yield automatically if they are still running after a brief wait, and completion is delivered without polling."
     }
   },
-  "required": ["command", "description"],
+  "required": ["command"],
   "additionalProperties": false,
   "$schema": "http://json-schema.org/draft-07/schema#"
 }

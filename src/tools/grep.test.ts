@@ -31,7 +31,6 @@ describe("Grep tool", () => {
       expect(result.output).toContain("test2.txt");
       expect(result.output).not.toContain("test3.txt");
     } catch (error) {
-      // Ripgrep might not be available in test environment
       if (error instanceof Error && error.message.includes("ENOENT")) {
         console.log("Skipping grep test - ripgrep not available");
       } else {
@@ -118,7 +117,7 @@ describe("Grep tool", () => {
       expect(result.files).toBe(4);
       expect(result.output).toContain("showing 2");
       const lines = result.output.split("\n").filter(Boolean);
-      expect(lines.length).toBe(3); // header + 2 files
+      expect(lines.length).toBe(3);
     } catch (error) {
       if (error instanceof Error && error.message.includes("ENOENT")) {
         console.log("Skipping grep test - ripgrep not available");
@@ -172,7 +171,7 @@ describe("Grep tool", () => {
       expect(result.files).toBe(4);
       expect(result.output).toContain("showing 2");
       const lines = result.output.split("\n").filter(Boolean);
-      expect(lines.length).toBe(3); // header + 2 files
+      expect(lines.length).toBe(3);
     } catch (error) {
       if (error instanceof Error && error.message.includes("ENOENT")) {
         console.log("Skipping grep test - ripgrep not available");

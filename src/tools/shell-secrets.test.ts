@@ -214,9 +214,6 @@ describe("shell secret execution", () => {
     const runtimeScript = createTempRuntimeScriptCommand(
       "const value = process.env.PASSWORD ?? ''; process.stdout.write(value.slice(0, 2)); setTimeout(() => process.stdout.write(value.slice(2)), 25)",
     );
-    // Receive the completion notice here. Otherwise it waits in the
-    // process-wide queue bridge and a later test file's listener runs it as
-    // an extra turn.
     const queued: QueuedMessage[] = [];
     setMessageQueueAdder((message) => queued.push(message));
     try {

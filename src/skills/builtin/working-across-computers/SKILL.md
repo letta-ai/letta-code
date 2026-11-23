@@ -94,13 +94,24 @@ letta sandbox download <sandbox-path> --agent <agent-id> --to <local-path>
 
 ## Publish an app from a managed Cloud sandbox
 
-After starting an HTTP, WebSocket, or SSE app on a sandbox port, expose it at a public Letta URL:
+After starting an HTTP, WebSocket, or SSE app on a sandbox port, expose it at a private Letta URL:
 
 ```bash
 letta sandbox expose <port> --expires-in <duration>
 ```
 
-Choose the lifetime explicitly with a whole-second, minute, or hour duration such as `30m`, `2h`, or `24h`. The supported range is 1 minute through 24 hours; there is no implicit default. This command works only inside the managed Cloud sandbox that owns the app. It does not accept `--agent` or `--conversation`; run it in the same sandbox as the service. The JSON result contains `{ url, port, expiresAt }`. Anyone holding the URL can access the app until the exact `expiresAt`, so share it only where the user requested.
+Choose the lifetime explicitly with a whole-second, minute, or hour duration such as `30m`, `2h`, or `24h`. The supported range is 1 minute through 24 hours; there is no implicit default. This command works only inside the managed Cloud sandbox that owns the app. It does not accept `--agent` or `--conversation`; run it in the same sandbox as the service. The JSON result contains `{ url, port, expiresAt, private: true }`. Only signed-in members of the owning organization can open a private exposure. The legacy `--private` flag is accepted as a no-op, so omitting it is preferred.
+
+Use `--public` only when the requester explicitly wants anyone holding the URL to have access:
+
+```bash
+letta sandbox expose <port> --public --expires-in <duration>
+```
+
+Public exposure URLs are bearer capabilities until `expiresAt`; share them only where requested. Never add `--public` merely to avoid a sign-in requirement.
+
+An exposed app only works while its sandbox is running. The sandbox sleeps after it has been idle for a while, and the app's server process does not survive a restart.
+Treat exposed apps as temporary demos. Anything meant to stay up goes on Vercel.
 
 To add time to the same URL and port, extend the active exposure before it expires:
 

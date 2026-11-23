@@ -144,7 +144,6 @@ describe("DeviceGitContextCache", () => {
         expect(await cache.refresh(binDir)).toBeNull();
         expect(Date.now() - started).toBeLessThan(5_000);
 
-        // Direct call plus one fresh git spawn per cache refresh.
         const lines = (await readFile(invocations, "utf-8")).trim().split("\n");
         expect(lines).toEqual(["rev-parse", "rev-parse", "rev-parse"]);
       } finally {

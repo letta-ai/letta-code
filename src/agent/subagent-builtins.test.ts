@@ -112,7 +112,6 @@ describe("built-in subagents", () => {
     ]) {
       expect(names).not.toContain(hidden);
     }
-    // Internal types stay loadable for harness launches.
     const configs = await getAllSubagentConfigs(tempDir);
     expect(configs.init).toBeDefined();
     expect(configs.reflection).toBeDefined();
@@ -211,12 +210,10 @@ Custom prompt body`,
       expect(resolved.systemPrompt).not.toContain("MemFS v2");
       expect(resolved.systemPrompt).not.toContain("$MEMORY_DIR/system/");
       if (name === "init") {
-        // shared v2 layout markers
         expect(resolved.systemPrompt).toContain("MEMORY.md");
         expect(resolved.systemPrompt).toContain("no frontmatter");
         expect(resolved.systemPrompt).toContain("`name` and `description`");
       } else {
-        // writers get the v2 layout from the preloaded memory skills
         expect(config.skills).toEqual(["creating-skills"]);
         expect(resolved.skills).toEqual([
           "creating-skills",
@@ -233,7 +230,6 @@ Custom prompt body`,
       expect(localResolved.systemPrompt).toBe(resolved.systemPrompt);
     }
 
-    // per-prompt operational phrases proving copied v1 guidance remains
     const opsPhrases: Record<string, string[]> = {
       reflection: [
         "## Commit",
@@ -287,9 +283,6 @@ Custom prompt body`,
   });
 
   test("built-ins never list a removed tool", () => {
-    // Read the shipped files directly: every built-in variant (standard,
-    // local-memfs, memfs-v2) lives here, and discovery would also pull in the
-    // developer's own ~/.letta/agents and project subagents.
     const builtinDir = join(import.meta.dir, "subagents", "builtin");
     const files = readdirSync(builtinDir).filter((file) =>
       file.endsWith(".md"),

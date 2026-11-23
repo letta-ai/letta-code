@@ -119,9 +119,6 @@ export function cleanupListenerConnection(
       queuedMessage,
     ] of conversationRuntime.queuedMessagesByItemId) {
       if (queuedMessage.connectionId === connectionId) {
-        // The accepted payload is process-owned once queued. Detach only the
-        // vanished delivery route; the queue pump will wait for a subscribed
-        // replacement and the durable ledger remains replayable meanwhile.
         conversationRuntime.queuedMessagesByItemId.set(itemId, {
           ...queuedMessage,
           connectionId: undefined,
@@ -192,7 +189,6 @@ export function closeListenerRuntimeConnections(
         typeof socket.once === "function" &&
         typeof socket.removeListener === "function"
       ) {
-        // ws can emit an error after close() while a handshake is still pending.
         const ignoreError = () => {};
         socket.on("error", ignoreError);
         socket.once("close", () => {

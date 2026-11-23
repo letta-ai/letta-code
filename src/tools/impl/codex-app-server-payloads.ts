@@ -6,10 +6,6 @@ import {
   toolOutputText,
 } from "./external-tool-call";
 
-// Pure readers for Codex app-server notification payloads: turn results,
-// capacity errors, and tool-like thread items.
-
-/** Delays before the second and third attempts of a turn rejected for capacity. */
 export const CAPACITY_RETRY_DELAYS_MS = [1_000, 2_000] as const;
 
 export const CODEX_CAPACITY_ERROR =
@@ -28,10 +24,6 @@ export function readString(value: unknown, key: string): string | undefined {
     : undefined;
 }
 
-/**
- * Codex reports an upstream HTTP status in `codexErrorInfo` when it has one;
- * older builds only include it in the message ("unexpected status 409 Conflict").
- */
 export function isCapacityError(error: Record<string, unknown>): boolean {
   const info = asRecord(error.codexErrorInfo);
   if (
@@ -67,7 +59,6 @@ export function turnReport(params: Record<string, unknown>): string {
   return "";
 }
 
-/** Map a tool-like app-server ThreadItem to a display tool call. */
 export function describeCodexToolItem(
   item: Record<string, unknown> | undefined,
 ): ExternalToolCall | undefined {
@@ -96,7 +87,6 @@ export function describeCodexToolItem(
     case "dynamicToolCall":
       return call(readString(item, "tool") ?? "tool", item.arguments);
     case "webSearch": {
-      // The query is often filled in only when the search completes.
       const query = readString(item, "query");
       return query ? call("WebSearch", { query }) : undefined;
     }
@@ -105,7 +95,6 @@ export function describeCodexToolItem(
   }
 }
 
-/** The outcome of a completed tool-like ThreadItem, with its full output. */
 export function describeCodexToolResult(
   item: Record<string, unknown>,
 ): ExternalToolResult | undefined {
@@ -136,7 +125,6 @@ export function describeCodexToolResult(
   };
 }
 
-/** The text of a completed `reasoning` ThreadItem (summary, else content). */
 export function codexReasoningText(item: Record<string, unknown>): string {
   if (item.type !== "reasoning") return "";
   for (const parts of [item.summary, item.content]) {

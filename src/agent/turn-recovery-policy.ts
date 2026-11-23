@@ -1,19 +1,9 @@
-/**
- * Pure, framework-agnostic policy helpers for turn-level recovery.
- *
- * Both TUI (App.tsx) and headless (headless.ts) consume these helpers
- * so that identical conflict inputs always produce the same recovery
- * action. No network calls, no React, no stream-json output.
- */
-
 import { randomUUID } from "node:crypto";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import { isCloudflareEdge52xErrorText } from "@/cli/helpers/error-formatter";
 import { isZaiNonRetryableError } from "@/cli/helpers/zai-errors";
 import type { StopReasonType } from "@/types/protocol_v2";
-
-// ── Error fragment constants ────────────────────────────────────────
 
 const INVALID_TOOL_CALL_IDS_FRAGMENT = "invalid tool call ids";
 const APPROVAL_PENDING_DETAIL_FRAGMENT = "waiting for approval";
@@ -59,6 +49,8 @@ const RETRYABLE_PROVIDER_DETAIL_PATTERNS = [
   "other side closed",
   "fetch failed",
   "socket hang up",
+  "Socket connection was closed",
+  "socket connection was closed",
   "ended without",
   "http2 request did not get a response",
   "terminated",
@@ -111,10 +103,6 @@ function isCloudflareEdge52xDetail(detail: unknown): boolean {
   return isCloudflareEdge52xErrorText(detail);
 }
 
-/**
- * Explicit classifier for quota-limit style errors that should not use
- * transient retry logic. Used by client-side fallback paths.
- */
 export function isQuotaLimitErrorDetail(detail: unknown): boolean {
   return hasNonRetryableQuotaDetail(detail);
 }
@@ -137,21 +125,16 @@ function isNonRetryableRunErrorType(errorType: unknown): boolean {
   );
 }
 
-// ── Classifiers ─────────────────────────────────────────────────────
-
-/** Tool call IDs don't match what the server expects. */
 export function isInvalidToolCallIdsError(detail: unknown): boolean {
   if (typeof detail !== "string") return false;
   return detail.toLowerCase().includes(INVALID_TOOL_CALL_IDS_FRAGMENT);
 }
 
-/** Backend has a pending approval blocking new messages. */
 export function isApprovalPendingError(detail: unknown): boolean {
   if (typeof detail !== "string") return false;
   return detail.toLowerCase().includes(APPROVAL_PENDING_DETAIL_FRAGMENT);
 }
 
-/** Conversation is busy (another request is being processed). */
 export function isConversationBusyError(detail: unknown): boolean {
   if (typeof detail !== "string") return false;
   const normalized = detail.toLowerCase();
@@ -160,7 +143,6 @@ export function isConversationBusyError(detail: unknown): boolean {
   );
 }
 
-/** Extract the server-reported blocking run id from a conversation-busy error. */
 export function extractConversationBusyRunId(detail: unknown): string | null {
   if (typeof detail !== "string" || !isConversationBusyError(detail)) {
     return null;
@@ -169,17 +151,11 @@ export function extractConversationBusyRunId(detail: unknown): string | null {
   return detail.match(CONVERSATION_BUSY_RUN_ID_PATTERN)?.[1] ?? null;
 }
 
-/**
- * LLM returned an empty response (no content and no tool calls).
- * This can happen with models like Opus 4.6 that occasionally return empty content.
- * These are retryable with a cache-busting system message modification.
- */
 export function isEmptyResponseError(detail: unknown): boolean {
   if (typeof detail !== "string") return false;
   return detail.toLowerCase().includes(EMPTY_RESPONSE_DETAIL_FRAGMENT);
 }
 
-/** Transient provider/network detail that is usually safe to retry. */
 export function isRetryableProviderErrorDetail(detail: unknown): boolean {
   if (isCloudflareEdge52xDetail(detail)) return true;
   if (typeof detail !== "string") return false;
@@ -188,7 +164,6 @@ export function isRetryableProviderErrorDetail(detail: unknown): boolean {
   );
 }
 
-/** Non-transient auth/validation style provider detail that should not be retried. */
 export function isNonRetryableProviderErrorDetail(detail: unknown): boolean {
   if (typeof detail !== "string") return false;
   if (isZaiNonRetryableError(detail)) return true;
@@ -199,7 +174,6 @@ export function isNonRetryableProviderErrorDetail(detail: unknown): boolean {
   );
 }
 
-/** Retry decision for run-metadata fallback classification. */
 export function shouldRetryRunMetadataError(
   errorType: unknown,
   detail: unknown,
@@ -233,8 +207,6 @@ export function shouldRetryPostStreamRunError(opts: {
   if (hasNonRetryableQuotaDetail(opts.detail)) return false;
   if (isNonRetryableProviderErrorDetail(opts.detail)) return false;
 
-  // The backend uses llm_api_error for provider failures. If it did not attach
-  // a recognized non-retryable signal, preserve the legacy transient retry.
   return true;
 }
 
@@ -252,13 +224,6 @@ export function normalizeStreamErrorTypeToStopReason(
   return "error";
 }
 
-/**
- * Check if this is an empty response error that should be retried.
- *
- * Empty responses from models like Opus 4.6 are retryable. The caller
- * decides whether to retry with the same input or append a system
- * reminder nudge (typically on the last attempt).
- */
 export function isEmptyResponseRetryable(
   errorType: unknown,
   detail: unknown,
@@ -270,7 +235,6 @@ export function isEmptyResponseRetryable(
   return isEmptyResponseError(detail);
 }
 
-/** Retry decision for pre-stream send failures before any chunks are yielded. */
 export function shouldRetryPreStreamTransientError(opts: {
   status: number | undefined;
   detail: unknown;
@@ -291,7 +255,6 @@ export function shouldRetryPreStreamTransientError(opts: {
   return isRetryableProviderErrorDetail(detail);
 }
 
-/** Parse Retry-After header to milliseconds (seconds or HTTP-date forms). */
 export function parseRetryAfterHeaderMs(
   retryAfterValue: string | null | undefined,
 ): number | null {
@@ -314,12 +277,6 @@ export type RetryDelayCategory =
   | "conversation_busy"
   | "empty_response";
 
-/**
- * Compute retry delay for known retry classes.
- * - `transient_provider`: exponential (Cloudflare-specific base) with Retry-After override
- * - `conversation_busy`: exponential
- * - `empty_response`: linear
- */
 export function getRetryDelayMs(opts: {
   category: RetryDelayCategory;
   attempt: number;
@@ -343,9 +300,6 @@ export function getRetryDelayMs(opts: {
   return EMPTY_RESPONSE_RETRY_BASE_DELAY_MS * attempt;
 }
 
-/**
- * Backward-compatible wrapper for transient provider retries.
- */
 export function getTransientRetryDelayMs(opts: {
   attempt: number;
   detail: unknown;
@@ -358,8 +312,6 @@ export function getTransientRetryDelayMs(opts: {
     retryAfterMs: opts.retryAfterMs,
   });
 }
-
-// ── Pre-stream conflict routing ─────────────────────────────────────
 
 export type PreStreamConflictKind =
   | "approval_pending"
@@ -378,7 +330,6 @@ export interface PreStreamErrorOptions {
   maxTransientRetries?: number;
 }
 
-/** Classify a pre-stream 409 conflict detail string. */
 export function classifyPreStreamConflict(
   detail: unknown,
 ): PreStreamConflictKind {
@@ -387,7 +338,6 @@ export function classifyPreStreamConflict(
   return null;
 }
 
-/** Determine the recovery action for a pre-stream 409 error. */
 export function getPreStreamErrorAction(
   detail: unknown,
   conversationBusyRetries: number,
@@ -418,33 +368,18 @@ export function getPreStreamErrorAction(
   return "rethrow";
 }
 
-// ── Error text extraction ───────────────────────────────────────────
-
-/**
- * Extract error detail string from a pre-stream APIError's nested body.
- *
- * Handles the common SDK error shapes:
- * - Nested: `e.error.error.detail` → `e.error.error.message`
- * - Direct: `e.error.detail` → `e.error.message`
- * - Error: `e.message`
- *
- * Checks `detail` first (specific) then `message` (generic) at each level.
- */
 export function extractConflictDetail(error: unknown): string {
   if (error && typeof error === "object" && "error" in error) {
     const errObj = (error as Record<string, unknown>).error;
     if (typeof errObj === "string") return errObj;
     if (errObj && typeof errObj === "object") {
       const outer = errObj as Record<string, unknown>;
-      // Nested: e.error.error.detail → e.error.error.message
       if (outer.error && typeof outer.error === "object") {
         const nested = outer.error as Record<string, unknown>;
         if (typeof nested.detail === "string") return nested.detail;
         if (typeof nested.message === "string") return nested.message;
       }
-      // String body: e.error.error (e.g. { error: "Conversation is busy..." })
       if (typeof outer.error === "string") return outer.error;
-      // Direct: e.error.detail → e.error.message
       if (typeof outer.detail === "string") return outer.detail;
       if (typeof outer.message === "string") return outer.message;
     }
@@ -452,8 +387,6 @@ export function extractConflictDetail(error: unknown): string {
   if (error instanceof Error) return error.message;
   return "";
 }
-
-// ── Approval payload rebuild ────────────────────────────────────────
 
 export interface PendingApprovalInfo {
   toolCallId: string;
@@ -479,9 +412,6 @@ export function buildFreshDenialApprovals(
   }));
 }
 
-/**
- * Post-stop retries create a new request/run and must not reuse OTIDs.
- */
 export function refreshInputOtidsForNewRequest<
   T extends MessageCreate | ApprovalCreate,
 >(currentInput: T[]): T[] {
@@ -491,10 +421,6 @@ export function refreshInputOtidsForNewRequest<
   })) as T[];
 }
 
-/**
- * Rebuild approvals in server order, preserving matching local results and
- * denying pending calls without results. Drop stale local approvals.
- */
 export function rebuildInputWithFreshDenials(
   currentInput: Array<MessageCreate | ApprovalCreate>,
   serverApprovals: PendingApprovalInfo[],
@@ -515,7 +441,6 @@ export function rebuildInputWithFreshDenials(
     }
   }
   const content = currentInput.filter((item) => item?.type !== "approval");
-  // Only pre-persistence pending-approval rejections can reuse message identity.
   const stripped = preserveMessageOtids
     ? content
     : refreshInputOtidsForNewRequest(content);
@@ -534,12 +459,6 @@ export function rebuildInputWithFreshDenials(
   return stripped;
 }
 
-// ── Retry gating ────────────────────────────────────────────────────
-
-/**
- * Decide whether an approval-pending recovery attempt should proceed.
- * Centralizes the retry-budget check used by both TUI and headless.
- */
 export function shouldAttemptApprovalRecovery(opts: {
   approvalPendingDetected: boolean;
   retries: number;
@@ -548,15 +467,12 @@ export function shouldAttemptApprovalRecovery(opts: {
   return opts.approvalPendingDetected && opts.retries < opts.maxRetries;
 }
 
-// ── ChatGPT plan quota rotation ─────────────────────────────────────
-
 const CHATGPT_USAGE_LIMIT_FRAGMENT = "usage_limit_reached";
 const CHATGPT_OAUTH_PROVIDER_TYPE = "chatgpt_oauth";
 const BYOK_PROVIDER_CATEGORY = "byok";
 
 export interface ChatGPTUsageLimitDetail {
   planType: string | null;
-  /** Absolute reset time in ms since epoch, when the server reported one. */
   resetsAt: number | null;
 }
 
@@ -628,10 +544,6 @@ function parseUsageLimitString(value: unknown): ChatGPTUsageLimitDetail | null {
   }
 }
 
-/**
- * Parse a ChatGPT usage-limit error from the structured Cloud error event or
- * from the older embedded-JSON detail string. Reset fields are best-effort.
- */
 export function parseChatGPTUsageLimitDetail(
   error: unknown,
 ): ChatGPTUsageLimitDetail | null {
@@ -673,12 +585,6 @@ function hasModelUnsupportedText(value: unknown): boolean {
   );
 }
 
-/**
- * Detect a ChatGPT plan that lists a model but cannot serve it, e.g.
- * `ChatGPT SSE error (model_not_found): The '<model>' model is not supported
- * when using Codex with a ChatGPT account.` Rotation treats this like an
- * unusable plan for that model.
- */
 export function isChatGPTModelUnsupportedError(error: unknown): boolean {
   if (hasModelUnsupportedText(error)) return true;
   if (!isRecord(error)) return false;
@@ -713,14 +619,6 @@ function isChatGPTByokModel(model: ChatGPTFailoverModelEntry): boolean {
   );
 }
 
-/**
- * Pick a sibling ChatGPT plan handle to fail over to when the current plan
- * hits its usage limit. The current handle must itself resolve to a
- * chatgpt_oauth BYOK model in `models` (otherwise returns null). Siblings
- * share the same model suffix (after the first `/`) under a different
- * provider prefix, are chatgpt_oauth + byok, and are not in
- * `exhaustedProviders`. One sibling is chosen uniformly at random.
- */
 export function selectChatGPTQuotaFailoverHandle(params: {
   currentHandle: string;
   models: ChatGPTFailoverModelEntry[];

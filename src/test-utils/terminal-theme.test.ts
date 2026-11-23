@@ -16,14 +16,12 @@ describe("parseHexComponent", () => {
   test("parses 4-digit hex (16-bit) and normalizes to 8-bit", () => {
     expect(parseHexComponent("0000")).toBe(0);
     expect(parseHexComponent("ffff")).toBe(255);
-    // 8000/ffff * 255 ≈ 128
     expect(parseHexComponent("8000")).toBe(128);
   });
 
   test("parses 1-digit hex and normalizes to 8-bit", () => {
     expect(parseHexComponent("0")).toBe(0);
     expect(parseHexComponent("f")).toBe(255);
-    // 8/15 * 255 = 136
     expect(parseHexComponent("8")).toBe(136);
   });
 
@@ -57,7 +55,6 @@ describe("calculateLuminance", () => {
   });
 
   test("mid-gray has luminance around 0.2", () => {
-    // sRGB mid-gray (128, 128, 128) has relative luminance ~0.216
     const lum = calculateLuminance(128, 128, 128);
     expect(lum).toBeGreaterThan(0.19);
     expect(lum).toBeLessThan(0.23);

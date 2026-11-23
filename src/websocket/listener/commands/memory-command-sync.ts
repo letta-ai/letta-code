@@ -1,4 +1,5 @@
 import type WebSocket from "ws";
+import { isMemoryUnavailable } from "@/utils/memory-access";
 import { ensureMemfsSyncedForAgent } from "@/websocket/listener/memfs-sync";
 import type { ListenerRuntime } from "@/websocket/listener/types";
 import { handleMemoryProtocolCommand } from "./memory";
@@ -11,13 +12,18 @@ export function createMemfsSyncedTaskRunner(
 ): RunDetachedListenerTask {
   const command = parsed as { agent_id?: unknown; type?: unknown };
   const agentId = command.agent_id;
-  if (typeof agentId !== "string" || command.type === "enable_memfs") {
+  if (
+    typeof agentId !== "string" ||
+    (command.type === "enable_memfs" && !isMemoryUnavailable(agentId))
+  ) {
     return runDetachedListenerTask;
   }
 
   return (commandName, task) => {
     runDetachedListenerTask(commandName, async () => {
-      await ensureMemfsSyncedForAgent(runtime, agentId);
+      if (!(await ensureMemfsSyncedForAgent(runtime, agentId))) {
+        throw new Error("Memory is not available on this machine.");
+      }
       await task();
     });
   };

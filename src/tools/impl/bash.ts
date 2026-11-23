@@ -4,6 +4,7 @@ import {
   consumeWorkingDirectoryRecovery,
   getCurrentWorkingDirectory,
 } from "@/runtime-context";
+import { resolveForegroundYieldMs } from "@/tools/foreground-yield";
 import {
   captureSecretRedactions,
   createSecretStreamScrubber,
@@ -30,6 +31,7 @@ import {
   backgroundProcesses,
   createBackgroundOutputFile,
   getNextBashId,
+  notifyBackgroundProcessStateChanged,
   scheduleBackgroundProcessCleanup,
   scrubCompletedBackgroundOutput,
 } from "./process_manager.js";
@@ -44,6 +46,7 @@ import {
   withStrictShellPrelude,
 } from "./shell-launchers.js";
 import {
+  FORCE_KILL_GRACE_MS,
   type ShellExecutionError,
   spawnWithLauncher,
   startShellProcess,
@@ -53,16 +56,14 @@ import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
 import { assertSafeWindowsCommand } from "./windows-command-safety.js";
 
-// Cache the working shell launcher after first successful spawn
 let cachedWorkingLauncher: string[] | null = null;
 
-/** Time to wait for an ordinary Bash command before returning it as a task. */
-const DEFAULT_FOREGROUND_YIELD_MS = 10_000;
+const NON_YIELDING_DEFAULT_TIMEOUT_MS = 120_000;
+const MAX_FOREGROUND_TIMEOUT_MS = 600_000;
 
 type ShellProcessStarter = typeof startShellProcess;
 let shellProcessStarter: ShellProcessStarter = startShellProcess;
 
-/** Test-only override for observing shell process launch options. */
 export function __setShellProcessStarterForTests(
   starter: ShellProcessStarter | null,
 ): void {
@@ -87,12 +88,6 @@ function rebuildCachedLauncher(
   );
 }
 
-/**
- * Get the first working shell launcher for background processes.
- * Uses cached launcher if available, otherwise returns first launcher from buildShellLaunchers.
- * For background processes, we can't easily do async fallback, so we rely on cached launcher
- * from previous foreground commands or the default launcher order.
- */
 export function getBackgroundLauncher(
   command: string,
   env: NodeJS.ProcessEnv,
@@ -107,12 +102,6 @@ export function getBackgroundLauncher(
   return selectAvailableShellLauncher(launchers, env) || [];
 }
 
-/**
- * Execute a command using spawn with explicit shell.
- * This avoids the double-shell parsing that exec() does.
- * Uses buildShellLaunchers() to try multiple shells with ENOENT fallback.
- * Exported for use by bash mode in the CLI.
- */
 export async function spawnCommand(
   command: string,
   options: {
@@ -135,16 +124,11 @@ export async function spawnCommand(
     : options.env;
   const commandToRun = withStrictShellPrelude(command, env);
 
-  // On Unix (Linux/macOS), use simple bash -c approach (original behavior)
-  // This avoids the complexity of fallback logic which caused issues on ARM64 CI
   if (process.platform !== "win32") {
-    // On macOS, prefer zsh due to bash 3.2's HEREDOC bug with apostrophes
     const executable = process.platform === "darwin" ? "/bin/zsh" : "bash";
     const innerLauncher = [executable, "-c", commandToRun];
     const sandboxed = applyShellSandbox(innerLauncher, options.cwd, env);
     if (sandboxed.backend) {
-      // The sandbox wrapper hides the inner shell from launcher inspection;
-      // note the unwrapped launcher so `git worktree add` ownership resolves.
       noteExpectedWorktreeForLauncher(innerLauncher, options.cwd);
     }
     return spawnWithLauncher(sandboxed.launcher, {
@@ -157,7 +141,6 @@ export async function spawnCommand(
     });
   }
 
-  // On Windows, use fallback logic to handle PowerShell ENOENT errors (PR #482)
   if (cachedWorkingLauncher) {
     const newLauncher = rebuildCachedLauncher(commandToRun, options.secretEnv);
     if (newLauncher) {
@@ -173,8 +156,6 @@ export async function spawnCommand(
         return result;
       } catch (error) {
         const err = error as ShellExecutionError;
-        // Only an executable-lookup ENOENT justifies retrying other shells.
-        // A missing cwd fails identically for every launcher.
         if (err.code !== "ENOENT" || err.reason === "cwd_missing") {
           throw error;
         }
@@ -223,7 +204,6 @@ export async function spawnCommand(
   throw new Error(suffix ? `${reason} (tried: ${suffix})` : reason);
 }
 
-/** Lines of each stream to replay in a completion notification. */
 const NOTIFICATION_TAIL_LINES = 50;
 
 function formatStreamTail(
@@ -259,18 +239,6 @@ function formatBackgroundOutputTail(bgProcess: BackgroundProcess): string {
   return sections.length > 0 ? sections.join("\n\n") : "(no output)";
 }
 
-/**
- * Queue the completion notification for a background shell.
- *
- * Mirrors the subagent path in task.ts: format the same `<task-notification>`
- * XML and hand it to the message-queue bridge, which wakes the parent turn.
- * Bash.md promises the agent it will be notified when a `run_in_background`
- * command finishes, so without this the agent plans around a wake-up that
- * never arrives (letta-ai/letta-code#3226).
- *
- * Called from the shell runner's single completion promise, which settles
- * exactly once, so the agent is woken exactly once per background shell.
- */
 function notifyBackgroundCompletion(params: {
   bashId: string;
   description?: string;
@@ -325,8 +293,8 @@ interface BashArgs {
   signal?: AbortSignal;
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
   secretEnv?: Record<string, string>;
+  variableEnv?: Record<string, string>;
   parentScope?: { agentId: string; conversationId: string };
-  /** Test-only override; not exposed in the Bash tool schema. */
   foregroundYieldMs?: number;
 }
 
@@ -347,10 +315,11 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     run_in_background = false,
     signal,
     onOutput,
-    secretEnv,
+    secretEnv: invocationSecrets,
     parentScope,
-    foregroundYieldMs = DEFAULT_FOREGROUND_YIELD_MS,
+    foregroundYieldMs = resolveForegroundYieldMs(),
   } = args;
+  const secretEnv = { ...args.variableEnv, ...invocationSecrets };
   const userCwd = getCurrentWorkingDirectory();
   assertSafeWindowsCommand(command, {
     cwd: userCwd,
@@ -358,13 +327,10 @@ export async function bash(args: BashArgs): Promise<BashResult> {
   });
   const redactions = captureSecretRedactions(
     parentScope?.agentId,
-    secretEnv ?? {},
+    invocationSecrets ?? {},
   );
   const sanitizeOutput = (text: string) =>
     scrubSecretsFromString(text, redactions);
-  // Per-stream scrubbers hold back potential partial secret matches so a
-  // credential split across output chunks never reaches the retained output,
-  // the output file, or the completion notification unredacted.
   const streamScrubbers = {
     stdout: createSecretStreamScrubber(redactions),
     stderr: createSecretStreamScrubber(redactions),
@@ -408,9 +374,6 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     };
   }
 
-  // If the runtime cwd was found deleted and repaired to a fallback (e.g. the
-  // agent removed its own worktree), tell the model instead of silently
-  // running from a different directory.
   const recoveredFrom = consumeWorkingDirectoryRecovery();
   const recoveryNote = recoveredFrom
     ? `Note: working directory ${recoveredFrom} no longer exists; running in ${userCwd} instead.\n`
@@ -442,26 +405,28 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       status: "error",
     };
   }
-  // Note the unwrapped launcher first; the sandbox wrapper (below) hides the
-  // inner shell from launcher inspection.
   noteExpectedWorktreeForLauncher(launcher, userCwd);
   const sandboxed = applyShellSandbox(launcher, userCwd, bgEnv);
   let bgProcess: BackgroundProcess;
   let outputWriteFailed = false;
   const foregroundOutput = { stdout: "", stderr: "" };
+  const canYield = !run_in_background && isQueueBridgeConnected();
   const effectiveTimeout = run_in_background
     ? timeout !== undefined && timeout > 0
       ? timeout
       : 0
-    : timeout === undefined
-      ? 0
-      : Math.min(Math.max(timeout, 1), 600000);
+    : timeout !== undefined
+      ? Math.min(Math.max(timeout, 1), MAX_FOREGROUND_TIMEOUT_MS)
+      : canYield
+        ? 0
+        : NON_YIELDING_DEFAULT_TIMEOUT_MS;
   const runningProcess = shellProcessStarter(sandboxed.launcher, {
     cwd: userCwd,
     env: sandboxed.env,
     timeoutMs: effectiveTimeout,
     sourceCommand: command,
     signal: run_in_background ? undefined : signal,
+    waitForProcessGroupOnClose: !run_in_background,
     captureOutput: false,
     onOutput(text, stream) {
       const sanitizedText = streamScrubbers[stream].push(text);
@@ -485,14 +450,15 @@ export async function bash(args: BashArgs): Promise<BashResult> {
         bgProcess.status = "failed";
         try {
           runningProcess.process.kill("SIGTERM");
-        } catch {
-          // Process may have already exited.
-        }
+        } catch {}
       }
     },
   });
   bgProcess = {
     process: runningProcess.process,
+    completion: runningProcess.completion,
+    terminate: runningProcess.terminate,
+    foregroundBash: !run_in_background,
     command,
     stdout: [],
     stderr: [],
@@ -507,13 +473,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
   };
   backgroundProcesses.set(bashId, bgProcess);
 
-  // Resolve the routing scope now rather than on completion: by the time the
-  // shell exits the turn that launched it is gone, so the process-global
-  // agent context may already point at a different conversation.
   const notificationScope = resolveNotificationScope(parentScope);
-  // The completion promise settles after the final stdout/stderr data events,
-  // so this is where held-back partial matches are flushed into the retained
-  // output and the output file before the final whole-file scrub.
   const flushStreamScrubbers = () => {
     for (const stream of ["stdout", "stderr"] as const) {
       const rest = streamScrubbers[stream].flush();
@@ -582,6 +542,13 @@ export async function bash(args: BashArgs): Promise<BashResult> {
         status,
         detail,
       });
+      if (bgProcess.completionNotificationSuppressed) {
+        notifyBackgroundProcessStateChanged(bgProcess.runtimeScope);
+      } else {
+        queueMicrotask(() =>
+          notifyBackgroundProcessStateChanged(bgProcess.runtimeScope),
+        );
+      }
       scheduleBackgroundProcessCleanup(bashId);
     });
   };
@@ -591,11 +558,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       type: "settled" as const,
       result,
     }));
-    // A yielded command reports back only through a task notification. One-shot
-    // headless runs, including every subagent, have no queue consumer, and they
-    // are already background work that nobody waits on interactively, so there
-    // the command simply blocks until it exits or times out.
-    const outcome = isQueueBridgeConnected()
+    const outcome = canYield
       ? await Promise.race([
           settledOutcome,
           new Promise<{ type: "yield" }>((resolve) => {
@@ -622,10 +585,6 @@ export async function bash(args: BashArgs): Promise<BashResult> {
         .filter(Boolean)
         .join("\n");
       const failed = result.status === "failed";
-      // Both outcomes save the full output. Keeping the file on failure is a
-      // deliberate departure from Claude Code, which omits it: the foreground
-      // output file is already deleted, so the excerpt would be all that is left
-      // of a large failing build or test log.
       const { content: truncatedOutput } = truncateByChars(
         output || "(Command completed with no output)",
         failed ? LIMITS.BASH_FAILURE_OUTPUT_CHARS : LIMITS.BASH_OUTPUT_CHARS,
@@ -633,7 +592,6 @@ export async function bash(args: BashArgs): Promise<BashResult> {
         {
           workingDirectory: userCwd,
           secrets: redactions,
-          // Failures keep a head-and-tail excerpt; successes a short prefix.
           ...(failed
             ? { useMiddleTruncation: true }
             : { previewChars: LIMITS.OVERFLOW_PREVIEW_CHARS }),
@@ -663,7 +621,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       };
     }
 
-    backgroundProcesses.set(bashId, bgProcess);
+    bgProcess.foregroundBash = false;
     notifyWhenSettled();
     return {
       content: [
@@ -686,4 +644,23 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     ],
     status: "success",
   };
+}
+
+export async function waitForForegroundBashCleanup(): Promise<void> {
+  const active = [...backgroundProcesses.values()].filter(
+    (entry) => entry.foregroundBash,
+  );
+  if (active.length === 0) return;
+  for (const entry of active) entry.terminate?.();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      Promise.allSettled(active.map((entry) => entry.completion)),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, FORCE_KILL_GRACE_MS + 250);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }

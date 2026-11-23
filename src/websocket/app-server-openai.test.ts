@@ -221,8 +221,6 @@ describe("app-server OpenAI-compatible API", () => {
         body: JSON.stringify({ model: "memo", messages }),
       });
 
-    // Without a stable chat identity there is no server-side reuse: every
-    // request gets a fresh conversation and the transcript is replayed.
     await send([{ role: "user", content: "first chat" }]);
     await send([
       { role: "user", content: "first chat" },
@@ -247,7 +245,6 @@ describe("app-server OpenAI-compatible API", () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        // Resolving by agent id (rather than name) must also work.
         model: "agent-local-222",
         messages: [{ role: "user", content: "say hello" }],
         stream: true,
@@ -419,11 +416,8 @@ describe("app-server OpenAI-compatible API", () => {
         body: JSON.stringify({ model: "memo", messages }),
       });
 
-    // Two chats with byte-identical transcripts but different chat ids.
     await send("chat-a", [{ role: "user", content: "Hello" }]);
     await send("chat-b", [{ role: "user", content: "Hello" }]);
-    // Follow-up in chat-a with an identical transcript to what chat-b
-    // would resend — the header, not the transcript, decides.
     await send("chat-a", [
       { role: "user", content: "Hello" },
       { role: "assistant", content: "Hello world" },
@@ -573,8 +567,6 @@ describe("app-server OpenAI-compatible API", () => {
         }),
       });
 
-    // Streaming chat messages pin the conversation; non-streaming task
-    // requests (title/tags generation) run statelessly despite the header.
     await send(true);
     await send(true);
     await send(false);
@@ -717,7 +709,6 @@ describe("app-server OpenAI-compatible API", () => {
     await send();
     expect(created.length).toBe(1);
     await send();
-    // The replay consulted the cache before allocating anything.
     expect(created.length).toBe(1);
   });
 
@@ -741,7 +732,6 @@ describe("app-server OpenAI-compatible API", () => {
     });
     expect(await waitFor(() => deleted.includes("conv-test-1"))).toBe(true);
 
-    // Header-keyed conversations persist: they ARE the chat's state.
     await fetch(httpUrl(handle, "/v1/chat/completions"), {
       method: "POST",
       headers: {

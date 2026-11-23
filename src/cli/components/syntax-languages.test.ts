@@ -16,7 +16,6 @@ describe("syntax-languages", () => {
 
   it("marks unknown languages unavailable without retrying", () => {
     expect(ensureLanguageLoaded("not-a-real-language")).toBe(false);
-    // Second call is a set lookup, not another load attempt.
     expect(ensureLanguageLoaded("not-a-real-language")).toBe(false);
   });
 
@@ -29,8 +28,6 @@ describe("syntax-languages", () => {
   });
 
   it("loads non-extension fence aliases without requesting the canonical name", () => {
-    // Do not also request cpp / csharp / kotlin — those loads register these
-    // aliases too and would hide a miss.
     const cases = [
       { alias: "c++", code: "int main() { return 0; }" },
       { alias: "c#", code: "class C {}" },
@@ -50,7 +47,6 @@ describe("syntax-languages", () => {
     });
     try {
       const spans = highlightCode("local x = 1", "lua");
-      // Give an asynchronous grammar load time to settle and notify.
       await new Promise((resolve) => setTimeout(resolve, 100));
       expect(repaints).toBe(0);
       expect(spans?.[0]?.length).toBeGreaterThan(1);

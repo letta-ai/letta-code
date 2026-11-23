@@ -1,6 +1,3 @@
-// src/tests/hooks/integration.test.ts
-// Integration tests for all 11 hook types
-
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,8 +20,6 @@ import { checkPermissionWithHooks } from "@/permissions/checker";
 import { permissionMode } from "@/permissions/mode";
 import { settingsManager } from "@/settings-manager";
 
-// Skip on Windows - test commands use bash syntax (&&, >&2, etc.)
-// The executor itself is cross-platform, but these test commands are bash-specific
 const isWindows = process.platform === "win32";
 
 describe.skipIf(isWindows)("Hooks Integration Tests", () => {
@@ -34,42 +29,32 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
 
   beforeEach(async () => {
     permissionMode.setMode("standard");
-    // Reset settings manager FIRST before changing HOME
     await settingsManager.reset();
 
     const baseDir = join(
       tmpdir(),
       `hooks-integration-${process.pid}-${Math.random().toString(36).slice(2)}`,
     );
-    // Create separate directories for HOME and project to avoid double-loading
     fakeHome = join(baseDir, "home");
     tempDir = join(baseDir, "project");
     mkdirSync(fakeHome, { recursive: true });
     mkdirSync(tempDir, { recursive: true });
-    // Override HOME to isolate from real global hooks
     originalHome = process.env.HOME;
     process.env.HOME = fakeHome;
 
-    // Initialize settings manager with new HOME
     await settingsManager.initialize();
   });
 
   afterEach(async () => {
-    // Wait for pending writes and reset
     await settingsManager.reset();
 
-    // Restore HOME
     process.env.HOME = originalHome;
     try {
-      // Clean up the parent directory
       const baseDir = join(tempDir, "..");
       rmSync(baseDir, { recursive: true, force: true });
-    } catch {
-      // Ignore cleanup errors
-    }
+    } catch {}
   });
 
-  // Helper to create hook config
   function createHooksConfig(hooks: Record<string, unknown>) {
     const settingsDir = join(tempDir, ".letta");
     mkdirSync(settingsDir, { recursive: true });
@@ -78,10 +63,6 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
       JSON.stringify({ hooks }),
     );
   }
-
-  // ============================================================================
-  // PreToolUse Hooks
-  // ============================================================================
 
   describe("PreToolUse hooks", () => {
     test("allows tool execution (exit 0)", async () => {
@@ -168,10 +149,6 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
     });
   });
 
-  // ============================================================================
-  // PostToolUse Hooks
-  // ============================================================================
-
   describe("PostToolUse hooks", () => {
     test("runs after tool execution", async () => {
       createHooksConfig({
@@ -242,8 +219,7 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
       const duration = Date.now() - start;
 
       expect(result.results).toHaveLength(2);
-      // Allow headroom for CI runners (especially macOS ARM) which can be slow
-      expect(duration).toBeLessThan(400); // Parallel should be ~100ms
+      expect(duration).toBeLessThan(400);
     });
 
     test("includes preceding_reasoning and preceding_assistant_message when provided", async () => {
@@ -300,15 +276,10 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
         tempDir,
       );
 
-      // Stderr collected as feedback on exit 2
       expect(result.feedback).toHaveLength(1);
       expect(result.feedback[0]).toContain("PostToolUse feedback");
     });
   });
-
-  // ============================================================================
-  // PostToolUseFailure Hooks
-  // ============================================================================
 
   describe("PostToolUseFailure hooks", () => {
     test("runs after tool failure", async () => {
@@ -335,7 +306,6 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
         tempDir,
       );
 
-      // PostToolUseFailure never blocks
       expect(result.blocked).toBe(false);
       expect(result.results).toHaveLength(1);
       expect(result.results[0]?.stdout).toBe("hook ran");
@@ -365,7 +335,6 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
         tempDir,
       );
 
-      // Stderr collected as feedback on exit 2
       expect(result.feedback).toHaveLength(1);
       expect(result.feedback[0]).toContain("Try checking spelling");
     });
@@ -425,17 +394,11 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
         tempDir,
       );
 
-      // PostToolUseFailure should never block - tool already failed
       expect(result.blocked).toBe(false);
-      // Stderr collected as feedback on exit 2
       expect(result.feedback).toHaveLength(1);
       expect(result.feedback[0]).toContain("feedback with exit 2");
     });
   });
-
-  // ============================================================================
-  // PermissionRequest Hooks
-  // ============================================================================
 
   describe("PermissionRequest hooks", () => {
     test("can auto-allow permission (exit 0)", async () => {
@@ -540,10 +503,6 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
     });
   });
 
-  // ============================================================================
-  // UserPromptSubmit Hooks
-  // ============================================================================
-
   describe("UserPromptSubmit hooks", () => {
     test("runs before prompt is processed", async () => {
       createHooksConfig({
@@ -611,15 +570,10 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
         tempDir,
       );
 
-      // Hooks should not run for slash commands
       expect(result.blocked).toBe(false);
       expect(result.results).toHaveLength(0);
     });
   });
-
-  // ============================================================================
-  // Notification Hooks
-  // ============================================================================
 
   describe("Notification hooks", () => {
     test("runs on notification", async () => {
@@ -683,14 +637,9 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
       const duration = Date.now() - start;
 
       expect(result.results).toHaveLength(2);
-      // Allow headroom for CI runners (especially macOS ARM) which can be slow
       expect(duration).toBeLessThan(400);
     });
   });
-
-  // ============================================================================
-  // Stop Hooks
-  // ============================================================================
 
   describe("Stop hooks", () => {
     test("runs when Claude finishes responding", async () => {
@@ -751,10 +700,6 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
     });
   });
 
-  // ============================================================================
-  // SubagentStop Hooks
-  // ============================================================================
-
   describe("SubagentStop hooks", () => {
     test("runs when subagent completes", async () => {
       createHooksConfig({
@@ -806,10 +751,6 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
       expect(parsed.error).toBe("Task failed");
     });
   });
-
-  // ============================================================================
-  // PreCompact Hooks
-  // ============================================================================
 
   describe("PreCompact hooks", () => {
     test("runs before compact operation", async () => {
@@ -886,10 +827,6 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
     });
   });
 
-  // ============================================================================
-  // SessionStart Hooks
-  // ============================================================================
-
   describe("SessionStart hooks", () => {
     test("runs when session starts", async () => {
       createHooksConfig({
@@ -959,17 +896,11 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
         tempDir,
       );
 
-      // SessionStart collects stdout regardless of exit code
       expect(result.feedback).toHaveLength(1);
       expect(result.feedback[0]).toContain("Session context for agent");
-      // SessionStart never blocks
       expect(result.blocked).toBe(false);
     });
   });
-
-  // ============================================================================
-  // SessionEnd Hooks
-  // ============================================================================
 
   describe("SessionEnd hooks", () => {
     test("runs when session ends", async () => {
@@ -1044,14 +975,9 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
       const duration = Date.now() - start;
 
       expect(result.results).toHaveLength(2);
-      // Allow headroom for CI runners (especially macOS ARM) which can be slow
       expect(duration).toBeLessThan(400);
     });
   });
-
-  // ============================================================================
-  // hasHooks Tests
-  // ============================================================================
 
   describe("hasHooks helper", () => {
     test("returns true when hooks exist", async () => {
@@ -1075,10 +1001,6 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
       expect(result).toBe(false);
     });
   });
-
-  // ============================================================================
-  // Complex Scenarios
-  // ============================================================================
 
   describe("Complex scenarios", () => {
     test("multiple hooks for same event all run", async () => {

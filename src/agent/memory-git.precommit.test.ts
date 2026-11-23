@@ -1,13 +1,5 @@
-/**
- * Tests for the git pre-commit hook that validates frontmatter
- * in memory .md files.
- *
- * Each test creates a temp git repo, installs the hook, stages
- * a file, and verifies the commit succeeds or fails as expected.
- */
-
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -36,7 +28,10 @@ function writeAndStage(relativePath: string, content: string): void {
   const fullPath = join(tempDir, relativePath);
   mkdirSync(join(fullPath, ".."), { recursive: true });
   writeFileSync(fullPath, content, "utf-8");
-  git(`add ${relativePath}`);
+  execFileSync("git", ["add", "--", relativePath], {
+    cwd: tempDir,
+    env: GIT_ENV,
+  });
 }
 
 function tryCommit(): { success: boolean; output: string } {
@@ -52,7 +47,6 @@ function tryCommit(): { success: boolean; output: string } {
   }
 }
 
-/** Valid frontmatter for convenience */
 const VALID_FM = "---\ndescription: Test block\n---\n\n";
 
 beforeEach(() => {
@@ -142,7 +136,6 @@ describe("pre-commit hook: field validation", () => {
 
 describe("pre-commit hook: read_only protection", () => {
   test("rejects modifying a read_only file", () => {
-    // First commit: create a read_only file (bypass hook for setup)
     const hookPath = join(tempDir, ".git", "hooks", "pre-commit");
     rmSync(hookPath);
     writeAndStage(
@@ -152,7 +145,6 @@ describe("pre-commit hook: read_only protection", () => {
     tryCommit();
     writeFileSync(hookPath, PRE_COMMIT_HOOK_SCRIPT, { mode: 0o755 });
 
-    // Second commit: try to modify it
     writeAndStage(
       "memory/system/skills.md",
       "---\ndescription: Skills\nread_only: true\n---\n\nModified.\n",
@@ -173,8 +165,6 @@ describe("pre-commit hook: read_only protection", () => {
   });
 
   test("rejects agent changing read_only value", () => {
-    // First commit: create with read_only: false (from server pull)
-    // Bypass the hook for initial setup
     const hookPath = join(tempDir, ".git", "hooks", "pre-commit");
     rmSync(hookPath);
     writeAndStage(
@@ -182,10 +172,8 @@ describe("pre-commit hook: read_only protection", () => {
       "---\ndescription: A block\nread_only: false\n---\n\nContent.\n",
     );
     tryCommit();
-    // Re-install hook
     writeFileSync(hookPath, PRE_COMMIT_HOOK_SCRIPT, { mode: 0o755 });
 
-    // Now try to change read_only
     writeAndStage(
       "memory/system/block.md",
       "---\ndescription: A block\nread_only: true\n---\n\nContent.\n",
@@ -196,7 +184,6 @@ describe("pre-commit hook: read_only protection", () => {
   });
 
   test("allows modifying content of non-read_only file (with read_only preserved)", () => {
-    // First commit: file with read_only: false (from server)
     const hookPath = join(tempDir, ".git", "hooks", "pre-commit");
     rmSync(hookPath);
     writeAndStage(
@@ -206,7 +193,6 @@ describe("pre-commit hook: read_only protection", () => {
     tryCommit();
     writeFileSync(hookPath, PRE_COMMIT_HOOK_SCRIPT, { mode: 0o755 });
 
-    // Modify content but keep read_only the same
     writeAndStage(
       "memory/system/block.md",
       "---\ndescription: A block\nread_only: false\n---\n\nUpdated.\n",
@@ -216,7 +202,6 @@ describe("pre-commit hook: read_only protection", () => {
   });
 
   test("rejects agent removing read_only field", () => {
-    // First commit: file with read_only (from server)
     const hookPath = join(tempDir, ".git", "hooks", "pre-commit");
     rmSync(hookPath);
     writeAndStage(
@@ -226,7 +211,6 @@ describe("pre-commit hook: read_only protection", () => {
     tryCommit();
     writeFileSync(hookPath, PRE_COMMIT_HOOK_SCRIPT, { mode: 0o755 });
 
-    // Remove read_only from frontmatter
     writeAndStage(
       "memory/system/block.md",
       "---\ndescription: A block\n---\n\nContent.\n",
@@ -308,4 +292,50 @@ describe("pre-commit hook: non-memory files", () => {
     const result = tryCommit();
     expect(result.success).toBe(true);
   });
+});
+
+describe("pre-commit hook: paths with spaces and non-ASCII", () => {
+  test("validates staged files whose names contain spaces and quotes", () => {
+    const fullPath = join(tempDir, "system", "User's Core Notes.md");
+    mkdirSync(join(tempDir, "system"), { recursive: true });
+    writeFileSync(fullPath, `${VALID_FM}Block content here.\n`, "utf-8");
+    execSync(`git add -- "system/User's Core Notes.md"`, {
+      cwd: tempDir,
+      env: GIT_ENV,
+    });
+    const result = tryCommit();
+    expect(result.output).not.toContain("could not read Git contents");
+    expect(result.success).toBe(true);
+  });
+
+  test("still rejects invalid frontmatter in a path with spaces", () => {
+    const fullPath = join(tempDir, "system", "My Notes.md");
+    mkdirSync(join(tempDir, "system"), { recursive: true });
+    writeFileSync(fullPath, "no frontmatter here\n", "utf-8");
+    execSync(`git add -- "system/My Notes.md"`, { cwd: tempDir, env: GIT_ENV });
+    const result = tryCommit();
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("system/My Notes.md: missing frontmatter");
+  });
+
+  test("validates and then commits a non-ASCII system path", () => {
+    const path = "system/café notes.md";
+    writeAndStage(path, "no frontmatter here\n");
+    const invalid = tryCommit();
+    expect(invalid.success).toBe(false);
+    expect(invalid.output).toContain(`${path}: missing frontmatter`);
+
+    writeAndStage(path, `${VALID_FM}Valid content.\n`);
+    expect(tryCommit().success).toBe(true);
+  });
+
+  test.each(["skills/my skill.md", "skills/café.md"])(
+    "rejects flat skill path %s intact",
+    (path) => {
+      writeAndStage(path, "# Skill\n");
+      const result = tryCommit();
+      expect(result.success).toBe(false);
+      expect(result.output).toContain(`${path}: invalid skill path`);
+    },
+  );
 });

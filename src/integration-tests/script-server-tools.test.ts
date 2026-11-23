@@ -4,8 +4,6 @@ import { settingsManager } from "@/settings-manager";
 import { createScriptToolScope } from "@/tools/script-tool-scope";
 import { executeToolScript } from "@/tools/workflow/workflow-engine";
 
-// The CI API integration matrix provides LETTA_API_KEY; a missing key is a
-// configuration failure, not a reason to skip live endpoint coverage.
 test("CodeMode and Monitor scripts call tools Letta Cloud executes", async () => {
   if (!process.env.LETTA_API_KEY) {
     throw new Error("LETTA_API_KEY is required for the live server-tool test.");
@@ -19,7 +17,7 @@ test("CodeMode and Monitor scripts call tools Letta Cloud executes", async () =>
   const agent = await client.agents.create({
     name: "Script server-tool integration",
     agent_type: "letta_v1_agent",
-    model: "letta/auto",
+    model: "anthropic/claude-sonnet-4-6",
     include_base_tools: false,
     include_base_tool_rules: false,
     tools: ["fetch_webpage"],
@@ -46,7 +44,6 @@ return { listed, title: page.title, error };`,
       await scope.cleanup();
     }
 
-    // A server tool that needs approval stays out of scripts.
     const gatedName = `script_gated_${crypto.randomUUID().replaceAll("-", "")}`;
     const gatedTool = await client.tools.create({
       source_code: `def ${gatedName}() -> str:

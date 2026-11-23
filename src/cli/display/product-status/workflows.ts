@@ -1,13 +1,3 @@
-/**
- * Built-in status rows for Workflow runs, rendered below the input:
- *
- *   ○ simple-demo                 0/3 agents done · 9s · 133.6k tokens
- *     Quick demo workflow with parallel agents
- *
- * Each run occupies two lines: running ones always, finished ones for a short
- * linger so the final numbers remain visible before the row disappears.
- */
-
 import { colors } from "@/cli/components/colors";
 import {
   truncateToWidth,
@@ -17,7 +7,6 @@ import { formatWorkflowStatusRow } from "@/cli/helpers/workflow-display";
 import type { ModPanel } from "@/cli/mods/types";
 import type { WorkflowExecutionSnapshot } from "@/tools/workflow/execution-registry";
 
-/** Negative orders stack below the primary line under the input. */
 export const WORKFLOW_STATUS_PANEL_ORDER = -1;
 export const WORKFLOW_STATUS_PANEL_ID = "default:workflows";
 export const WORKFLOW_ROW_LINGER_MS = 30_000;
@@ -30,7 +19,6 @@ const GLYPH_COLORS: Record<WorkflowExecutionSnapshot["status"], string> = {
   failed: colors.status.interrupt,
 };
 
-/** Runs worth a row right now: running, or finished very recently. */
 export function visibleWorkflowExecutions(
   executions: WorkflowExecutionSnapshot[],
   now = Date.now(),
@@ -77,8 +65,6 @@ export function createWorkflowStatusPanel(
           }
           const progress = ctx.chalk.dim(`${progressText}${failedSuffix}`);
           const description = `${WORKFLOW_DESCRIPTION_INDENT}${row.description}`;
-          // Keep progress on the first line; a long description should not
-          // consume the left budget and clip the workflow name.
           return [
             ctx.row(name, progress, ctx.width),
             ctx.chalk.dim(

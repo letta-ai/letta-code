@@ -15,14 +15,11 @@ describe("estimateSystemTokens", () => {
   });
 
   test("divides bytes by BYTES_PER_TOKEN and ceilings", () => {
-    // 4 bytes of ASCII -> 1 token
     expect(estimateSystemTokens("abcd")).toBe(1);
-    // 5 bytes -> ceil(5/4) = 2
     expect(estimateSystemTokens("abcde")).toBe(2);
   });
 
   test("uses UTF-8 byte length for multi-byte characters", () => {
-    // "é" is 2 bytes in UTF-8
     expect(Buffer.byteLength("é", "utf8")).toBe(2);
     expect(estimateSystemTokens("é")).toBe(
       Math.ceil(2 / SYSTEM_PROMPT_BYTES_PER_TOKEN),
@@ -48,7 +45,6 @@ describe("estimateSystemPromptSize", () => {
   });
 
   test("returns 0 total when system/ does not exist", () => {
-    // tmpRoot exists but has no system/
     const result = estimateSystemPromptSize(tmpRoot);
     expect(result.total).toBe(0);
     expect(result.files).toEqual([]);
@@ -85,8 +81,8 @@ describe("estimateSystemPromptSize", () => {
 
   test("sums tokens across files in system/", () => {
     mkdirSync(join(tmpRoot, "system"), { recursive: true });
-    writeFileSync(join(tmpRoot, "system", "persona.md"), "abcd"); // 4 bytes -> 1 tok
-    writeFileSync(join(tmpRoot, "system", "other.md"), "abcdefgh"); // 8 -> 2 tok
+    writeFileSync(join(tmpRoot, "system", "persona.md"), "abcd");
+    writeFileSync(join(tmpRoot, "system", "other.md"), "abcdefgh");
 
     const { total, files } = estimateSystemPromptSize(tmpRoot);
     expect(total).toBe(3);
@@ -111,7 +107,7 @@ describe("estimateSystemPromptSize", () => {
     );
 
     const { total, files } = estimateSystemPromptSize(tmpRoot);
-    expect(total).toBe(2 + 4 + 3); // 8/4 + 16/4 + 12/4
+    expect(total).toBe(2 + 4 + 3);
     expect(files).toHaveLength(3);
   });
 

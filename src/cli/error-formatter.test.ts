@@ -23,7 +23,6 @@ describe("formatErrorDetails", () => {
       'INTERNAL_SERVER_ERROR: ChatGPT request failed (400): {\n  "error": {\n    "message": "The encrypted content for item rs_0dd1c85f779f9f0301698a7e40a0508193ba9a669d32159bf0 could not be verified. Reason: Encrypted content organization_id did not match the target organization.",\n    "type": "invalid_request_error",\n    "param": null,\n    "code": "invalid_encrypted_content"\n  }\n}';
 
     test("handles nested error object from run metadata", () => {
-      // This is the errorObject shape constructed in App.tsx from run.metadata.error
       const errorObject = {
         error: {
           error: {
@@ -44,7 +43,6 @@ describe("formatErrorDetails", () => {
       expect(result).toContain("invalid_encrypted_content");
       expect(result).toContain("/clear to start a new conversation.");
       expect(result).toContain("different OpenAI authentication scope");
-      // Should NOT be raw JSON
       expect(result).not.toContain('"message_type"');
       expect(result).not.toContain('"run_id"');
     });
@@ -60,7 +58,6 @@ describe("formatErrorDetails", () => {
 
       const result = formatErrorDetails(errorObject);
 
-      // JSON-like structured format
       expect(result).toContain('type: "invalid_request_error"');
       expect(result).toContain('code: "invalid_encrypted_content"');
       expect(result).toContain("organization_id did not match");
@@ -155,7 +152,7 @@ describe("formatErrorDetails", () => {
     const message = formatErrorDetails(error);
 
     expect(message).toBe(
-      "Your account does not have credits for this model. Add your own API keys or upgrade your plan to purchase credits.",
+      "This model needs your own API key or Letta credits. Run /connect to add a provider key, or buy credits at https://chat.letta.com/preferences/usage.",
     );
     expect(message).not.toContain("not available on Free plan");
     expect(message).not.toContain("Selected hosted model");
@@ -229,7 +226,7 @@ describe("formatErrorDetails", () => {
 
     const message = formatErrorDetails(error);
     expect(message).toBe(
-      "Your account does not have credits for this model. Add your own API keys or upgrade your plan to purchase credits.",
+      "This model needs your own API key or Letta credits. Run /connect to add a provider key, or buy credits at https://chat.letta.com/preferences/usage.",
     );
   });
 
@@ -384,7 +381,7 @@ describe("formatErrorDetails", () => {
 
     expect(message).toContain("Upgrade your plan for more quota");
     expect(message).toContain("purchase credits");
-    expect(message).not.toContain("Add your own API keys");
+    expect(message).not.toContain("/connect");
   });
 
   test("prefers backend reason_text over generic hosted quota guidance", () => {
@@ -424,7 +421,7 @@ describe("formatErrorDetails", () => {
     const message = formatErrorDetails(error);
 
     expect(message).toBe(
-      "Your account does not have credits for this model. Add your own API keys or upgrade your plan to purchase credits.",
+      "This model needs your own API key or Letta credits. Run /connect to add a provider key, or buy credits at https://chat.letta.com/preferences/usage.",
     );
   });
 
@@ -441,13 +438,12 @@ describe("formatErrorDetails", () => {
       expect(result).toContain("Resets at");
       expect(result).toContain("/model");
       expect(result).toContain("/connect");
-      // Should NOT contain raw JSON
       expect(result).not.toContain('"type"');
       expect(result).not.toContain("RATE_LIMIT_EXCEEDED");
     });
 
     test("handles error with only resets_at (no resets_in_seconds)", () => {
-      const futureTimestamp = Math.floor(Date.now() / 1000) + 3600; // 1 hour from now
+      const futureTimestamp = Math.floor(Date.now() / 1000) + 3600;
       const detail = `RATE_LIMIT_EXCEEDED: ChatGPT rate limit exceeded: {"error":{"type":"usage_limit_reached","message":"The usage limit has been reached","plan_type":"plus","resets_at":${futureTimestamp}}}`;
 
       const result = checkChatGptUsageLimitError(detail);
@@ -488,7 +484,6 @@ describe("formatErrorDetails", () => {
     });
 
     test("formats correctly via formatErrorDetails from run metadata object", () => {
-      // Shape constructed in App.tsx from run.metadata.error
       const errorObject = {
         error: {
           error: {
@@ -507,7 +502,6 @@ describe("formatErrorDetails", () => {
       expect(result).toContain("ChatGPT usage limit reached");
       expect(result).toContain("team plan");
       expect(result).toContain("/model");
-      // Should NOT contain the raw detail
       expect(result).not.toContain("RATE_LIMIT_EXCEEDED");
       expect(result).not.toContain("[usage_limit_reached]");
     });

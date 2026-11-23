@@ -115,6 +115,7 @@ class FakeComputer {
       agent_id: command.agent_id,
       success: true,
       stopped: true,
+      cleanup_confirmed: true,
     };
   }
 
@@ -155,7 +156,6 @@ class FakeComputer {
       );
   }
 
-  /** A snapshot from a listener that has no subagents for this conversation. */
   emptySnapshot(seq = 1) {
     for (const handler of this.messageHandlers)
       handler(
@@ -349,16 +349,16 @@ describe("launchRemoteExternalCodingAgent", () => {
         expect(computer.launches[0]).toMatchObject({
           runtime,
           notify: "caller",
-          args:
-            worker === 2
-              ? { harness: type, fork_context: true }
-              : { subagent_type: type },
+          args: { harness: type, fork_context: worker === 2 },
         });
         expect(requests.slice((worker - 1) * 3, worker * 3)).toEqual([
           {
             method: "POST",
             path: "/v1/conversations/",
-            body: { hidden: true },
+            body: {
+              hidden: true,
+              parent_conversation_id: scope.conversationId,
+            },
           },
           {
             method: "POST",
@@ -468,12 +468,10 @@ describe("launchRemoteExternalCodingAgent", () => {
     const edit = { id: "toolu_3", name: "Edit", args: '{"file_path":"a.ts"}' };
     computer.snapshot({ tool_calls: [bash] }, 1);
     await Bun.sleep(0);
-    // Snapshots repeat the whole list; only new IDs are appended.
     computer.snapshot({ tool_calls: [bash, read] }, 2);
     await Bun.sleep(0);
     computer.snapshot({ tool_calls: [bash, read] }, 3);
     await Bun.sleep(0);
-    // The terminal snapshot can carry a call no progress update showed.
     computer.snapshot(
       { status: "completed", result: "Done", tool_calls: [bash, read, edit] },
       4,
@@ -513,7 +511,6 @@ describe("launchRemoteExternalCodingAgent", () => {
     await Bun.sleep(0);
     computer.snapshot({ progress_texts: [first] }, 2);
     await Bun.sleep(0);
-    // Snapshots repeat the latest texts; only new IDs are appended.
     computer.snapshot({ progress_texts: [first] }, 3);
     await Bun.sleep(0);
     computer.snapshot(
@@ -703,7 +700,6 @@ describe("launchRemoteExternalCodingAgent", () => {
     expect(message.text).toContain("Done after drop");
   });
 
-  /** Advances Date.now by `stepMs` on each refused reconnect to simulate an outage. */
   function outage(stepMs: number, outageMs: number, recovered: FakeComputer) {
     const realNow = Date.now.bind(Date);
     let offset = 0;
@@ -796,7 +792,6 @@ describe("launchRemoteExternalCodingAgent", () => {
     );
     const result = await launch([first, second]);
     if (!result.success) throw new Error(result.error);
-    // Drop before any progress snapshot: the accepted launch alone must count.
     first.drop();
     const message = await notified();
     expect(second.syncs).toBe(1);

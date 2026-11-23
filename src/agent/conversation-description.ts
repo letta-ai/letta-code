@@ -4,17 +4,13 @@ import {
   summarizeConversation,
   updateConversationDescription,
 } from "@/backend/api/conversations";
-import { DEFAULT_SUMMARIZATION_MODEL } from "@/constants";
+import { DEFAULT_TITLE_SUMMARIZATION_MODEL } from "@/constants";
 import { experimentManager } from "@/experiments/manager";
 import { isDebugEnabled } from "@/utils/debug";
 
 const CONVERSATION_DESCRIPTION_MAX_WORDS = 40;
 const CONVERSATION_DESCRIPTION_MESSAGE_LIMIT = 40;
 
-/**
- * Hard timeout on the summarize endpoint flow. Description generation is
- * best-effort and should never block the main conversation path indefinitely.
- */
 const CONVERSATION_DESCRIPTION_TIMEOUT_MS = 30_000;
 
 const CONVERSATION_DESCRIPTION_SYSTEM_PROMPT = `You generate short internal conversation descriptions.
@@ -64,10 +60,6 @@ export function normalizeConversationDescription(value: string): string | null {
   return trimToWordLimit(normalized, CONVERSATION_DESCRIPTION_MAX_WORDS);
 }
 
-/**
- * Extract plain-text content from an assistant_message chunk's `content`
- * field, which may be a raw string or an array of structured content parts.
- */
 function extractAssistantText(content: unknown): string {
   if (typeof content === "string") {
     return content;
@@ -139,7 +131,7 @@ export function buildConversationDescriptionMessages(
 export async function generateConversationDescriptionFromSummary(
   conversationId: string,
   messages: ConversationDescriptionMessage[],
-  model: string = DEFAULT_SUMMARIZATION_MODEL,
+  model: string = DEFAULT_TITLE_SUMMARIZATION_MODEL,
 ): Promise<string | null> {
   if (messages.length === 0) {
     return null;
@@ -202,7 +194,7 @@ export async function regenerateConversationDescription(
     const description = await generateConversationDescriptionFromSummary(
       conversationId,
       messages,
-      DEFAULT_SUMMARIZATION_MODEL,
+      DEFAULT_TITLE_SUMMARIZATION_MODEL,
     );
     if (!description) {
       return false;

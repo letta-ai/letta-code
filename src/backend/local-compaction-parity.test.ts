@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { packageLocalSummaryMessage } from "@/backend/local/compaction";
 import {
   formatLocalMessagesForSummary,
   LOCAL_SUMMARY_TOOL_RETURN_TRUNCATION_CHARS,
-  type LocalCompactionStats,
-  packageLocalSummaryMessage,
-} from "@/backend/local/compaction";
+} from "@/backend/local/compaction-transcript";
 import {
   emptyLocalUsage,
+  type LocalCompactionStats,
   type LocalMessage,
 } from "@/backend/local/local-message";
 

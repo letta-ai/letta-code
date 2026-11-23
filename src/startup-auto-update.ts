@@ -21,7 +21,6 @@ export function startStartupAutoUpdateCheck(
 ): Promise<UpdateNotification | undefined> {
   return checkAndAutoUpdate()
     .then((result) => {
-      // Surface ENOTEMPTY failures so users know how to fix
       if (result?.enotemptyFailed) {
         logError("\nAuto-update failed due to filesystem issue (ENOTEMPTY).");
         logError(
@@ -34,7 +33,6 @@ export function startStartupAutoUpdateCheck(
         );
         return undefined;
       }
-      // Return notification payload for the TUI to consume
       if (result?.updateApplied && result.latestVersion) {
         return { latestVersion: result.latestVersion };
       }

@@ -8,7 +8,10 @@ import {
   recordWorkflowProgress,
   registerWorkflowExecution,
 } from "@/tools/workflow/execution-registry";
-import { buildBackgroundProcessSnapshot } from "./background-process-snapshot";
+import {
+  buildBackgroundProcessSnapshot,
+  hasRunningBackgroundWork,
+} from "./background-process-snapshot";
 
 afterEach(() => {
   backgroundProcesses.clear();
@@ -16,6 +19,40 @@ afterEach(() => {
 });
 
 describe("background process snapshots", () => {
+  test("holds only running entries classified as Bash", () => {
+    const runtimeScope = { agentId: "agent-a", conversationId: "conv-a" };
+    for (const [id, kind] of [
+      ["monitor_1", "monitor"],
+      ["workflow_1", "workflow"],
+      ["tool_1", "tool"],
+      ["code_mode_1", undefined],
+    ] as const) {
+      backgroundProcesses.set(id, {
+        process: { kill() {} },
+        command: id,
+        status: "running",
+        exitCode: null,
+        runtimeScope,
+        kind,
+      });
+    }
+    expect(hasRunningBackgroundWork("agent-a", "conv-a")).toBe(false);
+    for (const id of ["bash_1", "exec_1", "download_1"]) {
+      const entry: BackgroundProcess = {
+        process: { kill() {} },
+        command: id,
+        status: "running",
+        exitCode: null,
+        runtimeScope,
+      };
+      backgroundProcesses.set(id, entry);
+      expect(hasRunningBackgroundWork("agent-a", "conv-a")).toBe(true);
+      expect(hasRunningBackgroundWork("agent-b", "conv-a")).toBe(false);
+      entry.status = "completed";
+      expect(hasRunningBackgroundWork("agent-a", "conv-a")).toBe(false);
+    }
+  });
+
   test("reports only running monitors in their owning runtime", () => {
     backgroundProcesses.set("monitor_1", {
       process: { kill: () => {} },

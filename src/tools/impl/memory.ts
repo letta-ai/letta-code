@@ -1,11 +1,3 @@
-/**
- * Memory() tool: progressive discovery of deferred MemFS v2 memory.
- *
- * Root memory files are already in the system prompt; everything beneath the
- * root is deferred. Reading a directory returns its MEMORY.md plus the files
- * and subdirectories directly beneath it; reading a file returns the file.
- * Output limits mirror Read.
- */
 import { execFileSync } from "node:child_process";
 import {
   closeSync,
@@ -22,6 +14,7 @@ import { getCurrentAgentId } from "@/agent/context";
 import { detectMemoryFormat } from "@/agent/memory-format";
 import { getActiveMemoryDirectory } from "@/agent/memory-runtime";
 import { parseFrontmatter } from "@/utils/frontmatter";
+import { isMemoryUnavailable } from "@/utils/memory-access";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
 
@@ -31,16 +24,10 @@ interface MemoryArgs {
   path: string;
 }
 
-/**
- * The agent's memory directory when it uses the MemFS v2 layout (MemFS active
- * and a root MEMORY.md), otherwise null. Gates both toolset inclusion and
- * execution.
- */
 export function resolveMemoryToolDirectory(
   agentId?: string | null,
 ): string | null {
   try {
-    // null means an agentless conversation; only undefined falls back to scope.
     const id = agentId === undefined ? getCurrentAgentId() : agentId;
     const memoryDir = id ? getActiveMemoryDirectory(id) : undefined;
     return memoryDir && detectMemoryFormat(memoryDir, false) === "memfs-v2"
@@ -61,10 +48,6 @@ function readDescription(path: string): string | undefined {
   }
 }
 
-/**
- * Child MEMORY.md indexes are frontmatter-free in MemFS v2, so fall back to the
- * index's first prose paragraph (after any frontmatter and headings).
- */
 function readIndexDescription(path: string): string | undefined {
   const fromFrontmatter = readDescription(path);
   if (fromFrontmatter) return fromFrontmatter;
@@ -80,9 +63,7 @@ function readIndexDescription(path: string): string | undefined {
         ? `${paragraph.slice(0, 297)}...`
         : paragraph;
     }
-  } catch {
-    // No readable index.
-  }
+  } catch {}
   return undefined;
 }
 
@@ -90,7 +71,6 @@ function isHidden(name: string): boolean {
   return name.startsWith(".");
 }
 
-/** Memory-root-relative paths of non-root files with this basename. */
 function findByBasename(
   dir: string,
   name: string,
@@ -129,7 +109,6 @@ function descriptionAttr(description: string | undefined): string {
     : "";
 }
 
-/** Read's line, per-line, and total-character limits; notices in Read's order. */
 function clampContent(
   content: string,
   fullPath: string,
@@ -170,12 +149,6 @@ function clampContent(
   return notices.length ? `${result}\n\n${notices.join("\n\n")}` : result;
 }
 
-/**
- * Last-edited time (ms) for each direct child of `dir`. A directory's time is
- * its most recent edit anywhere beneath it. Committed paths use their latest
- * commit time, because checkouts reset mtimes; uncommitted or untracked paths
- * (and memory outside git) use filesystem mtime.
- */
 function lastEditedByChild(dir: string, names: string[]): Map<string, number> {
   const edited = new Map<string, number>();
   const bump = (name: string, time: number) => {
@@ -196,14 +169,11 @@ function lastEditedByChild(dir: string, names: string[]): Map<string, number> {
       for (const entry of readdirSync(path, { withFileTypes: true })) {
         if (!isHidden(entry.name)) walkMtime(join(path, entry.name), name);
       }
-    } catch {
-      // Unreadable entries sort last.
-    }
+    } catch {}
   };
 
   let dirty: string[];
   try {
-    // Newest commit first; the first time seen per child is its latest commit.
     let commitTime = 0;
     for (const line of git([
       "log",
@@ -254,7 +224,6 @@ function renderDirectory(
     fullPath,
     entries.map((entry) => entry.name),
   );
-  // Most recently edited first (files and subdirectories together), then by name.
   const shown = entries
     .sort(
       (a, b) =>
@@ -304,7 +273,6 @@ function renderDirectory(
   const close = "</memory_content>";
   let head: string;
   if (existsSync(indexPath)) {
-    // Keep the whole return within Read's budget so the listing survives the tool-return backstop.
     const budget = Math.max(
       2_000,
       LIMITS.READ_OUTPUT_CHARS -
@@ -324,7 +292,6 @@ function renderDirectory(
   return `${open}\n${head}\n\n${tailText}\n${close}`;
 }
 
-/** Matches Read's text-file ceiling so oversized files are rejected before being loaded. */
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 
 function readPrefix(path: string, bytes: number): Buffer {
@@ -345,6 +312,10 @@ function renderFile(relPath: string, fullPath: string): string {
 }
 
 export async function memory(args: MemoryArgs): Promise<{ content: string }> {
+  const agentId = getCurrentAgentId();
+  if (agentId && isMemoryUnavailable(agentId)) {
+    return { content: "Memory is not available on this machine." };
+  }
   validateRequiredParams(args, ["path"], "Memory");
   const memoryDir = resolveMemoryToolDirectory();
   if (!memoryDir) {
@@ -380,7 +351,6 @@ export async function memory(args: MemoryArgs): Promise<{ content: string }> {
 
   const fullPath = join(memoryDir, ...segments);
   if (!existsSync(fullPath)) {
-    // Suggest the root-relative path for legacy directory-relative links.
     const candidates =
       !relPath.endsWith(".md") && existsSync(`${fullPath}.md`)
         ? [`${relPath}.md`]

@@ -1,16 +1,19 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { experimentManager } from "@/experiments/manager";
 import { settingsManager } from "@/settings-manager";
+import { removeTestDir } from "@/test-utils/test-fs";
 import {
   read_artifact_file,
   write_artifact_file,
 } from "@/tools/impl/artifact-files";
 import {
   clearCapturedToolExecutionContexts,
+  executeTool,
   prepareToolExecutionContextForModel,
+  prepareToolExecutionContextForSpecificTools,
 } from "@/tools/manager";
 
 const originalHome = process.env.HOME;
@@ -32,7 +35,7 @@ afterEach(async () => {
   clearCapturedToolExecutionContexts();
   await settingsManager.reset();
   if (testHomeDir) {
-    await rm(testHomeDir, { recursive: true, force: true });
+    await removeTestDir(testHomeDir);
     testHomeDir = "";
   }
   process.env.HOME = originalHome;
@@ -90,6 +93,28 @@ describe("artifact file tools", () => {
       content: "<h1>Todo</h1>",
       encoding: "utf8",
     });
+  });
+
+  test("keeps paths relative to the artifacts root during execution", async () => {
+    experimentManager.set("artifacts", true);
+    const { contextId } = await prepareToolExecutionContextForSpecificTools([
+      "read_artifact_file",
+      "write_artifact_file",
+    ]);
+    const writeResult = await executeTool(
+      "write_artifact_file",
+      { path: "notes/test.txt", content: "relative artifact" },
+      { toolContextId: contextId },
+    );
+    expect(writeResult.status).toBe("success");
+
+    const readResult = await executeTool(
+      "read_artifact_file",
+      { path: "notes/test.txt" },
+      { toolContextId: contextId },
+    );
+    expect(readResult.status).toBe("success");
+    expect(String(readResult.toolReturn)).toContain("relative artifact");
   });
 
   test("rejects paths that escape the artifacts root", async () => {

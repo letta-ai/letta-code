@@ -9,11 +9,8 @@ export interface EnvironmentMetadata {
   workingDirectory?: string;
   gitBranch?: string;
   supported_commands?: string[];
-  /** Accepts `launch_subagent` with `notify: "caller"`. */
   launch_subagent_notify_caller?: boolean;
-  /** Prepares external-worker fork history on the destination filesystem. */
   external_fork_context?: boolean;
-  /** Supports steering and stopping remote external subagents. */
   subagent_message?: boolean;
   [key: string]: unknown;
 }
@@ -95,9 +92,16 @@ export async function getEnvironmentConnection(
   );
 }
 
+export const SUBAGENT_CLOUD_OPTIONS_ENV = "LETTA_SUBAGENT_CLOUD_OPTIONS";
+
+export interface AgentSandboxOptions {
+  githubRepositories?: Array<{ owner: string; repo: string; commit?: string }>;
+  sandboxSize?: "regular" | "large" | "xlarge";
+}
+
 export async function createAgentSandbox(
   agentId: string,
-  options: { conversationId?: string } = {},
+  options: AgentSandboxOptions & { conversationId?: string } = {},
   request: typeof apiRequest = apiRequest,
 ): Promise<CreateAgentSandboxResponse> {
   const conversationId =
@@ -105,7 +109,15 @@ export async function createAgentSandbox(
   return request<CreateAgentSandboxResponse>(
     "POST",
     `/v1/agents/${encodeURIComponent(agentId)}/sandboxes`,
-    conversationId ? { conversationId } : {},
+    {
+      ...(conversationId && { conversationId }),
+      ...(options.githubRepositories !== undefined && {
+        githubRepositories: options.githubRepositories,
+      }),
+      ...(options.sandboxSize !== undefined && {
+        sandboxSize: options.sandboxSize,
+      }),
+    },
   );
 }
 
@@ -160,7 +172,6 @@ export async function resolveDesktopEnvironmentConnectionId(
   return { connectionId: environment.connectionId, environment };
 }
 
-/** Whether a computer selector names this environment by connection id, id, device id, or name. */
 export function environmentMatchesSelector(
   environment: EnvironmentConnection,
   selector: string,
@@ -173,13 +184,30 @@ export function environmentMatchesSelector(
   );
 }
 
+export class ComputerResolutionError extends Error {
+  constructor(
+    public readonly code:
+      | "computer_selector_empty"
+      | "computer_not_found"
+      | "computer_offline"
+      | "computer_ambiguous",
+    message: string,
+  ) {
+    super(message);
+    this.name = "ComputerResolutionError";
+  }
+}
+
 export async function resolveEnvironmentConnectionId(
   selector: string,
   list: typeof listEnvironments = listEnvironments,
 ): Promise<{ connectionId: string; environment: EnvironmentConnection }> {
   const trimmed = selector.trim();
   if (!trimmed) {
-    throw new Error("Computer selector must not be empty");
+    throw new ComputerResolutionError(
+      "computer_selector_empty",
+      "Computer selector must not be empty",
+    );
   }
 
   const response = await list({ limit: 100 });
@@ -188,14 +216,16 @@ export async function resolveEnvironmentConnectionId(
   );
 
   if (matches.length === 0) {
-    throw new Error(
+    throw new ComputerResolutionError(
+      "computer_not_found",
       `Computer "${trimmed}" not found. Run \`letta computers list\` to discover available computers.`,
     );
   }
 
   const onlineMatches = matches.filter(isEnvironmentOnline);
   if (onlineMatches.length === 0) {
-    throw new Error(
+    throw new ComputerResolutionError(
+      "computer_offline",
       `Computer "${trimmed}" is offline. Matched: ${matches.map(describeEnvironment).join(", ")}`,
     );
   }
@@ -203,13 +233,12 @@ export async function resolveEnvironmentConnectionId(
   if (
     new Set(onlineMatches.map((environment) => environment.deviceId)).size > 1
   ) {
-    throw new Error(
+    throw new ComputerResolutionError(
+      "computer_ambiguous",
       `Computer "${trimmed}" is ambiguous. Matched: ${onlineMatches.map(describeEnvironment).join(", ")}`,
     );
   }
 
-  // Multiple listeners for one device are not multiple computers. Match the
-  // picker by preferring the online listener with the most recent activity.
   onlineMatches.sort(
     (a, b) =>
       Math.max(b.lastHeartbeat ?? 0, b.lastSeenAt) -
@@ -217,7 +246,10 @@ export async function resolveEnvironmentConnectionId(
   );
   const environment = onlineMatches[0];
   if (!environment) {
-    throw new Error(`Computer "${trimmed}" is offline`);
+    throw new ComputerResolutionError(
+      "computer_offline",
+      `Computer "${trimmed}" is offline`,
+    );
   }
   if (!environment.connectionId) {
     throw new Error(`Computer "${trimmed}" has no active connection id`);
@@ -228,7 +260,7 @@ export async function resolveEnvironmentConnectionId(
 
 export async function resolveAgentSandboxConnectionId(
   agentId: string,
-  options: {
+  options: AgentSandboxOptions & {
     conversationId?: string;
     timeoutMs?: number;
     pollIntervalMs?: number;
@@ -236,9 +268,7 @@ export async function resolveAgentSandboxConnectionId(
 ): Promise<{ connectionId: string; environment: EnvironmentConnection }> {
   const timeoutMs = options.timeoutMs ?? 3 * 60_000;
   const pollIntervalMs = options.pollIntervalMs ?? 2_000;
-  const sandbox = await createAgentSandbox(agentId, {
-    conversationId: options.conversationId,
-  });
+  const sandbox = await createAgentSandbox(agentId, options);
   const deviceId = sandbox.deviceId || `sandbox-${agentId}`;
   const deadline = Date.now() + timeoutMs;
   let lastEnvironment: EnvironmentConnection | null = null;
@@ -302,10 +332,6 @@ export function getTeleportStatus(
   );
 }
 
-/**
- * Submit a teleport request to Cloud. Returns immediately after the 202
- * acceptance — the harness owns polling/yield after this returns.
- */
 export async function teleportToEnvironment(
   agentId: string,
   conversationId: string,

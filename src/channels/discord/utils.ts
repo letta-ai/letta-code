@@ -67,7 +67,6 @@ export function splitMessageText(text: string, maxLength: number): string[] {
       chunks.push(remaining);
       break;
     }
-    // Try to split at a newline boundary
     let splitAt = remaining.lastIndexOf("\n", maxLength);
     if (splitAt <= 0) {
       splitAt = remaining.lastIndexOf(" ", maxLength);
@@ -95,18 +94,12 @@ export function resolveDiscordChatType(
   return guildId ? "channel" : "direct";
 }
 
-/**
- * Resolve native emoji for Discord reactions.
- * Discord uses native Unicode emoji directly (not names like Slack).
- * Strip colons for common named patterns.
- */
 export function resolveDiscordReactionEmoji(value: string): string {
   const trimmed = value.trim();
   if (trimmed.startsWith("<:") || trimmed.startsWith("<a:")) {
     return trimmed;
   }
   const normalized = trimmed.replace(/^:+|:+$/g, "");
-  // Common name-to-emoji mappings for parity with Slack lifecycle reactions
   const nameMap: Record<string, string> = {
     eyes: "👀",
     white_check_mark: "✅",
@@ -164,11 +157,6 @@ export function formatDiscordLifecycleErrorMessage(
   });
 }
 
-/**
- * Best-effort: post a user-facing error reply when forwarding a Discord
- * message to the agent runtime fails. Swallows any send failure so the
- * notification path can never crash the listener.
- */
 export async function notifyDiscordDeliveryError(
   message: DiscordMessageLike,
   error: unknown,

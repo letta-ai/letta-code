@@ -85,7 +85,6 @@ describe("listener permission mode helpers", () => {
       ),
     ).toBe(ref2);
 
-    // keep typechecker happy about intentionally unused ref
     expect(ref).toBeDefined();
   });
 });

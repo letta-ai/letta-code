@@ -54,7 +54,6 @@ beforeEach(async () => {
   await settingsManager.reset();
   process.env.HOME = root;
   __testSetBackend(null);
-  // Isolate user credentials, URL rewrites and signing configuration.
   process.env.GIT_CONFIG_GLOBAL = join(root, "gitconfig");
   process.env.GIT_CONFIG_NOSYSTEM = "1";
   process.env.LETTA_API_KEY = token;
@@ -90,8 +89,6 @@ beforeEach(async () => {
       response.end("unauthorized");
       return;
     }
-    // Git's dumb HTTP transport serves a real bare repository. The server
-    // replaces only the authenticated proxy, not fetch or integration.
     const path = join(
       remoteDir,
       url.pathname.slice("/v1/git/agent-test/state.git/".length),
@@ -109,8 +106,6 @@ beforeEach(async () => {
   proxyUrl = `http://127.0.0.1:${address.port}`;
   process.env.LETTA_BASE_URL = proxyUrl;
   process.env.LETTA_MEMFS_GIT_PROXY_BASE_URL = proxyUrl;
-  // A broken fetch must fail locally, never contact api.letta.com. The
-  // command-scoped /v1/git/ rewrite is more specific than this safety net.
   git(memoryDir, [
     "config",
     `url.${proxyUrl}/bypassed-proxy/.insteadOf`,
@@ -142,8 +137,6 @@ async function makeReflection() {
   writeFileSync(join(worktree.worktreeDir, "reflection.md"), "learned\n");
   git(worktree.worktreeDir, ["add", "reflection.md"]);
   git(worktree.worktreeDir, ["commit", "-m", "reflection"]);
-  // Force integration to create a merge commit; its identity/signing policy
-  // must survive switching only the network operation to memory-git.
   writeFileSync(join(memoryDir, "parent.md"), "awake\n");
   git(memoryDir, ["add", "parent.md"]);
   git(memoryDir, ["commit", "-m", "parent"]);

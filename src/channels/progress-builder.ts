@@ -87,12 +87,6 @@ function toolNameForMessage(summary: ToolCallSummary | undefined): string {
   return summary?.name ? `: ${summary.name}` : "";
 }
 
-/**
- * Builds sanitized channel progress updates from stream deltas for a single
- * turn. Instances accumulate fragmented tool-call arguments across deltas,
- * so they must be scoped to one conversation turn (create one per turn and
- * drop it when the turn finishes) rather than shared across conversations.
- */
 export type ChannelTurnProgressBuilder = {
   buildUpdates(delta: unknown): ChannelTurnProgressUpdate[];
 };
@@ -100,15 +94,8 @@ export type ChannelTurnProgressBuilder = {
 export function createChannelTurnProgressBuilder(
   options: ChannelTurnProgressBuilderOptions = {},
 ): ChannelTurnProgressBuilder {
-  // Fragmented tool arguments and names accumulated across stream deltas,
-  // keyed by tool_call_id. Entries are dropped when the tool return arrives;
-  // the whole builder is dropped with the turn.
   const argumentsByToolCallId = new Map<string, string>();
   const namesByToolCallId = new Map<string, string>();
-  // A model step can stream its parallel calls separately, with different
-  // message ids for server tools and approval requests. Keep one title across
-  // those calls and their later client start/end events (which omit step_id).
-  // Like the builder itself, these maps live only for the current turn.
   const batchesByStep = new Map<string, { title: string | null }>();
   const batchesByToolCallId = new Map<string, { title: string | null }>();
 
@@ -122,7 +109,6 @@ export function createChannelTurnProgressBuilder(
     const isToolRequest =
       messageType === "tool_call_message" ||
       messageType === "approval_request_message";
-    // Older streams may lack step_id but still group calls in one message.
     const stepKey = isToolRequest
       ? firstNonEmptyString(record.step_id, record.id)
       : undefined;
@@ -147,10 +133,6 @@ export function createChannelTurnProgressBuilder(
     });
   }
 
-  // Wire shapes (see ToolCall / ToolCallDelta in @letta-ai/letta-client and
-  // the local backend projections): flat `tool_call_id` / `name` /
-  // `arguments` fields, delivered either as `tool_calls` (array or single
-  // delta object) or the deprecated `tool_call`.
   function extractToolCallSummary(value: unknown): ToolCallSummary | null {
     const record = asRecord(value);
     if (!record) {
@@ -173,10 +155,6 @@ export function createChannelTurnProgressBuilder(
           ? JSON.stringify(record.arguments)
           : undefined;
 
-    // Accumulate fragmented arguments across stream deltas for the same tool
-    // call. A fragment that already parses as complete JSON replaces earlier
-    // partial state (some streams first expose only command content, then
-    // later re-send full arguments including the description).
     let argumentsText: string | undefined;
     if (cacheId && rawArguments !== undefined) {
       const existing = argumentsByToolCallId.get(cacheId);
@@ -397,8 +375,6 @@ export function createChannelTurnProgressBuilder(
         const toolReturns = extractToolReturns(record);
         const updates: ChannelTurnProgressUpdate[] = [];
         for (const { summary, status, errorDetails } of toolReturns) {
-          // Resolve details from the accumulated arguments for this call,
-          // then drop the per-call caches.
           const accumulatedArgs = summary.id
             ? argumentsByToolCallId.get(summary.id)
             : undefined;
@@ -409,9 +385,6 @@ export function createChannelTurnProgressBuilder(
           const toolWithAccumulatedArgs = accumulatedArgs
             ? { ...summary, argumentsText: accumulatedArgs }
             : summary;
-          // toolDetails stays argument-derived even on errors: surfaces use it
-          // for row titles (e.g. shell rows), so tool output must never leak
-          // into it. Error-output previews travel in errorDetails (LET-9509).
           const toolDetails = formatToolProgressDetails(
             toolWithAccumulatedArgs,
             options,
@@ -477,8 +450,6 @@ export function createChannelTurnProgressBuilder(
           tool && accumulatedArgs
             ? { ...tool, argumentsText: accumulatedArgs }
             : tool;
-        // toolDetails stays argument-derived even on errors (see the
-        // tool_return_message handler); error previews go to errorDetails.
         const toolDetails = toolWithAccumulatedArgs
           ? formatToolProgressDetails(toolWithAccumulatedArgs, options)
           : undefined;

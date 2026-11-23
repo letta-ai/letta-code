@@ -2,12 +2,6 @@ export type ScheduledTaskRecurrence =
   | { type: "one-off" }
   | { type: "recurring"; cron: string; fireNumber?: number };
 
-/**
- * Conversation tag marking a conversation created by a scheduled task fire.
- *
- * Every schedule runner stamps this when it creates a conversation, so clients
- * can identify scheduled conversations without parsing the summary text.
- */
 export const SCHEDULE_ORIGIN_TAG = "origin:schedule";
 
 export interface ScheduledTaskPromptInput {
@@ -164,12 +158,6 @@ function formatRecurrence(recurrence: ScheduledTaskRecurrence): string {
   return `This is a recurring scheduled task (cron: ${recurrence.cron}).`;
 }
 
-/**
- * Build the canonical prompt envelope for a scheduled agent turn.
- *
- * Every schedule runner should call this immediately before dispatch while
- * keeping its stored authored prompt separate from runtime metadata.
- */
 export function formatScheduledTaskPrompt(
   input: ScheduledTaskPromptInput,
 ): string {
@@ -223,7 +211,6 @@ function getPrompt(text: string, recurrenceLineIndex: number): string | null {
   return trailingLines.join("\n").trim() || null;
 }
 
-/** Parse canonical and legacy scheduled-task envelopes from persisted messages. */
 export function parseScheduledTaskPrompt(
   rawText: string,
 ): ScheduledTaskPromptInfo | null {

@@ -4,6 +4,7 @@ import type WebSocket from "ws";
 import { getBackend } from "@/backend";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { migratePermissionMode } from "@/permissions/mode";
+import { telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type {
   AbortMessageCommand,
@@ -73,12 +74,6 @@ function isMissingWorkingDirectoryError(error: unknown): boolean {
   return code === "ENOENT" || code === "ENOTDIR";
 }
 
-/**
- * Handle mode change request from cloud.
- * Stores the new mode in ListenerRuntime.permissionModeByConversation so
- * each agent/conversation is isolated and the state outlives the ephemeral
- * ConversationRuntime (which gets evicted between turns).
- */
 export function handleModeChange(
   msg: ModeChangePayload,
   socket: WebSocket,
@@ -97,7 +92,6 @@ export function handleModeChange(
       conversationId,
     );
 
-    // Migrate legacy mode values from older clients
     const incomingMode = migratePermissionMode(msg.mode);
     if (!incomingMode) {
       emitLoopErrorNotice(socket, runtime, {
@@ -110,10 +104,21 @@ export function handleModeChange(
       return;
     }
 
+    const previousMode = current.mode;
     current.mode = incomingMode;
     current.explicit = true;
 
     persistPermissionModeMapForRuntime(runtime);
+    if (previousMode !== incomingMode) {
+      telemetry.trackPermissionModeChanged({
+        agent_id: agentId,
+        conversation_id: conversationId,
+        prev_mode: previousMode,
+        new_mode: incomingMode,
+        source: "user_toggle",
+        mode_is_default: false,
+      });
+    }
 
     emitRuntimeStateUpdates(runtime, scope);
 
@@ -352,6 +357,7 @@ export async function handleAbortMessageInput(
   listener: ListenerRuntime,
   params: {
     command: AbortMessageCommand;
+    confirmBackendCancellation?: boolean;
     connectionId?: ListenerConnectionId;
     socket: ListenerTransport;
     opts: {
@@ -398,7 +404,12 @@ export async function handleAbortMessageInput(
         conversationId === "default" || !conversationId
           ? agentId
           : conversationId;
-      await getBackend().cancelConversation(cancelId);
+      const results = await getBackend().cancelConversation(cancelId);
+      if (
+        !Object.values(results).length ||
+        Object.values(results).some((value) => value !== "cancelled")
+      )
+        throw new Error("Backend did not confirm cancellation of every run");
     },
     cancelRun: async (agentId: string, runId: string) => {
       const result = await getBackend().cancelRun(agentId, runId);
@@ -451,9 +462,6 @@ export async function handleAbortMessageInput(
       scopedRuntime.turnLifecycle.currentLease?.id ===
         lifecycleSnapshot.lease.id);
 
-  // A CLI waiter may observe completion just before its abort arrives. Match
-  // against the current lease's run even after transport cancellation moved it
-  // to `cancelling`; never apply an old run's abort to a replacement turn.
   if (
     params.command.run_id &&
     (!hasCurrentTurn || params.command.run_id !== lifecycleSnapshot.runId)
@@ -469,9 +477,6 @@ export async function handleAbortMessageInput(
     cause: "explicit_user",
     waitForExternalSettlement: hasCurrentTurn,
   });
-  // Interrupt semantics: the current turn stops and the user's queued messages
-  // park until resume_queue or the user's next message. System items (task
-  // notifications, cron, mod continuations) still drain once idle.
   scopedRuntime.queueRuntime.pause();
   const interruptedRunId = cancellation.runId;
   const pendingRequestsSnapshot = hasPendingApprovals
@@ -500,8 +505,6 @@ export async function handleAbortMessageInput(
     ];
   }
 
-  // Also set interrupt context for active turns without tracked tool IDs
-  // (e.g., background Task tools that spawn subagents)
   if (
     hasCurrentTurn &&
     cancellation.executingToolCallIds.length === 0 &&
@@ -512,7 +515,6 @@ export async function handleAbortMessageInput(
       conversationId: scopedRuntime.conversationId,
       continuationEpoch: scopedRuntime.continuationEpoch,
     };
-    // Set empty results array so hasInterruptedCacheForScope can detect the interrupt
     scopedRuntime.pendingInterruptedResults = [];
   }
 
@@ -547,7 +549,6 @@ export async function handleAbortMessageInput(
       scopedRuntime.pendingInterruptedResults.length === 0) &&
     pendingRequestsSnapshot.length > 0
   ) {
-    // Populate interrupted cache to prevent stale approval recovery on sync
     scopedRuntime.pendingInterruptedResults = pendingRequestsSnapshot.map(
       (req) => ({
         type: "approval" as const,
@@ -572,10 +573,6 @@ export async function handleAbortMessageInput(
   const cancelConversationId = scopedRuntime.conversationId;
   const cancelAgentId = scopedRuntime.agentId;
   const cancelRunId = interruptedRunId ?? params.command.run_id ?? null;
-  // Target the interrupted run when possible so this abort can never select
-  // a replacement turn. For conversations with agent_id:null, resolve the
-  // backend's execution owner from that exact run instead of widening the abort
-  // to every active run in the conversation.
   const backendCancellation =
     cancelAgentId && cancelRunId
       ? resolvedDeps
@@ -589,33 +586,41 @@ export async function handleAbortMessageInput(
       : cancelAgentId
         ? resolvedDeps.cancelConversation(cancelAgentId, cancelConversationId)
         : resolvedDeps.cancelConversationRun(cancelConversationId, cancelRunId);
-  void backendCancellation
-    .catch(() => {
-      // Fire-and-forget
-    })
-    .finally(() => {
-      if (!cancellation.lease) {
-        return;
-      }
-      const settlement = scopedRuntime.turnLifecycle.settleCancellation(
-        cancellation.lease,
-      );
-      if (settlement.released) {
-        resolvedDeps.scheduleQueuePump(
-          scopedRuntime,
-          params.socket,
-          params.opts as StartListenerOptions,
-          params.processQueuedTurn,
-        );
-      }
-    });
+  const pumpQueue = () =>
+    resolvedDeps.scheduleQueuePump(
+      scopedRuntime,
+      params.socket,
+      params.opts as StartListenerOptions,
+      params.processQueuedTurn,
+    );
+  const settlementPromise = backendCancellation.finally(() => {
+    if (!cancellation.lease) {
+      return;
+    }
+    const settlement = scopedRuntime.turnLifecycle.settleCancellation(
+      cancellation.lease,
+    );
+    if (settlement.released && !params.confirmBackendCancellation) pumpQueue();
+  });
 
-  resolvedDeps.scheduleQueuePump(
-    scopedRuntime,
-    params.socket,
-    params.opts as StartListenerOptions,
-    params.processQueuedTurn,
-  );
+  try {
+    if (params.confirmBackendCancellation) {
+      await settlementPromise;
+      const deadline = Date.now() + 10_000;
+      while (
+        cancellation.lease &&
+        scopedRuntime.turnLifecycle.isCurrent(cancellation.lease)
+      ) {
+        if (Date.now() >= deadline)
+          throw new Error("The listener turn did not stop");
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    } else {
+      void settlementPromise.catch(() => undefined);
+    }
+  } finally {
+    pumpQueue();
+  }
   return true;
 }
 
@@ -654,8 +659,6 @@ export async function handleCwdChange(
       normalizedPath,
     );
 
-    // Invalidate session-context only (not agent-info) so the agent gets
-    // updated CWD/git info on the next turn.
     runtime.reminderState.hasSentSessionContext = false;
     runtime.reminderState.pendingSessionContextReason = "cwd_changed";
 
@@ -664,8 +667,6 @@ export async function handleCwdChange(
       conversation_id: conversationId,
     });
 
-    // Restart the worktree file watcher for the new CWD so we detect
-    // any future worktree creation under the updated directory.
     restartWorktreeWatcher({
       runtime: runtime.listener,
       agentId,

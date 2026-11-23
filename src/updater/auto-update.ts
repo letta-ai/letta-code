@@ -30,7 +30,6 @@ import { getVersion } from "@/version";
 
 const execFileAsync = promisify(execFile);
 
-// Debug logging - set LETTA_DEBUG_AUTOUPDATE=1 to enable
 const DEBUG = process.env.LETTA_DEBUG_AUTOUPDATE === "1";
 function debugLog(...args: unknown[]) {
   if (DEBUG) {
@@ -42,11 +41,9 @@ interface UpdateCheckResult {
   updateAvailable: boolean;
   latestVersion?: string;
   currentVersion: string;
-  /** True when the version check itself failed (network error, registry down, etc.) */
   checkFailed?: boolean;
 }
 
-// Supported package managers for global install/update
 export type PackageManager = "npm" | "bun" | "pnpm";
 
 const DEFAULT_UPDATE_PACKAGE_NAME = "@letta-ai/letta-code";
@@ -64,12 +61,10 @@ const INSTALL_ARG_PREFIX: Record<PackageManager, string[]> = {
 
 const VALID_PACKAGE_MANAGERS = new Set<string>(Object.keys(INSTALL_ARG_PREFIX));
 const NPM_PREFIX_TIMEOUT_MS = 5000;
-// A lock left by a dead process is only taken over once it is this old.
 const UPDATE_LOCK_STALE_MS = 15 * 60 * 1000;
 type FetchImpl = typeof fetch;
 type RunUpdateCommand = typeof runUpdateCommand;
 
-/** Test seams; production callers pass nothing. */
 export interface UpdateDeps {
   fetchImpl?: FetchImpl;
   runCommand?: RunUpdateCommand;
@@ -88,7 +83,6 @@ function normalizeUpdatePackageName(raw: string | undefined): string | null {
   if (!raw) return null;
   const value = raw.trim();
   if (!value) return null;
-  // Basic npm package name validation: no whitespace/shell separators.
   if (/\s/.test(value) || /["'`;|&$]/.test(value)) return null;
   return value;
 }
@@ -156,8 +150,6 @@ export function buildUpdateExecOptions(
   return {
     timeout,
     encoding: "utf8",
-    // Match Codex's updater behavior: route package-manager commands through
-    // the Windows shell so npm/pnpm/bun .cmd shims resolve via PATHEXT.
     shell: platform === "win32",
   };
 }
@@ -273,10 +265,6 @@ export function buildInstallArgs(
   return args;
 }
 
-/**
- * Detect which package manager was used to install this binary.
- * Checks LETTA_PACKAGE_MANAGER env var first, then inspects the resolved binary path.
- */
 export function detectPackageManager(): PackageManager {
   const envOverride = process.env.LETTA_PACKAGE_MANAGER;
   if (envOverride) {
@@ -315,8 +303,6 @@ function isRunningLocally(): boolean {
   debugLog("argv[1]:", argv);
   debugLog("resolved path:", resolvedPath);
 
-  // If running from node_modules, it's npm installed (should auto-update)
-  // Otherwise it's local dev (source or built locally)
   return !resolvedPath.includes("node_modules");
 }
 
@@ -327,8 +313,6 @@ export async function checkForUpdate(
   if (isPythonDistribution()) return { updateAvailable: false, currentVersion };
   debugLog("Current version:", currentVersion);
 
-  // Skip auto-update for prerelease versions (e.g., 0.2.0-next.3)
-  // Prerelease users should manage updates manually to stay on their channel
   if (currentVersion.includes("-")) {
     debugLog("Prerelease version detected, skipping auto-update check");
     return { updateAvailable: false, currentVersion };
@@ -382,9 +366,6 @@ export async function checkForUpdate(
   };
 }
 
-/**
- * Get the npm global prefix path (e.g., /Users/name/.npm-global or ~/.nvm/versions/node/v20/lib)
- */
 async function getNpmGlobalPath(
   runCommand: RunUpdateCommand,
 ): Promise<string | null> {
@@ -400,25 +381,18 @@ async function getNpmGlobalPath(
   }
 }
 
-/**
- * Clean up orphaned temp directories left by interrupted npm installs.
- * These look like: .letta-code-lnWEqMep (npm's temp rename targets)
- */
 async function cleanupOrphanedDirs(globalPath: string): Promise<void> {
   const lettaAiDir = join(globalPath, "lib/node_modules/@letta-ai");
   try {
     const entries = await readdir(lettaAiDir);
     for (const entry of entries) {
-      // Match orphaned temp dirs like .letta-code-lnWEqMep
       if (entry.startsWith(".letta-code-")) {
         const orphanPath = join(lettaAiDir, entry);
         debugLog("Cleaning orphaned temp directory:", orphanPath);
         await rm(orphanPath, { recursive: true, force: true });
       }
     }
-  } catch {
-    // Directory might not exist or not readable, ignore
-  }
+  } catch {}
 }
 
 function getUpdateLockPath(): string {
@@ -452,9 +426,7 @@ function readUpdateLockOwner(
           raw,
         };
       }
-    } catch {
-      // Fall through: a torn or foreign file is judged by its mtime alone.
-    }
+    } catch {}
     return { owner: { pid: 0, createdAt: statSync(lockPath).mtimeMs }, raw };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
@@ -481,16 +453,9 @@ function tryCreateUpdateLock(lockPath: string, contents: string): boolean {
 function removeQuietly(path: string): void {
   try {
     unlinkSync(path);
-  } catch {
-    // Best effort.
-  }
+  } catch {}
 }
 
-/**
- * Move a stale lock aside so exactly one contender can replace it. rename is
- * atomic: when several processes judge the same lock stale, only one rename
- * succeeds and the rest see ENOENT. Returns true only for that winner.
- */
 function takeOverStaleLock(lockPath: string, staleRaw: string): boolean {
   const asidePath = `${lockPath}.stale-${process.pid}-${randomUUID()}`;
   try {
@@ -501,27 +466,15 @@ function takeOverStaleLock(lockPath: string, staleRaw: string): boolean {
   }
   try {
     if (readFileSync(asidePath, "utf8") === staleRaw) return true;
-    // Another contender already replaced the stale lock and we moved its
-    // fresh lock aside. Put it back without overwriting anything, and back off.
     try {
       linkSync(asidePath, lockPath);
-    } catch {
-      // A newer lock already exists; leave it.
-    }
+    } catch {}
     return false;
   } finally {
     removeQuietly(asidePath);
   }
 }
 
-/**
- * Machine-wide lock so only one global install runs at a time. Concurrent
- * `npm install -g` runs of the same package race on npm's bin and package
- * swaps and can leave the install broken. Returns a release function, or null
- * when the update should be skipped: another live (or recent) update holds the
- * lock, another process won a stale-lock takeover, or the lock could not be
- * acquired at all. It never lets an install run unlocked.
- */
 export async function acquireUpdateLock(
   lockPath: string,
 ): Promise<(() => void) | null> {
@@ -535,9 +488,7 @@ export async function acquireUpdateLock(
   const release = () => {
     try {
       if (readFileSync(lockPath, "utf8") === contents) unlinkSync(lockPath);
-    } catch {
-      // Already gone or unreadable; nothing to release.
-    }
+    } catch {}
   };
 
   try {
@@ -558,7 +509,6 @@ export async function acquireUpdateLock(
       }
       debugLog("Took over stale update lock:", lockPath);
     }
-    // Exclusive create so a contender that slipped in first still wins alone.
     return tryCreateUpdateLock(lockPath, contents) ? release : null;
   } catch (error) {
     debugLog("Could not acquire update lock; skipping update:", error);
@@ -605,7 +555,6 @@ async function performUpdateLocked(
   debugLog("Detected package manager:", pm);
   debugLog("Install command:", installCmd);
 
-  // ENOTEMPTY orphan cleanup is npm-specific (npm's temp rename behavior)
   let globalPath: string | null = null;
   if (pm === "npm") {
     globalPath = await getNpmGlobalPath(runCommand);
@@ -618,7 +567,6 @@ async function performUpdateLocked(
   try {
     debugLog(`Running ${installCmd}...`);
     progressLog?.(`Running update command: ${installCmd}`);
-    // Never time out an install: killing it can leave the global package incomplete.
     await runCommand(pm, installArgs);
     debugLog("Update completed successfully");
     progressLog?.("Update command completed successfully.");
@@ -633,7 +581,6 @@ async function performUpdateLocked(
     });
     const errorMsg = error instanceof Error ? error.message : String(error);
 
-    // ENOTEMPTY retry is npm-specific
     if (pm === "npm" && errorMsg.includes("ENOTEMPTY") && globalPath) {
       debugLog("ENOTEMPTY detected, attempting cleanup and retry...");
       await cleanupOrphanedDirs(globalPath);
@@ -663,9 +610,6 @@ async function performUpdateLocked(
       }
     }
 
-    // npm race condition retry: covers TAR_ENTRY_ERROR (parallel extraction races),
-    // uv_cwd (npm CWD deleted during atomic package swap), and spawn sh ENOENT
-    // (sharp postinstall CWD missing). All are transient npm parallelism issues.
     const isNpmRaceCondition =
       pm === "npm" &&
       (errorMsg.includes("TAR_ENTRY_ERROR") ||
@@ -700,21 +644,12 @@ async function performUpdateLocked(
 }
 
 export interface AutoUpdateResult {
-  /** Whether an ENOTEMPTY error persisted after cleanup and retry */
   enotemptyFailed?: boolean;
-  /** Latest version available (set when a significant update was applied) */
   latestVersion?: string;
-  /** True when the binary was updated and the user should restart */
   updateApplied?: boolean;
-  /** Set when an update is available but must be installed by the user */
   manualUpdateCommand?: string;
 }
 
-/**
- * Returns true when `latest` is at least one minor version ahead of `current`.
- * Used to gate the in-app "restart to update" notification — patch-only bumps
- * are applied silently without interrupting the user.
- */
 function isSignificantUpdate(current: string, latest: string): boolean {
   const [cMajor = 0, cMinor = 0] = current.split(".").map(Number);
   const [lMajor = 0, lMinor = 0] = latest.split(".").map(Number);
@@ -737,7 +672,6 @@ export async function checkAndAutoUpdate(
     return;
   }
 
-  // A subagent must never replace the global install its parent runs from.
   if (process.env.LETTA_CODE_AGENT_ROLE === "subagent") {
     debugLog("Subagent process, skipping auto-update");
     return;
@@ -819,13 +753,6 @@ export async function manualUpdate(options?: {
   };
 }
 
-/**
- * Startup auto-update. Windows can't replace files a running process holds
- * open (the CLI entry, native addons), so a global install over the live CLI
- * can leave a partial install with the `letta` launchers deleted. On Windows,
- * only check and return the command for the user to run after closing Letta
- * Code.
- */
 export async function startupAutoUpdate(
   platform: NodeJS.Platform = process.platform,
   fetchImpl: FetchImpl = fetch,

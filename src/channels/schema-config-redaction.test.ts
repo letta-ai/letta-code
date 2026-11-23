@@ -21,8 +21,6 @@ const SIMPLE_SCHEMA: ChannelConfigSchema = {
   ],
 };
 
-// Reserved keys that redactConfigForSnapshot always emits, regardless of
-// whether the schema declares them.
 const RESERVED_BASE = {
   accounts_json: "",
   configs_json: "",
@@ -71,8 +69,8 @@ describe("redactConfigForSnapshot", () => {
       ...RESERVED_BASE,
       url: "https://example.com",
       has_api_key: false,
-      mode: "fast", // default
-      debug: false, // default
+      mode: "fast",
+      debug: false,
     });
   });
 

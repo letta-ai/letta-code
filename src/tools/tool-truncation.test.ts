@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { removeTestDir } from "@/test-utils/test-fs";
 import { bash } from "@/tools/impl/bash";
 import { glob } from "@/tools/impl/glob";
 import { grep } from "@/tools/impl/grep";
@@ -14,34 +15,28 @@ describe("tool truncation integration tests", () => {
   let originalUserCwd: string | undefined;
 
   beforeEach(async () => {
-    // Create a temporary directory for tests
     testDir = await mkdtemp(join(tmpdir(), "letta-test-"));
-    // Save and set USER_CWD so tools operate within the temp dir
     originalUserCwd = process.env.USER_CWD;
     process.env.USER_CWD = testDir;
   });
 
   afterEach(async () => {
-    // Restore USER_CWD before removing the temp dir to avoid leaving
-    // an invalid cwd for other tests that may run afterwards.
     if (originalUserCwd === undefined) delete process.env.USER_CWD;
     else process.env.USER_CWD = originalUserCwd;
-    // Clean up the temp directory
-    await rm(testDir, { recursive: true, force: true });
+    await removeTestDir(testDir);
   });
 
   describe("Bash tool truncation", () => {
     test.skipIf(process.platform === "win32")(
       "truncates output exceeding 30K characters",
       async () => {
-        // Generate output larger than 30K chars
         const result = await bash({
           command: `echo "${Array.from({ length: 1000 }, () => "x".repeat(50)).join("\\n")}"`,
         });
 
         const output = result.content[0]?.text || "";
         expect(output).toContain("[Output truncated: showing 2,000");
-        expect(output.length).toBeLessThan(LIMITS.OVERFLOW_PREVIEW_CHARS + 500); // Preview + notice
+        expect(output.length).toBeLessThan(LIMITS.OVERFLOW_PREVIEW_CHARS + 500);
       },
     );
 
@@ -56,7 +51,6 @@ describe("tool truncation integration tests", () => {
     test.skipIf(process.platform === "win32")(
       "truncates error output",
       async () => {
-        // Generate large error output
         const largeString = "e".repeat(40000);
         const result = await bash({
           command: `>&2 echo "${largeString}" && exit 1`,
@@ -110,7 +104,6 @@ describe("tool truncation integration tests", () => {
       expect(result.content).toContain("Line 1");
       expect(result.content).toContain("Line 50");
       expect(result.content).not.toContain("Line 51");
-      // Should not show truncation notice when user explicitly set limit
       expect(result.content).not.toContain("File truncated");
     });
 
@@ -128,7 +121,6 @@ describe("tool truncation integration tests", () => {
 
   describe("Grep tool truncation", () => {
     beforeEach(async () => {
-      // Create test files for grep
       for (let i = 1; i <= 100; i++) {
         await writeFile(join(testDir, `file${i}.txt`), `match\n`.repeat(100));
       }
@@ -139,15 +131,14 @@ describe("tool truncation integration tests", () => {
         pattern: "match",
         path: testDir,
         output_mode: "content",
-        head_limit: 0, // Disable head_limit to test truncation
+        head_limit: 0,
       });
 
-      expect(result.output.length).toBeLessThanOrEqual(15000); // 10K + notice
+      expect(result.output.length).toBeLessThanOrEqual(15000);
       expect(result.output).toContain("[Output truncated: showing 10,000");
     });
 
     test("truncates file list exceeding 10K characters", async () => {
-      // Create files with long paths
       for (let i = 1; i <= 1000; i++) {
         await writeFile(
           join(testDir, `very-long-filename-to-make-output-large-${i}.txt`),
@@ -185,7 +176,6 @@ describe("tool truncation integration tests", () => {
     test(
       "truncates file list exceeding 2000 files",
       async () => {
-        // Create 2500 files
         for (let i = 1; i <= 2500; i++) {
           await writeFile(join(testDir, `file${i}.txt`), "content");
         }
@@ -194,15 +184,13 @@ describe("tool truncation integration tests", () => {
 
         expect(result.truncated).toBe(true);
         expect(result.totalFiles).toBe(2500);
-        // Should contain the truncation notice
         const filesString = result.files.join("\n");
         expect(filesString).toContain("showing 2,000 of 2,500 files");
       },
       { timeout: 15000 },
-    ); // Increased timeout for Windows CI where file creation is slower
+    );
 
     test("does not truncate when under limit", async () => {
-      // Create 10 files
       for (let i = 1; i <= 10; i++) {
         await writeFile(join(testDir, `file${i}.txt`), "content");
       }
@@ -219,7 +207,6 @@ describe("tool truncation integration tests", () => {
     test(
       "truncates directory exceeding 1000 entries",
       async () => {
-        // Create 1500 files
         for (let i = 1; i <= 1500; i++) {
           await writeFile(join(testDir, `file${i}.txt`), "content");
         }
@@ -230,17 +217,14 @@ describe("tool truncation integration tests", () => {
         expect(output).toContain("[Output truncated");
         expect(output).toContain("showing 1,000 of 1,500 entries");
         expect(output).toContain("file1.txt");
-        // Should not contain files beyond 1000
         const lines = output.split("\n");
-        // Count actual file entries (excluding headers and notices)
         const fileEntries = lines.filter((line) => line.match(/^\s+- file/));
         expect(fileEntries.length).toBeLessThanOrEqual(LIMITS.LS_MAX_ENTRIES);
       },
       { timeout: 15000 },
-    ); // Increased timeout for Windows CI where file creation is slower
+    );
 
     test("does not truncate small directories", async () => {
-      // Create 5 files
       for (let i = 1; i <= 5; i++) {
         await writeFile(join(testDir, `file${i}.txt`), "content");
       }

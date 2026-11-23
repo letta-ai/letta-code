@@ -171,8 +171,6 @@ describe("listener connection identity", () => {
   });
 
   test("a process-originated turn executes on the listener connection", () => {
-    // Task notifications and cron turns carry no submitting connection. Their
-    // tools (including Agent launches) still run on this listener.
     const { runtime } = addConnection("conn-sandbox");
     const scope = { agent_id: "agent-1", conversation_id: "conversation-1" };
 

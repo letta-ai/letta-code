@@ -2,10 +2,6 @@ import { describe, expect, mock, test } from "bun:test";
 import type { NotificationBuffer } from "@/utils/task-notifications";
 import { appendTaskNotificationEventsToBuffer } from "@/utils/task-notifications";
 
-// ---------------------------------------------------------------------------
-// Helper-level behavioral tests
-// ---------------------------------------------------------------------------
-
 describe("appendTaskNotificationEventsToBuffer", () => {
   const makeBuffer = (): NotificationBuffer => ({
     byId: new Map(),
@@ -31,7 +27,6 @@ describe("appendTaskNotificationEventsToBuffer", () => {
     expect(buffer.byId.size).toBe(2);
     expect(flush).toHaveBeenCalledTimes(1);
 
-    // Verify event shape
     const firstId = buffer.order[0];
     expect(firstId).toBeDefined();
     const first = buffer.byId.get(firstId as string) as Record<string, unknown>;

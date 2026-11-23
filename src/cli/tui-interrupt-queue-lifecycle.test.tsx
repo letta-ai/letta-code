@@ -1,16 +1,12 @@
-/**
- * Regression tests for the TUI interrupt -> queue handoff (issue #4168).
- *
- * A Monitor `task_notification` queued while a turn is active must start the
- * next turn on its own once an Esc cancellation has settled. The interrupted
- * turn's finally block owns that `cancelling -> idle` transition and wakes the
- * dequeue effect; no timer or later user prompt may be required.
- *
- * The typed-prompt case matters: a turn started from the queue bridge is woken
- * by the dequeue effect's own completion callback, which masked the bug. A
- * turn started by typing has no such callback.
- */
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  type Mock,
+  spyOn,
+  test,
+} from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -39,6 +35,7 @@ import {
   backgroundProcesses,
   clearBackgroundProcessCleanup,
 } from "@/tools/impl/process_manager";
+import * as debugModule from "@/utils/debug";
 import {
   addToMessageQueue,
   clearPendingMessages,
@@ -80,14 +77,55 @@ async function waitFor(
   predicate: () => boolean,
   description: string,
   timeoutMs = 5000,
+  diagnose?: () => string,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!predicate() && Date.now() < deadline) {
     await sleep(10);
   }
   if (!predicate()) {
-    throw new Error(`Timed out waiting for ${description}`);
+    const details = diagnose ? `\n${diagnose()}` : "";
+    throw new Error(`Timed out waiting for ${description}${details}`);
   }
+}
+
+let debugLogSpy: Mock<typeof debugModule.debugLog> | null = null;
+
+function recentQueueDebugLines(limit = 15): string[] {
+  return (debugLogSpy?.mock.calls ?? [])
+    .filter(([prefix]) => prefix === "queue" || prefix === "queue-lifecycle")
+    .slice(-limit)
+    .map(
+      ([prefix, message]) =>
+        `[${prefix}] ${message.slice(0, 400).replaceAll("\n", "\\n")}`,
+    );
+}
+
+function describeQueueState(
+  frames: string[],
+  inputCount: number,
+  monitor: { state: { status: string; outputFile?: string | null } },
+): string {
+  const queueLines = recentQueueDebugLines();
+  let monitorOutput = "";
+  try {
+    monitorOutput = readFileSync(monitor.state.outputFile as string, "utf8");
+  } catch (error) {
+    monitorOutput = `(unreadable: ${String(error)})`;
+  }
+  const lastFrame = stripAnsi(frames.at(-1) ?? "").trimEnd();
+  return [
+    `executor turns: ${inputCount}`,
+    `queue bridge connected: ${isQueueBridgeConnected()}`,
+    `monitor status: ${monitor.state.status}`,
+    `monitor output (tail): ${JSON.stringify(monitorOutput.slice(-300))}`,
+    "recent queue debug log:",
+    queueLines.length > 0
+      ? queueLines.map((line) => `  ${line}`).join("\n")
+      : "  (none)",
+    `last frame (${frames.length} writes):`,
+    lastFrame.slice(-2000),
+  ].join("\n");
 }
 
 function monitorNotification(summary: string): string {
@@ -100,11 +138,6 @@ function monitorNotification(summary: string): string {
   });
 }
 
-/**
- * First turn: a stream that yields nothing until aborted, then ends only when
- * the test releases it (so the test controls when cancellation settles).
- * Every later turn: an immediate assistant reply.
- */
 class DelayedInterruptExecutor implements HeadlessTurnExecutor {
   readonly inputs: HeadlessTurnExecutorInput[] = [];
   private releaseInterruptedTurn: (() => void) | null = null;
@@ -194,9 +227,12 @@ beforeEach(async () => {
   process.env.HOME = tempHome;
   await settingsManager.reset();
   await settingsManager.initialize();
+  debugLogSpy = spyOn(debugModule, "debugLog");
 });
 
 afterEach(async () => {
+  debugLogSpy?.mockRestore();
+  debugLogSpy = null;
   for (const instance of renderedInstances) {
     instance.unmount();
     instance.cleanup();
@@ -235,8 +271,6 @@ async function renderTestApp(executor: HeadlessTurnExecutor): Promise<{
   stdin: NodeJS.ReadStream;
   frames: string[];
 }> {
-  // This fixture is local. A Cloud-shaped ID makes skill discovery query
-  // attached repositories over HTTP before each otherwise-fake turn.
   const agentId = "agent-local-tui-interrupt-queue";
   const backend = new FakeHeadlessBackend(agentId, executor);
   __testSetBackend(backend);
@@ -266,7 +300,6 @@ async function renderTestApp(executor: HeadlessTurnExecutor): Promise<{
 }
 
 async function typePrompt(stdin: NodeJS.ReadStream, text: string) {
-  // Give the input component a moment to mount before typing.
   await sleep(200);
   stdin.push(text);
   await sleep(50);
@@ -276,7 +309,7 @@ async function typePrompt(stdin: NodeJS.ReadStream, text: string) {
 describe("TUI interrupt queue lifecycle", () => {
   test("a real Monitor survives normal completion and idle Esc", async () => {
     const inputs: HeadlessTurnExecutorInput[] = [];
-    const { stdin } = await renderTestApp({
+    const { stdin, frames } = await renderTestApp({
       async execute(input) {
         inputs.push(input);
         return createAssistantMessageStream();
@@ -287,7 +320,7 @@ describe("TUI interrupt queue lifecycle", () => {
     const input = inputs[0];
     if (!input) throw new Error("Missing first turn");
     const source = await startMonitor(input);
-    // An event drives another complete turn while the source stays connected.
+    const diagnose = () => describeQueueState(frames, inputs.length, source);
     source.socket.send("normal monitor event");
     await waitFor(
       () =>
@@ -296,12 +329,11 @@ describe("TUI interrupt queue lifecycle", () => {
         ),
       "the normal Monitor event to be received",
     );
-    // Receipt and TUI delivery are separate stages. On Windows the 200 ms
-    // Monitor batch plus Ink dequeue can exceed the generic fixture deadline.
     await waitFor(
       () => inputs.length === 2,
       "the Monitor notification turn",
       10_000,
+      diagnose,
     );
     await sleep(300);
     expect(source.state.status).toBe("running");
@@ -313,6 +345,7 @@ describe("TUI interrupt queue lifecycle", () => {
       () => inputs.length === 3,
       "the event after idle Esc",
       10_000,
+      diagnose,
     );
     expect(JSON.stringify(inputs[2]?.body)).toContain(
       "still watching after idle Esc",
@@ -357,14 +390,12 @@ describe("TUI interrupt queue lifecycle", () => {
         ),
       "the real Monitor event to be received",
     );
-    // Monitor batches events for 200ms before handing them to the TUI queue.
     await sleep(300);
     stdin.push("\u001b");
     await executor.abortObserved;
     expect(source.isClosed()).toBe(false);
     expect(source.state.status).toBe("running");
 
-    // Cancellation has not settled yet: nothing may start a replacement turn.
     await sleep(100);
     expect(executor.inputs).toHaveLength(1);
 
@@ -430,19 +461,12 @@ describe("TUI interrupt queue lifecycle", () => {
     await executor.abortObserved;
     await waitFor(() => cancelCalls.length === 1, "the first backend cancel");
 
-    // The interrupted turn is still unwinding (the executor holds its
-    // stream). A second Esc must escalate: re-fire the backend cancel
-    // instead of silently returning, so a lost first attempt is retried.
     stdin.push("\u001b");
     await waitFor(
       () => cancelCalls.length === 2,
       "the escalated backend cancel",
     );
 
-    // The escalation force-settles the interrupt, but the executor still
-    // holds the turn. A third Esc must keep routing to the handler (the
-    // aborted controller witnesses the in-flight interrupt) and re-fire
-    // the cancel again, so the retry route survives the settle.
     stdin.push("\u001b");
     await waitFor(
       () => cancelCalls.length === 3,
@@ -477,7 +501,6 @@ describe("TUI interrupt queue lifecycle", () => {
       "the surfaced cancel failure",
     );
 
-    // The interrupt is still unwinding; a second Esc must retry the cancel.
     stdin.push("\u001b");
     await waitFor(() => cancelAttempts === 2, "the retried backend cancel");
 
@@ -495,7 +518,6 @@ describe("TUI interrupt queue lifecycle", () => {
         () => executor.inputs.length === 1,
         "the typed initial turn",
       );
-      // A user message queued behind the active turn (source: user).
       addToMessageQueue({ kind: "user", text: "queued while busy" });
 
       addToMessageQueue(
@@ -510,7 +532,6 @@ describe("TUI interrupt queue lifecycle", () => {
       await executor.abortObserved;
       executor.settleInterruptedTurn();
 
-      // The notification starts a turn on its own; the parked user message does not.
       await waitFor(
         () => executor.inputs.length === 2,
         "the notification turn after Esc",

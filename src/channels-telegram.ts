@@ -1,16 +1,3 @@
-/**
- * Public Telegram channel primitives for remote hosts (for example Cloud
- * webhook ingress and Bot API senders).
- *
- * Bundled as `@letta-ai/letta-code/channels/telegram`. Everything reachable
- * from this entry must stay free of grammY imports, node builtins, and
- * backend/provider modules — the same constraint as `channels/slack`.
- *
- * NOTE: use relative imports in this file (not `@/`), because tsc preserves
- * import specifiers in the emitted d.ts files and consumers cannot resolve
- * `@/` aliases.
- */
-
 export {
   buildTelegramDebounceKey,
   resolveTelegramInboundDebounceMs,

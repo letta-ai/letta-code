@@ -1,13 +1,3 @@
-/**
- * Pure Telegram wire shapes shared by the local grammY adapter and remote
- * hosts (for example Cloud webhook ingress) through the public
- * `@letta-ai/letta-code/channels/telegram` subpath.
- *
- * This module must stay free of grammY imports and node builtins so the
- * public bundle and its declaration files resolve for browser/node consumers
- * that do not install the Telegram runtime.
- */
-
 export type TelegramLikeMessage = {
   media_group_id?: string;
   message_thread_id?: number | string;
@@ -125,11 +115,6 @@ export type TelegramReactionType =
       type?: "paid";
     };
 
-/**
- * Structural reaction payload accepted by Bot API `setMessageReaction`.
- * Mirrors grammY's `ReactionType` without importing its types so the public
- * declaration files do not require `@grammyjs/types`.
- */
 export type TelegramReactionInput =
   | {
       type: "emoji";

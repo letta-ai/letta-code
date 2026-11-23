@@ -29,7 +29,6 @@ test("nested launches use the immediate parent scope without changing the acting
     ),
   );
   expect(env[ACTING_USER_ID_ENV]).toBe("user-owner");
-  // A CLI command run later by the child is not another launch from its parent.
   expect(
     buildHeadlessSenderReminder(consumeSubagentLaunch(env), undefined, env),
   ).toBe("");
@@ -71,7 +70,6 @@ test("memory workers receive a silent task-log contract instead of a reply instr
   expect(reminder).toContain("not sent to the primary agent or user");
   expect(reminder).not.toContain("Include your answer in your final response");
   expect(reminder).toStartWith("<system-reminder>");
-  // The worker sentinel does not change explicit CLI sends made by a process.
   expect(buildHeadlessSenderReminder(false, "agent-sender", env)).toBe(
     buildAgentSendReminder({ agentId: "agent-sender" }, false),
   );

@@ -10,19 +10,12 @@ import { SANDBOX_ENV_VAR, type SandboxBackend } from "@/sandbox/policy";
 import { wrapLauncher } from "@/sandbox/wrap";
 
 export interface MemoryConfinementLauncherInput {
-  /** Command and arguments for the process that should be confined. */
   launcher: string[];
-  /**
-   * Environment for the confined process. `MEMORY_DIR` (or
-   * `LETTA_MEMORY_DIR`) identifies the memory root that stays writable.
-   */
   env: NodeJS.ProcessEnv;
 }
 
 export interface MemoryConfinementLauncherResult {
-  /** Sandbox wrapper followed by the original launcher. */
   launcher: string[];
-  /** Original environment plus the nested-sandbox sentinel. */
   env: NodeJS.ProcessEnv;
   backend: SandboxBackend;
 }

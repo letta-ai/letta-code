@@ -1,18 +1,4 @@
-/**
- * Pure builder for the `POST /v1/agents` wire payload of a Letta Code agent.
- *
- * This is the shared creation-policy choke point for the CLI and external
- * harness surfaces. It owns the defaults that must not drift between callers:
- * agent type, prompt mode, tags, server tools, initial messages, parallel tool
- * calls, and compaction. Callers may supply either a Letta Code personality or
- * their own identity blocks without rebuilding that policy.
- *
- * Everything reachable from this module must stay free of Node/backend imports
- * so it can be bundled in the browser-safe `agent-presets` package export.
- */
-
 import type { CreateBlock } from "@letta-ai/letta-client/resources/blocks/blocks";
-import { DEFAULT_SUMMARIZATION_MODEL } from "@/constants";
 import { buildCreatedAgentTags } from "./agent-tags";
 import { getDefaultMemoryBlocks } from "./memory";
 import { getDefaultModel, resolveModel } from "./model-catalog";
@@ -25,22 +11,12 @@ import {
 } from "./personality-presets";
 import { buildSystemPrompt, type MemoryPromptMode } from "./prompt-assets";
 
-/** Agent type used for all Letta Code agents. */
 export const LETTA_CODE_AGENT_TYPE = "letta_v1_agent";
 
-/**
- * Server-side tools attached to created agents. Client-side tools (Read,
- * Write, Bash, etc.) are passed via client_tools at runtime instead.
- */
 export const DEFAULT_CREATED_AGENT_BASE_TOOLS = ["web_search", "fetch_webpage"];
 
 export type CreateAgentMemoryBlock = CreateBlock;
 
-/**
- * Root marker that makes the hosted memory repository use MemFS v2.
- * The server seeds the root `MEMORY.md` layout only when the create request
- * includes a block with this label.
- */
 export const DEFAULT_ROOT_MEMORY_BLOCK: CreateAgentMemoryBlock = {
   label: "MEMORY",
   value: "# Memory\n",
@@ -51,24 +27,15 @@ export interface BuildCreateAgentRequestOptions {
   personalityId?: PersonalityId;
   name?: string;
   description?: string;
-  /** Model ID or handle. Personality default, then catalog default, applies. */
   model?: string;
-  /** Complete prompt override. Null delegates default selection to the server. */
   system?: string | null;
-  /** Whether the target is Letta Cloud; callers determine this with their backend's cloud detection. */
   isLettaCloud?: boolean;
   memoryPromptMode?: MemoryPromptMode;
-  /**
-   * Caller-defined identity. With a personality, matching labels replace its
-   * blocks and new labels append after the personality blocks.
-   */
   memoryBlocks?: CreateAgentMemoryBlock[];
   blockIds?: string[];
-  /** Extra tags appended after canonical Letta Code and personality tags. */
   extraTags?: string[];
   enableMemfs?: boolean;
   isSubagent?: boolean;
-  /** Exact server-side tools. Omission uses the Letta Code web-tool defaults. */
   baseTools?: string[];
   embedding?: string;
   hidden?: boolean;
@@ -128,7 +95,6 @@ function ensureRootMemoryBlock(
     : [{ ...DEFAULT_ROOT_MEMORY_BLOCK }, ...blocks];
 }
 
-/** Build the canonical Core create-agent request for a Letta Code agent. */
 export async function buildCreateAgentRequest(
   options: BuildCreateAgentRequestOptions = {},
 ): Promise<CreateAgentRequest> {
@@ -173,9 +139,6 @@ export async function buildCreateAgentRequest(
   const suppliedMemoryBlocks = hasSuppliedMemoryBlocks
     ? mergeMemoryBlocks(personalityBlocks, options.memoryBlocks)
     : [];
-  // Root-layout agents must send the MEMORY block so the server seeds a
-  // MemFS v2 repository; without it the initial repo uses the legacy
-  // system/ layout even when the prompt mode says otherwise.
   const memoryBlocks = options.isSubagent
     ? undefined
     : memoryPromptMode === "root-memfs"
@@ -213,7 +176,7 @@ export async function buildCreateAgentRequest(
     initial_message_sequence: [],
     parallel_tool_calls: options.parallelToolCalls ?? true,
     compaction_settings: {
-      model: options.compactionModel ?? DEFAULT_SUMMARIZATION_MODEL,
+      model: options.compactionModel ?? modelHandle,
     },
     ...(options.embedding !== undefined
       ? { embedding: options.embedding }
@@ -226,14 +189,12 @@ export async function buildCreateAgentRequest(
   };
 }
 
-/** Compatibility wrapper for callers that create a personality agent. */
 export async function buildCreateAgentRequestForPersonality(params: {
   personalityId: PersonalityId;
   name?: string;
   description?: string;
   model?: string;
   extraTags?: string[];
-  /** This browser-safe wrapper defaults to Cloud; pass false for a local server. */
   isLettaCloud?: boolean;
 }): Promise<CreateAgentRequestForPersonality> {
   const request = (await buildCreateAgentRequest({

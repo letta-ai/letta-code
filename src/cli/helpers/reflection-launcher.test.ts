@@ -127,7 +127,6 @@ describe("reflection launchers", () => {
         "platform",
       );
       const originalOptIn = process.env.LETTA_ENABLE_WINDOWS_AUTO_REFLECTION;
-      // Stop allowed launches at the next gate without API or filesystem work.
       const isCutover = mock(async () => true);
       const isParentDirty = spyOn(
         memoryWorktree,

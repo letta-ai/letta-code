@@ -8,10 +8,9 @@ import {
 } from "react";
 import { getCachedModelReasoningCapabilities } from "@/agent/available-models";
 import {
+  contextWindowToPreserveForModelSelection,
   type ModelReasoningEffort,
   type ModelReasoningSelection,
-  preservableContextWindow,
-  shouldPreserveContextWindowForModelSelection,
 } from "@/agent/model";
 import { applyPersonalityToMemory } from "@/agent/personality";
 import {
@@ -31,7 +30,6 @@ import {
   persistReflectionSettingsForAgent,
   type ReflectionSettings,
 } from "@/cli/helpers/memory-reminder";
-import { DEFAULT_SUMMARIZATION_MODEL } from "@/constants";
 import { experimentManager } from "@/experiments/manager";
 import type { ExperimentId } from "@/experiments/types";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
@@ -350,7 +348,6 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
         const isOpenAICompatibleProxy =
           modelUpdateArgs?.[OPENAI_COMPATIBLE_PROXY_UPDATE_ARG] === true &&
           providerType === "openai";
-        // Keep picker labels aligned with models that preserve xhigh separately from max.
         const usesDistinctXHighLabel =
           /Fable 5|Opus 4\.[78]|Opus 5|Sonnet 5|GPT-5\.6/.test(model.label);
         const reasoningLevel =
@@ -438,7 +435,6 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           }
         }
 
-        // Switching models should discard any pending debounce from the previous model.
         resetPendingReasoningCycle();
 
         if (isAgentBusy()) {
@@ -462,31 +458,15 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           return;
         }
 
-        // Switching to a different model (or a different context-window
-        // variant of the same model, e.g. base <-> 1M dual listings) resets
-        // the context window to the selected catalog entry's preset. Only a
-        // tier change within the same variant preserves the current window —
-        // and it preserves by RE-SENDING the current value explicitly, never
-        // by omitting the field: the server treats an omitted
-        // context_window_limit as "re-derive from the handle" and clamps it
-        // to a legacy global default (128k). A current value that looks like
-        // that clamp is not preservable, so poisoned agents heal to the
-        // preset even on same-variant tier changes. See LET-9786.
-        const currentLlmConfig = llmConfigRef.current;
-        const shouldPreserveContextWindow =
-          shouldPreserveContextWindowForModelSelection({
+        const preservedContextWindow = contextWindowToPreserveForModelSelection(
+          {
             currentModelHandle,
             currentModelId,
-            currentLlmConfig,
+            currentLlmConfig: llmConfigRef.current,
             selectedModelHandle: modelHandle,
             selectedContextWindow,
-          });
-        const preservedContextWindow = shouldPreserveContextWindow
-          ? preservableContextWindow(
-              currentLlmConfig?.context_window,
-              modelHandle,
-            )
-          : undefined;
+          },
+        );
         const modelUpdateArgsForRequest = model.updateArgs
           ? { ...(model.updateArgs as Record<string, unknown>) }
           : undefined;
@@ -507,9 +487,6 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             phase: "running",
           });
 
-          // "default" is a virtual sentinel for the agent's primary history, not a
-          // real conversation object. When active, model changes must update the agent
-          // itself (otherwise the next agent sync will snap back).
           const conversationId = conversationIdRef.current;
           let conversationModelSettings:
             | AgentState["model_settings"]
@@ -548,9 +525,6 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             ).context_window_limit;
           }
 
-          // The API may not echo reasoning_effort back, so populate it from
-          // model.updateArgs as a reliable fallback. An explicit null is the
-          // custom provider's Default selection and must clear stale flat state.
           const hasExplicitReasoningEffort =
             modelUpdateArgs !== undefined &&
             "reasoning_effort" in modelUpdateArgs;
@@ -618,16 +592,11 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           setCurrentModelId(modelId);
           setTempModelOverride(null);
 
-          // Record the previous and new model in recents (by handle, since
-          // availableHandles in ModelSelector uses handles).
-          // The "from" model is added first so the "to" model ends up at the
-          // front of the list after both addRecentModel calls.
           if (currentModelHandle) {
             settingsManager.addRecentModel(currentModelHandle);
           }
           settingsManager.addRecentModel(modelHandle);
 
-          // Reset context token tracking since different models have different tokenizers
           resetContextHistory(contextTrackerRef.current);
           setCurrentModelHandle(modelHandle);
           setHasAvailableLocalModels(true);
@@ -894,7 +863,6 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             return;
           }
 
-          // Wait for the remote block to pick up the git push
           cmd.update({
             output: "Waiting for changes to propagate...",
             phase: "running",
@@ -949,7 +917,6 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
               ) {
                 throw pollErr;
               }
-              // Transient API error — keep polling
             }
             await new Promise((r) => setTimeout(r, pollIntervalMs));
           }
@@ -1104,14 +1071,11 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
         });
 
         try {
-          // Spread existing compaction_settings to preserve model/other fields,
-          // only override the mode. If no model is configured, default to
-          // letta/auto so compaction uses a consistent summarization model.
           const existing = agentState?.compaction_settings;
           const existingModel = existing?.model?.trim();
           const nextCompactionSettings = {
             ...existing,
-            model: existingModel || DEFAULT_SUMMARIZATION_MODEL,
+            model: existingModel || agentState?.model || undefined,
             mode: mode as
               | "all"
               | "sliding_window"
@@ -1142,6 +1106,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
       isAgentBusy,
       withCommandLock,
       agentState?.compaction_settings,
+      agentState?.model,
       setActiveOverlay,
       setAgentState,
       setQueuedOverlayAction,
@@ -1347,7 +1312,6 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
 
       if (isAgentBusy()) {
         setActiveOverlay(null);
-        // For batch changes we can only queue one action; queue the first change.
         const first = changes[0];
         if (first) {
           const cmd =

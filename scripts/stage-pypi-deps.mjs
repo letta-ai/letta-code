@@ -1,5 +1,3 @@
-// Copy the locked runtime dependency closure, preserving Node's nested versions.
-// No dependency installation happens on the user's machine.
 import {
   cpSync,
   existsSync,
@@ -12,9 +10,6 @@ import { dirname, join, resolve } from "node:path";
 
 const root = process.cwd();
 const app = resolve(process.argv[2]);
-// sharp-electron is only reachable under Electron, never our bundled Node.
-// @shikijs/langs is external in the bundle so lazily-loaded grammars
-// (LET-13149) resolve from here at runtime.
 const roots = [
   "ws",
   "@vscode/ripgrep",
@@ -71,7 +66,6 @@ function copy(name, from, dest, ancestors = new Set()) {
 }
 for (const name of roots) copy(name, root, app);
 
-// Retain license notices for code in the JS bundle as well as external modules.
 function licenses(dir, destination) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name);
