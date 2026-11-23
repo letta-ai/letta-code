@@ -7,7 +7,7 @@ test("failed own-identity probes cool down from completion, then cache success",
   const currentDurableLockOwner = createCurrentDurableLockOwner(
     (budget) => {
       budgets.push(budget);
-      clock += budget; // Model a probe consuming its entire synchronous budget.
+      clock += budget;
       return budgets.length < 3 ? null : "proven-start";
     },
     () => clock,

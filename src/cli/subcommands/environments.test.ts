@@ -46,7 +46,6 @@ test("--limit 1 advances by record id even when device ids are shared", async ()
   const calls: unknown[] = [];
   const list: typeof listEnvironments = async (options) => {
     calls.push(options);
-    // Model the server ignoring unknown cursors and returning page one.
     const index = records.findIndex((record) => record.id === options?.after);
     const start = index + 1;
     return {

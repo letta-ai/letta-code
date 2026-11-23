@@ -52,7 +52,6 @@ test("turn setup delivers the interrupt recovery notice once, only to the interr
       },
     ),
   );
-  // Keep remote MemFS/secrets hydration outside this local turn-setup fixture.
   __listenerWarmupTestUtils.setWarmupDepsForTests({
     ensureMemfsSyncedForAgent: async () => false,
     ensureSecretsHydratedForAgent: async () => {},
@@ -134,7 +133,6 @@ test("turn setup delivers the interrupt recovery notice once, only to the interr
       agentId,
       conversationId,
     });
-    // Backend cancellation is intentionally fire-and-forget; let its fence settle.
     await Bun.sleep(0);
     expect(runtime.turnLifecycle.kind).toBe("idle");
 

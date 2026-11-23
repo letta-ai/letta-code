@@ -458,7 +458,6 @@ export async function installGithubApp(
   progress(onProgress, "Getting repository information");
   ensureRepoAccess(repo);
 
-  // Create agent if needed
   if (agentMode === "create" && agentName) {
     progress(onProgress, `Creating agent ${agentName}`);
     const agent = await createLettaAgent(apiKey, agentName);
@@ -479,7 +478,6 @@ export async function installGithubApp(
     progress(onProgress, "Creating workflow files");
     const changed = writeWorkflow(repoDir, workflowPath, workflowContent);
 
-    // Always set the secret from the locally-available key
     progress(onProgress, "Setting up LETTA_API_KEY secret");
     setRepositorySecret(repo, "LETTA_API_KEY", apiKey);
 

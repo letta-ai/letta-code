@@ -41,7 +41,6 @@ describe("memoryReminder", () => {
       ({
         memoryReminderInterval: 5,
         reflectionTrigger: "step-count",
-        // Legacy key from older settings files should be ignored safely.
         reflectionBehavior: "reminder",
         reflectionStepCount: 25,
       }) as unknown as ReturnType<

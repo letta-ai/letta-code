@@ -79,7 +79,6 @@ describe("request-scoped client toolsets", () => {
       });
 
       expect(prepared.toolset).toBe("letta");
-      // Memory is attached only for MemFS v2 agents; none is scoped here.
       expect(prepared.preparedToolContext.loadedToolNames).toEqual(
         TOOLSET_CATALOG.letta.tools
           .filter((name) => name !== "Memory")
@@ -124,8 +123,6 @@ describe("request-scoped client toolsets", () => {
       clientToolAllowlist: ["Read", "Glob", "Grep"],
     });
 
-    // Glob and Grep are not in the default base; allowlisting them is what
-    // loads them.
     expect([...prepared.preparedToolContext.loadedToolNames].sort()).toEqual([
       "Glob",
       "Grep",

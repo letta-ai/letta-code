@@ -4,13 +4,6 @@ import {
   type StartupResolutionInput,
 } from "@/agent/resolve-startup-agent";
 
-/**
- * Unit tests for the NUX (new user experience) agent resolution logic.
- *
- * Core invariant: switching directories with a valid global LRU
- * should NOT create a new agent — it should resume the global agent.
- */
-
 function makeInput(
   overrides: Partial<StartupResolutionInput> = {},
 ): StartupResolutionInput {
@@ -283,8 +276,6 @@ describe("resolveStartupTarget", () => {
   });
 
   test("global LRU never restores conversation (project-scoped)", () => {
-    // Even if global session had a conversation, resolveStartupTarget
-    // should NOT include it — conversations are project-scoped
     const result = resolveStartupTarget(
       makeInput({
         globalAgentId: "agent-global-123",
@@ -295,7 +286,6 @@ describe("resolveStartupTarget", () => {
       action: "resume",
       agentId: "agent-global-123",
     });
-    // Verify no conversationId key (not even undefined)
     expect("conversationId" in result).toBe(false);
   });
 

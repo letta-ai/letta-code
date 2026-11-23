@@ -334,7 +334,6 @@ describe("startup resolution from settings files", () => {
       ],
     });
 
-    // Two pins belong to other orgs / were deleted and don't resolve here.
     const target = await resolveFromSettings({
       existingAgentIds: ["agent-pinned-live"],
     });
@@ -359,8 +358,6 @@ describe("startup resolution from settings files", () => {
       ],
     });
 
-    // Neither pin resolves in this org, so the LRU should win instead of the
-    // selector firing on a raw pin count.
     const target = await resolveFromSettings({
       existingAgentIds: ["agent-global"],
     });

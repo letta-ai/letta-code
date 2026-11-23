@@ -43,9 +43,6 @@ describe("conversation model carryover", () => {
       reasoning_effort: "xhigh",
       context_window: 100000,
     });
-    // The preserved value must ALSO ride as contextWindowOverride so local
-    // backends (which ignore updateArgs.context_window in favor of the pi
-    // catalog) honor it too (LET-9786 re-review).
     expect(carryover?.contextWindowOverride).toBe(100000);
   });
 
@@ -60,7 +57,6 @@ describe("conversation model carryover", () => {
       activeConversationContextWindowLimit: null,
     });
 
-    // Preset windows stay in updateArgs only — local backends own those.
     expect(carryover?.contextWindowOverride).toBeUndefined();
   });
 
@@ -76,8 +72,6 @@ describe("conversation model carryover", () => {
       activeConversationContextWindowLimit: 128000,
     });
 
-    // 128000 matches no gpt-5.6-sol preset — treated as poison (LET-9786);
-    // the new conversation starts from the preset instead.
     expect(carryover?.contextWindowOverride).toBeUndefined();
     expect(carryover?.updateArgs?.context_window).not.toBe(128000);
   });

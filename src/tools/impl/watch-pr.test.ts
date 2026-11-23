@@ -63,9 +63,7 @@ afterEach(() => {
   for (const process of backgroundProcesses.values()) {
     try {
       process.process.kill("SIGTERM");
-    } catch {
-      // Already stopped.
-    }
+    } catch {}
     if (process.outputFile && existsSync(process.outputFile)) {
       rmSync(process.outputFile, { force: true });
     }
@@ -224,7 +222,7 @@ describe("WatchPR background lifecycle", () => {
       });
       expect(queued[0]?.text).toContain("24-hour Cloud sandbox limit");
       expect(queued[0]?.text).toContain("re-arm it by calling WatchPR again");
-      expect(queued[0]?.text).toContain("Wake or cron");
+      expect(queued[0]?.text).not.toContain("Wake or cron");
     } finally {
       timers.mockRestore();
     }
@@ -436,57 +434,79 @@ describe("WatchPR background lifecycle", () => {
     });
   }
 
-  test("reports a sustained refresh error once and reports recovery", async () => {
-    let now = 0;
-    let fetchCount = 0;
-    const waits: number[] = [];
-    let output = "";
-    let earlyOutput = "";
-    const queued: string[] = [];
-    setMessageQueueAdder((message) => queued.push(message.text));
-
-    const result = await watch_pr(
-      { url },
-      {
-        now: () => now,
-        createOutputWriter: () => ({
-          append: (text) => {
-            output += text;
-            return true;
+  for (const failedPollCount of [5, 12]) {
+    test(`${failedPollCount} failed polls only notify about prolonged stale data`, async () => {
+      let now = 0;
+      let fetchCount = 0;
+      let output = "";
+      const waits: number[] = [];
+      const queued: string[] = [];
+      let finish!: () => void;
+      const finished = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      setMessageQueueAdder((message) => queued.push(message.text));
+      const result = await watch_pr(
+        { url },
+        {
+          now: () => now,
+          createOutputWriter: () => ({
+            append: (text) => {
+              output += text;
+              return true;
+            },
+          }),
+          fetchSnapshot: async () => {
+            fetchCount++;
+            if (fetchCount >= 2 && fetchCount <= failedPollCount + 1) {
+              throw new Error("GitHub temporarily unavailable");
+            }
+            return snapshot();
           },
-        }),
-        fetchSnapshot: async () => {
-          fetchCount += 1;
-          if (fetchCount >= 2 && fetchCount <= 6) {
-            throw new Error("GitHub temporarily unavailable");
-          }
-          return fetchCount >= 8 ? snapshot({ state: "MERGED" }) : snapshot();
+          wait: async (signal, milliseconds) => {
+            if (fetchCount > failedPollCount + 1) {
+              finish();
+              await new Promise<void>((_resolve, reject) => {
+                signal.addEventListener("abort", () => reject(signal.reason), {
+                  once: true,
+                });
+              });
+            }
+            waits.push(milliseconds);
+            now += milliseconds;
+          },
         },
-        wait: async (_signal, milliseconds) => {
-          if (waits.length === 3) earlyOutput = output;
-          now += milliseconds;
-          waits.push(milliseconds);
-          if (waits.length > 8) throw new Error("test loop escaped");
-        },
-      },
-    );
-
-    await Bun.sleep(250);
-    expect(earlyOutput).not.toContain("could not refresh");
-    const notifications = queued.join("\n");
-    expect(
-      queued.filter((notification) =>
-        notification.includes("could not refresh"),
-      ),
-    ).toHaveLength(1);
-    expect(notifications).toContain("recovered after 5 failed polls");
-    expect(output.match(/WatchPR could not refresh/g)).toHaveLength(1);
-    expect(output.match(/WatchPR recovered/g)).toHaveLength(1);
-    expect(waits).toEqual([
-      30_000, 60_000, 120_000, 240_000, 300_000, 300_000, 30_000,
-    ]);
-    expect(backgroundProcesses.get(result.taskId)?.status).toBe("completed");
-  });
+      );
+      await finished;
+      await Bun.sleep(250);
+      await task_stop({ task_id: result.taskId });
+      expect(output.match(/\[poll error \d+\]/g)).toHaveLength(failedPollCount);
+      expect(output).toContain(
+        `[poll error ${failedPollCount}] GitHub temporarily unavailable`,
+      );
+      expect(output).not.toContain("could not refresh");
+      expect(output).not.toContain("recovered after");
+      if (failedPollCount === 5) {
+        expect(queued).toEqual([]);
+        expect(waits).toEqual([
+          30_000, 60_000, 120_000, 240_000, 300_000, 300_000,
+        ]);
+      } else {
+        expect(
+          output.match(/WatchPR hasn't received fresh PR data/g),
+        ).toHaveLength(1);
+        expect(
+          output.match(/WatchPR is receiving PR updates again/g),
+        ).toHaveLength(1);
+        expect(queued.join("\n")).toContain(
+          "WatchPR hasn't received fresh PR data for 30 minutes; still watching.",
+        );
+        expect(queued.join("\n")).toContain(
+          "WatchPR is receiving PR updates again.",
+        );
+      }
+    });
+  }
 
   test("requires a second same-head read before announcing readiness", async () => {
     const queued: string[] = [];

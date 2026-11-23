@@ -107,7 +107,6 @@ describe("discord channel service", () => {
     if (!snapshot || snapshot.channelId !== "discord")
       throw new Error("wrong channel");
     expect(snapshot.agentId).toBe("agent-123");
-    // Discord uses top-level agentId, not a binding object
     expect((snapshot as Record<string, unknown>).binding).toBeUndefined();
 
     unbindChannelAccountLive("discord", "discord-bot");
@@ -136,7 +135,6 @@ describe("discord channel service", () => {
     expect(snapshot.config.default_permission_mode).toBe("standard");
     expect(snapshot.config.auto_thread_on_mention).toBe(false);
 
-    // Should NOT have Slack-specific fields
     expect((snapshot as Record<string, unknown>).mode).toBeUndefined();
     expect((snapshot as Record<string, unknown>).hasBotToken).toBeUndefined();
   });
@@ -294,8 +292,6 @@ describe("discord channel service", () => {
     );
   });
 
-  // ── threadPolicyByChannel ──────────────────────────────────
-
   test("threadPolicyByChannel is set during creation and reflected in snapshot", () => {
     const created = createChannelAccountLive(
       "discord",
@@ -334,7 +330,6 @@ describe("discord channel service", () => {
     );
 
     if (created.channelId !== "discord") throw new Error("wrong channel");
-    // The snapshot normalizes undefined → {}
     expect(created.threadPolicyByChannel).toEqual({});
     expect(created.config.thread_policy_by_channel).toEqual({});
   });
@@ -380,14 +375,12 @@ describe("discord channel service", () => {
   });
 
   test("threadPolicyByChannel is merged through patch merge", async () => {
-    // Create with no threadPolicyByChannel
     createChannelAccountLive(
       "discord",
       { token: "test-token", dmPolicy: "pairing" },
       { accountId: "discord-bot" },
     );
 
-    // Set config live with threadPolicyByChannel (should update existing)
     const snapshot = await setChannelConfigLive("discord", {
       token: "test-token",
       dmPolicy: "pairing",
@@ -398,8 +391,6 @@ describe("discord channel service", () => {
     if (snapshot.channelId !== "discord") throw new Error("wrong channel");
     expect(snapshot.threadPolicyByChannel).toEqual({ "channel-echo": true });
   });
-
-  // ── Key migration: accounts.json snake_case ↔ camelCase ──────
 
   test("load: reads snake_case key from loaded account", () => {
     clearChannelAccountStores();
@@ -551,7 +542,6 @@ describe("discord channel service", () => {
       expect(isDiscordChannelAccount(first)).toBe(true);
       if (!isDiscordChannelAccount(first))
         throw new Error("expected discord account");
-      // snake_case value wins
       expect(first.threadPolicyByChannel).toEqual({
         "channel-snake": true,
       });
@@ -585,9 +575,7 @@ describe("discord channel service", () => {
       savedAccounts as unknown as Array<Record<string, unknown>>
     )[0];
     expect(saved).toBeDefined();
-    // Should have thread_policy_by_channel (snake_case)
     expect(saved?.thread_policy_by_channel).toEqual({ "channel-gamma": false });
-    // Should NOT have threadPolicyByChannel (camelCase)
     expect(saved?.threadPolicyByChannel).toBeUndefined();
   });
 

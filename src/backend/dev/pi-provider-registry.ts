@@ -1,6 +1,4 @@
 import type { Api, KnownProvider, Model } from "@earendil-works/pi-ai";
-// getEnvApiKey has no non-compat entrypoint yet; it is the one remaining
-// /compat import in the local backend (tracked upstream).
 import { getEnvApiKey } from "@earendil-works/pi-ai/compat";
 import {
   builtinProviders,
@@ -71,11 +69,6 @@ interface PiProviderOverride {
   catalogModelHandle?: (model: Model<Api>) => string | undefined;
 }
 
-/**
- * Static catalog models for a provider. Some pi-ai providers (e.g. "radius")
- * have purely dynamic catalogs and no generated MODELS entry; they read as
- * an empty catalog here.
- */
 export function builtinCatalogModels(
   provider: KnownProvider,
 ): readonly Model<Api>[] {
@@ -107,10 +100,6 @@ const PI_PROVIDER_ALIASES: Record<string, PiProvider> = {
   "kimi-code": "kimi-coding",
 };
 
-// Keep LC's built-in provider defaults aligned with Pi TUI's
-// `defaultModelPerProvider` until Pi exposes this through a narrow runtime
-// package/API. Local endpoint providers intentionally have no default here;
-// they must resolve to explicit or discovered local models.
 export const PI_TUI_DEFAULT_MODEL_IDS: Partial<Record<KnownProvider, string>> =
   {
     "amazon-bedrock": "us.anthropic.claude-opus-5-5",
@@ -157,9 +146,6 @@ export const PI_TUI_DEFAULT_MODEL_IDS: Partial<Record<KnownProvider, string>> =
     "xiaomi-token-plan-sgp": "mimo-v2.6-pro",
   };
 
-// These pi-ai providers are intentionally absent from Pi TUI's
-// `defaultModelPerProvider`. Keep the omission explicit so newly added pi-ai
-// providers cannot silently inherit catalog-order defaults without review.
 export const PI_TUI_DEFAULTLESS_PROVIDER_IDS: ReadonlySet<string> = new Set([
   "typesafe",
 ]);
@@ -251,8 +237,6 @@ function defaultModelForProvider(
 ): string {
   const piTuiDefault = PI_TUI_DEFAULT_MODEL_IDS[provider];
   if (piTuiDefault) return `${handlePrefix}${piTuiDefault}`;
-  // Match Pi TUI's no-explicit-default behavior for providers omitted from its
-  // default map: use catalog order as the generic fallback.
   const model = builtinCatalogModels(provider)[0];
   return model ? `${handlePrefix}${model.id}` : `${handlePrefix}model`;
 }
@@ -377,9 +361,6 @@ const LOCAL_ENDPOINT_PROVIDER_SPECS: readonly PiProviderSpec[] = [
 ];
 
 export const PI_PROVIDER_SPECS: readonly PiProviderSpec[] = [
-  // Keyed off the provider collection (builtinProviders), not the generated
-  // static catalog: purely dynamic providers (e.g. "radius") have a factory
-  // but no catalog entry.
   ...builtinProviders().map((provider) =>
     makePiProviderSpec(provider.id as KnownProvider),
   ),
@@ -451,8 +432,6 @@ export function isResolvablePiModelHandle(model: string | undefined): boolean {
   const spec = getPiProviderSpec(provider);
   if (!spec.piProvider) return spec.createCustomModel === true;
   const catalog = builtinCatalogModels(spec.piProvider);
-  // Purely dynamic providers (e.g. "radius") have no static catalog to check
-  // against; their handles resolve at runtime.
   if (catalog.length === 0) return true;
   const modelId = stripProviderHandlePrefix(model, provider);
   return catalog.some((entry) => entry.id === modelId);

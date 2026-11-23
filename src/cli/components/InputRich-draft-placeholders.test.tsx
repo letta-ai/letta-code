@@ -16,13 +16,6 @@ import { buildModInvocationContext } from "@/mods/context";
 import { settingsManager } from "@/settings-manager";
 import { Input } from "./InputRich";
 
-/**
- * Drives the real composer. Edits must not free paste-registry entries: the
- * text input's kill buffer (Ctrl+K / Ctrl+U, then Ctrl+Y) or a retyped bracket
- * brings a removed placeholder back, and the submitted text must still resolve.
- * Dropping a holder (the parked history draft, an unrestored input) must free
- * the entries only it referenced.
- */
 const CTRL_A = "\u0001";
 const CTRL_C = "\u0003";
 const CTRL_K = "\u000b";
@@ -51,7 +44,6 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 20));
 type ContentParts = ReturnType<typeof buildMessageContentFromDisplay>;
 
 function mountComposer() {
-  // Content is built from the display text when the submit handler runs.
   const submissions: ContentParts[] = [];
   const stdin = new Readable({ read() {} }) as NodeJS.ReadStream;
   stdin.isTTY = true;
@@ -59,7 +51,6 @@ function mountComposer() {
   stdin.ref = () => stdin;
   stdin.unref = () => stdin;
   let setRestoredInput: (text: string | null) => void = () => {};
-  // Like the app, the owner clears a restored input once Input consumes it.
   function Composer() {
     const [restoredInput, setRestored] = useState<string | null>(null);
     setRestoredInput = setRestored;
@@ -79,7 +70,6 @@ function mountComposer() {
         modContext={buildModInvocationContext({
           agent: { id: "agent-draft" },
         })}
-        // Input reads only the registry and load flags from the adapter.
         modAdapter={
           {
             hadModPanels: false,
@@ -99,7 +89,6 @@ function mountComposer() {
   });
   return {
     submissions,
-    // One stdin read per key, each in its own tick, like a person typing.
     async press(...keys: string[]) {
       await tick();
       for (const key of keys) {
@@ -107,7 +96,6 @@ function mountComposer() {
         await tick();
       }
     },
-    // A failed turn hands its text back to the composer.
     async restore(text: string) {
       setRestoredInput(text);
       await tick();
@@ -180,7 +168,6 @@ describe("Input draft placeholders", () => {
       await composer.press(
         ...Array.from({ length: placeholder.length }, () => BACKSPACE),
       );
-      // The edit alone keeps the entry: the placeholder could still come back.
       expect(getImage(id)).toBeDefined();
 
       await composer.press(CTRL_C);
@@ -192,16 +179,12 @@ describe("Input draft placeholders", () => {
   });
 });
 
-// Each test first sends "hello" so history has an entry. On a one-line draft
-// the first Up moves the caret to the start; the second parks the draft and
-// recalls "hello".
 describe("Input draft holders", () => {
   test("typing into a recalled entry drops the parked draft; Ctrl+C leaves its image freed", async () => {
     const id = allocateImage({ data: "iVBORw0KGgo=", mediaType: "image/png" });
     const composer = mountComposer();
     try {
       await composer.press("hello", ENTER, `[Image #${id}]`, UP, UP);
-      // Parked, not discarded: Down would bring the draft back.
       expect(getImage(id)).toBeDefined();
 
       await composer.press("x", CTRL_C);
@@ -244,7 +227,6 @@ describe("Input draft holders", () => {
       await composer.press(
         ...Array.from({ length: placeholder.length }, () => BACKSPACE),
       );
-      // The restored draft is live again, so the edit only noted it.
       expect(getImage(id)).toBeDefined();
 
       await composer.press(CTRL_C);
@@ -281,7 +263,6 @@ describe("Input draft holders", () => {
     } finally {
       composer.unmount();
     }
-    // The typed draft was kept, not clobbered by the restored text.
     expect(composer.submissions).toEqual([[{ type: "text", text: "draft" }]]);
   });
 });

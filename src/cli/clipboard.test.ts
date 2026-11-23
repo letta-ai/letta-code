@@ -86,12 +86,10 @@ test("clearPlaceholdersInText removes referenced placeholders", () => {
   const id2 = allocateImage({ data: "img", mediaType: "image/png" });
   const display = `[Pasted text #${id1} +1 lines] and [Image #${id2}]`;
 
-  // Verify they resolve before clearing
   expect(resolvePlaceholders(display)).toContain("Content 1");
 
   clearPlaceholdersInText(display);
 
-  // After clearing, placeholders should not resolve
   expect(resolvePlaceholders(display)).toBe(display);
 });
 
@@ -102,7 +100,6 @@ test("releaseDiscardedPlaceholders frees entries only referenced by the discarde
 
   releaseDiscardedPlaceholders(display, [""]);
 
-  // Both placeholders dangle after the discard
   expect(resolvePlaceholders(display)).toBe(display);
   const content = buildMessageContentFromDisplay(display);
   expect(content.every((p) => p.type === "text")).toBe(true);
@@ -115,7 +112,6 @@ test("releaseDiscardedPlaceholders keeps entries still referenced by keep texts"
 
   releaseDiscardedPlaceholders(discarded, [null, undefined, queued]);
 
-  // The queued text still resolves to the image content part
   const content = buildMessageContentFromDisplay(queued);
   expect(content.some((p) => p.type === "image")).toBe(true);
 });

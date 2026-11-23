@@ -1,12 +1,3 @@
-/**
- * Pure Telegram outbound payload builders shared by the local grammY adapter
- * and remote hosts (for example Cloud Bot API senders) through the public
- * `@letta-ai/letta-code/channels/telegram` subpath.
- *
- * Everything here builds plain Bot API payload objects; no grammY import and
- * no node builtins.
- */
-
 import type {
   ChannelRichMessage,
   OutboundChannelMessage,

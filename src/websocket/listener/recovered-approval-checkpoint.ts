@@ -41,12 +41,6 @@ function savedResult(
   };
 }
 
-/**
- * Track each approval independently. An approved tool is omitted while provably
- * unstarted, becomes unknown immediately before its effect boundary, and becomes
- * completed immediately after its executor settles. This lets a later recovery
- * replay serial siblings that never reached their own boundary.
- */
 export function createRecoveredApprovalEffectBoundary(params: {
   decisions: ApprovalDecision[];
   ownsClaim: () => boolean;
@@ -88,9 +82,6 @@ export function createRecoveredApprovalEffectBoundary(params: {
     initialResults: snapshot(),
     initialUnstartedToolCallIds: [...unstarted],
     beforeToolExecution: (toolCallId: string) => {
-      // Serialize mutation, snapshot creation, and the durable pre-effect write.
-      // Parallel executors may start after their own checkpoint, but no sibling
-      // can capture a stale snapshot while an earlier boundary is rolling back.
       const operation = transitionChain.then(async () => {
         if (!params.ownsClaim()) {
           claimLost = true;
@@ -108,19 +99,12 @@ export function createRecoveredApprovalEffectBoundary(params: {
         try {
           await params.checkpoint(snapshot(), [...unstarted], "before");
         } catch (error) {
-          // The executor has not started until this checkpoint returns. If the
-          // write failed or was cancelled, restore the exact pre-boundary state
-          // so outer recovery cannot persist a false unknown-effect outcome.
           restoreUnstarted();
           if (!params.ownsClaim()) claimLost = true;
           throw error;
         }
         if (!params.ownsClaim()) {
           claimLost = true;
-          // The durable unknown was committed, but this callback has not
-          // returned and the executor therefore cannot have started. Replace
-          // that conservative checkpoint with exact replayable state. This
-          // rollback is authority-independent but remains revision-CAS fenced.
           restoreUnstarted();
           await params.checkpoint(snapshot(), [...unstarted], "rollback");
           throw new Error("Recovery claim lost before tool execution");
@@ -134,10 +118,6 @@ export function createRecoveredApprovalEffectBoundary(params: {
       return operation;
     },
     afterToolExecution: (toolCallId: string, result: ApprovalResult) => {
-      // Once the executor settled, exact local evidence must replace unknown even
-      // if transport/claim authority was concurrently revoked. The outer claim
-      // remains retained until every started group settles and CAS fences any
-      // independent successor.
       const operation = transitionChain.then(async () => {
         results.set(toolCallId, result);
         let independentSuccessor = false;
@@ -169,7 +149,6 @@ export function createRecoveredApprovalEffectBoundary(params: {
   };
 }
 
-/** Only denials are final before any approved tool reaches its effect boundary. */
 export function recoveredApprovalInFlightResults(
   decisions: ApprovalDecision[],
 ): ApprovalResult[] {
@@ -178,7 +157,6 @@ export function recoveredApprovalInFlightResults(
   );
 }
 
-/** Preserve reported partial effects and leave provably unstarted approvals replayable. */
 export function recoveredApprovalFailureResults(
   decisions: ApprovalDecision[],
   error: unknown,

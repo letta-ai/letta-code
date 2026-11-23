@@ -13,11 +13,8 @@ import {
 } from "@/utils/message-queue-bridge";
 import { resolveNotificationScope } from "@/utils/task-notifications";
 
-/** Warn when at least this fraction of the volume is used... */
 export const LOW_DISK_USED_FRACTION = 0.9;
-/** ...or when less than this many bytes remain available. */
 export const LOW_DISK_AVAILABLE_BYTES = 1024 ** 3;
-/** Minimum time between disk measurements. */
 export const DISK_SPACE_CHECK_INTERVAL_MS = 60_000;
 
 export interface DiskSpaceSample {
@@ -53,10 +50,6 @@ export function isDiskSpaceLow(sample: DiskSpaceSample): boolean {
   );
 }
 
-/**
- * Start a background measurement if the last one is old enough. Never awaits
- * and never throws: a failed measurement leaves the previous sample in place.
- */
 export function refreshDiskSpaceSample(
   path: string,
   options: { nowMs?: number; statfsFn?: StatfsFn } = {},
@@ -116,9 +109,7 @@ Before continuing with disk-heavy work, free space: use \`du -xh --max-depth=2 <
 ${SYSTEM_REMINDER_CLOSE}`;
 }
 
-/** Escalate a second time once the volume is this full. */
 export const CRITICAL_DISK_USED_FRACTION = 0.95;
-/** How often to re-check the disk while a tool batch is running. */
 export const DISK_SPACE_POLL_INTERVAL_MS = 30_000;
 
 type AlertLevel = 0 | 1 | 2;
@@ -129,15 +120,8 @@ function alertLevel(sample: DiskSpaceSample): AlertLevel {
   return usedFraction >= CRITICAL_DISK_USED_FRACTION ? 2 : 1;
 }
 
-// Highest level already pushed as a notification in this process. Shared by
-// every loop here because they share the disk; resets when space recovers.
 let pushedLevel: AlertLevel = 0;
 
-/**
- * Measure now and return a reminder only when the level rises (low, then
- * critical). Used on a timer while tools run, so a long install or a running
- * subagent can't fill the disk between turns unnoticed.
- */
 export async function checkDiskSpaceNow(
   path: string,
   options: { env?: NodeJS.ProcessEnv; statfsFn?: StatfsFn } = {},
@@ -164,11 +148,6 @@ export async function checkDiskSpaceNow(
   }
 }
 
-/**
- * Poll the disk while `work` runs and hand any new alert to `deliver`
- * (a queued task notification), so it reaches the agent without waiting
- * for the next user turn.
- */
 export async function watchDiskSpaceDuring<T>(
   path: string,
   deliver: (reminder: string) => void,
@@ -179,7 +158,6 @@ export async function watchDiskSpaceDuring<T>(
     intervalMs?: number;
   } = {},
 ): Promise<T> {
-  // The listener's sandbox watcher already covers this process.
   if (!isManagedCloudRuntime(options.env) || sandboxPollTimer) return work();
   const check = () =>
     void checkDiskSpaceNow(path, options).then((text) => {
@@ -200,12 +178,6 @@ export async function watchDiskSpaceDuring<T>(
 
 let sandboxPollTimer: ReturnType<typeof setInterval> | null = null;
 
-/**
- * Poll the sandbox disk for the life of the listener process. The disk is
- * shared by everything in the sandbox (foreground and background commands,
- * subagents, external coding workers), so one process-wide timer sees every
- * writer. Returns a stop function; never throws.
- */
 export function watchSandboxDiskSpace(
   getPath: () => string,
   deliver: (reminder: string) => void,
@@ -261,14 +233,8 @@ export function isSandboxDiskWatchRunning(): boolean {
   return sandboxPollTimer !== null;
 }
 
-// Alert waiting for the next model request in loops with no queue consumer
-// (headless one-shot, which includes every subagent).
 let pendingRequestReminder: string | null = null;
 
-/**
- * Queue the alert like a task notification so an idle agent wakes for it.
- * Subagents have no queue, so it rides their next model request instead.
- */
 export function deliverDiskSpaceReminder(
   text: string,
   parentScope?: { agentId: string; conversationId: string },
@@ -284,7 +250,6 @@ export function deliverDiskSpaceReminder(
   });
 }
 
-/** Take (and clear) an alert held for the next model request. */
 export function takePendingDiskSpaceReminder(): string | null {
   const text = pendingRequestReminder;
   pendingRequestReminder = null;
@@ -301,18 +266,12 @@ export function resetDiskSpaceAlertForTests(): void {
 
 export interface DiskSpaceReminderInput {
   workingDirectory: string;
-  /** Per-conversation flag: true once the current low-disk episode was reported. */
   notified: boolean;
   env?: NodeJS.ProcessEnv;
   nowMs?: number;
   statfsFn?: StatfsFn;
 }
 
-/**
- * Fire-and-forget low-disk check for managed Cloud sandboxes. The turn never
- * waits on the filesystem: it reads the last cached sample and schedules a
- * fresh one for a later turn. Reports once per low-disk episode.
- */
 export function evaluateDiskSpaceReminder(input: DiskSpaceReminderInput): {
   text: string | null;
   notified: boolean;

@@ -45,8 +45,6 @@ const scope = {
   conversation_id: "conv-sync-teleport-fixture",
 } as const;
 
-// The source's yielded MessageChannel call: replay-unsafe, so sync recovery
-// classifies it as a stale denial with nothing waiting on a human.
 const sourceYieldedApproval = {
   toolCallId: "call-message-channel-1",
   toolName: "MessageChannel",
@@ -98,7 +96,6 @@ async function sync(
 ): Promise<void> {
   await replaySyncStateForRuntime(runtime.listener, transport as never, scope, {
     scheduleWarmupsAfterSync: () => {},
-    // The strongest ask an owner can make; the teleport gate must still win.
     recoverApprovals: true,
     resumeInterruptedTurn: true,
     forceDeviceStatus: true,
@@ -245,8 +242,6 @@ describe("sync replay on a teleport destination", () => {
     const processed: IncomingMessage[] = [];
     expectInboundTeleport(runtime, "teleport-1");
 
-    // Destination runtime_start replay, then the Slack gateway's own
-    // runtime_start replay a moment later: neither may start a turn.
     await sync(runtime, transport, processed);
     await sync(runtime, transport, processed);
     await Bun.sleep(5);
@@ -265,8 +260,6 @@ describe("sync replay on a teleport destination", () => {
       expect(frame.loop_status.status).toBe("WAITING_ON_INPUT");
     }
 
-    // Once the continuation has arrived (the router clears the expectation),
-    // a later sync may again resume an interrupted turn on its own.
     clearExpectedInboundTeleport(runtime);
     await sync(runtime, transport, processed);
     await waitFor(() => processed.length === 1);

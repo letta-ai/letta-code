@@ -1,17 +1,5 @@
-/**
- * Subagent state management for tracking active subagents
- *
- * This module provides a centralized state store that bridges non-React code
- * (manager.ts) with React components (SubagentGroupDisplay.tsx).
- * Uses an event-emitter pattern compatible with React's useSyncExternalStore.
- */
-
 import { subagentScopeMatches } from "@/utils/subagent-scope.js";
 import { clearSubagentEvents } from "./subagent-events";
-
-// ============================================================================
-// Types
-// ============================================================================
 
 export interface ToolCall {
   id: string;
@@ -19,25 +7,15 @@ export interface ToolCall {
   args: string;
 }
 
-/**
- * An assistant text block from an external coding worker. Sent to a parent on
- * another computer as `SubagentSnapshot.progress_texts` (latest
- * {@link MAX_PROGRESS_TEXTS}, oldest first); older listeners omit the field.
- */
 export interface ProgressText {
-  /** Stable per subagent, so a parent appends each text to its log once. */
   id: string;
-  /** ISO timestamp of when the text was recorded. */
   at: string;
   text: string;
 }
 
-/** Longest progress text excerpt kept per entry. */
 export const PROGRESS_TEXT_CHARS = 300;
-/** Most recent progress texts kept per subagent (and sent in snapshots). */
 export const MAX_PROGRESS_TEXTS = 20;
 
-/** Collapse whitespace and cap a progress excerpt to one short line. */
 export function excerptProgressText(value: string, max: number): string {
   const line = value.replace(/\s+/g, " ").trim();
   return line.length > max ? `${line.slice(0, max)}…` : line;
@@ -45,68 +23,38 @@ export function excerptProgressText(value: string, max: number): string {
 
 export interface SubagentState {
   id: string;
-  type: string; // "General-purpose", "Recall", "code-reviewer", etc.
+  type: string;
   description: string;
   prompt?: string;
   status: "pending" | "running" | "completed" | "error";
   agentId?: string | null;
   agentURL: string | null;
-  // The subagent's own conversation id (from its init event). Needed by
-  // desktop dual-view routing: local agents have a bare-id agentURL with no
-  // ?conversation= param to parse, so this is the only conversation source.
   conversationId?: string | null;
-  /** Exact accepted Super Run for a remotely executing child send. */
   superRunId?: string;
   toolCalls: ToolCall[];
-  /** Latest assistant text blocks from an external worker, oldest first. */
   progressTexts?: ProgressText[];
-  /** Texts recorded so far; numbers progress text IDs so they stay stable. */
   progressTextCount?: number;
-  /**
-   * Seq of the latest event in the task's event log. Sent in snapshots as
-   * `event_seq` so a parent on another computer knows there are events to
-   * read with `read_subagent_events`; absent for older listeners.
-   */
   eventSeq?: number;
-  // Monotonic counter to avoid transient regressions in rendered tool usage.
   maxToolCallsSeen: number;
   totalTokens: number;
   durationMs: number;
   error?: string;
-  /** Final report published for a caller-notified launch. */
   result?: string;
-  /** The outcome is published to a caller on another computer, which may
-   * reconnect later to read it. Set for failures too, which carry no result. */
   published?: boolean;
   model?: string;
   startTime: number;
-  /** Background task ID from the Agent receipt; TaskStop takes it. */
   taskId?: string;
-  /** Computer the child was launched on, when not this one. */
   computer?: string;
-  /** Set by TaskStop so the failed outcome reads as a deliberate stop. */
   stoppedByCaller?: boolean;
-  toolCallId?: string; // Links this subagent to its parent Task tool call
-  isBackground?: boolean; // True if running in background (fire-and-forget)
-  /** False when the entry is presentation-only and must not retain the parent runtime. */
+  toolCallId?: string;
+  isBackground?: boolean;
   claimsParentRuntime?: boolean;
-  silent?: boolean; // True if this subagent should be hidden from SubagentGroupDisplay
-  parentAgentId?: string; // Parent runtime scope agent id (for listener-mode WS scoping)
-  parentConversationId?: string; // Parent runtime scope conversation id
-  /** True while an interrupt's abort-hook cancel is still in flight: the
-   * row is a live remote run's only retry handle (its conversationId), so
-   * cleanup must not delete it until the hook settles the cancel. */
+  silent?: boolean;
+  parentAgentId?: string;
+  parentConversationId?: string;
   cancelPending?: boolean;
-  /** A user-requested stop failed and the remote run is still live: the row
-   * is the retry handle and idle Esc retries its stop. */
   stopFailed?: boolean;
-  /** Monotonic count of stop attempts dispatched through the row's abort
-   * hook; incremented by the interrupt marking whenever a hook fires. */
   stopAttempts?: number;
-  /** Outcome of the most recently dispatched stop attempt, written only by
-   * the abort-hook settle/restore paths (the single writer that knows
-   * whether a cancel killed a live run, failed to land, or found the run
-   * already settled). */
   stopOutcome?: {
     attempt: number;
     kind: "failed" | "stopped" | "natural";
@@ -140,17 +88,12 @@ interface SubagentStore {
 
 type TimerHandle = ReturnType<typeof setTimeout>;
 
-// ============================================================================
-// Store
-// ============================================================================
-
 const store: SubagentStore = {
   agents: new Map(),
   expanded: false,
   listeners: new Set(),
 };
 
-// Cached snapshot for useSyncExternalStore - must return same reference if unchanged
 let cachedSnapshot: { agents: SubagentState[]; expanded: boolean } = {
   agents: [],
   expanded: false,
@@ -159,16 +102,9 @@ let cachedLifecycleItems: SubagentLifecycleItem[] = [];
 
 const DEFAULT_COMPLETED_SUBAGENT_RETENTION_MS = 30_000;
 let completedSubagentRetentionMs = DEFAULT_COMPLETED_SUBAGENT_RETENTION_MS;
-// A published outcome is how a caller on another computer receives the result
-// or the failure, and it may reconnect after an outage to read it, so keep
-// those entries longer.
 export const DEFAULT_PUBLISHED_RESULT_RETENTION_MS = 30 * 60_000;
 let publishedResultRetentionMs = DEFAULT_PUBLISHED_RESULT_RETENTION_MS;
 const completedSubagentCleanupTimers = new Map<string, TimerHandle>();
-
-// ============================================================================
-// Internal Helpers
-// ============================================================================
 
 function updateSnapshot(): void {
   const agents = Array.from(store.agents.values());
@@ -238,9 +174,6 @@ function armCompletedSubagentCleanup(id: string): void {
         return;
       }
 
-      // A cancel is still in flight: the row is a live remote run's only
-      // retry handle. Keep it and re-check after another retention window;
-      // the abort hook clears the flag once the cancel settles.
       if (current.cancelPending) {
         armCompletedSubagentCleanup(id);
         return;
@@ -260,19 +193,12 @@ function armCompletedSubagentCleanup(id: string): void {
 
 let subagentCounter = 0;
 
-// ============================================================================
-// Session history
-// ============================================================================
-
-/** A subagent row as last seen, kept after the live store drops it. */
 export interface SubagentHistoryEntry {
   agent: SubagentState;
   lastActivityMs: number;
 }
 
 const MAX_SUBAGENT_HISTORY = 200;
-// The live store forgets finished rows within seconds so the TUI stays tidy;
-// ListSubagents needs every child launched this session, so keep a bounded copy.
 const subagentHistory = new Map<string, SubagentHistoryEntry>();
 
 function putAgent(id: string, agent: SubagentState): void {
@@ -287,25 +213,14 @@ function putAgent(id: string, agent: SubagentState): void {
   subagentHistory.set(id, { agent, lastActivityMs: Date.now() });
 }
 
-/** Every subagent row seen this session, oldest launch first. */
 export function getSubagentHistory(): SubagentHistoryEntry[] {
   return Array.from(subagentHistory.values());
 }
 
-// ============================================================================
-// Public API
-// ============================================================================
-
-/**
- * Generate a unique subagent ID
- */
 export function generateSubagentId(): string {
   return `subagent-${Date.now()}-${++subagentCounter}`;
 }
 
-/**
- * Get a subagent by its parent Task tool call ID
- */
 export function getSubagentByToolCallId(
   toolCallId: string,
 ): SubagentState | undefined {
@@ -317,9 +232,6 @@ export function getSubagentByToolCallId(
   return undefined;
 }
 
-/**
- * Register a new subagent when Task tool starts
- */
 export function registerSubagent(
   id: string,
   type: string,
@@ -334,7 +246,6 @@ export function registerSubagent(
   prompt?: string,
   claimsParentRuntime?: boolean,
 ): void {
-  // Capitalize type for display (recall -> Recall)
   const displayType = type.charAt(0).toUpperCase() + type.slice(1);
 
   const agent: SubagentState = {
@@ -366,9 +277,6 @@ export function registerSubagent(
   notifyListeners();
 }
 
-/**
- * Update a subagent's state
- */
 export function updateSubagent(
   id: string,
   updates: Partial<Omit<SubagentState, "id">>,
@@ -376,7 +284,6 @@ export function updateSubagent(
   const agent = store.agents.get(id);
   if (!agent) return;
 
-  // If setting agentURL, also mark as running
   if (updates.agentURL && agent.status === "pending") {
     updates.status = "running";
   }
@@ -388,14 +295,12 @@ export function updateSubagent(
     updates.maxToolCallsSeen ?? 0,
   );
 
-  // Skip no-op updates to avoid unnecessary re-renders
   const keys = Object.keys(updates) as (keyof typeof updates)[];
   const isNoop =
     keys.every((k) => agent[k] === updates[k]) &&
     nextMax === agent.maxToolCallsSeen;
   if (isNoop) return;
 
-  // Create a new object to ensure React.memo detects the change
   const updatedAgent = { ...agent, ...updates, maxToolCallsSeen: nextMax };
   putAgent(id, updatedAgent);
   if (updatedAgent.status === "completed" || updatedAgent.status === "error") {
@@ -406,9 +311,6 @@ export function updateSubagent(
   notifyListeners();
 }
 
-/**
- * Add a tool call to a subagent
- */
 export function addToolCall(
   subagentId: string,
   toolCallId: string,
@@ -418,10 +320,8 @@ export function addToolCall(
   const agent = store.agents.get(subagentId);
   if (!agent) return;
 
-  // Don't add duplicates
   if (agent.toolCalls.some((tc) => tc.id === toolCallId)) return;
 
-  // Create a new object to ensure React.memo detects the change
   const updatedAgent = {
     ...agent,
     toolCalls: [
@@ -437,10 +337,6 @@ export function addToolCall(
   notifyListeners();
 }
 
-/**
- * Record an assistant text block from an external worker, keeping the latest
- * {@link MAX_PROGRESS_TEXTS}. Skips blanks and a repeat of the previous text.
- */
 export function addProgressText(
   subagentId: string,
   text: string,
@@ -463,9 +359,6 @@ export function addProgressText(
   notifyListeners();
 }
 
-/**
- * Mark a subagent as completed
- */
 export function completeSubagent(
   id: string,
   result: {
@@ -479,12 +372,10 @@ export function completeSubagent(
   const agent = store.agents.get(id);
   if (!agent) return;
 
-  // Create a new object to ensure React.memo detects the change
   const updatedAgent = {
     ...agent,
     status: result.success ? "completed" : "error",
     error: result.error,
-    // The run settled on its own: no failed stop remains to retry.
     stopFailed: undefined,
     ...(result.result !== undefined ? { result: result.result } : {}),
     ...(result.published ? { published: true } : {}),
@@ -516,31 +407,19 @@ export function getSubagentToolCount(
   return Math.max(agent.toolCalls.length, agent.maxToolCallsSeen);
 }
 
-/**
- * Toggle expanded/collapsed state
- */
 export function toggleExpanded(): void {
   store.expanded = !store.expanded;
   notifyListeners();
 }
 
-/**
- * Get current expanded state
- */
 export function isExpanded(): boolean {
   return store.expanded;
 }
 
-/**
- * Get all active subagents (not yet cleared)
- */
 export function getSubagents(): SubagentState[] {
   return Array.from(store.agents.values());
 }
 
-/**
- * Get silent background agents that are still pending or running
- */
 export function getActiveBackgroundAgents(): SubagentState[] {
   return Array.from(store.agents.values()).filter(
     (a) =>
@@ -590,9 +469,6 @@ export function subscribeToSubagentLifecycle(listener: () => void): () => void {
   return subscribe(listener);
 }
 
-/**
- * Get subagents grouped by type
- */
 export function getGroupedSubagents(): Map<string, SubagentState[]> {
   const grouped = new Map<string, SubagentState[]>();
   for (const agent of store.agents.values()) {
@@ -603,17 +479,10 @@ export function getGroupedSubagents(): Map<string, SubagentState[]> {
   return grouped;
 }
 
-/**
- * Clear all completed subagents (call on new user message)
- */
 export function clearCompletedSubagents(): void {
   let removedAny = false;
   for (const [id, agent] of store.agents.entries()) {
-    // A published outcome waits for its remote caller; its own timer removes it.
     if (isPublished(agent)) continue;
-    // A cancel is still in flight for this row: deleting it would lose a
-    // live remote run's only retry handle. The abort hook clears the flag
-    // once the cancel settles.
     if (agent.cancelPending) continue;
     if (agent.status === "completed" || agent.status === "error") {
       clearCompletedSubagentCleanup(id);
@@ -627,19 +496,11 @@ export function clearCompletedSubagents(): void {
   }
 }
 
-/**
- * Clear specific subagents by their IDs (call when committing to staticItems)
- */
 export function clearSubagentsByIds(ids: string[]): void {
   let removedAny = false;
   for (const id of ids) {
     const agent = store.agents.get(id);
     if (agent?.cancelPending) {
-      // The row's Task line was promoted to the static transcript, but the
-      // interrupt's cancel is still in flight and the row is a live remote
-      // run's only retry handle (its conversationId). Keep it — hidden,
-      // since its display life is over — until the abort hook settles the
-      // cancel; the retention timer then removes it like any terminal row.
       updateSubagent(id, { silent: true });
       continue;
     }
@@ -652,9 +513,6 @@ export function clearSubagentsByIds(ids: string[]): void {
   }
 }
 
-/**
- * Clear all subagents
- */
 export function clearAllSubagents(): void {
   for (const id of Array.from(completedSubagentCleanupTimers.keys())) {
     clearCompletedSubagentCleanup(id);
@@ -665,9 +523,6 @@ export function clearAllSubagents(): void {
   notifyListeners();
 }
 
-/**
- * Check if there are any active subagents
- */
 export function hasActiveSubagents(): boolean {
   for (const agent of store.agents.values()) {
     if (agent.status === "pending" || agent.status === "running") {
@@ -679,29 +534,14 @@ export function hasActiveSubagents(): boolean {
 
 const subagentAbortHooks = new Map<string, () => void>();
 
-/**
- * Register a callback that aborts a still-running background subagent task.
- * Task spawn sites register the task's AbortController trigger so a user
- * interrupt stops the subagent process, not just its UI status.
- */
 export function registerSubagentAbortHook(id: string, hook: () => void): void {
   subagentAbortHooks.set(id, hook);
 }
 
-/** Remove a subagent's abort hook once its task has settled. */
 export function clearSubagentAbortHook(id: string): void {
   subagentAbortHooks.delete(id);
 }
 
-/**
- * Mark all running/pending subagents as interrupted
- * Called when user presses ESC to interrupt execution
- *
- * Scope: when `scope` is provided, only subagents belonging to that
- * agent/conversation are interrupted — concurrent conversations of the same
- * agent (or other agents in the listener) keep running. Subagents with no
- * recorded parent conversation stay interruptible by agent alone.
- */
 export function interruptActiveSubagents(
   errorMessage: string,
   scope?: { agentId?: string; conversationId?: string },
@@ -718,15 +558,9 @@ export function interruptActiveSubagents(
         status: "error",
         error: errorMessage,
         durationMs: Date.now() - agent.startTime,
-        // The fired hook's cancel is now in flight: protect the row (the
-        // remote run's retry handle) from cleanup until the hook settles,
-        // and count the attempt so its settle can be told apart from the
-        // previous one even when no render observes the transient state.
         ...(hook
           ? { cancelPending: true, stopAttempts: (agent.stopAttempts ?? 0) + 1 }
           : {}),
-        // A fresh stop attempt supersedes the recorded failure; the hook
-        // re-marks stopFailed only if this cancel fails too.
         stopFailed: undefined,
       };
       putAgent(id, updatedAgent);
@@ -739,13 +573,6 @@ export function interruptActiveSubagents(
   }
 }
 
-/**
- * Retry the stop of subagents whose previous user-requested stop failed
- * (stopFailed rows still pending/running in scope). Unlike
- * interruptActiveSubagents this leaves healthy same-scope background tasks
- * alone: an Esc retrying one task's stop must not abort its siblings.
- * Returns the ids of the rows whose stop was re-dispatched.
- */
 export function interruptStopFailedSubagents(
   errorMessage: string,
   scope?: { agentId?: string; conversationId?: string },
@@ -789,8 +616,6 @@ function subagentMatchesScope(
   );
 }
 
-/** True when a live subagent row's user-requested stop failed and the remote
- * run is still going — the state where a later Esc must retry the stop. */
 export function hasStopFailedSubagents(scope?: {
   agentId?: string;
   conversationId?: string;
@@ -804,13 +629,6 @@ export function hasStopFailedSubagents(scope?: {
   return false;
 }
 
-// ============================================================================
-// React Integration (useSyncExternalStore compatible)
-// ============================================================================
-
-/**
- * Subscribe to store changes
- */
 export function subscribe(listener: () => void): () => void {
   store.listeners.add(listener);
   return () => {
@@ -818,10 +636,6 @@ export function subscribe(listener: () => void): () => void {
   };
 }
 
-/**
- * Get a snapshot of the current state for React
- * Returns cached snapshot - only updates when notifyListeners is called
- */
 export function getSnapshot(): {
   agents: SubagentState[];
   expanded: boolean;
@@ -829,19 +643,10 @@ export function getSnapshot(): {
   return cachedSnapshot;
 }
 
-// ============================================================================
-// Stream Event Forwarding
-// ============================================================================
-
-/** Worker output or a harness notification after its memory push completes. */
 export type SubagentStreamEvent =
   | { type: "message"; message_type: string; [key: string]: unknown }
   | { type: "memory_updated"; affected_paths: string[]; timestamp: number };
 
-/**
- * Callback for forwarding raw subagent stream events to the WS layer.
- * Events include streamed output and harness-owned memory push notifications.
- */
 export type SubagentStreamEventListener = (
   subagentId: string,
   event: SubagentStreamEvent,
@@ -849,10 +654,6 @@ export type SubagentStreamEventListener = (
 
 const streamEventListeners = new Set<SubagentStreamEventListener>();
 
-/**
- * Subscribe to raw subagent stream events (for WS forwarding).
- * Returns an unsubscribe function.
- */
 export function subscribeToStreamEvents(
   listener: SubagentStreamEventListener,
 ): () => void {
@@ -862,10 +663,6 @@ export function subscribeToStreamEvents(
   };
 }
 
-/**
- * Emit a raw stream event from a subagent. Called from processStreamEvent
- * in manager.ts for message-type events that should be forwarded to the web UI.
- */
 export function emitStreamEvent(
   subagentId: string,
   event: SubagentStreamEvent,

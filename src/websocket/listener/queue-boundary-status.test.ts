@@ -93,8 +93,6 @@ test("a queued input drains once after its scheduled socket is replaced", async 
     conversation_id: "conv-1",
   });
 
-  // An active direct turn owns messageQueue. The input is accepted and the
-  // pump is scheduled behind that turn, while its socket is still open.
   let finishDirectTurn!: () => void;
   runtime.messageQueue = new Promise<void>((resolve) => {
     finishDirectTurn = resolve;
@@ -108,8 +106,6 @@ test("a queued input drains once after its scheduled socket is replaced", async 
   };
   scheduleQueuePump(runtime, oldTransport, options, processQueuedTurn);
 
-  // Reconnect recovery observes the queued item and requests a pump with the
-  // stable process transport, but the old scheduled pump already owns the slot.
   oldSocket.readyState = WebSocket.CLOSED;
   suspendListenerConnection(listener, options.connectionId);
   openListenerConnection({
@@ -125,7 +121,6 @@ test("a queued input drains once after its scheduled socket is replaced", async 
     options,
     processQueuedTurn,
   );
-  // Direct-turn cleanup may also request the old socket before it settles.
   scheduleQueuePump(runtime, oldTransport, options, processQueuedTurn);
   finishDirectTurn();
   await runtime.messageQueue;
@@ -186,8 +181,6 @@ test("an unrelated connection cannot drain a disconnected conversation", async (
   });
   const processTransport = getOrCreateProcessTransport(listener);
   expect(isListenerTransportOpen(processTransport)).toBe(true);
-  // Reconnect recovery schedules queued scopes even when the new connection
-  // belongs to a different conversation.
   scheduleQueuePump(runtime, processTransport, optionsB, processQueuedTurn);
   await runtime.messageQueue;
   expect(processed).toEqual([]);
@@ -422,7 +415,6 @@ test.each([false, true])(
     expect(processed[0]?.messages).toMatchObject(
       queuedMessage("http").messages,
     );
-    // The following WebSocket turn still waits for its own subscriber.
     expect(runtime.queueRuntime.length).toBe(1);
     expect([...runtime.queuedMessagesByItemId.values()]).toEqual([
       queuedMessage("ws"),
@@ -536,11 +528,6 @@ test("an active pump switches transport after reconnect without replaying its tu
   expect(newSocket.sentPayloads.length).toBeGreaterThan(0);
 });
 
-// Queue frames are otherwise emitted only on change and loop frames only on
-// transition, so a single lost frame leaves downstream status consumers stale
-// until the next change happens to land (LET-11174). These tests pin the
-// repair: the pump snapshots the queue at dequeue and queue + loop at turn
-// end. Only the turn owner can publish the starting loop after taking a lease.
 test("the pump snapshots the queue at dequeue and the loop only after the turn", async () => {
   const listener = createRuntime();
   const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
@@ -559,16 +546,11 @@ test("the pump snapshots the queue at dequeue and the loop only after the turn",
     socket as unknown as WebSocket,
     makeListenerOptions(),
     async () => {
-      // Snapshot what was already emitted when the turn body begins. The
-      // queue is unchanged from here to turn end: the end-boundary frames
-      // must be new emissions, not leftovers of the dequeue transition.
       turnStartFrameCount = socket.sentPayloads.length;
       processedTurns += 1;
     },
   );
   await waitFor(() => processedTurns === 1 && !runtime.queuePumpActive);
-  // The dequeue-transition frame rides a microtask; let it flush so the
-  // assertion below counts every frame belonging to this turn.
   await Bun.sleep(5);
 
   const parsed = socket.sentPayloads.map(
@@ -577,9 +559,6 @@ test("the pump snapshots the queue at dequeue and the loop only after the turn",
   const framesBeforeTurnBody = parsed.slice(0, turnStartFrameCount);
   const framesAfterTurnBody = parsed.slice(turnStartFrameCount);
 
-  // Turn start boundary: an unconditional queue snapshot (empty queue, no
-  // removal transitions — distinct from the dequeue-transition frame).
-  // No loop status frame is emitted before the turn owner takes its lease.
   expect(
     framesBeforeTurnBody.some(
       (frame) =>
@@ -594,8 +573,6 @@ test("the pump snapshots the queue at dequeue and the loop only after the turn",
     framesBeforeTurnBody.some((frame) => frame.type === "update_loop_status"),
   ).toBe(false);
 
-  // Turn end boundary: the same unconditional snapshots fire again after the
-  // turn body, despite zero queue changes since turn start.
   expect(
     framesAfterTurnBody.some(
       (frame) =>

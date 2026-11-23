@@ -23,7 +23,6 @@ import { createRemoteIdleNotifier } from "./remote-turn-wait";
 
 export interface ChildSubagentIdentity {
   name: string;
-  /** The `type:<subagent_type>` tag written at spawn, when present. */
   type: string;
 }
 
@@ -37,11 +36,6 @@ function readTag(tags: unknown, prefix: string): string | undefined {
   return undefined;
 }
 
-/**
- * A child this conversation launched with Agent, found by its conversation.
- * Ephemeral children have no agent to tag-check, so this is how a send to one
- * is recognized.
- */
 export function findLaunchedChild(
   conversationId: string | undefined,
   parentScope: { agentId: string; conversationId: string },
@@ -61,19 +55,12 @@ export function findLaunchedChild(
     : null;
 }
 
-/**
- * Resolves `agentId` as a subagent spawned by `parentAgentId`, or null. Spawned
- * subagents carry a `parent:<id>` tag (see manager.ts); peers messaged over
- * A2A carry no such tag and never enter the parent's subagent state.
- */
 export async function resolveChildSubagent(
   backend: Pick<Backend, "retrieveAgent">,
   agentId: string,
   parentAgentId: string,
 ): Promise<ChildSubagentIdentity | null> {
   try {
-    // Cloud omits tags unless asked; without this a tagged child looks like a
-    // peer and is silently never tracked (same footgun as memfs-sync.ts).
     const agent = await backend.retrieveAgent(agentId, {
       include: ["agent.tags"],
     });
@@ -93,7 +80,6 @@ export interface TrackChildSendInput {
   prompt: string;
   parentScope: { agentId: string; conversationId: string };
   signal?: AbortSignal;
-  /** Test seam; follows the Cloud Super Run feed by default. */
   waitForRun?: (
     receipt: EnqueueReceipt,
     signal: AbortSignal,
@@ -116,19 +102,9 @@ function waitForChildRun(
   });
 }
 
-/**
- * A `SendAgentMessage` to a child subagent is fire-and-forget for the model,
- * but the child is still doing this parent's work. Register it in the parent's
- * subagent state (feeding the TUI group, the listener snapshot, and Cloud's
- * `active_subagent_count`) and follow the enqueue receipt until that specific
- * Super Run settles. Tracking is bound to the receipt, so a later direct chat
- * with the child never keeps the parent's indicator lit.
- */
 export function trackChildSend(input: TrackChildSendInput): string {
   const { receipt, child, parentScope } = input;
   const subagentId = generateSubagentId();
-  // Keep background TUI grouping, but do not retain the parent runtime for work
-  // executing in the child's own Super Run.
   registerSubagent(
     subagentId,
     child.type,

@@ -10,7 +10,6 @@ interface ExternalToolResultContent {
   mimeType?: string;
 }
 
-/** Convert external-tool wire content into the content shape sent to Letta. */
 export function normalizeExternalToolResultContent(
   content: readonly ExternalToolResultContent[],
 ): string | Array<TextContent | ImageContent> {

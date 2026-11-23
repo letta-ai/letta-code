@@ -69,10 +69,6 @@ function createGatewayFixtureProcess(): {
   spawnProcess: typeof spawn;
   getKillSignal: () => NodeJS.Signals | number | undefined;
 } {
-  // Bun 1.3.0 on Windows can stall when the test process writes to a spawned
-  // child's stdin pipe. Model the process boundary in memory so this protocol
-  // test remains deterministic; the unexpected-exit test below still launches
-  // a real Node child on every platform.
   const stdin = new PassThrough();
   const stdout = new PassThrough();
   const stderr = new PassThrough();

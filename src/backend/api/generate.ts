@@ -6,8 +6,6 @@ export async function generateAgentResponse<T>(
   timeout: number,
 ): Promise<T> {
   return apiRequest<T>("POST", `/v1/agents/${agentId}/generate`, body, {
-    // The generated SDK accepted a timeout option here. Use AbortSignal.timeout
-    // in the API seam so callers don't need direct raw-client access.
     signal: AbortSignal.timeout(timeout),
   });
 }

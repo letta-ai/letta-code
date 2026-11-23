@@ -6,15 +6,6 @@ import {
 } from "@/reminders/engine";
 import { createSharedReminderState } from "@/reminders/state";
 
-/**
- * Regression test for #1848:
- *
- *   `--no-system-info-reminder` (which maps to
- *   `systemInfoReminderEnabled: false`) must suppress the `agent-info`
- *   reminder too, not just `session-context`. Otherwise embedders that spawn
- *   a fresh subprocess per turn will see the agent-info harness block
- *   prepended on every turn (because `hasSentAgentInfo` resets per process).
- */
 function withStubbedSessionContext(
   fn: () => Promise<void>,
 ): () => Promise<void> {
@@ -70,8 +61,6 @@ describe("agent-info respects systemInfoReminderEnabled flag (#1848)", () => {
       const ctx = makeCtx({ systemInfoReminderEnabled: false });
       const result = await buildSharedReminderParts(ctx);
       expect(result.appliedReminderIds).not.toContain("agent-info");
-      // State is not flipped, so if the flag is later re-enabled the reminder
-      // can still fire.
       expect(ctx.state.hasSentAgentInfo).toBe(false);
     }),
   );

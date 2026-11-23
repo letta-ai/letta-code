@@ -32,8 +32,6 @@ async function waitForProcessExit(pid: number): Promise<void> {
 
 describe.skipIf(process.platform === "win32")("subagent process", () => {
   test("hides the Windows console window for subagent processes", async () => {
-    // A detached listener has no console on Windows, so a child spawned
-    // without windowsHide opens a visible console window that steals focus.
     const spawnSpy = spyOn(childProcess, "spawn");
     try {
       const running = spawnSubagentProcess(
@@ -91,8 +89,6 @@ describe.skipIf(process.platform === "win32")("subagent process", () => {
 describe.skipIf(process.platform !== "linux")(
   "managed workload process",
   () => {
-    // Stand-in for systemd-run: records its options, then execs the command
-    // after `--` in place, as `systemd-run --scope` does.
     function installFakeSystemdRun(): { binDir: string; argsFile: string } {
       const binDir = mkdtempSync(join(tmpdir(), "fake-systemd-run-"));
       const argsFile = join(binDir, "args");
@@ -113,7 +109,6 @@ describe.skipIf(process.platform !== "linux")(
       return { binDir, argsFile };
     }
 
-    // Reports its own PID, then echoes one stream-json line from stdin.
     const echoScript = [
       'process.stdout.write(JSON.stringify({ pid: process.pid }) + "\\n");',
       'process.stdin.once("data", (d) => { process.stdout.write(d); process.exit(0); });',
@@ -173,7 +168,6 @@ describe.skipIf(process.platform !== "linux")(
   },
 );
 
-// Native CLI shims such as codex.cmd run behind cmd.exe on Windows.
 test.skipIf(process.platform !== "win32")(
   "managed cancellation kills a Windows cmd wrapper and its descendant",
   async () => {

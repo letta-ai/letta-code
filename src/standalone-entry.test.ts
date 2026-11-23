@@ -58,8 +58,6 @@ console.log(auth.apiKey);
   });
   expect(result.success).toBe(true);
 
-  // The full Windows suite reports spawnSync ETIMEDOUT in about 25ms despite
-  // a 10s timeout. Keep the same bound while awaiting the child asynchronously.
   const execution = await promisify(execFile)("node", [outputPath], {
     cwd: tempDir,
     encoding: "utf8",

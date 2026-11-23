@@ -9,8 +9,6 @@ import BashDescription from "@/tools/descriptions/Bash.md";
 import ExecCommandDescription from "@/tools/descriptions/ExecCommand.md";
 import { buildBashDescriptionForPlatform } from "@/tools/tool-definitions";
 
-// The exact text the descriptions contained before the trailer became
-// configurable. The default must keep producing it byte-for-byte.
 const ORIGINAL_INSTRUCTION_BLOCK = [
   "End commit messages with:",
   "👾 Generated with [Letta Code](https://letta.com)",

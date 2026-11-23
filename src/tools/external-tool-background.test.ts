@@ -355,9 +355,6 @@ describe("external tool auto-backgrounding", () => {
 
 describe("external tool cancel racing (turn abort signal)", () => {
   test("non-backgroundable tool settles immediately when the turn aborts", async () => {
-    // Regression: a cancelled turn used to block on the remote tool result
-    // until the bridge timeout (up to 5 minutes) because nothing raced the
-    // wait against the turn's abort signal.
     const controller = new AbortController();
     let settleOperation!: () => void;
     const operation = new Promise<{ status: "success"; toolReturn: string }>(
@@ -378,8 +375,6 @@ describe("external tool cancel racing (turn abort signal)", () => {
     expect(result.status).toBe("error");
     expect(String(result.toolReturn)).toContain("interrupted by user");
     expect(String(result.toolReturn)).toContain("outcome is unknown");
-    // The underlying operation keeps running; settling it later must not
-    // produce an unhandled rejection through the raced wrapper.
     settleOperation();
     await Bun.sleep(0);
   });
@@ -426,9 +421,6 @@ describe("external tool cancel racing (turn abort signal)", () => {
   });
 
   test("backgroundable tool that already yielded ignores a later abort", async () => {
-    // Post-yield the turn is no longer blocked on the tool, so the abort must
-    // NOT race the detached operation: the real result still arrives as a
-    // task notification.
     const controller = new AbortController();
     let settleOperation!: () => void;
     const notifications: Array<{ text: string }> = [];

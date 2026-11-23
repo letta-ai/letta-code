@@ -1,11 +1,6 @@
-/**
- * LSP-enhanced Read tool - wraps the base Read tool and adds LSP diagnostics
- * This is used when LETTA_ENABLE_LSP is set
- */
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { read as baseRead, type ToolReturnContent } from "./read.js";
 
-// Format a single diagnostic in opencode style: "ERROR [line:col] message"
 function formatDiagnostic(diag: {
   severity?: number;
   range: { start: { line: number; character: number } };
@@ -18,7 +13,7 @@ function formatDiagnostic(diag: {
     4: "HINT",
   };
   const severity = severityMap[diag.severity || 1] || "ERROR";
-  const line = diag.range.start.line + 1; // Convert to 1-based
+  const line = diag.range.start.line + 1;
   const col = diag.range.start.character + 1;
   return `${severity} [${line}:${col}] ${diag.message}`;
 }
@@ -35,20 +30,16 @@ interface ReadLSPResult {
 }
 
 export async function read_lsp(args: ReadLSPArgs): Promise<ReadLSPResult> {
-  // First, call the base read function
   const result = await baseRead(args);
 
-  // Skip LSP if not enabled (shouldn't happen since we only load this when enabled)
   if (!process.env.LETTA_ENABLE_LSP) {
     return result;
   }
 
-  // If content is multimodal (image), skip LSP processing - only applies to text files
   if (typeof result.content !== "string") {
     return result;
   }
 
-  // Determine if we should include diagnostics
   const lineCount = result.content.split("\n").length;
   const shouldInclude =
     args.include_types === true ||
@@ -59,27 +50,21 @@ export async function read_lsp(args: ReadLSPArgs): Promise<ReadLSPResult> {
   }
 
   try {
-    // Import LSP manager dynamically
     const { lspManager } = await import("@/lsp/manager.js");
     const path = await import("node:path");
 
-    // Resolve the path
     const userCwd = getCurrentWorkingDirectory();
     const resolvedPath = path.default.isAbsolute(args.file_path)
       ? args.file_path
       : path.default.resolve(userCwd, args.file_path);
 
-    // Touch the file (opens it in LSP if not already open)
     await lspManager.touchFile(resolvedPath, false);
 
-    // Wait briefly for diagnostics (LSP servers are async)
     await new Promise((resolve) => setTimeout(resolve, 100));
 
-    // Get diagnostics
     const diagnostics = lspManager.getDiagnostics(resolvedPath);
 
     if (diagnostics.length > 0) {
-      // Only show errors (severity 1) like opencode does
       const errors = diagnostics.filter((d) => d.severity === 1);
       if (errors.length === 0) {
         return result;
@@ -97,10 +82,8 @@ export async function read_lsp(args: ReadLSPArgs): Promise<ReadLSPResult> {
       };
     }
 
-    // No errors - return as-is
     return result;
   } catch (_error) {
-    // If LSP fails, silently return the base result
     return result;
   }
 }

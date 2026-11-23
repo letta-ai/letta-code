@@ -3,13 +3,8 @@ import { DEFAULT_MCP_OAUTH_CLIENT_NAME } from "@/mcp-oauth-client-name";
 
 const CALLBACK_TIMEOUT_MS = 5 * 60 * 1000;
 
-/** Accepted OAuth callback parameters. */
 export interface OAuthCallbackResult {
   code: string;
-  /**
-   * Provider-reported site. Datadog appends `domain` (e.g. `us5.datadoghq.com`)
-   * naming the region that issued the code. Untrusted; callers must allowlist.
-   */
   domain?: string;
 }
 
@@ -20,10 +15,6 @@ export interface OAuthCallbackServer {
   close(): void;
 }
 
-/**
- * @param appName Name shown on the success page ("return to <appName>"),
- *   normally the consent-screen client name. Defaults to "Letta Code".
- */
 export async function startOAuthCallbackServer(
   preferredPort?: number,
   appName: string = DEFAULT_MCP_OAUTH_CLIENT_NAME,

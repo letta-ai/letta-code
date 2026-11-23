@@ -1,10 +1,3 @@
-/**
- * Channel config read/write helpers.
- *
- * Channel configs live below the active product config root.
- * This module handles reading, writing, and validating channel configs.
- */
-
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { migratePermissionMode } from "@/permissions/mode";
@@ -29,8 +22,6 @@ import type {
   WhatsAppGroupMode,
 } from "./types";
 import type { WhatsAppWaitingBehavior } from "./whatsapp/waiting-behavior-config-types";
-
-// ── Paths ─────────────────────────────────────────────────────────
 
 let channelsRootOverride: string | null = null;
 
@@ -58,11 +49,6 @@ export function getChannelRoutingPath(channelId: string): string {
   return join(getChannelDir(channelId), "routing.json");
 }
 
-/**
- * Legacy routing path from the original channels MVP, when the file was named
- * `routing.yaml` despite holding JSON content. Used only for one-time migration
- * to the correctly-named `routing.json`. See issue #3076.
- */
 export function getLegacyChannelRoutingPath(channelId: string): string {
   return join(getChannelDir(channelId), "routing.yaml");
 }
@@ -83,12 +69,6 @@ export function __testOverrideChannelsRoot(root: string | null): void {
   channelsRootOverride = root;
 }
 
-// ── YAML helpers ──────────────────────────────────────────────────
-
-/**
- * Minimal YAML parser for simple key-value configs.
- * Handles: strings, booleans, numbers, simple arrays.
- */
 function parseSimpleYaml(text: string): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   const lines = text.split("\n");
@@ -99,7 +79,6 @@ function parseSimpleYaml(text: string): Record<string, unknown> {
     const line = rawLine.trimEnd();
     if (!line || line.startsWith("#")) continue;
 
-    // Array item
     const arrayMatch = line.match(/^\s+-\s+(.*)/);
     if (arrayMatch && currentKey && currentArray) {
       const val = parseYamlValue(arrayMatch[1]?.trim() ?? "");
@@ -107,10 +86,8 @@ function parseSimpleYaml(text: string): Record<string, unknown> {
       continue;
     }
 
-    // Key-value pair
     const kvMatch = line.match(/^(\w[\w_]*)\s*:\s*(.*)/);
     if (kvMatch) {
-      // Save previous array if any
       if (currentKey && currentArray) {
         result[currentKey] = currentArray;
         currentArray = null;
@@ -131,7 +108,6 @@ function parseSimpleYaml(text: string): Record<string, unknown> {
     }
   }
 
-  // Save trailing array
   if (currentKey && currentArray) {
     result[currentKey] = currentArray;
   }
@@ -144,7 +120,6 @@ function parseYamlValue(raw: string): unknown {
   if (raw === "false") return false;
   if (raw === "null") return null;
   if (/^-?\d+(\.\d+)?$/.test(raw)) return Number(raw);
-  // Strip quotes
   if (
     (raw.startsWith('"') && raw.endsWith('"')) ||
     (raw.startsWith("'") && raw.endsWith("'"))
@@ -153,8 +128,6 @@ function parseYamlValue(raw: string): unknown {
   }
   return raw;
 }
-
-// ── Config read/write ─────────────────────────────────────────────
 
 interface ChannelConfigCodec<TConfig extends ChannelConfig> {
   parse(parsed: Record<string, unknown>): TConfig;

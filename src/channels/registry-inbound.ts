@@ -57,12 +57,6 @@ export function createChannelInboundRouter(deps: {
 
     const config = getChannelAccount(msg.channel, accountId);
 
-    // Sender access gate: one decision for every surface (DMs, groups,
-    // and every channel's auto-route path), evaluated before control
-    // responses and slash commands so unauthorized senders cannot answer
-    // approval prompts or run commands. "pair" senders continue so
-    // read-only slash commands still work before pairing completes; the
-    // pairing-code flow below handles their normal messages.
     const senderAccess = config
       ? evaluateChannelSenderAccess({
           account: config,
@@ -177,10 +171,6 @@ export function createChannelInboundRouter(deps: {
       return;
     }
 
-    // Telegram groups/supergroups can be used as public channel surfaces.
-    // DMs keep the older explicit pairing flow below; group topics route by
-    // chat_id + message_thread_id, which makes forum mode a surprisingly sane
-    // threading primitive. Telegram, accidentally doing something useful.
     if (
       msg.channel === "telegram" &&
       isTelegramChannelAccount(config) &&
@@ -206,9 +196,6 @@ export function createChannelInboundRouter(deps: {
       return;
     }
 
-    // Discord guild messages and account-bound DMs use auto-routing (like
-    // Slack). DMs configured with explicit pairing fall through to the
-    // standard pairing flow below.
     if (
       msg.channel === "discord" &&
       isDiscordChannelAccount(config) &&
@@ -223,9 +210,6 @@ export function createChannelInboundRouter(deps: {
         return;
       }
 
-      // Delivery-time re-check: if allowed_channels changed since route creation,
-      // drop the message (route cleanup, if desired, is handled separately by
-      // reconcile + removeStaleRoutes).
       if (msg.chatType === "channel" && config.allowedChannels) {
         const isAllowed = isDiscordGuildChannelAllowed({
           channelId: msg.chatId,
@@ -253,8 +237,6 @@ export function createChannelInboundRouter(deps: {
         }
       }
 
-      // Route lookup and provisioning above must run before we consume this
-      // recovery signal. Do not turn the empty mention into an agent turn.
       const isBareThreadMention =
         msg.isMention === true &&
         !!msg.threadId &&
@@ -287,10 +269,6 @@ export function createChannelInboundRouter(deps: {
       return;
     }
 
-    // WhatsApp sends through a linked human account, so the adapter performs
-    // the conservative self-chat/group gates before messages reach here.
-    // Direct chats can auto-route when not using pairing; groups auto-route
-    // through the account binding.
     if (
       msg.channel === "whatsapp" &&
       isWhatsAppChannelAccount(config) &&
@@ -319,8 +297,6 @@ export function createChannelInboundRouter(deps: {
       return;
     }
 
-    // Signal uses a linked signal-cli account. DMs can use pairing, but
-    // account-bound DMs and configured groups auto-route like WhatsApp.
     if (
       msg.channel === "signal" &&
       isSignalChannelAccount(config) &&
@@ -349,9 +325,6 @@ export function createChannelInboundRouter(deps: {
       return;
     }
 
-    // 1. Pairing handshake: the sender access gate above already allowed
-    // allowlisted/approved senders and denied blocked ones; "pair" means
-    // this DM sender still needs a pairing code.
     if (senderAccess === "pair") {
       if (msg.reaction) {
         return;
@@ -377,9 +350,6 @@ export function createChannelInboundRouter(deps: {
       return;
     }
 
-    // 2. Route lookup (reload from disk on miss — allows standalone CLI pairing).
-    // Telegram private bot topics share the existing root DM route unless an
-    // exact topic route exists; a disabled exact route remains authoritative.
     const route = loadRouteForInboundMessage(msg, accountId);
     if (!route) {
       if (msg.reaction) {
@@ -393,14 +363,11 @@ export function createChannelInboundRouter(deps: {
       return;
     }
 
-    // 3. Let adapters enrich inbound messages (e.g. thread context,
-    // transcription, attachment hydration), then format as XML/content parts.
     const preparedMessage = adapter.prepareInboundMessage
       ? await adapter.prepareInboundMessage(msg, { isFirstRouteTurn: false })
       : msg;
     const content = formatChannelNotification(preparedMessage);
 
-    // 4. Deliver or buffer
     deps.deliver({
       route,
       content,

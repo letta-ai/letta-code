@@ -25,8 +25,6 @@ describe("/btw command parsing", () => {
   it("does not match /btw with only whitespace after trim", () => {
     const msg = "/btw   ";
     const match = msg.match(btwRegex);
-    // The regex requires at least one non-whitespace char after /btw
-    // But "   " is captured by .+ so this will match - let's test the handler logic
     const question = match?.[1]?.trim();
     expect(question).toBe("");
   });

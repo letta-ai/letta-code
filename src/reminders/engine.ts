@@ -37,13 +37,9 @@ export interface SharedReminderContext {
   systemInfoReminderEnabled: boolean;
   skillSources: SkillSource[];
   conversationBootstrapContent?: MessageCreate["content"];
-  /** Explicit working directory (overrides process.cwd() in session context). */
   workingDirectory?: string;
-  /** Source of the session context (varies intro text). */
   sessionContextSource?: SessionContextSource;
-  /** Reason the session context is being (re)generated. */
   sessionContextReason?: SessionContextReason;
-  /** Shell context detected at startup, if available. */
   shellContext?: ShellContext;
 }
 
@@ -69,9 +65,7 @@ async function buildAgentInfoReminder(
   try {
     const scopeAgentId = await getMcpScopeAgentId(context.agent.id);
     if (scopeAgentId !== context.agent.id) parentAgentId = scopeAgentId;
-  } catch {
-    // Parent lookup must not prevent the agent's own info reminder.
-  }
+  } catch {}
   const reminder = buildAgentInfo({
     parentAgentId,
     agentInfo: {
@@ -87,12 +81,6 @@ async function buildAgentInfoReminder(
   return reminder || null;
 }
 
-/**
- * Secret names a session can use: its own vault plus, for a subagent, the vault
- * of the agent it inherits MCP from. Shell substitution already falls back to
- * that vault (resolveSecretEnvFromCommand); listing the names keeps the agent
- * from concluding a secret is missing.
- */
 export async function listAvailableSecretNames(
   agentId: string,
   lookupParent?: ParentAgentLookup,
@@ -111,9 +99,7 @@ export async function listAvailableSecretNames(
       await ensureSecretsLoaded(scopeAgentId);
       for (const name of listSecretNames(scopeAgentId)) names.add(name);
     }
-  } catch {
-    // Unresolvable parent linkage never widens access; list own names only.
-  }
+  } catch {}
   return [...names].sort();
 }
 
@@ -164,14 +150,12 @@ async function buildSecretsInfoReminder(
 
 export interface McpServerReminderEntry {
   name: string;
-  /** Tool count when cheaply known (cloud-synced tools); null otherwise. */
   toolCount: number | null;
 }
 
 export interface McpServersReminderDependencies {
   lookupParentAgent?: ParentAgentLookup;
   getLocalServerNames?: (agentId: string) => string[];
-  /** Returns cloud-connected servers, or null when unavailable. */
   listServerSideServers?: (
     agentId: string,
     timeoutMs?: number,
@@ -182,9 +166,6 @@ async function defaultListServerSideServers(
   agentId: string,
   timeoutMs = 3_000,
 ): Promise<McpServerReminderEntry[] | null> {
-  // An unavailable backend means no server-side MCP; local names are still
-  // valid. A failed server fetch on an available backend throws instead, so a
-  // transient API error never reports an incomplete server list.
   let serverSideAvailable = false;
   try {
     const { getBackend } = await import("@/backend");
@@ -203,8 +184,6 @@ async function defaultListServerSideServers(
     typeof listUnifiedMcpServers
   >[0];
   const allServers = await listUnifiedMcpServers(client, agentId, timeoutMs);
-  // Hosted Letta Cloud cannot execute stdio-type cloud servers; do not
-  // advertise tools the agent cannot call.
   const servers =
     getServerUrl() === LETTA_CLOUD_API_URL
       ? allServers.filter((server) => server.serverType !== "stdio")
@@ -236,12 +215,17 @@ export function buildMcpServersReminderText(
   return `${SYSTEM_REMINDER_OPEN}\n${inventory}\n${MCP_MEMORY_GUIDANCE}\n${entries?.length === 0 ? "" : `${MCP_TOOL_USAGE}\n`}${SYSTEM_REMINDER_CLOSE}`;
 }
 
+export interface McpServerInventory {
+  entries: McpServerReminderEntry[];
+  serverSideAvailable: boolean;
+}
+
 export async function listMcpServersForAgent(
   agentId: string,
   _state: SharedReminderContext["state"],
   deps: McpServersReminderDependencies = {},
   timeoutMs = 3_000,
-): Promise<McpServerReminderEntry[]> {
+): Promise<McpServerInventory> {
   const localNames = (
     deps.getLocalServerNames ??
     ((id: string) =>
@@ -255,7 +239,10 @@ export async function listMcpServersForAgent(
     deps.listServerSideServers ?? defaultListServerSideServers
   )(agentId, timeoutMs);
   if (serverSideEntries) entries.push(...serverSideEntries);
-  return [...new Map(entries.map((entry) => [entry.name, entry])).values()];
+  return {
+    entries: [...new Map(entries.map((entry) => [entry.name, entry])).values()],
+    serverSideAvailable: serverSideEntries !== null,
+  };
 }
 
 export async function buildMcpServersInfoReminderText(
@@ -263,21 +250,29 @@ export async function buildMcpServersInfoReminderText(
   deps: McpServersReminderDependencies = {},
 ): Promise<string | null> {
   try {
-    const uniqueEntries = await listMcpServersForAgent(
-      await getMcpScopeAgentId(
-        context.agent.id,
-        undefined,
-        deps.lookupParentAgent,
-      ),
-      context.state,
-      deps,
-    );
+    const { entries: uniqueEntries, serverSideAvailable } =
+      await listMcpServersForAgent(
+        await getMcpScopeAgentId(
+          context.agent.id,
+          undefined,
+          deps.lookupParentAgent,
+        ),
+        context.state,
+        deps,
+      );
     const namesKey = uniqueEntries
       .map((entry) => `${entry.name}\u0001${entry.toolCount ?? ""}`)
       .join("\0");
     if (
       context.state.hasSentMcpServersInfo &&
       context.state.lastSentMcpServerNamesKey === namesKey
+    ) {
+      return null;
+    }
+    if (
+      uniqueEntries.length === 0 &&
+      !serverSideAvailable &&
+      context.state.lastSentMcpServerNamesKey === null
     ) {
       return null;
     }
@@ -375,7 +370,6 @@ async function buildPermissionModeReminder(
   const shouldEmit = (() => {
     if (context.mode === "interactive" || context.mode === "listen") {
       if (previousMode === null) {
-        // First turn: only remind if not in the default mode (unrestricted).
         return currentMode !== "unrestricted";
       }
       return previousMode !== currentMode;
@@ -555,7 +549,6 @@ export async function buildSharedReminderParts(
   const parts: ReminderTextPart[] = [];
   const appliedReminderIds: SharedReminderId[] = [];
 
-  // Incremented once per user turn; surfaced in the statusline payload.
   context.state.turnCount += 1;
 
   for (const reminder of SHARED_REMINDER_CATALOG) {

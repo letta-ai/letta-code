@@ -37,9 +37,7 @@ function memoryLayoutPolicy(memoryDir: string): MemoryLayoutPolicy {
       ).trim();
       return v2Started ? "root-marker" : "legacy-only";
     }
-  } catch {
-    /* Repositories created outside the harness have no persistent policy. */
-  }
+  } catch {}
   return spawnSync("git", ["cat-file", "-e", "HEAD:MEMORY.md"], {
     cwd: memoryDir,
     stdio: "ignore",
@@ -48,7 +46,6 @@ function memoryLayoutPolicy(memoryDir: string): MemoryLayoutPolicy {
     : "legacy-only";
 }
 
-/** Validate the committed MemFS tree without changing its index or working tree. */
 export function validateMemoryConstraintsHead(
   memoryDir: string,
 ): MemoryConstraintsValidationResult {
@@ -65,9 +62,6 @@ export function validateMemoryConstraintsHead(
     });
     const layoutPolicy = memoryLayoutPolicy(memoryDir);
     writeFileSync(validatorPath, MEMORY_CONSTRAINTS_VALIDATOR_SCRIPT, "utf8");
-    // Run the validator with this process's own runtime, like the pre-commit
-    // hook does. Desktop installs ship no system `node`, so a PATH lookup fails
-    // and every audit would report invalid memory.
     const result = spawnSync(
       process.execPath,
       [validatorPath, "--layout", layoutPolicy, "--audit"],
@@ -99,11 +93,6 @@ export function validateMemoryConstraintsHead(
   }
 }
 
-/**
- * Validate the tree post-turn sync would publish. Hosted MemFS validates only
- * the pushed tip, and the runtime loads only the head of main, so intermediate
- * commits are not checked.
- */
 export function invalidPendingMemory(
   memoryDir: string,
   localOnly: boolean,

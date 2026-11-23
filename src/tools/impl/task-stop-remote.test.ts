@@ -197,7 +197,6 @@ describe("TaskStop for remote external workers that never answer", () => {
     expect(result.killed).toBe(false);
     expect(result.output).toContain("did not answer");
     expect(result.output).toContain("may still be running");
-    // The handle stays so a later TaskStop can retry.
     expect(abortController.signal.aborted).toBe(false);
     expect(backgroundTasks.get("task_stop_hangs")?.status).toBe("running");
   });
@@ -255,8 +254,6 @@ describe("Background task interrupt hook", () => {
     await Bun.sleep(20);
 
     expect(cancel).toHaveBeenCalledWith("conv-child");
-    // task_stop deliberately returned killed:false without aborting so the
-    // handle survives for a retry; the hook must not destroy that handle.
     expect(controller.signal.aborted).toBe(false);
     expect(backgroundTasks.get("task_hook_preserve")?.status).toBe("running");
     cancel.mockRestore();
@@ -270,8 +267,6 @@ describe("Background task interrupt hook", () => {
       description: "local",
       subagentType: "general-purpose",
       subagentId: "sub_task_hook_local",
-      // Not running: task_stop returns killed:false without aborting, so
-      // the hook's fail-safe local abort is the only thing that fires.
       status: "failed",
       startTime: new Date(),
       outputFile: createBackgroundOutputFile("task_hook_local"),
@@ -283,7 +278,6 @@ describe("Background task interrupt hook", () => {
     buildBackgroundTaskAbortHook("task_hook_local", controller)();
     await Bun.sleep(20);
 
-    // Local tasks have no remote handle to preserve: fail-safe local abort.
     expect(controller.signal.aborted).toBe(true);
   });
 
@@ -325,14 +319,11 @@ describe("Background task interrupt hook", () => {
       buildBackgroundTaskAbortHook("task_hook_retry", controller),
     );
 
-    // First interrupt: fires the hook, errored the row, removed the hook.
     interruptActiveSubagents("Interrupted by user");
     await Bun.sleep(20);
     expect(cancel).toHaveBeenCalledTimes(1);
     expect(controller.signal.aborted).toBe(false);
 
-    // The failed remote cancel restored the row: it survives completed-row
-    // cleanup and keeps the conversationId a TaskStop retry needs.
     expect(
       getSubagents().find((a) => a.id === "sub_task_hook_retry")?.status,
     ).toBe("running");
@@ -341,7 +332,6 @@ describe("Background task interrupt hook", () => {
       true,
     );
 
-    // A later interrupt reaches the re-armed hook and retries the cancel.
     interruptActiveSubagents("Interrupted by user");
     await Bun.sleep(20);
     expect(cancel).toHaveBeenCalledTimes(2);
@@ -360,8 +350,6 @@ describe("Background task interrupt hook", () => {
     buildBackgroundTaskAbortHook("task_hook_completed", controller)();
     await Bun.sleep(20);
 
-    // Restore only reclaims rows the interrupt errored; a row that settled
-    // on its own keeps its terminal state.
     expect(
       getSubagents().find((a) => a.id === "sub_task_hook_completed")?.status,
     ).toBe("completed");
@@ -385,18 +373,12 @@ describe("Background task interrupt hook", () => {
     );
 
     interruptActiveSubagents("Interrupted by user");
-    // Let the hook reach cancelConversation so the cancel is genuinely in
-    // flight before the new turn starts.
     await Bun.sleep(20);
-    // The user starts a new turn while the cancel is still in flight: the
-    // turn-start sweep must not delete the row that holds the remote run's
-    // only retry handle.
     clearCompletedSubagents();
     expect(getSubagents().some((a) => a.id === "sub_task_hook_race")).toBe(
       true,
     );
 
-    // The cancel fails: the protected row is restored and stays retryable.
     resolveCancel({ "run-child": "failed" });
     await Bun.sleep(20);
     expect(
@@ -427,8 +409,6 @@ describe("Background task interrupt hook", () => {
       );
 
       interruptActiveSubagents("Interrupted by user");
-      // Several retention windows elapse while the cancel is in flight:
-      // the timer must keep re-checking instead of deleting the row.
       await Bun.sleep(35);
       expect(getSubagents().some((a) => a.id === "sub_task_hook_timer")).toBe(
         true,
@@ -462,11 +442,7 @@ describe("Background task interrupt hook", () => {
     );
 
     interruptActiveSubagents("Interrupted by user");
-    // Let the hook reach cancelConversation so the cancel is genuinely in
-    // flight when the task fails on its own.
     await Bun.sleep(20);
-    // The task fails on its own while the cancel is in flight: settlement
-    // marks the background task failed and writes the real error.
     const bgTask = backgroundTasks.get("task_hook_natural");
     bgTask!.status = "failed";
     completeSubagent("sub_task_hook_natural", {
@@ -476,8 +452,6 @@ describe("Background task interrupt hook", () => {
 
     resolveCancel({ "run-child": "failed" });
     await Bun.sleep(20);
-    // The natural failure stands: no running ghost, no re-armed hook, and
-    // the row no longer blocks terminal-row cleanup.
     const row = getSubagents().find((a) => a.id === "sub_task_hook_natural");
     expect(row?.status).toBe("error");
     expect(row?.error).toBe("natural failure");
@@ -506,22 +480,14 @@ describe("Background task interrupt hook", () => {
     );
 
     interruptActiveSubagents("Interrupted by user");
-    // Let the hook reach cancelConversation so the cancel is genuinely in
-    // flight before the promotion runs.
     await Bun.sleep(20);
-    // Esc's refreshDerived promotes the finished Task line to the static
-    // transcript and clears the backing rows — the third deletion path.
     clearSubagentsByIds(["sub_task_hook_promote"]);
     const retained = getSubagents().find(
       (a) => a.id === "sub_task_hook_promote",
     );
-    // The row survives as a hidden retry handle: its line was promoted, so
-    // it must not double-render in the live subagent display.
     expect(retained).toBeDefined();
     expect(retained?.silent).toBe(true);
 
-    // The cancel fails: the retained row is restored and a later interrupt
-    // retries through it.
     resolveCancel({ "run-child": "failed" });
     await Bun.sleep(20);
     expect(
@@ -556,8 +522,6 @@ describe("Background task interrupt hook", () => {
       getSubagents().find((a) => a.id === "sub_task_hook_promote_ok")?.silent,
     ).toBe(true);
 
-    // The cancel lands: the flag clears and the hidden terminal row is
-    // cleanup-eligible again — retention is bounded, not a leak.
     resolveCancel({ "run-child": "cancelled" });
     await Bun.sleep(20);
     clearCompletedSubagents();
@@ -585,9 +549,6 @@ describe("Background task interrupt hook", () => {
 
     interruptActiveSubagents("Interrupted by user");
     await Bun.sleep(20);
-    // The cancel fails: the row restores as the retry handle, marked
-    // stop-failed so the transcript surfaces the live remote run and idle
-    // Esc can retry its stop.
     resolveCancel({ "run-child": "failed" });
     await Bun.sleep(20);
     const restored = getSubagents().find(
@@ -623,8 +584,6 @@ describe("Background task interrupt hook", () => {
         ?.stopFailed,
     ).toBe(true);
 
-    // A later stop lands: the row settles as a plain terminal row — no
-    // lingering stopFailed marking keeps idle Esc or notifications armed.
     interruptActiveSubagents("Interrupted by user");
     await Bun.sleep(20);
     resolveCancel({ "run-child": "cancelled" });
@@ -667,8 +626,6 @@ describe("Background task interrupt hook", () => {
         ?.stopFailed,
     ).toBe(true);
 
-    // The run finishes on its own while armed for a retry: the natural
-    // result stands and no stop-failed marking survives it.
     completeSubagent("sub_task_hook_stopfail_natural", {
       success: true,
       result: "done",
@@ -706,8 +663,6 @@ describe("Background task interrupt hook", () => {
         ?.stopFailed,
     ).toBe(true);
 
-    // A new stop attempt is in flight: the recorded failure is superseded
-    // until the hook settles it (and re-marks only if it fails again).
     interruptActiveSubagents("Interrupted by user");
     await Bun.sleep(20);
     const retrying = getSubagents().find(
@@ -751,8 +706,6 @@ describe("Background task interrupt hook", () => {
       return originalHook();
     };
 
-    // First stop fails: only the failed row is marked. The cancels are
-    // keyed by conversation so the sibling's cancel stays pending.
     interruptActiveSubagents("Interrupted by user");
     await Bun.sleep(20);
     resolvers.get("conv-child")?.({ "run-child": "failed" });
@@ -765,15 +718,12 @@ describe("Background task interrupt hook", () => {
       getSubagents().find((a) => a.id === "sub_task_hook_healthy_one")?.status,
     ).toBe("error");
 
-    // Restore both rows to live state: the failed one stop-failed, the
-    // sibling healthy again (as if its own interrupt had never happened).
     updateSubagent("sub_task_hook_healthy_one", {
       status: "running",
       error: undefined,
       cancelPending: undefined,
     });
 
-    // The targeted retry re-dispatches only the stop-failed row's hook.
     const retried = interruptStopFailedSubagents("Interrupted by user");
     expect(retried).toEqual(["sub_task_hook_failed_one"]);
     expect(healthyHookFired).toBe(0);
@@ -810,9 +760,6 @@ describe("Background task interrupt hook", () => {
         ?.stopFailed,
     ).toBe(true);
 
-    // The user follows the hint: the targeted retry dispatches, fails
-    // again, and the row re-marks stopFailed so the failure can re-surface
-    // and the next Esc stays armed.
     const retried = interruptStopFailedSubagents("Interrupted by user");
     expect(retried).toEqual(["sub_task_hook_retry_loop"]);
     await Bun.sleep(20);
@@ -845,8 +792,6 @@ describe("Background task interrupt hook", () => {
       buildBackgroundTaskAbortHook("task_hook_outcomes", controller),
     );
 
-    // First stop attempt fails: the restore records the failed outcome for
-    // attempt 1.
     interruptActiveSubagents("Interrupted by user");
     await Bun.sleep(20);
     resolvers.get("conv-child")?.({ "run-child": "failed" });
@@ -858,8 +803,6 @@ describe("Background task interrupt hook", () => {
     expect(restored?.stopFailed).toBe(true);
     expect(restored?.stopOutcome).toEqual({ attempt: 1, kind: "failed" });
 
-    // The targeted retry dispatches attempt 2 and the cancel lands: the
-    // settle records the stopped outcome for attempt 2.
     const retried = interruptStopFailedSubagents("Interrupted by user");
     expect(retried).toEqual(["sub_task_hook_outcomes"]);
     await Bun.sleep(20);
@@ -894,7 +837,6 @@ describe("Background task interrupt hook", () => {
       buildBackgroundTaskAbortHook("task_hook_natural_fail", controller),
     );
 
-    // First stop attempt fails and restores the retry handle.
     interruptActiveSubagents("Interrupted by user");
     await Bun.sleep(20);
     resolvers.get("conv-child")?.({ "run-child": "failed" });
@@ -904,9 +846,6 @@ describe("Background task interrupt hook", () => {
         ?.stopFailed,
     ).toBe(true);
 
-    // The retry dispatches, but the task fails on its own while the cancel
-    // is in flight: the settle must record the natural outcome so the
-    // notification selector never mistakes it for a landed stop.
     interruptStopFailedSubagents("Interrupted by user");
     await Bun.sleep(20);
     const bgTask = backgroundTasks.get("task_hook_natural_fail");

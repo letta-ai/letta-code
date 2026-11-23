@@ -7,10 +7,10 @@ import type {
 } from "@earendil-works/pi-ai";
 import { isContextOverflow } from "@earendil-works/pi-ai";
 
-import type { LocalCompactionStats } from "@/backend/local/compaction";
 import {
   emptyLocalUsage,
   type LocalAssistantMessage,
+  type LocalCompactionStats,
   type LocalMessage,
 } from "@/backend/local/local-message";
 import { resolveAvailableLocalModelForTurn } from "@/backend/local/local-model-config";
@@ -85,12 +85,6 @@ export interface PiStreamAdapterOptions {
   stream?: PiStreamFunction;
   abortSignal?: AbortSignal;
   localProviderAuthStorageDir?: string;
-  /**
-   * Per-backend pi-ai Models runtime used for model resolution and stream
-   * dispatch. A dedicated instance is created when not provided; the local
-   * backend passes its own so /model listing and turn execution share one
-   * provider registry.
-   */
   modelsRuntime?: LocalPiModelsRuntime;
   onContextWindowOverflow?: (
     input: ProviderTurnInput,
@@ -217,15 +211,6 @@ function withAnthropicOutputEffort(
   };
 }
 
-/**
- * Reject a turn whose irreducible prompt cannot fit the serving context window.
- *
- * Local engines truncate oversized prompts silently rather than erroring, so
- * the failure mode is an agent that answers with its memory and persona
- * quietly missing. Compaction cannot help here — the system prompt and tool
- * definitions are not history — so surface it as an actionable error instead of
- * shipping a request we know will be clipped.
- */
 function assertPromptFloorFitsContextWindow(
   input: ProviderTurnInput,
   model: { id: string; provider?: string; contextWindow?: number },
@@ -361,8 +346,6 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       new LocalPiModelsRuntime({
         storageDir: options.localProviderAuthStorageDir,
       });
-    // Stream dispatch goes through the pi-ai Models runtime so the provider
-    // that published the model owns the request; no global compat dispatch.
     this.runStream =
       options.stream ??
       ((model, context, streamOptions) =>
@@ -402,9 +385,6 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
     const contextTokens = estimateProviderContextTokens(input);
     if (contextTokens === undefined) return null;
 
-    // Resolve through the same per-backend Models runtime as streamOnce. The
-    // provider-published Model remains the source of truth for contextWindow;
-    // Letta owns only the harness policy deciding when to compact around it.
     const localModel = await resolveAvailableLocalModelForTurn({
       model: input.agent.model,
       modelSettings: input.agent.model_settings,
@@ -510,8 +490,6 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
         resolved.model.api === "openai-codex-responses") &&
       (verbosity === "low" || verbosity === "medium" || verbosity === "high")
     ) {
-      // pi-ai's streamSimple drops textVerbosity (including for Codex), so
-      // forward the saved setting at the same payload seam as output effort.
       const existing = options.onPayload;
       options.onPayload = async (payload, model) => {
         const next = (await existing?.(payload, model)) ?? payload;
@@ -523,9 +501,6 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       };
     }
     if (resolved.model.api === "openai-responses") {
-      // pi-ai replays OpenAI Responses output items from transcript history.
-      // Those upstream item IDs (rs_*, msg_*, fc_*) are not retrievable when the
-      // request uses store:false, so remove them and replay the full item bodies.
       options.onPayload = withOpenAIResponsesReplayIdSanitizer(
         options.onPayload,
       );
@@ -542,8 +517,6 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
         resolved.model.id.includes("claude-fable-5") &&
         anthropicEffortForSettings(input.agent.model_settings) === "max"
       ) {
-        // pi-ai's public ThinkingLevel type currently tops out at xhigh, but
-        // Anthropic accepts Fable's max effort through output_config.effort.
         options.onPayload = withAnthropicOutputEffort(options.onPayload, "max");
       }
     }
@@ -635,9 +608,6 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           usageContextTokens ??
           estimateProviderContextTokens({
             ...input,
-            // Provider usage includes the completed assistant response. Match
-            // that scope when we fall back to estimation; using the original
-            // pre-response input here would postpone compaction by one turn.
             uiMessages: [
               ...input.uiMessages,
               finalLocalMessage ?? toLocalAssistantMessage(finalMessage, input),
@@ -681,10 +651,6 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
 
     while (true) {
       if (!preflightCompactionChecked) {
-        // Check once per turn. If compaction still cannot make the request fit,
-        // the provider overflow path remains the bounded recovery mechanism.
-        // Reclassifying the eventual output limit itself as overflow would
-        // recreate the behavior deliberately removed in #3355.
         preflightCompactionChecked = true;
         const compaction = await this.compactBeforeProviderCall(activeInput);
         if (compaction) {
@@ -728,10 +694,6 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
 
         const retryableTransportError = isRetryableLocalProviderError(error);
 
-        // Oversized-payload classification: a retryable transport failure on a
-        // payload we can measure as oversized will keep failing — compact
-        // instead of retrying the same bytes. See comment on
-        // isOversizedPayloadTransportFailure.
         if (
           retryableTransportError &&
           !emittedModelOutput &&
@@ -755,11 +717,6 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
             continue;
           }
 
-          // Unlike the provider-reported overflow branch above, the original
-          // error here is retryable. If compaction itself fails (for example
-          // the summarizer model call errors), fall back to the normal
-          // transient retry path instead of replacing a retryable transport
-          // error with a non-retryable compaction error.
           let compaction: Awaited<
             ReturnType<NonNullable<typeof this.onContextWindowOverflow>>
           > = null;
@@ -779,10 +736,6 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           }
         }
 
-        // Adaptive image elision: a fixed byte limit cannot capture a user's
-        // current uplink. If a retryable transport error repeats before any
-        // model output, shed provider-context-only image bytes even when the
-        // request is below the configured classifier threshold.
         if (
           retryableTransportError &&
           !emittedModelOutput &&

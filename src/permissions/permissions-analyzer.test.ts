@@ -4,10 +4,6 @@ import {
   parseAbsoluteCommandPaths,
 } from "@/permissions/analyzer";
 
-// ============================================================================
-// Bash Command Analysis Tests
-// ============================================================================
-
 test("Git diff suggests safe subcommand rule", () => {
   const context = analyzeApprovalContext(
     "Bash",
@@ -490,12 +486,8 @@ test("Skill script path in quoted command is detected", () => {
   );
 });
 
-// ============================================================================
-// File Tool Analysis Tests
-// ============================================================================
-
 test("Read outside working directory suggests directory pattern", () => {
-  if (process.platform === "win32") return; // Skip on Windows - Unix paths
+  if (process.platform === "win32") return;
 
   const context = analyzeApprovalContext(
     "Read",
@@ -534,7 +526,7 @@ test("Write suggests session-only approval", () => {
 });
 
 test("Edit suggests directory pattern for project-level", () => {
-  if (process.platform === "win32") return; // Skip on Windows - Unix paths
+  if (process.platform === "win32") return;
 
   const context = analyzeApprovalContext(
     "Edit",
@@ -549,7 +541,7 @@ test("Edit suggests directory pattern for project-level", () => {
 });
 
 test("Edit at project root suggests accept edits mode for this session", () => {
-  if (process.platform === "win32") return; // Skip on Windows - Unix paths
+  if (process.platform === "win32") return;
 
   const context = analyzeApprovalContext(
     "Edit",
@@ -564,7 +556,7 @@ test("Edit at project root suggests accept edits mode for this session", () => {
 });
 
 test("Glob outside working directory suggests directory pattern", () => {
-  if (process.platform === "win32") return; // Skip on Windows - Unix paths
+  if (process.platform === "win32") return;
 
   const context = analyzeApprovalContext(
     "Glob",
@@ -577,7 +569,7 @@ test("Glob outside working directory suggests directory pattern", () => {
 });
 
 test("Grep outside working directory suggests directory pattern", () => {
-  if (process.platform === "win32") return; // Skip on Windows - Unix paths
+  if (process.platform === "win32") return;
 
   const context = analyzeApprovalContext(
     "Grep",
@@ -643,10 +635,6 @@ test("Grep outside Windows working directory emits canonical Windows absolute ru
   expect(context.approveAlwaysText).toContain("C:/Users/Test/docs/");
 });
 
-// ============================================================================
-// WebFetch Analysis Tests
-// ============================================================================
-
 test("WebFetch suggests domain pattern", () => {
   const context = analyzeApprovalContext(
     "WebFetch",
@@ -681,10 +669,6 @@ test("WebFetch with invalid URL falls back", () => {
   expect(context.safetyLevel).toBe("moderate");
 });
 
-// ============================================================================
-// Default/Unknown Tool Analysis Tests
-// ============================================================================
-
 test("Unknown tool suggests session-only", () => {
   const context = analyzeApprovalContext(
     "CustomTool",
@@ -697,15 +681,7 @@ test("Unknown tool suggests session-only", () => {
   expect(context.safetyLevel).toBe("moderate");
 });
 
-// ============================================================================
-// Long Command Bugs
-// ============================================================================
-
 test("Long complex bash commands should generate smart wildcard patterns", () => {
-  // Bug: When command is >40 chars, analyzer saves exact match instead of wildcard
-  // Example: "cd /path && git diff file.ts | head -100"
-  // Should generate: "Bash(cd /path && git diff:*)" to also match "... | tail -30"
-
   const longCommand =
     "cd /Users/test/project && git diff src/file.ts | head -100";
 
@@ -715,15 +691,11 @@ test("Long complex bash commands should generate smart wildcard patterns", () =>
     "/Users/test/project",
   );
 
-  // Should extract "git diff" pattern, not save full command
   expect(context.recommendedRule).toBe("Bash(git diff:*)");
-  // Button text should reflect the wildcard pattern
   expect(context.approveAlwaysText).not.toContain("...");
 });
 
 test("Very long non-git commands should generate prefix-based wildcards", () => {
-  // For commands that don't match known patterns (npm, git, etc)
-  // we should still be smarter than exact match
   const longCommand = "cd /Users/test/project && npm run lint 2>&1 | tail -20";
 
   const context = analyzeApprovalContext(
@@ -732,7 +704,6 @@ test("Very long non-git commands should generate prefix-based wildcards", () => 
     "/Users/test/project",
   );
 
-  // Should generate wildcard for "npm run lint"
   expect(context.recommendedRule).toBe("Bash(npm run lint:*)");
   expect(context.approveAlwaysText).toContain("npm run lint");
 });
@@ -771,10 +742,6 @@ test("exec_command is analyzed as Bash using cmd", () => {
 
   expect(context.recommendedRule).toBe("Bash(curl:*)");
 });
-
-// ============================================================================
-// gh CLI approval tests
-// ============================================================================
 
 test("gh pr view suggests safe project-scoped rule", () => {
   const context = analyzeApprovalContext(
@@ -863,7 +830,6 @@ test("gh search issues suggests safe rule", () => {
     "/Users/test/project",
   );
 
-  // search category has null allowedActions - use "gh search" prefix (no action)
   expect(context.recommendedRule).toBe("Bash(gh search:*)");
   expect(context.safetyLevel).toBe("safe");
 });
@@ -875,7 +841,6 @@ test("gh api suggests moderate rule (can mutate)", () => {
     "/Users/test/project",
   );
 
-  // api category has null allowedActions - use "gh api" prefix (no action)
   expect(context.recommendedRule).toBe("Bash(gh api:*)");
   expect(context.safetyLevel).toBe("moderate");
 });

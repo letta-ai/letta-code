@@ -31,7 +31,6 @@ interface TaskStopResult {
   output?: string;
 }
 
-/** Interrupt a remote child's conversation, as the UI's stop button does. */
 async function cancelRemoteRun(
   subagentId: string,
   allowIdle = false,
@@ -53,7 +52,6 @@ async function cancelRemoteRun(
       ? { killed: true }
       : { killed: true, output: "Cancelled the remote run" };
   } catch (error) {
-    // Local children can be between runs while their background work is live.
     if (allowIdle && error instanceof ApiRequestError && error.status === 409)
       return { killed: true };
     return {
@@ -63,14 +61,11 @@ async function cancelRemoteRun(
   }
 }
 
-/** Longest TaskStop waits for another computer to answer a stop request. */
 const REMOTE_STOP_TIMEOUT_MS = 30_000;
-/** Longest TaskStop waits for an aborted remote worker's task to settle. */
 const COMPLETION_TIMEOUT_MS = 5_000;
 
 const TIMED_OUT = Symbol("timed out");
 
-/** Resolves with `promise`, or with `TIMED_OUT` once `timeoutMs` passes. */
 async function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
@@ -88,7 +83,6 @@ async function withTimeout<T>(
   }
 }
 
-/** Retry schedule cleanup without re-aborting a process that already exited. */
 async function finishPendingWakeCancellation(
   task: BackgroundTask,
 ): Promise<TaskStopResult> {
@@ -120,7 +114,6 @@ export async function task_stop(
   validateRequiredParams(args, ["task_id"], "TaskStop");
   const { task_id } = args;
 
-  // Check if this is a background Task (subagent)
   const task = backgroundTasks.get(task_id);
   if (task) {
     if (task.cancelPendingWakes) return finishPendingWakeCancellation(task);
@@ -211,7 +204,6 @@ export async function task_stop(
         if (settled === TIMED_OUT) {
           if (!remoteExternalStopped)
             throw new Error("Subagent process exit was not confirmed");
-          // The owning worker confirmed its process exit; only this follower's result is late.
           task.status = "failed";
           scheduleBackgroundTaskCleanup(task_id);
           return {
@@ -222,7 +214,6 @@ export async function task_stop(
       } catch (error) {
         return { killed: false, output: getErrorMessage(error) };
       }
-      // The launcher can hand off to a listener while its abort unwinds.
       if (task.stop && task.stop !== initialStop) {
         try {
           const result = await withTimeout(
@@ -244,7 +235,6 @@ export async function task_stop(
           } catch (error) {
             return { killed: false, output: getErrorMessage(error) };
           }
-          // Process exit is confirmed even if schedule cleanup needs a retry.
           task.status = "failed";
           scheduleBackgroundTaskCleanup(task_id);
           task.cancelPendingWakes = () =>
@@ -264,12 +254,9 @@ export async function task_stop(
       scheduleBackgroundTaskCleanup(task_id);
       return remote ?? { killed: true };
     }
-    // Task exists but isn't running or doesn't have abort controller
     return { killed: false };
   }
 
-  // Fall back to killing a Bash background process (bash shells share the
-  // task id space).
   const process = backgroundProcesses.get(task_id);
   if (process?.cancel) return process.cancel();
   if (process?.remote && process.status === "running") {

@@ -11,12 +11,6 @@ import {
   type SharedReminderState,
 } from "@/reminders/state";
 
-/**
- * Stub providers so tests run in isolation without hitting real
- * session-context or agent-info builders (which touch process.cwd, git, etc.).
- * Stubs mirror the real providers' state mutations so the reminder engine's
- * once-per-session guards work correctly.
- */
 function withStubbedProviders(fn: () => Promise<void>): () => Promise<void> {
   const origSession = sharedReminderProviders["session-context"];
   const origAgent = sharedReminderProviders["agent-info"];
@@ -85,10 +79,8 @@ describe("listen-mode session context", () => {
       const state = createSharedReminderState();
       const ctx = listenContext(state);
 
-      // First turn — fires
       await buildSharedReminderParts(ctx);
 
-      // Second turn — same state, should NOT re-fire
       const result = await buildSharedReminderParts(ctx);
 
       expect(result.appliedReminderIds).not.toContain("session-context");
@@ -102,12 +94,9 @@ describe("listen-mode session context", () => {
       const state = createSharedReminderState();
       const ctx = listenContext(state);
 
-      // First turn fires
       await buildSharedReminderParts(ctx);
       expect(state.hasSentSessionContext).toBe(true);
 
-      // Simulate periodic sync: DON'T reset state (the fix)
-      // Just build again — should not re-inject
       const result = await buildSharedReminderParts(ctx);
       expect(result.appliedReminderIds).not.toContain("session-context");
     }),
@@ -119,15 +108,12 @@ describe("listen-mode session context", () => {
       const state = createSharedReminderState();
       const ctx = listenContext(state);
 
-      // First turn fires
       await buildSharedReminderParts(ctx);
       expect(state.hasSentSessionContext).toBe(true);
 
-      // Simulate a manual reset of bootstrap reminder state.
       resetSharedReminderState(state);
       expect(state.hasSentSessionContext).toBe(false);
 
-      // Next turn after reset — should fire again
       const result = await buildSharedReminderParts(ctx);
       expect(result.appliedReminderIds).toContain("session-context");
       expect(result.appliedReminderIds).toContain("agent-info");
@@ -157,19 +143,16 @@ describe("listen-mode session context", () => {
       const state = createSharedReminderState();
       const ctx = listenContext(state);
 
-      // First turn fires both
       await buildSharedReminderParts(ctx);
       expect(state.hasSentSessionContext).toBe(true);
       expect(state.hasSentAgentInfo).toBe(true);
 
-      // Simulate CWD change: only invalidate session-context
       state.hasSentSessionContext = false;
       state.pendingSessionContextReason = "cwd_changed";
 
       const result = await buildSharedReminderParts(ctx);
       expect(result.appliedReminderIds).toContain("session-context");
       expect(result.appliedReminderIds).not.toContain("agent-info");
-      // Reason should be cleared after injection
       expect(state.pendingSessionContextReason).toBeUndefined();
     }),
   );
@@ -180,17 +163,14 @@ describe("listen-mode session context", () => {
       const stateA = createSharedReminderState();
       const stateB = createSharedReminderState();
 
-      // Conversation A fires
       const ctxA = listenContext(stateA);
       await buildSharedReminderParts(ctxA);
       expect(stateA.hasSentSessionContext).toBe(true);
 
-      // Conversation B should still fire (fresh state)
       const ctxB = listenContext(stateB);
       const resultB = await buildSharedReminderParts(ctxB);
       expect(resultB.appliedReminderIds).toContain("session-context");
 
-      // A is not affected by B
       expect(stateA.hasSentSessionContext).toBe(true);
     }),
   );

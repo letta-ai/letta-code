@@ -127,7 +127,6 @@ function normalizeSlackAttachmentLike(
   };
 }
 
-/** Normalize, deduplicate, and cap the Slack files attached to one event/message. */
 export function collectSlackFiles(rawEvent: unknown): SlackFileLike[] {
   const record = asRecord(rawEvent);
   if (!record) return [];
@@ -166,15 +165,6 @@ export function collectSlackFiles(rawEvent: unknown): SlackFileLike[] {
   return Array.from(deduped.values()).slice(0, MAX_SLACK_ATTACHMENTS);
 }
 
-/**
- * Find the exact Slack message and return only its files.
- *
- * `null` means the message was not present in the requested chat/thread. An
- * empty array means the message existed but had no files. This distinction lets
- * explicit downloads reject a file id without searching outside its source
- * message, while thin app_mention payloads can safely hydrate their canonical
- * files through conversations.replies.
- */
 export async function resolveSlackMessageFiles(params: {
   channelId: string;
   threadTs?: string | null;
@@ -189,7 +179,6 @@ export async function resolveSlackMessageFiles(params: {
         oldest: params.messageTs,
         latest: params.messageTs,
         inclusive: true,
-        // Slack may lead with the thread root even when the bounds pin a reply.
         limit: 2,
       }),
     );
@@ -379,11 +368,6 @@ function parseContentLength(response: Response): number | undefined {
   return Number.isFinite(value) ? value : undefined;
 }
 
-/**
- * Open a private Slack file without forwarding the bot token to another origin.
- * The returned body remains streaming; callers choose their own byte and idle
- * limits before materializing it.
- */
 export async function fetchSlackFile(params: {
   token: string;
   file: SlackFileLike;

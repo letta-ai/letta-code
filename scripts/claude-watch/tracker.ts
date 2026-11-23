@@ -4,7 +4,6 @@ import type {
   ClaudeWatchVerdict,
 } from "./types.ts";
 
-/** Deliberately different from the Codex watcher marker. */
 export const CLAUDE_TRACKER_STATE_START = "<!-- claude-watch-tracker-state";
 export const CLAUDE_TRACKER_STATE_END = "-->";
 export const TRACKER_HISTORY_LIMIT = 50;
@@ -83,7 +82,6 @@ export function findTrackerEntry(
   return state.processed.find((entry) => entry.candidate_id === candidateId);
 }
 
-/** Errors are retryable and therefore do not count as processed. */
 export function hasProcessedCandidate(
   state: ClaudeTrackerState,
   candidateId: string,
@@ -154,7 +152,6 @@ export function recordAnalysis(
   });
 }
 
-/** Upserts by candidate id, so retries never create duplicate history rows. */
 export function upsertTrackerEntry(
   state: ClaudeTrackerState,
   entry: ClaudeTrackerEntry,
@@ -173,7 +170,6 @@ export function upsertTrackerEntry(
   };
 }
 
-/** True only for entries useful to a human; no-op and transient errors stay hidden. */
 export function isActionableEntry(entry: ClaudeTrackerEntry): boolean {
   return (
     entry.outcome === "pr_created" ||

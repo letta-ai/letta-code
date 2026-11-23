@@ -1,10 +1,3 @@
-/**
- * Task tool implementation
- *
- * Spawns specialized subagents to handle complex, multi-step tasks autonomously.
- * Supports both built-in subagent types and custom subagents defined in .letta/agents/.
- */
-
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
@@ -33,6 +26,7 @@ import { forkParentConversation } from "@/agent/subagents/fork-conversation";
 import { spawnSubagent } from "@/agent/subagents/manager";
 import { formatSubagentError } from "@/agent/subagents/subagent-refusal";
 import { getBackend } from "@/backend";
+import type { AgentSandboxOptions } from "@/backend/api/environments";
 import { runSubagentStopHooks } from "@/hooks";
 import {
   getCurrentWorkingDirectory,
@@ -82,6 +76,7 @@ import {
   resolveTaskAgentSelection,
   shouldForkTaskContext,
 } from "./task-agent-selection";
+import { parseTaskCloudOptions } from "./task-cloud-options";
 import {
   buildTaskResultHeader,
   closeTaskProgressLog,
@@ -98,10 +93,10 @@ import { validateRequiredParams } from "./validation";
 
 interface TaskArgs extends Partial<SubagentLaunchArgs> {
   command?: "run" | "refresh";
-  toolCallId?: string; // Injected by executeTool for linking subagent to parent tool call
-  signal?: AbortSignal; // Injected by executeTool for interruption handling
-  parentScope?: { agentId: string; conversationId: string }; // Injected by executeTool for notification routing
-  /** The launching App Server client owns the completion notification. */
+  cloud?: unknown;
+  toolCallId?: string;
+  signal?: AbortSignal;
+  parentScope?: { agentId: string; conversationId: string };
   notifyCaller?: boolean;
 }
 
@@ -114,76 +109,35 @@ export {
 export interface SpawnBackgroundSubagentTaskArgs {
   taskId?: string;
   subagentType: string;
-  /** Configuration resolved by the caller; omitted by legacy internal callers. */
   config?: SubagentConfig;
-  /** User-facing task type; execution still uses subagentType. */
   displayType?: string;
   prompt: string;
   description: string;
   model?: string;
-  /** Replace the subagent's configured system prompt/persona (advanced). */
   systemPromptOverride?: string;
   toolCallId?: string;
   existingAgentId?: string;
   existingConversationId?: string;
-  /** Identity for this child's initial input only. */
   clientMessageId?: string;
   maxTurns?: number;
   forkedContext?: boolean;
-  /** Parent conversation scope for routing notifications in listener mode. */
   parentScope?: { agentId: string; conversationId: string };
-  /** Authenticated Cloud user responsible for the launch-time turn. */
-  /** Null explicitly suppresses fallback to an ambient runtime actor. */
   actingUserId?: string | null;
-  /** Transcript/payload file exposed as TRANSCRIPT_PATH for reflection prompts. */
   transcriptPath?: string;
-  /** Optional exact memory scope for harness-created memory worktrees. */
   memoryScope?: SubagentMemoryScope;
-  /**
-   * Optional computer selector passed to the child as `--computer`.
-   * The child routes its turn to that connected computer and fails fast
-   * if the device is offline, ambiguous, or too old to support routing.
-   */
   environment?: string;
-  /**
-   * When true, skip injecting the completion notification into the primary
-   * agent's message queue and hide from SubagentGroupDisplay.
-   * Use `onComplete` to show a user-facing notification without leaking
-   * into the agent's context.
-   */
+  cloudOptions?: AgentSandboxOptions;
   silentCompletion?: boolean;
-  /**
-   * Harness-triggered conflict repair: the attempt token from
-   * `claimMemoryConflictRepair`. The worker records its outcome under it and
-   * skips if another worker already resolved the conflict.
-   */
   memoryRepairToken?: string;
-  /**
-   * Emit a completion notification even when `silentCompletion` is true.
-   * Useful when the parent should not stream subagent tokens but still wants
-   * a normal task notification event.
-   */
   emitCompletionNotification?: boolean;
-  /** Whether this entry claims the parent runtime; false for remote caller presentation. */
   claimsParentRuntime?: boolean;
-  /** Publish the truncated final report on the subagent state snapshot. */
   publishResult?: boolean;
-  /**
-   * Optional override for the completion notification summary.
-   */
   completionSummary?:
     | string
     | ((result: {
         success: boolean;
         error?: string;
       }) => string | Promise<string>);
-  /**
-   * Called after the subagent finishes (success or failure).
-   * Runs regardless of `silentCompletion` and is awaited before
-   * completion notifications/hooks continue.
-   * `report` is the raw final subagent report and may be large; callbacks
-   * should parse/summarize it rather than injecting it directly into context.
-   */
   onComplete?: (result: {
     success: boolean;
     error?: string;
@@ -194,10 +148,6 @@ export interface SpawnBackgroundSubagentTaskArgs {
     durationMs?: number;
     report?: string;
   }) => void | Promise<void>;
-  /**
-   * Optional dependency overrides for tests.
-   * Production callers should not provide this.
-   */
   deps?: Partial<SpawnBackgroundSubagentTaskDeps>;
 }
 
@@ -239,10 +189,6 @@ async function resolveCompletionSummary(
   return trimmed.length > 0 ? trimmed : defaultSummary;
 }
 
-/**
- * Spawn a background subagent task and return task metadata immediately.
- * Notification/hook behavior is identical to Task's background path.
- */
 export function spawnBackgroundSubagentTask(
   args: SpawnBackgroundSubagentTaskArgs,
 ): SpawnBackgroundSubagentTaskResult {
@@ -343,7 +289,6 @@ export function spawnBackgroundSubagentTask(
     taskId,
     ...(environment?.trim() ? { computer: environment.trim() } : {}),
   });
-  // Register the abort trigger for interruptActiveSubagents (fire-and-forget).
   registerSubagentAbortHook(
     subagentId,
     buildBackgroundTaskAbortHook(taskId, abortController),
@@ -351,8 +296,6 @@ export function spawnBackgroundSubagentTask(
   writeTaskTranscriptStart(outputFile, description, subagentType);
   openTaskProgressLog(subagentId, outputFile, resolvedParentScope?.agentId);
   if (publishResult) serveTaskEvents(subagentId);
-  // Fire-and-forget: tasks own their lifecycle. Capture parentAgentId
-  // synchronously (spawnSubagent runs after async yields): scope.agentId wins.
   const parentAgentIdForSpawn = resolvedParentScope?.agentId;
   const workerMemoryDir =
     subagentType === "memory" && resolvedParentScope
@@ -388,6 +331,7 @@ export function spawnBackgroundSubagentTask(
       actingUserId,
       args.config,
       args.clientMessageId,
+      args.cloudOptions,
     );
   };
   const memoryTask =
@@ -403,7 +347,6 @@ export function spawnBackgroundSubagentTask(
           formatHeader: (identity) =>
             buildTaskResultHeader(subagentType, subagentId, identity),
           execute,
-          // Awaited by the worker so a one-shot drain sees the repair task.
           repair: (result) =>
             ensureMemoryRepair(
               { ...resolvedParentScope, actingUserId, result },
@@ -534,9 +477,7 @@ export function spawnBackgroundSubagentTask(
         result.error,
         result.agentId,
         result.conversationId,
-      ).catch(() => {
-        // Silently ignore hook errors
-      });
+      ).catch(() => {});
     })
     .catch(async (error) => {
       closeTaskProgressLog(subagentId);
@@ -627,13 +568,10 @@ export function spawnBackgroundSubagentTask(
         errorMessage,
         existingAgentId,
         existingConversationId,
-      ).catch(() => {
-        // Silently ignore hook errors
-      });
+      ).catch(() => {});
     })
     .finally(unsubscribe);
 
-  // Memory drains wait for the whole lifecycle (sync, cleanup), not just the child.
   const swallow = () => undefined;
   bgTask.completion =
     subagentType === "memory"
@@ -642,12 +580,10 @@ export function spawnBackgroundSubagentTask(
   return { taskId, outputFile, subagentId };
 }
 
-/** Launch through the same task lifecycle for tools and App Server commands. */
 export async function launchSubagent(
   args: TaskArgs,
+  cloudSkillRepositories?: string[],
 ): Promise<SubagentLaunchResult> {
-  // `custom` + identity is the App Server's prepared-conversation protocol,
-  // not a named preset. The Agent adapter strips overrides before reaching here.
   const prepared =
     args.subagent_type === "custom" &&
     Boolean(args.agent_id || args.conversation_id);
@@ -750,9 +686,10 @@ export async function launchSubagent(
     return { success: false, error: resolvedComputer.error };
   }
 
+  const cloud = parseTaskCloudOptions(args.computer, args.cloud);
+  if ("error" in cloud) return { success: false, error: cloud.error };
   let effectiveAgentId = args.agent_id;
   let effectiveConversationId = args.conversation_id;
-
   const callerNotification = args.notifyCaller
     ? {
         emitCompletionNotification: false,
@@ -780,10 +717,12 @@ export async function launchSubagent(
           description,
           model,
           mcp: args.mcp,
+          cloudOptions: cloud.options,
           toolCallId,
-          parentScope: resolvedParentScope ?? {
-            agentId: parentAgentId,
+          parentScope: {
             conversationId: getConversationId() ?? "default",
+            ...resolvedParentScope,
+            agentId: parentAgentId,
           },
           signal,
         },
@@ -839,6 +778,7 @@ export async function launchSubagent(
             parentConversationId: resolvedParentScope?.conversationId,
             actingUserId: resolvedParentScope?.actingUserId,
             cwd: getCurrentWorkingDirectory(),
+            cloudSkillRepositories,
             mcpReminder,
             signal: childSignal,
             onStarted: (agentId) =>
@@ -948,6 +888,7 @@ export async function launchSubagent(
     parentScope: resolvedParentScope,
     ...callerNotification,
     environment: resolvedComputer.computer,
+    cloudOptions: cloud.options,
   });
 
   const abortStartup = () =>
@@ -960,6 +901,7 @@ export async function launchSubagent(
   } finally {
     signal?.removeEventListener("abort", abortStartup);
   }
+
   const linkedAgent = getSubagentSnapshot().agents.find(
     (a) => a.id === subagentId,
   );
@@ -978,7 +920,6 @@ export async function launchSubagent(
       linkedAgent?.conversationId ?? effectiveConversationId ?? null,
   };
 }
-/** Agent's text adapter; App Server callers consume launchSubagent directly. */
 export async function task(
   args: TaskArgs,
 ): Promise<string | { content: string; status: "error" }> {

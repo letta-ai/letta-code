@@ -53,13 +53,11 @@ export type AppServerSendCommand =
   | AppServerProtocolCommand
   | AppServerRawCommand;
 
-/** Receives every parsed protocol frame from the app-server WebSocket. */
 export type AppServerMessageHandler = (
   message: WsProtocolMessage,
   channel: AppServerChannel,
 ) => void;
 
-/** Called synchronously before a typed or raw command is written to the socket. */
 export type AppServerSendHandler = (command: AppServerSendCommand) => void;
 
 export interface AppServerDisconnectEvent {
@@ -67,7 +65,6 @@ export interface AppServerDisconnectEvent {
   event: unknown;
 }
 
-/** Called once when the WebSocket closes before client.close(). */
 export type AppServerDisconnectHandler = (
   disconnect: AppServerDisconnectEvent,
 ) => void;
@@ -97,13 +94,9 @@ export type AppServerSocketConstructor = new (
 ) => AppServerSocketLike;
 
 export interface AppServerClientOptions {
-  /** Base app-server URL, e.g. ws://127.0.0.1:4500 or http://127.0.0.1:4500. */
   url: string;
-  /** Optional capability token sent as Authorization: Bearer <token>; requires a WebSocket implementation with header support. */
   authToken?: string;
-  /** Optional WebSocket constructor for Node/tests. Browsers use globalThis.WebSocket. */
   WebSocket?: AppServerSocketConstructor;
-  /** Default timeout for request_id-correlated control requests. */
   requestTimeoutMs?: number;
 }
 
@@ -167,10 +160,6 @@ export function resolveAppServerUrl(url: string): string {
   return parsed.toString();
 }
 
-/**
- * @deprecated App-server uses one bidirectional WebSocket. Both historical
- * channel names resolve to that same socket URL.
- */
 export function resolveAppServerChannelUrl(
   url: string,
   _channel: AppServerChannel,
@@ -214,11 +203,6 @@ function onceSocketEvent(
   return detach;
 }
 
-/**
- * Resolves once the socket opens. Rejects on an error, an HTTP upgrade
- * failure, a close before opening, or after `timeoutMs`, so a connection that
- * never completes cannot hang the caller.
- */
 function waitForSocketOpen(
   socket: AppServerSocketLike,
   timeoutMs: number,
@@ -286,7 +270,6 @@ function waitForSocketOpen(
           );
           detachOpen();
           detachResponse();
-          // Aborting can emit a socket error before the request closes.
           request.once("close", cleanup);
           request.abort();
         };
@@ -313,33 +296,36 @@ function waitForSocketOpen(
       detachResponse = () => socket.off?.("unexpected-response", onResponse);
     }
     detachError = onceSocketEvent(socket, "error", (event) => {
+      const detail = socketErrorDetail(event);
+      if (detail === null) return;
       cleanup();
-      reject(
-        new Error(
-          `App-server WebSocket failed to open: ${socketErrorDetail(event)}`,
-        ),
-      );
+      reject(new Error(`App-server WebSocket failed to open: ${detail}`));
     });
-    detachClose = onceSocketEvent(socket, "close", () => {
-      // An HTTP upgrade failure reports its status from the response handler.
+    detachClose = onceSocketEvent(socket, "close", (event) => {
       if (upgradeRejected) return;
       cleanup();
+      const reason =
+        event && typeof event === "object"
+          ? Reflect.get(event, "reason")
+          : null;
       reject(
-        new Error("App-server WebSocket failed to open: closed before opening"),
+        new Error(
+          `App-server WebSocket failed to open: ${typeof reason === "string" && reason ? reason : "closed before opening"}`,
+        ),
       );
     });
   });
 }
 
-function socketErrorDetail(event: unknown): string {
-  if (event instanceof Error) return event.message;
+function socketErrorDetail(event: unknown): string | null {
+  if (event instanceof Error) return event.message || null;
   if (event && typeof event === "object") {
     const error = Reflect.get(event, "error");
-    if (error instanceof Error) return error.message;
+    if (error instanceof Error && error.message) return error.message;
     const message = Reflect.get(event, "message");
     if (typeof message === "string" && message) return message;
   }
-  return String(event);
+  return typeof event === "string" && event ? event : null;
 }
 
 function rawEventData(event: unknown): unknown {
@@ -385,9 +371,7 @@ function appServerSocketOptions(
 
 export class AppServerClient {
   readonly socket: AppServerSocketLike;
-  /** @deprecated Alias for socket. */
   readonly control: AppServerSocketLike;
-  /** @deprecated Alias for socket; no second stream connection is created. */
   readonly stream: AppServerSocketLike;
 
   private readonly requestTimeoutMs: number;
@@ -412,8 +396,6 @@ export class AppServerClient {
       resolveAppServerUrl(options.url),
       socketOptions,
     );
-    // EventEmitter sockets can emit again after handshake listeners detach,
-    // including while close() aborts a failed connection. Keep this for life.
     this.socket.on?.("error", () => {});
     this.control = this.socket;
     this.stream = this.socket;
@@ -474,18 +456,10 @@ export class AppServerClient {
     this.socket.send(JSON.stringify(command));
   }
 
-  /**
-   * Send a forward-compatible protocol command from a compatibility adapter.
-   * Prefer the typed wrappers above this boundary for normal product code.
-   */
   sendRaw(command: AppServerRawCommand): void {
     this.writeCommand(command);
   }
 
-  /**
-   * Request a forward-compatible response without mirroring the full protocol
-   * union in a downstream compatibility adapter.
-   */
   requestRaw<TResponse extends AppServerRawResponse>(
     command: AppServerRawCommand & { request_id: string },
     options: AppServerRawRequestOptions<TResponse>,
@@ -805,7 +779,6 @@ export class AppServerClient {
     );
   }
 
-  /** Release queue items parked by `abort()` without sending a new message. */
   resumeQueue(
     command: Omit<ResumeQueueCommand, "type" | "request_id"> & {
       request_id?: string;
@@ -880,18 +853,10 @@ export class AppServerClient {
     });
   }
 
-  /**
-   * Submit input to a runtime. Observe progress, tool activity, approvals, and
-   * terminal lifecycle events through onMessage().
-   */
   input(command: Omit<InputCommand, "type">): void {
     this.send({ type: "input", ...command });
   }
 
-  /**
-   * Submit an input and wait only until the listener accepts it into the
-   * normal dispatch/queue path. This never waits for turn completion.
-   */
   submitInput(
     command: Omit<InputCommand, "type" | "request_id"> & {
       request_id?: string;

@@ -28,9 +28,7 @@ beforeEach(async () => {
   originalHome = process.env.HOME;
   tempHome = await mkdtemp(join(tmpdir(), "letta-last-good-repos-"));
   process.env.HOME = tempHome;
-  // Treat the backend as cloud so attached repositories are fetched.
   cloudSpy = spyOn(memoryFilesystem, "isLettaCloud").mockResolvedValue(true);
-  // A fresh agent id per test keeps the process-global last-good map isolated.
   agentId = `agent-last-good-${Date.now()}-${agentCounter++}`;
   listSpy = spyOn(attachedRepositories, "listAttachedAgentRepositories");
 });
@@ -101,7 +99,6 @@ test("a later successful response still removes a detached repository", async ()
   const detached = await resolve();
   expect(detached).toEqual({ skillsDirs: [skillsDir("team-b")], errors: [] });
 
-  // A failure after the detach falls back to the shrunken list, not the old one.
   invalidateAttachedRepositoriesCache(agentId);
   listSpy.mockRejectedValueOnce(new Error("timeout"));
   const failed = await resolve();

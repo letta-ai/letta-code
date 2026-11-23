@@ -35,11 +35,8 @@ function fixture() {
   const install = (owner: DurableLockOwner) => populate(lock, owner);
   const replaceEmpty = (replacement: string) => {
     try {
-      // POSIX atomically replaces the now-empty M0 directory.
       renameSync(replacement, lock);
     } catch (error) {
-      // Windows does not replace an existing directory. Model the only possible
-      // ordering there: M0 is removed, then M1 is installed.
       const code = (error as NodeJS.ErrnoException).code;
       if (code !== "EEXIST" && code !== "EPERM" && code !== "EACCES") {
         throw error;
@@ -67,8 +64,6 @@ test("a dead lock directory is recovered", () => {
   const f = fixture();
   try {
     f.install(deadOwner);
-    // Real directory fsyncs can exceed 50 ms on hosted macOS runners. This
-    // assertion covers successful dead-owner recovery, not the timeout edge.
     const release = acquireDurableFileLock(f.path, { waitMs: 500 });
     const names = readdirSync(f.lock);
     expect(names).toHaveLength(1);
@@ -104,8 +99,6 @@ test("a dead legacy file lock is reclaimed without replacing a live file", () =>
   const f = fixture();
   try {
     writeFileSync(f.lock, JSON.stringify(deadOwner), { mode: 0o600 });
-    // Legacy recovery adds hard-link quarantine and directory fsyncs; preserve
-    // the tiny timeout only for the live-owner contention assertion below.
     const release = acquireDurableFileLock(f.path, { waitMs: 500 });
     expect(readdirSync(f.lock)).toHaveLength(1);
     release();
@@ -203,7 +196,6 @@ test("installation retries when stale cleanup removes its empty directory", () =
     let installs = 0;
     const release = acquireDurableFileLock(f.path, {
       waitMs: 50,
-      // Filesystem latency must not consume this retry-behavior test's budget.
       now: () => now,
       sleep: (milliseconds) => {
         now += milliseconds;
@@ -422,8 +414,6 @@ test.each([
         processStart: recorded,
       };
       f.install(incumbent);
-      // Identity availability is an input to recovery. A real bounded OS probe
-      // may return null, which must preserve the incumbent rather than evict it.
       let clock = 0;
       const budgets: number[] = [];
       const waitMs = recovers ? 1_000 : 10;

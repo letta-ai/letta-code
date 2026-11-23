@@ -20,10 +20,6 @@ import { settingsManager } from "@/settings-manager";
 import { FORK_PROMPT_CHARACTER_LIMIT } from "./fork-prompt";
 import { backgroundTasks } from "./process_manager";
 
-// External coding workers with fork_context. Replace discovery and the
-// child-process boundary only; task(), the selection logic, and the transcript
-// rendering run for real. Runs isolated via
-// isolated-unit-tests.json because of the module mocks.
 const base: SubagentConfig = {
   name: "general-purpose",
   description: "Fixture",
@@ -76,8 +72,6 @@ const spawn = mock(
 );
 mock.module("@/agent/subagents/manager", () => ({ spawnSubagent: spawn }));
 
-// External workers: keep the real module, replace only the process launch and
-// the remote hand-off so the prompt each would receive can be observed.
 const workerPrompts: string[] = [];
 const CLAUDE_WORKER_ID = "claude_11111111-1111-4111-8111-111111111111";
 const workerReminders: Array<string | undefined> = [];
@@ -87,7 +81,7 @@ mock.module("@/reminders/engine", () => ({
   ...realReminders,
   listMcpServersForAgent: async () => {
     if (inventoryError) throw inventoryError;
-    return [];
+    return { entries: [], serverSideAvailable: true };
   },
 }));
 
@@ -118,6 +112,7 @@ const remoteLaunches: Array<{
   prompt: string;
   forkContext?: boolean;
   computer: string;
+  parentScope: { agentId: string; conversationId: string };
 }> = [];
 const realRemote = await import("./remote-external-coding-agent");
 mock.module("./remote-external-coding-agent", () => ({
@@ -126,6 +121,7 @@ mock.module("./remote-external-coding-agent", () => ({
     prompt: string;
     forkContext?: boolean;
     computer: string;
+    parentScope: { agentId: string; conversationId: string };
   }) => {
     remoteLaunches.push(launch);
     return { success: true, task_id: "t", output_file: "o", agent_id: null };
@@ -179,7 +175,6 @@ beforeEach(async () => {
   previousScratchpad = process.env.LETTA_SCRATCHPAD;
   process.env.HOME = scratchpad;
   process.env.LETTA_SCRATCHPAD = scratchpad;
-  // The fork helper copies the parent's toolset preference.
   await settingsManager.reset();
   await settingsManager.initialize();
 });
@@ -280,6 +275,37 @@ describe("fork_context for external coding workers", () => {
     expect(listConversationMessages).not.toHaveBeenCalled();
   });
 
+  test("a detached subagent launches a remote worker with the parent agent identity", async () => {
+    const previousRole = process.env.LETTA_CODE_AGENT_ROLE;
+    const previousParent = process.env.LETTA_PARENT_AGENT_ID;
+    process.env.LETTA_CODE_AGENT_ROLE = "subagent";
+    process.env.LETTA_PARENT_AGENT_ID = "agent-parent";
+    try {
+      const result = await launchSubagent({
+        ...brief,
+        harness: "codex",
+        computer: "cloud",
+        parentScope: {
+          agentId: "conv-detached-child",
+          conversationId: "conv-detached-child",
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(remoteLaunches).toHaveLength(1);
+      expect(remoteLaunches[0]?.parentScope).toMatchObject({
+        agentId: "agent-parent",
+        conversationId: "conv-detached-child",
+      });
+    } finally {
+      if (previousRole === undefined) delete process.env.LETTA_CODE_AGENT_ROLE;
+      else process.env.LETTA_CODE_AGENT_ROLE = previousRole;
+      if (previousParent === undefined)
+        delete process.env.LETTA_PARENT_AGENT_ID;
+      else process.env.LETTA_PARENT_AGENT_ID = previousParent;
+    }
+  });
+
   test("a forked external worker uses the default computer", async () => {
     process.env.LETTA_DEFAULT_SUBAGENT_COMPUTER = "cloud";
     try {
@@ -304,8 +330,6 @@ describe("fork_context for external coding workers", () => {
   });
 });
 
-// Exercise the shared launch entrypoint and the model-facing Agent/Task adapter.
-// Rejection must happen before history reads, forks, or local/remote processes.
 describe("fork prompt limit", () => {
   const oversized = "x".repeat(FORK_PROMPT_CHARACTER_LIMIT + 1);
   for (const harness of [

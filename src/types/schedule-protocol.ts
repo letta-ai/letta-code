@@ -75,7 +75,6 @@ export interface CronResumeCommand {
   type: "cron_resume";
   request_id: string;
   task_id: string;
-  /** Required when resuming an overdue one-off schedule. */
   scheduled_for?: string;
 }
 

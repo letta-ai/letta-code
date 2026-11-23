@@ -13,7 +13,6 @@ export interface DreamCommandScope {
   actingUserId?: string;
 }
 
-/** Null authorizes the existing Code-managed path, never an error fallback. */
 export async function requestCloudReflectionRun(
   scope: DreamCommandScope,
   args = "",
@@ -35,10 +34,6 @@ export async function requestCloudReflectionRun(
       actingUserRequestOptions(capturedScope.actingUserId),
     );
   } catch (error) {
-    // A 404 from the cutover preflight means the server has no reflection
-    // endpoint for this agent — mirror the automatic path, which logs the
-    // failed cutover check and falls through to the local reflection agent
-    // instead of aborting the manual command (#4849).
     if (error instanceof APIError && error.status === 404) return null;
     throw error;
   }
@@ -56,7 +51,6 @@ export async function requestCloudReflectionRun(
   return requestReflectionRun(capturedScope, "", backend);
 }
 
-/** One explicit command invocation, with immutable scope and no model turn. */
 export async function requestReflectionRun(
   scope: DreamCommandScope,
   args = "",

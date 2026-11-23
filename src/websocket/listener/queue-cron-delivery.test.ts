@@ -38,7 +38,6 @@ test("a fired cron records queued then delivered with the same queue item ID", a
       prompt: "Check in",
       scheduled_for: new Date(Date.now() + 86_400_000),
     }).task;
-    // A closed transport keeps the scheduled pump from draining before inspection.
     startScheduler(
       { readyState: 3 } as ListenerTransport,
       {

@@ -1,7 +1,3 @@
-/**
- * Tests for the bundled skill-creator scripts
- */
-
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
@@ -369,7 +365,6 @@ describe("init-skill", () => {
   test("created skill passes validation", () => {
     initSkill("valid-init", TEST_DIR);
 
-    // The initialized skill should pass validation (except for TODO in description)
     const skillDir = join(TEST_DIR, "valid-init");
     expect(existsSync(join(skillDir, "SKILL.md"))).toBe(true);
   });
@@ -398,7 +393,6 @@ describe("package-skill", () => {
   });
 
   test("packages a valid skill into a .skill file", () => {
-    // Create a valid skill
     const skillDir = join(TEST_DIR, "packagable-skill");
     mkdirSync(skillDir);
     writeFileSync(
@@ -424,9 +418,6 @@ This skill can be packaged.
     expect(existsSync(archivePath)).toBe(true);
 
     if (process.platform === "win32") {
-      // Python and Info-ZIP interoperability run on Unix CI below. On Windows,
-      // inspect the actual archive bytes so a host-native backslash cannot
-      // silently return to either local or central entry names.
       const archive = readFileSync(archivePath);
       expect(
         archive.includes(
