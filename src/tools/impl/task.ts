@@ -680,7 +680,7 @@ export async function launchSubagent(
     return { success: false, error: resolvedComputer.error };
   }
 
-  const cloud = parseTaskCloudOptions(args.computer, args.cloud);
+  const cloud = parseTaskCloudOptions(resolvedComputer.computer, args.cloud);
   if ("error" in cloud) return { success: false, error: cloud.error };
   let effectiveAgentId = args.agent_id;
   let effectiveConversationId = args.conversation_id;

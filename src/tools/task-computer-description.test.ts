@@ -13,13 +13,19 @@ test("describes where an Agent launch with no computer will run", () => {
     [DEFAULT_SUBAGENT_COMPUTER_ENV_VAR]: " cloud ",
   }).properties.computer.description;
   expect(cloud).toContain(
-    "Omitting computer sends eligible workers to a fresh Cloud sandbox",
+    "Omitting computer sends subagents to a fresh Cloud sandbox, where this machine's files are unavailable",
   );
-  expect(cloud).toContain("this machine's files are unavailable");
+  expect(cloud).toContain(
+    "memory and recall subagents always stay on this machine",
+  );
   expect(cloud).toContain('Pass "local" to stay on this machine');
+  expect(cloud).toContain("Fails fast if the device is offline");
 
   const remote = buildTaskSchema({
     [DEFAULT_SUBAGENT_COMPUTER_ENV_VAR]: "workstation",
   }).properties.computer.description;
-  expect(remote).toContain('the connected computer "workstation"');
+  expect(remote).toContain(
+    'the connected computer "workstation"; unless that is this machine',
+  );
+  expect(remote).toContain("Prefer a stable device ID or computer name");
 });
