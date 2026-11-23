@@ -16,7 +16,6 @@ import type { LocalStore } from "@/backend/local/local-store";
 
 async function drain(stream: AsyncIterable<unknown>): Promise<void> {
   for await (const _chunk of stream) {
-    // drain
   }
 }
 
@@ -105,9 +104,6 @@ describe("local compaction fallback keeps custom prompt", () => {
       } as ConversationMessageCreateBody),
     );
 
-    // Fewer than 4 messages: sliding-window planning fails and compaction
-    // falls back to full summarization. The user's custom prompt must
-    // survive the automatic mode fallback.
     await backend.compactConversationMessages(conversation.id, {
       agent_id: agent.id,
     } as never);
@@ -129,8 +125,6 @@ describe("local compaction fallback keeps custom prompt", () => {
       context: Context,
     ): Promise<AssistantMessage> => {
       systemPromptsSeen.push(context.systemPrompt);
-      // A long summary keeps the post-compaction estimate above the tiny
-      // configured context window, forcing the full-summarization fallback.
       return assistantMessage({
         responseId: `summary-${systemPromptsSeen.length}`,
         stopReason: "stop",
@@ -162,9 +156,6 @@ describe("local compaction fallback keeps custom prompt", () => {
       );
     }
 
-    // Sliding-window compaction runs with the custom prompt, but the result
-    // still exceeds the context window, so compaction falls back to full
-    // summarization. That fallback must keep the user's custom prompt too.
     const result = await backend.compactConversationMessages(conversation.id, {
       agent_id: agent.id,
     } as never);
@@ -185,13 +176,11 @@ describe("local compaction fallback keeps custom prompt", () => {
       join(tmpdir(), "local-compaction-fallback-source-"),
     );
     const replies: AssistantMessage[] = [
-      // The sliding-window self summary still exceeds the context window...
       assistantMessage({
         responseId: "self-sliding",
         stopReason: "stop",
         content: [{ type: "text", text: "x".repeat(8000) }],
       }),
-      // ...so the full self pass runs, where the model calls a tool instead.
       assistantMessage({
         responseId: "self-all",
         stopReason: "toolUse",
@@ -317,8 +306,6 @@ describe("local compaction fallback keeps custom prompt", () => {
       agent_id: agent.id,
     } as never);
 
-    // Pressure compaction runs after a completed response; an irreducible
-    // context must not turn that successful turn into a failure.
     const compaction = await (
       backend as unknown as {
         compactForContextPressure: (
@@ -550,7 +537,6 @@ describe("local compaction fallback keeps custom prompt", () => {
         result.uiMessages.filter((message) => message.metadata?.compaction),
       ).toHaveLength(1);
       expect(result.stats.context_tokens_after).toBeLessThan(1000);
-      // The warning is not a summary request's text.
       expect(result.stats).not.toHaveProperty("summary_source");
       const notice = result.uiMessages[0];
       expect(notice?.role).toBe("user");

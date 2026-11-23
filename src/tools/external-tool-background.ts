@@ -26,7 +26,6 @@ type ExternalResult = {
   toolReturn: MessageCreate["content"];
   cancellation?: "cancelled" | "timeout";
 };
-/** An external tool unwound early because the turn's abort signal fired. */
 export type InterruptedExternalResult = {
   status: "error";
   toolReturn: string;
@@ -35,12 +34,6 @@ type Settled<T> =
   | { kind: "result"; result: T }
   | { kind: "error"; error: unknown };
 
-/**
- * Build the fulfilled error result for an external tool whose turn was
- * cancelled mid-flight. Mirrors the bridge-timeout wording: the remote tool
- * was already dispatched and may still take effect, so the model must not
- * assume the call was rolled back.
- */
 export function interruptedExternalToolResult(
   toolName: string,
 ): InterruptedExternalResult {
@@ -50,13 +43,6 @@ export function interruptedExternalToolResult(
   };
 }
 
-/**
- * Settle a blocking external-tool operation when the turn's abort signal
- * fires so a cancelled turn stops waiting for the remote result. The
- * underlying operation keeps running; once the turn is unwound its eventual
- * result has no consumer (the notification path is only wired after a
- * yield), so it is dropped rather than surfaced.
- */
 function raceExternalOperationAbort<T extends ExternalResult>(
   operation: Promise<T>,
   signal: AbortSignal,
@@ -89,7 +75,6 @@ function notificationText(toolReturn: unknown): string {
   return scrubAmbientSecrets(String(toolReturn));
 }
 
-/** Yield an external result as a scoped notification without starting a second request. */
 export async function autoBackgroundExternalTool<T extends ExternalResult>(
   toolName: string,
   tool: { autoBackground?: boolean } | undefined,
@@ -128,8 +113,6 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
             : runtime.actingUserId,
         }
       : undefined);
-  // Only listener tools opt in. Headless SDK tools share one stdin reader, and
-  // tool_end mods must see the real result before the model does.
   const canBackground = () =>
     typeof options?.canBackground === "function"
       ? options.canBackground()
@@ -172,16 +155,12 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
   if (onAbort !== undefined && signal) {
     signal.removeEventListener("abort", onAbort);
   }
-  // Built-ins receive the same signal directly and own their cancellation result.
-  // Do not replace it with remote-operation wording or create a late receipt.
   if (first.kind === "aborted")
     return options?.abortController
       ? operation
       : interruptedExternalToolResult(toolName);
   if (first.kind === "result") return first.result;
   if (first.kind === "error") throw first.error;
-  // A mod may reload while the operation is in the foreground window.
-  // If a tool_end handler became active, wait for the real result inline.
   if (!canBackground()) {
     return signal && !options?.abortController
       ? raceExternalOperationAbort(operation, signal, toolName)
@@ -286,8 +265,6 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
       (await options?.shouldEnqueue?.()) === false
     )
       return;
-    // executeExternalTool has already clamped the result to 32K plus an
-    // overflow-file notice. A smaller notification cap would hide that path.
     const content = truncateByChars(
       raw,
       LIMITS.TOOL_RETURN_MAX_CHARS + 1_000,

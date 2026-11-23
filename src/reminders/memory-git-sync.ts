@@ -21,7 +21,6 @@ export interface RunPostTurnMemorySyncParams {
   agentId: string;
   conversationId?: string | null;
   isEnabled?: (agentId: string) => boolean;
-  /** Host diagnostics only; never route memory sync status into model context. */
   emitWarning?: (text: string) => void | Promise<void>;
   onMemoryPushed?: () => void;
   debugLabel?: string;
@@ -36,7 +35,6 @@ export interface RunPostTurnMemorySyncDependencies {
   syncAttachedRepositories?: typeof syncPendingAttachedRepositoryCommitsAfterTurn;
 }
 
-/** Host diagnostic for an active background repair; never injected into context. */
 export function formatMemoryRepairInProgressReminder(
   result: MemoryPostTurnSyncResult,
 ): string {
@@ -50,11 +48,6 @@ Continue the current task. Do not inspect, edit, or run Git commands in the memo
 ${SYSTEM_REMINDER_CLOSE}`;
 }
 
-/**
- * Host diagnostics for post-turn MemFS sync. Repairable states are
- * normally handed to a background worker. If that worker could not finish,
- * report the failure without assigning repository work to the foreground.
- */
 export function formatMemoryPostTurnSyncReminder(
   result: MemoryPostTurnSyncResult,
 ): string | null {

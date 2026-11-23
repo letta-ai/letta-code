@@ -121,7 +121,6 @@ async function filterVisiblePeerGrants(
         );
         return [peerId, agent.hidden === true ? null : agent.name] as const;
       } catch {
-        // Match the Cloud UI: unresolved peer agents do not render.
         return [peerId, null] as const;
       }
     }),

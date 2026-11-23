@@ -1,61 +1,33 @@
-/**
- * Centralized truncation utilities for tool outputs.
- * Implements limits similar to Claude Code to prevent excessive token usage.
- * When outputs exceed limits, full content can be written to overflow files.
- */
-
 import { debugLog } from "@/utils/debug.js";
 import { OVERFLOW_CONFIG, writeOverflowFile } from "./overflow.js";
 
-// Limits based on Claude Code's proven production values
 export const LIMITS = {
-  // Command output limits
-  BASH_OUTPUT_CHARS: 30_000, // 30K characters for bash/shell output
-  BASH_FAILURE_OUTPUT_CHARS: 10_000, // Head-and-tail excerpt for failures
-  TASK_OUTPUT_CHARS: 30_000, // 30K characters for subagent task output
-  HOOK_OUTPUT_CHARS: 10_000, // Max characters per model-facing hook string
-  OVERFLOW_PREVIEW_CHARS: 2_000, // Prefix shown when full output is saved
-  // Background shell completion notifications are injected into the agent's
-  // context unprompted, so they get a tighter budget than a tool return the
-  // agent actually asked for. The full transcript stays in the output file.
+  BASH_OUTPUT_CHARS: 30_000,
+  BASH_FAILURE_OUTPUT_CHARS: 10_000,
+  TASK_OUTPUT_CHARS: 30_000,
+  HOOK_OUTPUT_CHARS: 10_000,
+  OVERFLOW_PREVIEW_CHARS: 2_000,
   BASH_NOTIFICATION_CHARS: 10_000,
 
-  // File reading limits
-  READ_MAX_LINES: 2_000, // Max lines per file read
-  READ_MAX_CHARS_PER_LINE: 2_000, // Max characters per line
-  READ_OUTPUT_CHARS: 30_000, // 30K total characters for file read output
+  READ_MAX_LINES: 2_000,
+  READ_MAX_CHARS_PER_LINE: 2_000,
+  READ_OUTPUT_CHARS: 30_000,
 
-  // Search/discovery limits
-  GREP_OUTPUT_CHARS: 10_000, // Max characters for grep results
-  GLOB_MAX_FILES: 2_000, // Max number of file paths
-  LS_MAX_ENTRIES: 1_000, // Max directory entries
-  MEMORY_MAX_ENTRIES: 10, // Files + subdirectories per Memory() listing
+  GREP_OUTPUT_CHARS: 10_000,
+  GLOB_MAX_FILES: 2_000,
+  LS_MAX_ENTRIES: 1_000,
+  MEMORY_MAX_ENTRIES: 10,
 
-  // Backstop for any model-facing tool return that doesn't apply its own
-  // clamp (MCP/external tools, mod tools, item-count-limited tools, etc.).
-  // Slightly above BASH_OUTPUT_CHARS so outputs already clamped by a tool
-  // (30K + truncation notice) pass through unchanged.
   TOOL_RETURN_MAX_CHARS: 32_000,
 } as const;
 
-/**
- * Options for truncation with overflow support
- */
 export interface TruncationOptions {
-  /** Working directory for overflow file creation */
   workingDirectory?: string;
-  /** Whether to use middle truncation (keep beginning and end) */
   useMiddleTruncation?: boolean;
-  /** Prefix to show instead of the maxChars excerpt when the full output was saved to a file */
   previewChars?: number;
-  /** Secret values available to this tool invocation */
   secrets?: Readonly<Record<string, string>>;
 }
 
-/**
- * Writes the full output to an overflow file when overflow is enabled and a
- * working directory was provided. Returns undefined when nothing was written.
- */
 function writeOverflow(
   getContent: () => string,
   toolName: string,
@@ -72,17 +44,11 @@ function writeOverflow(
       options.secrets,
     );
   } catch (error) {
-    // Silently fail if overflow file creation fails
     debugLog("truncation", "Failed to write overflow file: %O", error);
     return undefined;
   }
 }
 
-/**
- * Truncates text to a maximum character count.
- * Adds a truncation notice when content exceeds limit.
- * Optionally writes full output to an overflow file.
- */
 export function truncateByChars(
   text: string,
   maxChars: number,
@@ -95,8 +61,6 @@ export function truncateByChars(
 
   const overflowPath = writeOverflow(() => text, toolName, options);
 
-  // A prefix preview only applies when the full output was saved; otherwise
-  // fall back to the normal maxChars excerpt so nothing becomes unreachable.
   const filePreviewChars = overflowPath ? options?.previewChars : undefined;
   const shownChars = Math.min(maxChars, filePreviewChars ?? maxChars);
   const useMiddleTruncation =
@@ -105,7 +69,6 @@ export function truncateByChars(
 
   let truncated: string;
   if (useMiddleTruncation) {
-    // Middle truncation: keep beginning and end
     const halfMax = Math.floor(shownChars / 2);
     const beginning = text.slice(0, halfMax);
     const end = text.slice(-halfMax);
@@ -113,7 +76,6 @@ export function truncateByChars(
     const middleNotice = `\n... [${omittedChars.toLocaleString()} characters omitted] ...\n`;
     truncated = beginning + middleNotice + end;
   } else {
-    // Post truncation: keep beginning only
     truncated = text.slice(0, shownChars);
   }
 
@@ -134,10 +96,6 @@ export function truncateByChars(
   };
 }
 
-/**
- * Truncates an array of items (file paths, directory entries, etc.)
- * Optionally writes full output to an overflow file.
- */
 export function truncateArray<T>(
   items: T[],
   maxItems: number,
@@ -150,21 +108,16 @@ export function truncateArray<T>(
     return { content: formatter(items), wasTruncated: false };
   }
 
-  // Determine if we should use middle truncation
   const useMiddleTruncation =
     options?.useMiddleTruncation ?? OVERFLOW_CONFIG.MIDDLE_TRUNCATE;
 
   let selectedItems: T[];
   if (useMiddleTruncation) {
-    // Middle truncation: keep beginning and end
     const halfMax = Math.floor(maxItems / 2);
     const beginning = items.slice(0, halfMax);
     const end = items.slice(-halfMax);
-    // Note: We can't insert a marker in the middle of a typed array,
-    // so we'll just show beginning and end
     selectedItems = [...beginning, ...end];
   } else {
-    // Post truncation: keep beginning only
     selectedItems = items.slice(0, maxItems);
   }
 

@@ -282,10 +282,7 @@ async function retireFailedCaptureSession(
       admission.sessionId,
       admission.env,
     );
-  } catch {
-    // Keep the remembered state fenced. A later reservation must establish a
-    // verified EOF drop boundary before another actor may start.
-  }
+  } catch {}
 }
 
 async function resetCaptureBoundary(
@@ -366,9 +363,6 @@ export async function reserveNativeSessionCapture(
       try {
         await resetCaptureBoundary(state, source, sessionId, env);
       } catch (error) {
-        // Capture is auxiliary. Keep this actor's admission/fence, but allow
-        // the native turn to recreate or relocate its session file; the EOF
-        // finalizer will retry the reset without bricking every later send.
         reportNativeSessionCaptureFailure(source, sessionId, error);
       }
     }
@@ -408,7 +402,6 @@ async function entries(path: string, directories: boolean): Promise<string[]> {
     throw error;
   }
 }
-/** Find the exact native file for a CLI session, not a stdout projection. */
 export async function findNativeSessionPath(
   source: NativeSessionSource,
   sessionId: string,
@@ -696,8 +689,6 @@ async function discardRejectedSegment(state: CaptureState): Promise<void> {
   if (!segment) return;
   const directory = join(segment.path, "..");
   await cleanupSpoolDirectory(directory);
-  // Only the head segment was rejected. Later segments can belong to other
-  // actors and must each receive their own upload attempt.
   state.ackedOffset = segment.end;
   state.retryDelayMs = INITIAL_DRAIN_RETRY_MS;
 }
@@ -724,9 +715,6 @@ function startDrain(
       reportNativeSessionCaptureFailure(source, sessionId, error);
       const segment = state.segments[0];
       if (error instanceof NativeChunkAcknowledgmentError) {
-        // The server may have committed the attempted index before returning a
-        // malformed response. Never reuse that ambiguous idempotency slot for
-        // another actor's bytes.
         state.chunkIndex = Math.max(
           state.chunkIndex,
           error.attemptedChunkIndex + 1,
@@ -767,7 +755,6 @@ function startDrain(
     });
 }
 
-/** Resolves once the turn's bytes are immutable on disk; network drain is background work. */
 export function captureNativeSession(
   source: NativeSessionSource,
   sessionId: string,
@@ -794,9 +781,6 @@ export function captureNativeSession(
     .then(() =>
       seal(state, source, sessionId, frozenScope, env, frozenOptions),
     );
-  // Production callers hold a per-session admission until this actor's exact
-  // boundary succeeds. Keep the queue usable for that same reservation's
-  // bounded retry rather than poisoning every future attempt in the process.
   state.sealing = sealing.catch(() => undefined);
   return sealing.then(() => startDrain(state, source, sessionId));
 }
@@ -819,9 +803,6 @@ export async function awaitNativeSessionCaptureDrainForTests(
   }
 }
 
-// The parent conversation that launched each native session. Unlike the
-// capture state, this is kept for every server: remote steering and resume
-// check it once the launch's background task and subagent row are evicted.
 const MAX_NATIVE_SESSION_OWNERS = 1024;
 const owners = new Map<string, NativeSessionOwner>();
 
@@ -905,7 +886,6 @@ export function setNativeSessionCaptureDrainHookForTests(
   drainHookForTests = hook;
 }
 
-/** Report delivery failure without logging raw transcripts or response bodies. */
 export function reportNativeSessionCaptureFailure(
   source: NativeSessionSource,
   sessionId: string,

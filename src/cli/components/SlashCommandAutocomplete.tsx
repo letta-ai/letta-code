@@ -11,8 +11,6 @@ import { AutocompleteBox, AutocompleteItem } from "./Autocomplete";
 import { Text } from "./Text";
 import type { AutocompleteProps, CommandMatch } from "./types/autocomplete";
 
-// Match Codex's slash-command popup behavior: a small hard cap that can shrink
-// on short terminals, but never expands just because the terminal is tall.
 const MAX_POPUP_ROWS = 8;
 const CMD_COL_WIDTH = 14;
 
@@ -25,17 +23,15 @@ const BUILTIN_SKILL_ALIASES = new Set([
   "syncing-memory-filesystem",
 ]);
 
-// Compute filtered command list (excluding hidden commands), sorted by order
 const _allCommands: CommandMatch[] = Object.entries(commands)
   .filter(([, { hidden }]) => !hidden)
   .map(([cmd, { desc, order }]) => ({
     cmd,
     desc,
-    order: order ?? 100, // Default order for commands without explicit order
+    order: order ?? 100,
   }))
   .sort((a, b) => a.order - b.order);
 
-// Extract the text after the "/" symbol where the cursor is positioned
 function extractSearchQuery(
   input: string,
   cursor: number,
@@ -46,7 +42,6 @@ function extractSearchQuery(
   const spaceIndex = afterSlash.indexOf(" ");
   const endPos = spaceIndex === -1 ? input.length : 1 + spaceIndex;
 
-  // Check if cursor is within this /command
   if (cursor < 0 || cursor > endPos) {
     return null;
   }
@@ -73,13 +68,11 @@ export function SlashCommandAutocomplete({
   const [customCommands, setCustomCommands] = useState<CommandMatch[]>([]);
   const [skillCommands, setSkillCommands] = useState<CommandMatch[]>([]);
 
-  // Load custom commands once on mount
   useEffect(() => {
     import("@/cli/commands/custom.js").then(({ getCustomCommands }) => {
       getCustomCommands().then((customs) => {
         const matches: CommandMatch[] = customs.map((cmd) => ({
           cmd: `/${cmd.id}`,
-          // Include source/namespace in description for disambiguation
           desc: `${cmd.description} (${cmd.source}${cmd.namespace ? `:${cmd.namespace}` : ""})`,
           order: 200 + (cmd.source === "project" ? 0 : 100),
         }));
@@ -88,7 +81,6 @@ export function SlashCommandAutocomplete({
     });
   }, []);
 
-  // Load user-invocable skills for slash-command autocomplete.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -129,7 +121,6 @@ export function SlashCommandAutocomplete({
     };
   }, [agentId]);
 
-  // Check pin status to conditionally show/hide pin/unpin commands
   const allCommands = useMemo(() => {
     let builtins = _allCommands;
 
@@ -138,18 +129,15 @@ export function SlashCommandAutocomplete({
         const isPinned = settingsManager.isAgentPinned(agentId);
 
         builtins = _allCommands.filter((cmd) => {
-          // Hide /pin if agent is already pinned
           if (cmd.cmd === "/pin" && isPinned) {
             return false;
           }
-          // Hide /unpin if agent is not pinned
           if (cmd.cmd === "/unpin" && !isPinned) {
             return false;
           }
           return true;
         });
       } catch (_error) {
-        // If settings aren't loaded, just use all builtins
         builtins = _allCommands;
       }
     }
@@ -181,7 +169,6 @@ export function SlashCommandAutocomplete({
       (cmd) => !reservedCommands.has(cmd.cmd),
     );
 
-    // Merge command sources and sort by order.
     return [
       ...visibleBuiltins,
       ...visibleModCommands,
@@ -223,7 +210,7 @@ export function SlashCommandAutocomplete({
 
     const lowerQuery = query.toLowerCase();
     const filtered = allCommands.filter((item) => {
-      const cmdName = item.cmd.slice(1).toLowerCase(); // Remove leading "/"
+      const cmdName = item.cmd.slice(1).toLowerCase();
       return cmdName.includes(lowerQuery);
     });
 
@@ -240,24 +227,18 @@ export function SlashCommandAutocomplete({
     onAutocomplete: onAutocomplete
       ? (item) => onAutocomplete(item.cmd)
       : undefined,
-    // Disable automatic active state management - we handle it manually below
     manageActiveState: false,
   });
 
-  // Manually manage active state - only active when there are matches to select
-  // When there are no matches, we don't block submit so the user can still
-  // run commands that aren't in the autocomplete registry (e.g., /help, /reflection)
   useLayoutEffect(() => {
     const isActive = !hideAutocomplete && matches.length > 0;
     onActiveChange?.(isActive);
   }, [hideAutocomplete, matches.length, onActiveChange]);
 
-  // Don't show if input doesn't start with "/"
   if (!currentInput.startsWith("/")) {
     return null;
   }
 
-  // Show "no matching commands" message when query has content but no results
   if (showNoMatches) {
     return (
       <AutocompleteBox>
@@ -266,12 +247,10 @@ export function SlashCommandAutocomplete({
     );
   }
 
-  // Don't show if no matches and query is empty (shouldn't happen, but safety check)
   if (hideAutocomplete || matches.length === 0) {
     return null;
   }
 
-  // Calculate visible window based on selected index, bounded by viewport.
   const availablePopupRows = Math.max(1, terminalRows - 8);
   const visibleCommandCount = Math.min(MAX_POPUP_ROWS, availablePopupRows);
   const totalMatches = matches.length;
@@ -279,7 +258,6 @@ export function SlashCommandAutocomplete({
 
   let startIndex = 0;
   if (needsScrolling) {
-    // Keep selected item visible, preferring to show it in the middle
     const halfWindow = Math.floor(visibleCommandCount / 2);
     startIndex = Math.max(0, selectedIndex - halfWindow);
     startIndex = Math.min(startIndex, totalMatches - visibleCommandCount);
@@ -296,12 +274,9 @@ export function SlashCommandAutocomplete({
       {visibleMatches.map((item, idx) => {
         const actualIndex = startIndex + idx;
 
-        // Keep the footer height stable while navigating by forcing a single-line
-        // representation for each row.
         const displayCmd = truncateText(item.cmd, CMD_COL_WIDTH).padEnd(
           CMD_COL_WIDTH,
         );
-        // 2-char gutter comes from <AutocompleteItem />.
         const maxDescWidth = Math.max(0, columns - 2 - CMD_COL_WIDTH - 1);
         const displayDesc = truncateText(item.desc, maxDescWidth);
 

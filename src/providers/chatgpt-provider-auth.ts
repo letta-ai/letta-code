@@ -13,14 +13,6 @@ import {
 } from "@/backend/local/local-provider-auth-store";
 import { type Settings, settingsManager } from "@/settings-manager";
 
-/**
- * Shared request plumbing for ChatGPT OAuth provider services (usage and
- * rate-limit reset credits). Both services talk to the same two upstreams:
- * ChatGPT directly with a locally stored OAuth token, or Letta Cloud with the
- * user's Letta credential. Keeping auth resolution here means token refresh
- * and settings writes are fixed in one place.
- */
-
 export const OPENAI_CODEX_OAUTH_PROVIDER_ID = "openai-codex";
 export const CHATGPT_PROVIDER_CACHE_TTL_MS = 30_000;
 export const CHATGPT_PROVIDER_REQUEST_TIMEOUT_MS = 15_000;
@@ -154,8 +146,6 @@ export function responseMessage(
   return getString(raw, ["message", "error", "detail"]) ?? fallback;
 }
 
-// ── Letta Cloud credentials ─────────────────────────────────────────
-
 export async function readCloudCredentialSettings(
   getSettings?: () => Promise<CloudCredentialSettings>,
 ): Promise<
@@ -182,16 +172,9 @@ export function cloudBaseUrl(settings: Pick<Settings, "env">): string {
   ).replace(/\/+$/, "");
 }
 
-/**
- * Returns a usable Letta Cloud API key, refreshing the OAuth access token and
- * persisting the rotated credentials when it is missing or about to expire.
- * An explicit LETTA_API_KEY environment variable always wins and is never
- * refreshed.
- */
 export async function resolveCloudApiKey(input: {
   settings: CloudCredentialSettings;
   now: number;
-  /** Feature-specific copy shown when no Letta credential is available. */
   unauthorizedMessage: string;
   refreshAccessToken?: RefreshLettaAccessToken;
 }): Promise<{ success: true; apiKey: string } | ChatGPTProviderFailure> {
@@ -220,8 +203,6 @@ export async function resolveCloudApiKey(input: {
         tokenExpiresAt: input.now + tokens.expires_in * 1000,
       });
     } catch (error) {
-      // OAuthRefreshError messages name the auth host and OAuth error code,
-      // never the token, so they are safe to surface to listener clients.
       return chatGPTProviderError(
         "refresh_failed",
         errorMessage(error, "Failed to refresh the Letta Cloud access token."),
@@ -238,8 +219,6 @@ export function cloudRequestHeaders(apiKey: string): Record<string, string> {
   return { ...getLettaCodeHeaders(apiKey), Accept: "application/json" };
 }
 
-// ── Local ChatGPT OAuth ─────────────────────────────────────────────
-
 export type LocalChatGPTOAuthRecord = LocalProviderRecord & {
   auth: { type: "oauth"; accountId?: string };
 };
@@ -255,10 +234,6 @@ function isConnectedChatGPTOAuthRecord(
   );
 }
 
-/**
- * Finds the connected local ChatGPT OAuth provider. Without an explicit name,
- * checks the default ChatGPT provider name and then the legacy openai-codex id.
- */
 export function findLocalChatGPTOAuthRecord(
   providerName: string | undefined,
   storageDir: string | undefined,
@@ -271,10 +246,6 @@ export function findLocalChatGPTOAuthRecord(
     .find(isConnectedChatGPTOAuthRecord);
 }
 
-/**
- * Builds ChatGPT backend request headers for a local OAuth provider,
- * refreshing the ChatGPT OAuth token first when it has expired.
- */
 export async function localChatGPTRequestHeaders(
   record: LocalChatGPTOAuthRecord,
   storageDir: string | undefined,

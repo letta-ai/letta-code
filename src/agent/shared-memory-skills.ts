@@ -36,13 +36,6 @@ type GlobalWithAttachedRepositories = typeof globalThis & {
   >;
 };
 
-/**
- * Last successful repository list per agent. Unlike the TTL cache, this is
- * never expired or invalidated: a failed fetch falls back to it so a transient
- * error does not drop every attached-repo skill for one request (which churns
- * the prompt prefix and emits spurious skill reminders). Only another
- * successful response replaces it.
- */
 function getLastGoodAttachedRepositories(): Map<
   string,
   AttachedAgentRepository[]
@@ -115,10 +108,6 @@ export interface SharedMemorySkillsContext {
   errors: SkillDiscoveryError[];
 }
 
-/**
- * Resolve only server-attached repository mounts. Local sibling directories are
- * deliberately ignored because detach leaves their checkouts on disk.
- */
 export async function resolveSharedMemorySkillsContext(options: {
   agentId?: string;
   skillSources: SkillSource[];
@@ -146,7 +135,6 @@ export async function resolveSharedMemorySkillsContext(options: {
         return { skillsDirs: [], errors: [] };
       }
     } catch {
-      // This can run before settings initialization in tests and early startup.
       return { skillsDirs: [], errors: [] };
     }
     try {

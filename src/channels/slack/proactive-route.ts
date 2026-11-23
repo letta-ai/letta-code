@@ -18,11 +18,6 @@ export interface BindProactiveSlackThreadRouteParams {
   conversationId: string;
 }
 
-/**
- * Bind replies to a proactively posted Slack root back to the runtime that
- * created it. Existing ownership is idempotent, but a conflicting route is
- * never overwritten.
- */
 export function bindProactiveSlackThreadRoute(
   params: BindProactiveSlackThreadRouteParams,
 ): void {

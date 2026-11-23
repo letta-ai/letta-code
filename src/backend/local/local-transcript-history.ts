@@ -1,8 +1,3 @@
-/**
- * Full-history transcript reads. Streams messages.jsonl and drops image bytes
- * of messages outside the conversation's context as each row is parsed, so a
- * long image-heavy history is not pinned in memory. The file is never written.
- */
 import { isRecord } from "@/utils/type-guards";
 import {
   forEachJsonlRow,
@@ -41,13 +36,6 @@ function omitImagesOutsideContext(
   };
 }
 
-/**
- * Read every transcript row for a full-history load. Image bytes of messages
- * outside `in_context_message_ids` are replaced with a short text placeholder
- * as each row is parsed, so a long image-heavy history does not pin every
- * base64 payload in memory. In memory only: messages.jsonl is never
- * rewritten. An empty id list means every message is in context.
- */
 export function readLocalTranscriptRowsForHistory(
   path: string,
   inContextMessageIds: readonly string[],
@@ -67,12 +55,6 @@ export function readLocalTranscriptRowsForHistory(
   return rows;
 }
 
-/**
- * Count the distinct messages in a transcript that are not in
- * `inContextMessageIds`: the messages compaction has taken out of context.
- * Streams messages.jsonl and keeps only ids. An empty id list means every
- * message is in context.
- */
 export function countLocalTranscriptMessagesOutsideContext(
   path: string,
   messageFormat: LocalTranscriptMessageFormat,

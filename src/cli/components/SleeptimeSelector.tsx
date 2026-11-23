@@ -281,7 +281,6 @@ export function SleeptimeSelector({
       return;
     }
 
-    // Allow arbitrary typing and validate only when saving.
     if (
       input &&
       input.length > 0 &&

@@ -1,9 +1,5 @@
 import packageJson from "../../../package.json";
 
-/**
- * Get standard headers for manual HTTP calls to Letta API.
- * Use this for any direct fetch() calls (not SDK calls).
- */
 export function getLettaCodeHeaders(
   apiKey?: string,
   actingUserId: string | null | undefined = process.env.LETTA_ACTING_USER_ID,
@@ -20,9 +16,6 @@ export function getLettaCodeHeaders(
   };
 }
 
-/**
- * Get headers for MCP OAuth connections (includes Accept header for SSE).
- */
 export function getMcpOAuthHeaders(apiKey: string): Record<string, string> {
   return {
     ...getLettaCodeHeaders(apiKey),

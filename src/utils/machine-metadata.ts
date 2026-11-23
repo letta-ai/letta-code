@@ -2,7 +2,6 @@ import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { cpus, totalmem } from "node:os";
 
-/** Descriptive computer specs only. Never send raw probe output or identifiers. */
 export interface MachineMetadata {
   model?: string;
   osName?: string;
@@ -26,11 +25,9 @@ export interface MachineMetadataSources {
   ) => Promise<string>;
 }
 
-// All probes share this deadline, including a missing/hung platform utility.
 const COLLECTION_TIMEOUT_MS = 2_000;
 let machineMetadata: Promise<MachineMetadata> | undefined;
 
-/** Cached for this process, including retries and reconnect registrations. */
 export function getMachineMetadata(): Promise<MachineMetadata> {
   machineMetadata ??= collectMachineMetadata().catch(() => ({
     architecture: process.arch,
@@ -90,7 +87,6 @@ function records(value: unknown): Record<string, unknown>[] {
 }
 
 function gpuNames(values: unknown[]): string[] | undefined {
-  // Preserve duplicates: two identical names can represent two physical GPUs.
   const names = values
     .map(text)
     .filter((name): name is string => !!name)
@@ -135,7 +131,6 @@ const WINDOWS_QUERY = [
   "@{model=$computer.Model;osName=$os.Caption;osVersion=$os.Version;cpu=$cpu.Name;gpus=$gpus} | ConvertTo-Json -Compress",
 ].join("; ");
 
-/** Best effort: unavailable fields are omitted and connection startup is bounded. */
 export async function collectMachineMetadata(
   sources: MachineMetadataSources = localSources(),
   timeoutMs = COLLECTION_TIMEOUT_MS,
@@ -220,8 +215,6 @@ export async function collectMachineMetadata(
         "--query-gpu=name",
         "--format=csv,noheader",
       ]);
-      // PCI enumeration can expose host devices to a container. nvidia-smi only
-      // reports GPUs accessible through its installed NVIDIA driver.
       const pci = container ? "" : await run("lspci", []);
       const pciGpus = pci.split("\n").flatMap((line) => {
         const name = line.match(

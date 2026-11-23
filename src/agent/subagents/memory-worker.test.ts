@@ -37,7 +37,6 @@ function scope(repairToken: string) {
     repairToken,
   };
 }
-/** Record a repair attempt, as post-turn sync does before launching a worker. */
 async function claim(): Promise<string> {
   const result = await claimMemoryConflictRepair(root);
   expect(result.status).toBe("claimed");
@@ -45,7 +44,6 @@ async function claim(): Promise<string> {
 }
 const attemptStatus = async () =>
   (await claimMemoryConflictRepair(root)).status;
-/** Leave the checkout mid-merge with a conflicted note.md. */
 function conflict() {
   git("checkout", "-q", "-b", "other");
   writeFileSync(join(root, "note.md"), "other\n");
@@ -182,7 +180,6 @@ test("a repair that ran marks its attempt done; the same conflict is reported ne
     success: true,
     report: "could not resolve",
   }));
-  // Still conflicted, and now recorded as attempted: no relaunch.
   expect(await attemptStatus()).toBe("attempted");
 });
 
@@ -248,13 +245,11 @@ test("a repair whose initial sync throws forgets its attempt", async () => {
 test("a repair that finds nothing left to repair forgets its attempt", async () => {
   conflict();
   const token = await claim();
-  // The primary abandoned the merge before the worker got the checkout.
   git("merge", "--abort");
   const result = await runMemoryWorker(scope(token), async () => {
     throw new Error("must not run");
   });
   expect(result.success).toBe(true);
-  // Retrying the same merge is the same operation; it must be repaired anew.
   expect(() => git("merge", "other")).toThrow();
   expect(await attemptStatus()).toBe("claimed");
 });
@@ -271,8 +266,6 @@ test("a late worker cannot forget a newer attempt for the same checkout", async 
     },
   );
   await Bun.sleep(30);
-  // Meanwhile the conflict changed and a new turn in the same process claimed
-  // it, before the waiting worker was cancelled.
   writeFileSync(join(root, ".git", "MERGE_HEAD"), "b".repeat(40));
   await claim();
   controller.abort();

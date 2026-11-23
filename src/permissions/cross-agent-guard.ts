@@ -1,34 +1,3 @@
-// src/permissions/cross-agent-guard.ts
-// Cross-agent guard: hard-denies an in-process file tool whose target path
-// resolves under another agent's memory directory.
-//
-// SCOPE — this guard now exists ONLY for agent-process IN-PROCESS file
-// tools: Read / Write / Edit / NotebookEdit / Glob / Grep / LS and ApplyPatch
-// (all canonicalized via `canonicalToolName`, all carrying an explicit absolute
-// path). These never fork, so the kernel filesystem sandbox (src/sandbox/)
-// cannot see them.
-//
-// Spawned shell commands are intentionally no longer analyzed here (the old
-// token/raw-command scanner is gone — it was bypassable by symlinks, command
-// substitution, globbing, and subprocesses). When the opt-in cross-agent shell
-// sandbox is enabled (`LETTA_FS_SANDBOX=1`), the kernel confines spawned
-// shells instead; by default agent shells run unconfined. Subagents with the
-// memory-subagent profile are confined as whole processes (default-on) and
-// skip the guard entirely when the sandbox sentinel is set. The guard is the
-// in-process safety net; the kernel is the enforcement boundary for opted-in
-// shells and process-confined subagents.
-//
-// The guard runs BEFORE any other permission logic (decision step 0 in
-// checkPermission). Its deny is unbypassable by modes and permission rules.
-//
-// Guarded access is limited to:
-//   - self:   current AGENT_ID
-//   - parent: explicit LETTA_PARENT_AGENT_ID for subagent processes
-//
-// Enabled by default for parent processes and subagents. --disable-memory-guard
-// is parent-process only; subagents always evaluate the guard unless they are
-// already kernel-confined as whole processes.
-
 import { homedir } from "node:os";
 import { getRuntimeContext } from "@/runtime-context";
 import { getRuntimeExecutionEnv } from "@/runtime-execution-settings";
@@ -41,10 +10,6 @@ import {
   canonicalizeRoot,
   getCrossBackendAgentsTreeRoots,
 } from "./sandbox-policy";
-
-// --------------------------------------------------------------------------
-// Allowed agents
-// --------------------------------------------------------------------------
 
 export interface CrossAgentGuardOptions {
   env?: NodeJS.ProcessEnv;
@@ -72,10 +37,6 @@ export function isMemoryGuardDisabled(
   return options.disableMemoryGuard ?? cliPermissions.isMemoryGuardDisabled();
 }
 
-/**
- * Resolve the set of agent IDs a guarded process is allowed to operate
- * against without disabling the guard.
- */
 export function resolveAllowedAgents(
   options: CrossAgentGuardOptions = {},
 ): Set<string> {
@@ -93,66 +54,26 @@ export function resolveAllowedAgents(
   return ids;
 }
 
-// --------------------------------------------------------------------------
-// Target path extraction
-// --------------------------------------------------------------------------
-
 type ToolArgs = Record<string, unknown>;
 
 export interface CrossAgentTargets {
-  /** Agent IDs extracted from any path references in the tool args. */
   agentIds: Set<string>;
-  /**
-   * True iff at least one target path resolved under a cross-agent memory tree
-   * (`~/.letta/agents/<id>/...` on API, `<storage>/memfs/<id>/...` on local) —
-   * the only case where the guard is concerned at all.
-   */
   anyAgentScoped: boolean;
 }
 
-/**
- * Sentinel ID used when a path touches the agents tree but we can't
- * resolve it to a single agent — e.g. the bare agents-tree root (an
- * enumeration attempt) or a recursive-search root that would walk into
- * the tree. The guard treats this as never-allowed, so any such path
- * is denied unless upstream knew what agent to filter to.
- */
 const UNRESOLVED_AGENT_ID = "<unresolved>";
 
-/**
- * Normalize a path for structural comparison: forward slashes, no
- * trailing slash, preserving a bare `/` as root.
- */
 function normalizePathForCompare(path: string): string {
   const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
   return normalized.length === 0 ? "/" : normalized;
 }
 
-/**
- * Classification of a path relative to a cross-agent memory tree:
- *  - `outside`     — path is unrelated to the tree.
- *  - `agents-root` — path is exactly the tree root (enumeration of every agent
- *                    on the machine).
- *  - `ancestor`    — path is an ancestor of the tree root (e.g. `$HOME`, `/`).
- *                    Directory search tools (Glob/Grep/LS) entering this path would
- *                    walk into other agents' directories.
- *  - `agent`       — path is inside a specific agent's directory (any depth,
- *                    including the bare agent dir). The `id` is the agent ID
- *                    component (the segment right under the tree root).
- */
 export type AgentsTreeClassification =
   | { kind: "outside" }
   | { kind: "agents-root" }
   | { kind: "ancestor" }
   | { kind: "agent"; id: string };
 
-/**
- * Every cross-agent memory tree on this machine, normalized. This includes API
- * and local-backend trees under both the active product config root and legacy
- * HOME-local Letta root, plus an explicit local-backend storage override. All
- * share the `<root>/<agentId>/...` shape, so {@link classifyPathUnderRoot}
- * resolves the agent id regardless of backend or product.
- */
 function getCrossAgentTreeRoots(
   homeDir: string,
   env: NodeJS.ProcessEnv,
@@ -162,11 +83,6 @@ function getCrossAgentTreeRoots(
   );
 }
 
-/**
- * Structural classification of a normalized path relative to a normalized
- * tree root. Both inputs must already be canonical (forward slashes, no
- * trailing slash) — the caller decides whether that means lexical or realpath.
- */
 function classifyPathUnderRoot(
   normalized: string,
   root: string,
@@ -182,9 +98,6 @@ function classifyPathUnderRoot(
     return { kind: "agent", id };
   }
 
-  // Is `normalized` an ancestor of the agents-tree root?
-  // A recursive walk starting at `normalized` would eventually enter
-  // `<root>/`, exposing every agent on the machine.
   const prefix = normalized === "/" ? "/" : `${normalized}/`;
   if (root.startsWith(prefix)) {
     return { kind: "ancestor" };
@@ -193,9 +106,6 @@ function classifyPathUnderRoot(
   return { kind: "outside" };
 }
 
-/**
- * Extract file directives from an ApplyPatch input.
- */
 export function extractApplyPatchPaths(input: string): string[] {
   const paths: string[] = [];
   const fileDirectivePattern = /\*\*\* (?:Add|Update|Delete) File:\s*(.+)/g;
@@ -229,26 +139,12 @@ export function extractFilePath(toolArgs: ToolArgs): string | null {
   return null;
 }
 
-/**
- * Tools whose semantics imply a recursive walk from the given path
- * (as opposed to touching a single file). When one of these is pointed
- * at an *ancestor* of the agents tree, the walk would expose every
- * agent on disk — so we treat ancestor paths as hits for these tools.
- *
- * Compared against the canonical tool name, including the LS alias.
- */
 const RECURSIVE_CANONICAL_TOOLS = new Set<string>(["Glob", "Grep", "ListDir"]);
 
 function isRecursivePathTool(toolName: string): boolean {
   return RECURSIVE_CANONICAL_TOOLS.has(canonicalToolName(toolName));
 }
 
-/**
- * Extract the agent IDs referenced by the target paths of an in-process file
- * tool call. Returns `anyAgentScoped: false` for tool calls that don't touch
- * agent memory at all (the guard's fast path). Shell tools are NOT handled
- * here — the kernel sandbox confines spawned shells.
- */
 export function extractTargetAgentPaths(
   toolName: string,
   toolArgs: ToolArgs,
@@ -259,8 +155,6 @@ export function extractTargetAgentPaths(
   const agentIds = new Set<string>();
   let anyAgentScoped = false;
   const recursive = isRecursivePathTool(toolName);
-  // Both the API and local-backend cross-agent trees, plus their realpath form
-  // (resolving symlinks; tolerating a not-yet-existing leaf for create-file).
   const treeRoots = getCrossAgentTreeRoots(homeDir, env);
   const realTreeRoots = treeRoots.map((root) => canonicalizeRoot(root));
 
@@ -269,14 +163,10 @@ export function extractTargetAgentPaths(
       case "outside":
         return;
       case "agents-root":
-        // Targeting the agents tree root itself — enumeration.
         anyAgentScoped = true;
         agentIds.add(UNRESOLVED_AGENT_ID);
         return;
       case "ancestor":
-        // Only dangerous for tools that recursively walk from the
-        // given path (Glob/Grep/LS). Single-file tools like Read
-        // can't escape their target.
         if (recursive) {
           anyAgentScoped = true;
           agentIds.add(UNRESOLVED_AGENT_ID);
@@ -293,11 +183,6 @@ export function extractTargetAgentPaths(
     if (!rawPath || typeof rawPath !== "string") return;
     const resolvedPath = resolveMemoryTargetPath(rawPath, workingDirectory);
     if (!resolvedPath) return;
-    // Classify against every cross-agent tree (API + local). The lexical pass
-    // preserves string-match behavior; the realpath pass follows symlinks so a
-    // link whose real target lands in another agent's memory can't slip past.
-    // Everything unions via the shared `agentIds` set — extra passes only add
-    // denials, never remove them.
     const lexical = normalizePathForCompare(resolvedPath);
     const real = canonicalizeRoot(resolvedPath);
     for (const root of treeRoots) {
@@ -308,7 +193,6 @@ export function extractTargetAgentPaths(
     }
   };
 
-  // ApplyPatch: extract every file directive.
   if (toolName === "ApplyPatch") {
     if (typeof toolArgs.input === "string") {
       for (const p of extractApplyPatchPaths(toolArgs.input)) {
@@ -318,23 +202,14 @@ export function extractTargetAgentPaths(
     return { agentIds, anyAgentScoped };
   }
 
-  // All other in-process file tools: Read/Write/Edit/NotebookEdit/Glob/Grep/LS
-  // (all converge on file_path / path / notebook_path).
   addFromPath(extractFilePath(toolArgs));
 
-  // Glob also accepts a `pattern` arg. An absolute pattern like
-  // `/home/user/.letta/agents/**/*.md` would bypass the `path` check
-  // entirely. Run the pattern through the same resolver.
   if (recursive && typeof toolArgs.pattern === "string") {
     addFromPath(toolArgs.pattern);
   }
 
   return { agentIds, anyAgentScoped };
 }
-
-// --------------------------------------------------------------------------
-// Guard evaluation
-// --------------------------------------------------------------------------
 
 export interface CrossAgentGuardResult {
   matchedRule: "cross-agent guard";
@@ -355,16 +230,6 @@ function buildReason(offending: string[], allowed: Set<string>): string {
   );
 }
 
-/**
- * Evaluate whether an in-process file tool call should be hard-denied because
- * it targets another agent's memory. Returns null when the guard is not
- * concerned.
- *
- * Shell tools are not evaluated: spawned shells are confined by the kernel
- * filesystem sandbox. A subagent confined as a whole process by the kernel
- * (sandbox sentinel set) is also skipped — its every tool, in-process file ops
- * included, is already kernel-isolated.
- */
 export function evaluateCrossAgentGuard(
   toolName: string,
   toolArgs: ToolArgs,
@@ -379,15 +244,10 @@ export function evaluateCrossAgentGuard(
     return null;
   }
 
-  // Spawned shells are confined by the kernel sandbox; the bypassable static
-  // shell analysis this guard used to do is gone.
   if (isShellToolName(toolName) || canonicalToolName(toolName) === "Bash") {
     return null;
   }
 
-  // A subagent confined as a whole process by the kernel sandbox (sentinel set)
-  // has cross-agent isolation enforced for *every* tool — including in-process
-  // file ops — so the static guard is fully redundant.
   if (env.LETTA_CODE_AGENT_ROLE === "subagent" && env[SANDBOX_ENV_VAR]) {
     return null;
   }

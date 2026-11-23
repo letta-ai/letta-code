@@ -47,12 +47,10 @@ export async function buildEphemeralConversationCreateBody(
     system: request.system ?? system,
     ...(modelSettings ? { model_settings: modelSettings } : {}),
     ...(contextWindow ? { context_window_limit: contextWindow } : {}),
-    // A subagent's conversation links to the parent that launched it.
     ...resolveEphemeralSubagentLink(env),
   };
 }
 
-/** Local compatibility state only; the conversation still has no agent. */
 export function projectConversationState(conversation: {
   id: string;
   model?: string | null;
@@ -96,7 +94,6 @@ export async function createEphemeralConversation(
   };
 }
 
-/** Load compatibility state without replacing a conversation's history owner. */
 export async function retrieveResumeState(
   agentId: string | null,
   conversationId: string,

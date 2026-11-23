@@ -19,7 +19,6 @@ export function traceCaptureEnabled(
   );
 }
 
-/** Headers are never captured. Also redact credential fields and known values in bodies. */
 export function sanitizeTraceJson(raw: string, secrets: string[]): string {
   let value: unknown;
   try {
@@ -37,7 +36,6 @@ export function sanitizeTraceJson(raw: string, secrets: string[]): string {
   });
 }
 
-/** Preserve every SSE JSON event as well as the assembled provider response. */
 function assembleResponse(
   raw: string,
   streaming: boolean,
@@ -143,14 +141,12 @@ export function assembleTraceResponse(
   }
 }
 
-// Allow room to parse and compact payloads without retaining unbounded traffic.
 export const MAX_TRACE_BUFFER_BYTES = 16 * 1024 * 1024;
 const MAX_ENCODED_PAYLOAD_BYTES = 3 * 1024 * 1024;
 const truncated = { truncated: "size_limit" };
 export const TRUNCATED_TRACE_JSON = JSON.stringify(truncated);
 
 function traceJsonFits(bytes: number, encodedBytes: number): boolean {
-  // The payload is a JSON string inside the upload body.
   return (
     bytes <= MAX_TRACE_PAYLOAD_BYTES &&
     encodedBytes <= MAX_ENCODED_PAYLOAD_BYTES
@@ -184,8 +180,6 @@ export function compactTracePayload(json: string): string {
   let encodedBytes = Buffer.byteLength(JSON.stringify(initial));
   if (traceJsonFits(bytes, encodedBytes)) return initial;
 
-  // Measure each candidate once. Replacing a value changes the serialized size
-  // by exactly the difference between that value and its replacement.
   const candidates: {
     bytes: number;
     encodedBytes: number;

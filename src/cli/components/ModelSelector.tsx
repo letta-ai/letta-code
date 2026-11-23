@@ -1,4 +1,3 @@
-// Import useInput from vendored Ink for bracketed paste support
 import { Box, useInput } from "ink";
 import {
   useCallback,
@@ -64,7 +63,6 @@ type ModelCategory =
   | "server-recommended"
   | "server-all";
 
-// Re-export for consumers that import from ModelSelector
 export { buildByokProviderAliases, isByokHandleForSelector };
 export type {
   ModelSelectorSelection,
@@ -114,10 +112,6 @@ export function getEmptyStateActionDescriptors(
   ];
 }
 
-// Get tab order for model categories.
-// For self-hosted servers, only show server-specific tabs.
-// For Letta-hosted, keep ordering consistent across billing tiers.
-// "recents" is prepended when the user has >= 2 recently used models.
 export function getModelCategories(
   _billingTier?: string,
   isSelfHosted?: boolean,
@@ -142,22 +136,16 @@ export function getModelCategories(
 
 interface ModelSelectorProps {
   currentModelId?: string;
-  /** The current model's handle (e.g., "anthropic/claude-sonnet-4.6") for accurate current model highlighting */
   currentModelHandle?: string | null;
   currentModelServiceTier?: string | null;
   onSelect: (selection: ModelSelectorSelection) => void;
   onOpenConnect?: () => void;
   onOpenLogin?: () => void;
   onCancel: () => void;
-  /** Filter models to only show those matching this provider prefix (e.g., "chatgpt-plus-pro") */
   filterProvider?: string;
-  /** Force refresh the models list on mount */
   forceRefresh?: boolean;
-  /** User's billing tier (kept for compatibility and future gating logic) */
   billingTier?: string;
-  /** Whether connected to a self-hosted server (not api.letta.com) */
   isSelfHosted?: boolean;
-  /** Whether the active backend provides a local-only model catalog */
   localModelCatalog?: boolean;
 }
 
@@ -177,7 +165,6 @@ export function ModelSelector({
 }: ModelSelectorProps) {
   const typedModels = models as UiModel[];
 
-  // For self-hosted and local backends, only show the active backend's model catalog.
   const modelCategories = useMemo(
     () => getModelCategories(billingTier, isSelfHosted, localModelCatalog),
     [billingTier, isSelfHosted, localModelCatalog],
@@ -193,9 +180,6 @@ export function ModelSelector({
   const [selectedIndex, setSelectedIndex] = useState(0);
   const cachedHandlesAtMount = useMemo(() => getCachedModelHandles(), []);
 
-  // undefined: not loaded yet (show spinner)
-  // Set<string>: loaded and filtered
-  // null: error fallback (show all models + warning)
   const [availableHandles, setAvailableHandles] = useState<
     Set<string> | null | undefined
   >(cachedHandlesAtMount ?? undefined);
@@ -258,7 +242,6 @@ export function ModelSelector({
     };
   }, [isSelfHosted]);
 
-  // Fetch available models from the API (with caching + inflight dedupe)
   const loadModels = useRef(async (forceRefresh = false) => {
     try {
       if (forceRefresh) {
@@ -270,9 +253,6 @@ export function ModelSelector({
       }
 
       const cacheInfoBefore = getAvailableModelsCacheInfo();
-      // Refresh the curated catalog alongside availability so the preset
-      // list reflects cloud-canon data before this component re-renders
-      // (best-effort: on failure `models` keeps its current contents).
       const [result] = await Promise.all([
         getAvailableModelHandles({ forceRefresh }),
         refreshModelCatalog(forceRefresh ? { force: true } : undefined).catch(
@@ -296,7 +276,6 @@ export function ModelSelector({
       setError(err instanceof Error ? err.message : "Failed to load models");
       setIsLoading(false);
       setRefreshing(false);
-      // Fallback: show all models if API fails
       setAvailableHandles(null);
       setAllApiHandles([]);
       setProviderTypesByHandle(new Map());
@@ -484,9 +463,6 @@ export function ModelSelector({
     ],
   );
 
-  // Supported models: runtime catalog entries that are available
-  // Featured models first, then non-featured, preserving catalog order within each group
-  // If filterProvider is set, only show models from that provider
   const supportedModels = useMemo(() => {
     if (availableHandles === undefined) return [];
     let available = filterModelsByAvailabilityForSelector(
@@ -494,13 +470,11 @@ export function ModelSelector({
       availableHandles,
       allApiHandles,
     );
-    // Apply provider filter if specified
     if (filterProvider) {
       available = available.filter((m) =>
         m.handle.startsWith(`${filterProvider}/`),
       );
     }
-    // Apply search filter
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       available = available.filter(
@@ -511,10 +485,6 @@ export function ModelSelector({
       );
     }
 
-    // Deduplicate by handle+context_window: keep one representative entry per unique combo.
-    // Models with multiple reasoning tiers (e.g., gpt-5.5 none/low/med/high/max)
-    // share the same handle — the ModelReasoningSelector handles tier selection after pick.
-    // Models with different context_window (e.g., 200k vs 1M) show separately.
     const seen = new Set<string>();
     const deduped: UiModel[] = [];
     for (const m of available) {
@@ -538,13 +508,11 @@ export function ModelSelector({
     serviceTierForModel,
   ]);
 
-  // BYOK models: models from ChatGPT OAuth, standard lc-* providers, or any connected custom BYOK provider
   const isByokHandle = useCallback(
     (handle: string) => isByokHandleForSelector(handle, byokProviderAliases),
     [byokProviderAliases],
   );
 
-  // Letta API (all): preserve backend metadata when aliases are not yet classified as BYOK.
   const allLettaModels = useMemo(() => {
     if (availableHandles === undefined) return [];
 
@@ -583,29 +551,22 @@ export function ModelSelector({
     withProviderTypeMetadata,
   ]);
 
-  // Convert a BYOK handle to its base provider handle for catalog lookup
-  // e.g., "lc-anthropic/claude-3-5-haiku" -> "anthropic/claude-3-5-haiku"
-  // e.g., "lc-gemini/gemini-2.0-flash" -> "google_ai/gemini-2.0-flash"
   const toBaseHandle = useCallback(
     (handle: string): string =>
       baseHandleForByokAlias(handle, byokProviderAliases),
     [byokProviderAliases],
   );
 
-  // BYOK (recommended): BYOK API handles with matching runtime catalog entries
   const byokModels = useMemo(() => {
     if (availableHandles === undefined) return [];
 
-    // Get all BYOK handles from API
     const byokHandles = allApiHandles.filter(isByokHandle);
 
-    // Find matching catalog entries (using aliases for lc-* providers)
     const matched: UiModel[] = [];
     for (const handle of byokHandles) {
       const baseHandle = toBaseHandle(handle);
       const staticModel = pickPreferredStaticModel(baseHandle);
       if (staticModel) {
-        // Use catalog metadata but keep the BYOK handle as the ID
         matched.push(
           toByokSelectorModel(
             staticModel,
@@ -620,7 +581,6 @@ export function ModelSelector({
       }
     }
 
-    // Apply search filter
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       return matched.filter(
@@ -643,13 +603,11 @@ export function ModelSelector({
     withProviderTypeMetadata,
   ]);
 
-  // BYOK (all): all BYOK handles from API (including recommended ones)
   const byokAllModels = useMemo(() => {
     if (availableHandles === undefined) return [];
 
     const byokHandles = allApiHandles.filter(isByokHandle);
 
-    // Apply search filter
     let filtered = byokHandles;
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
@@ -661,11 +619,6 @@ export function ModelSelector({
     return filtered;
   }, [availableHandles, allApiHandles, searchQuery, isByokHandle]);
 
-  // Server-recommended models: runtime catalog entries available on the server.
-  // Discoverable local endpoint providers (Ollama, LM Studio, llama.cpp) may
-  // not have preset entries, so include their live-discovered
-  // handles here instead of hiding them until the user switches to "All".
-  // Filter out letta/letta-free legacy model
   const serverRecommendedModels = useMemo(() => {
     if (!backendModelCatalog || availableHandles === undefined) return [];
     let available = allApiHandles
@@ -686,7 +639,6 @@ export function ModelSelector({
           m.handle.toLowerCase().includes(query),
       );
     }
-    // Deduplicate by handle+context_window (same as supportedModels)
     const seen = new Set<string>();
     const deduped: UiModel[] = [];
     for (const m of available) {
@@ -706,8 +658,6 @@ export function ModelSelector({
     serviceTierForModel,
   ]);
 
-  // Server-all models: ALL handles from the server (for self-hosted)
-  // Filter out letta/letta-free legacy model
   const serverAllModels = useMemo(() => {
     if (!backendModelCatalog) return [];
     const handles = allApiHandles.filter((h) => h !== "letta/letta-free");
@@ -737,16 +687,13 @@ export function ModelSelector({
     searchQuery,
   ]);
 
-  // Recent models: models the user has recently selected (max 10)
-  // Only includes models that are currently available
   const recentModels = useMemo(() => {
     if (availableHandles === undefined) return [];
     const recentHandles = settingsManager.getRecentModels();
-    if (recentHandles.length < 2) return []; // Don't show recents with < 2 items
+    if (recentHandles.length < 2) return [];
 
     const resolved: UiModel[] = [];
     for (const handle of recentHandles) {
-      // When availableHandles is non-null, skip unavailable models
       if (availableHandles !== null && !availableHandles.has(handle)) continue;
 
       if (backendModelCatalog) {
@@ -755,7 +702,6 @@ export function ModelSelector({
         continue;
       }
 
-      // Try to resolve to a static model with label/description
       const staticModel = pickPreferredStaticModel(toBaseHandle(handle));
       if (staticModel) {
         resolved.push(
@@ -791,7 +737,6 @@ export function ModelSelector({
     withProviderTypeMetadata,
   ]);
 
-  // Map category -> list for O(1) lookup
   const categoryListMap = useMemo(
     () => ({
       recents: recentModels,
@@ -833,20 +778,17 @@ export function ModelSelector({
     ],
   );
 
-  // Filter out empty categories so the tab bar never shows tabs with 0 items
   const nonEmptyCategories = useMemo(
     () =>
       modelCategories.filter((cat) => {
         const list = categoryListMap[cat];
         if (!list || list.length === 0) return false;
-        // Recents tab only shows when there are ≥2 available recent models
         if (cat === "recents" && list.length < 2) return false;
         return true;
       }),
     [modelCategories, categoryListMap],
   );
 
-  // All categories empty → show null state under a single "All" tab
   const allEmpty =
     !isLoading && nonEmptyCategories.length === 0 && !searchQuery;
   const emptyStateActions = useMemo(
@@ -858,7 +800,6 @@ export function ModelSelector({
     [onOpenConnect, onOpenLogin, showLoginAction],
   );
 
-  // When all categories are empty, collapse to a single "All" tab
   const displayCategories = useMemo(
     () =>
       allEmpty
@@ -867,18 +808,14 @@ export function ModelSelector({
     [allEmpty, backendModelCatalog, nonEmptyCategories],
   );
 
-  // Get the list for current category
   const currentList: UiModel[] = useMemo(() => {
     const list = categoryListMap[category] as UiModel[] | undefined;
     return list ?? [];
   }, [category, categoryListMap]);
 
-  // Show 1 fewer item because Search line takes space
   const visibleCount = VISIBLE_ITEMS - 1;
 
-  // Scrolling - keep selectedIndex in view
   const startIndex = useMemo(() => {
-    // Keep selected item in the visible window
     if (selectedIndex < visibleCount) return 0;
     return Math.min(
       selectedIndex - visibleCount + 1,
@@ -893,7 +830,6 @@ export function ModelSelector({
   const showScrollDown = startIndex + visibleCount < currentList.length;
   const itemsBelow = currentList.length - startIndex - visibleCount;
 
-  // Auto-switch to first non-empty category if current category becomes empty
   useEffect(() => {
     if (allEmpty) return;
     if (
@@ -905,7 +841,6 @@ export function ModelSelector({
     }
   }, [nonEmptyCategories, category, allEmpty]);
 
-  // Reset selection when category changes
   const cycleCategory = useCallback(() => {
     setCategory((current) => {
       const cats =
@@ -917,7 +852,6 @@ export function ModelSelector({
     setSearchQuery("");
   }, [displayCategories, modelCategories]);
 
-  // Set initial selection to current model on mount
   const initializedRef = useRef(false);
   useEffect(() => {
     if (!initializedRef.current && currentList.length > 0) {
@@ -929,7 +863,6 @@ export function ModelSelector({
     }
   }, [currentList, currentModelId]);
 
-  // Clamp selectedIndex when list changes
   useEffect(() => {
     const selectableCount = allEmpty
       ? emptyStateActions.length
@@ -941,13 +874,11 @@ export function ModelSelector({
 
   useInput(
     (input, key) => {
-      // CTRL-C: immediately cancel (bypasses search clearing)
       if (key.ctrl && input === "c") {
         onCancel();
         return;
       }
 
-      // Handle ESC: clear search first if active, otherwise cancel
       if (key.escape) {
         if (searchQuery) {
           setSearchQuery("");
@@ -958,8 +889,6 @@ export function ModelSelector({
         return;
       }
 
-      // Allow 'r' to refresh even while loading. If a refresh is already in
-      // flight, consume the key so repeated presses don't turn into search text.
       if (input === "r" && !searchQuery) {
         if (!refreshing) {
           loadModels.current(true);
@@ -967,14 +896,12 @@ export function ModelSelector({
         return;
       }
 
-      // Tab or left/right arrows to switch categories
       if (key.tab || key.rightArrow) {
         cycleCategory();
         return;
       }
 
       if (key.leftArrow) {
-        // Cycle backwards through categories
         setCategory((current) => {
           const cats =
             displayCategories.length > 0 ? displayCategories : modelCategories;
@@ -986,7 +913,6 @@ export function ModelSelector({
         return;
       }
 
-      // Handle backspace for search
       if (key.backspace || key.delete) {
         if (searchQuery) {
           setSearchQuery((prev) => prev.slice(0, -1));
@@ -1012,8 +938,6 @@ export function ModelSelector({
         }
       }
 
-      // Capture text input for search (allow typing even with 0 results)
-      // Exclude special keys like Enter, arrows, etc.
       if (
         input &&
         input.length === 1 &&
@@ -1028,7 +952,6 @@ export function ModelSelector({
         return;
       }
 
-      // Disable navigation/selection while loading or no results
       if (isLoading || currentList.length === 0) {
         return;
       }
@@ -1051,7 +974,6 @@ export function ModelSelector({
         }
       }
     },
-    // Keep active so ESC and 'r' work while loading.
     { isActive: true },
   );
 
@@ -1132,7 +1054,6 @@ export function ModelSelector({
         </Box>
       )}
 
-      {/* Null state — no models available */}
       {!isLoading && allEmpty && (
         <Box flexDirection="column" paddingLeft={1}>
           <TabBar
@@ -1169,7 +1090,6 @@ export function ModelSelector({
         </Box>
       )}
 
-      {/* Loading states */}
       {isLoading && (
         <Box paddingLeft={2}>
           <Text dimColor>Loading available models...</Text>
@@ -1194,7 +1114,6 @@ export function ModelSelector({
         </Box>
       )}
 
-      {/* Model list */}
       {refreshing && (
         <Box paddingLeft={2}>
           <Text dimColor>Refreshing list...</Text>
@@ -1213,7 +1132,6 @@ export function ModelSelector({
             (model.id === currentModelId ||
               model.handle === currentModelHandle) &&
             modelServiceTier === currentServiceTier;
-          // Show lock for non-free models when on free tier (only for Letta API tabs)
           const showLock =
             isFreeTier &&
             !model.free &&

@@ -29,7 +29,6 @@ describe("listener secrets sync", () => {
         (await retrieveMock(agentId)).secrets,
       updateAgent: async () => ({}),
     });
-    // Use a short freshness window for deterministic tests.
     __testSetFreshnessMs(500);
     clearSecretsCache("agent-listener-secret");
   });
@@ -66,10 +65,8 @@ describe("listener secrets sync", () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
 
     await ensureSecretsHydratedForAgent(listener, "agent-listener-secret");
-    // Second call within the freshness window should be a cache hit.
     await ensureSecretsHydratedForAgent(listener, "agent-listener-secret");
 
-    // Only one server fetch — the second call hit the cache.
     expect(retrieveMock).toHaveBeenCalledTimes(1);
     expect(loadSecrets("agent-listener-secret")).toEqual({
       WS_SECRET_TOKEN: "first",
@@ -77,7 +74,6 @@ describe("listener secrets sync", () => {
   });
 
   test("re-fetches after the freshness window expires", async () => {
-    // Use a very short freshness window so it expires immediately.
     __testSetFreshnessMs(1);
 
     retrieveMock
@@ -90,7 +86,6 @@ describe("listener secrets sync", () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
 
     await ensureSecretsHydratedForAgent(listener, "agent-listener-secret");
-    // Wait for the freshness window to expire.
     await new Promise((resolve) => setTimeout(resolve, 10));
     await ensureSecretsHydratedForAgent(listener, "agent-listener-secret");
 
@@ -191,10 +186,8 @@ describe("listener secrets sync", () => {
     await ensureSecretsHydratedForAgent(listener, "agent-listener-secret");
     expect(retrieveMock).toHaveBeenCalledTimes(1);
 
-    // Simulate a GUI secret mutation invalidating the cache.
     invalidateSecretsCacheForAgent(listener, "agent-listener-secret");
 
-    // Next call should re-fetch even though the freshness window hasn't expired.
     await ensureSecretsHydratedForAgent(listener, "agent-listener-secret");
     expect(retrieveMock).toHaveBeenCalledTimes(2);
     expect(loadSecrets("agent-listener-secret")).toEqual({
@@ -277,13 +270,10 @@ describe("listener secrets sync", () => {
     });
     const listener = __listenClientTestUtils.createListenerRuntime();
 
-    // Simulate the turn preflight hydration.
     await ensureSecretsHydratedForAgent(listener, "agent-listener-secret");
 
-    // Simulate the approval execution path calling again in the same turn.
     await ensureSecretsHydratedForAgent(listener, "agent-listener-secret");
 
-    // Only one server fetch — the approval path reused the cached hydration.
     expect(retrieveMock).toHaveBeenCalledTimes(1);
     expect(loadSecrets("agent-listener-secret")).toEqual({
       WS_SECRET_TOKEN: "preflight",
@@ -303,18 +293,14 @@ describe("listener secrets sync", () => {
       });
     const listener = __listenClientTestUtils.createListenerRuntime();
 
-    // First hydration.
     await ensureSecretsHydratedForAgent(listener, "agent-listener-secret");
     expect(retrieveMock).toHaveBeenCalledTimes(1);
 
-    // Invalidate and re-fetch.
     invalidateSecretsCacheForAgent(listener, "agent-listener-secret");
     await ensureSecretsHydratedForAgent(listener, "agent-listener-secret");
     expect(retrieveMock).toHaveBeenCalledTimes(2);
 
-    // After re-fetch, the dirty flag is cleared and the cache is fresh again.
-    // A third call within the freshness window should be a cache hit.
     await ensureSecretsHydratedForAgent(listener, "agent-listener-secret");
-    expect(retrieveMock).toHaveBeenCalledTimes(2); // no new fetch
+    expect(retrieveMock).toHaveBeenCalledTimes(2);
   });
 });

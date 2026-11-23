@@ -1,10 +1,5 @@
 import stringWidth from "string-width";
 
-/**
- * Truncate text to fit within maxWidth terminal columns, appending "..." when
- * truncation occurs. Uses stringWidth for correct handling of wide characters
- * (CJK, emoji) that occupy more than one terminal column.
- */
 export function truncateText(text: string, maxWidth: number): string {
   if (maxWidth <= 0) return "";
   if (stringWidth(text) <= maxWidth) return text;

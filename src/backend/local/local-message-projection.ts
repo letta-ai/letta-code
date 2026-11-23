@@ -389,9 +389,6 @@ export interface LocalToolResultRepairResult {
 export function removeOrphanLocalToolResults(
   messages: readonly LocalMessage[],
 ): LocalToolResultRepairResult {
-  // Mirror pi-ai transformMessages() tool-flow boundaries: tool results only
-  // belong to the immediately pending assistant tool calls. A user or another
-  // assistant message closes that pending tool-result window.
   let pendingToolCallIds = new Set<string>();
   const repaired: LocalMessage[] = [];
   const removedMessageIds: string[] = [];

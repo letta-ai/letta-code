@@ -1,4 +1,3 @@
-/** Disk persistence and backwards-compatible filename migration for routes. */
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import {
@@ -24,14 +23,11 @@ function readRoutingFile(path: string): ChannelRoute[] {
   );
 }
 
-/** Prefer the current file; migration is never a prerequisite for reading. */
 export function readChannelRoutesFromDisk(channelId: string): ChannelRoute[] {
   const path = getChannelRoutingPath(channelId);
   try {
     return readRoutingFile(path);
   } catch (error) {
-    // Only absence permits fallback. A broken/unreadable current file must not
-    // resurrect stale routes from a legacy file left behind during cleanup.
     if (!isMissing(error)) return [];
   }
 
@@ -40,7 +36,6 @@ export function readChannelRoutesFromDisk(channelId: string): ChannelRoute[] {
   try {
     routes = readRoutingFile(legacyPath);
   } catch {
-    // A concurrent migration may have removed the old name since our first read.
     try {
       return readRoutingFile(path);
     } catch {
@@ -49,14 +44,9 @@ export function readChannelRoutesFromDisk(channelId: string): ChannelRoute[] {
   }
 
   try {
-    // Both names are in the same directory. A hard link publishes the complete
-    // existing file atomically and fails if another process created the target.
-    // Unlike rename, it cannot replace a newer routing.json. On filesystems
-    // without hard links, keep reading the legacy file until a normal save.
     fs.linkSync(legacyPath, path);
   } catch {
     try {
-      // Another process may have migrated or saved while we read the legacy file.
       return readRoutingFile(path);
     } catch (error) {
       return isMissing(error) ? routes : [];
@@ -65,14 +55,10 @@ export function readChannelRoutesFromDisk(channelId: string): ChannelRoute[] {
 
   try {
     fs.unlinkSync(legacyPath);
-  } catch {
-    // Publication succeeded. Interrupted/denied cleanup can leave both names;
-    // routing.json remains authoritative on every subsequent read.
-  }
+  } catch {}
   return routes;
 }
 
-/** Publish complete snapshots; a failed write leaves the previous file intact. */
 export function writeChannelRoutesToDisk(
   channelId: string,
   routes: ChannelRoute[],
@@ -92,8 +78,6 @@ export function writeChannelRoutesToDisk(
   } finally {
     try {
       fs.unlinkSync(temporaryPath);
-    } catch {
-      // Usually already renamed. Cleanup must not mask a failed write/rename.
-    }
+    } catch {}
   }
 }

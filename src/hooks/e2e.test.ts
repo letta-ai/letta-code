@@ -1,6 +1,3 @@
-// src/tests/hooks/e2e.test.ts
-// E2E tests that verify hooks are triggered during actual CLI operation
-
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
 import {
@@ -15,8 +12,6 @@ import { join } from "node:path";
 
 const projectRoot = process.cwd();
 
-// Skip on Windows - test commands use bash syntax (>>, &&, cat, etc.)
-// The executor itself is cross-platform, but these test commands are bash-specific
 const isWindows = process.platform === "win32";
 
 interface TestEnv {
@@ -26,9 +21,6 @@ interface TestEnv {
   markerFile: string;
 }
 
-/**
- * Create an isolated test environment with hooks config
- */
 function setupTestEnv(): TestEnv {
   const baseDir = join(
     tmpdir(),
@@ -44,20 +36,12 @@ function setupTestEnv(): TestEnv {
   return { baseDir, projectDir, fakeHome, markerFile };
 }
 
-/**
- * Clean up test environment
- */
 function cleanup(env: TestEnv): void {
   try {
     rmSync(env.baseDir, { recursive: true, force: true });
-  } catch {
-    // Ignore cleanup errors
-  }
+  } catch {}
 }
 
-/**
- * Write hooks config to project settings
- */
 function writeHooksConfig(env: TestEnv, hooks: Record<string, unknown>): void {
   writeFileSync(
     join(env.projectDir, ".letta", "settings.json"),
@@ -65,9 +49,6 @@ function writeHooksConfig(env: TestEnv, hooks: Record<string, unknown>): void {
   );
 }
 
-/**
- * Run CLI with isolated environment and capture output
- */
 async function runCli(
   args: string[],
   env: TestEnv,
@@ -76,15 +57,12 @@ async function runCli(
   const { timeoutMs = 120000 } = options;
 
   return new Promise((resolve, reject) => {
-    // Run bun with the entry point directly (not "run dev") so we can use
-    // a temp directory as cwd. This allows hooks to load from the temp dir.
     const proc = spawn("bun", [join(projectRoot, "src/index.ts"), ...args], {
       cwd: env.projectDir,
       env: {
         ...process.env,
         HOME: env.fakeHome,
         LETTA_CODE_AGENT_ROLE: "subagent",
-        // Skip keychain check since we're using a fake HOME directory
         LETTA_SKIP_KEYCHAIN_CHECK: "1",
       },
     });
@@ -121,9 +99,6 @@ async function runCli(
   });
 }
 
-/**
- * Read marker file contents, return empty string if not exists
- */
 function readMarker(env: TestEnv): string {
   if (!existsSync(env.markerFile)) {
     return "";
@@ -131,17 +106,9 @@ function readMarker(env: TestEnv): string {
   return readFileSync(env.markerFile, "utf-8");
 }
 
-/**
- * Check if LETTA_API_KEY is available for E2E tests
- */
 function hasApiKey(): boolean {
   return !!process.env.LETTA_API_KEY;
 }
-
-// ============================================================================
-// E2E Tests - Require API key, skip gracefully if missing
-// Skip on Windows - hooks use `sh -c` shell commands
-// ============================================================================
 
 describe.skipIf(isWindows)("Hooks E2E Tests", () => {
   let env: TestEnv;
@@ -153,10 +120,6 @@ describe.skipIf(isWindows)("Hooks E2E Tests", () => {
   afterEach(() => {
     cleanup(env);
   });
-
-  // ============================================================================
-  // PreToolUse Hooks
-  // ============================================================================
 
   describe("PreToolUse hooks", () => {
     test(
@@ -275,11 +238,9 @@ describe.skipIf(isWindows)("Hooks E2E Tests", () => {
           env,
         );
 
-        // Hook should have written to marker (proving it ran)
         const marker = readMarker(env);
         expect(marker).toContain("BLOCKED_BY_HOOK");
 
-        // Exit should be 0 (CLI handles blocked gracefully)
         expect(result.exitCode).toBe(0);
       },
       { timeout: 180000 },
@@ -314,22 +275,16 @@ describe.skipIf(isWindows)("Hooks E2E Tests", () => {
           env,
         );
 
-        // Check hook received proper input
         if (existsSync(inputFile)) {
           const input = JSON.parse(readFileSync(inputFile, "utf-8"));
           expect(input.event_type).toBe("PreToolUse");
           expect(input.tool_name).toBeDefined();
           expect(input.working_directory).toBeDefined();
         }
-        // If file doesn't exist, tool wasn't called (which is valid)
       },
       { timeout: 180000 },
     );
   });
-
-  // ============================================================================
-  // PostToolUse Hooks
-  // ============================================================================
 
   describe("PostToolUse hooks", () => {
     test(
@@ -398,20 +353,12 @@ describe.skipIf(isWindows)("Hooks E2E Tests", () => {
           const input = JSON.parse(readFileSync(inputFile, "utf-8"));
           expect(input.event_type).toBe("PostToolUse");
           expect(input.tool_name).toBeDefined();
-          // PostToolUse should have tool_result
           expect(input.tool_result).toBeDefined();
         }
       },
       { timeout: 180000 },
     );
   });
-
-  // ============================================================================
-  // SessionStart Hooks
-  // NOTE: SessionStart hooks only fire in interactive mode (App.tsx), not in
-  // headless mode (headless.ts). The -p flag runs in headless mode, so these
-  // tests verify the hook config is valid but the hooks won't actually fire.
-  // ============================================================================
 
   describe("SessionStart hooks", () => {
     test.skip(
@@ -479,13 +426,6 @@ describe.skipIf(isWindows)("Hooks E2E Tests", () => {
       { timeout: 180000 },
     );
   });
-
-  // ============================================================================
-  // UserPromptSubmit Hooks
-  // NOTE: UserPromptSubmit hooks only fire in interactive mode (App.tsx), not in
-  // headless mode (headless.ts). The -p flag runs in headless mode, so these
-  // tests verify the hook config is valid but the hooks won't actually fire.
-  // ============================================================================
 
   describe("UserPromptSubmit hooks", () => {
     test.skip(
@@ -586,22 +526,12 @@ describe.skipIf(isWindows)("Hooks E2E Tests", () => {
           env,
         );
 
-        // Hook ran and wrote marker
         const marker = readMarker(env);
         expect(marker).toContain("BLOCKED");
-
-        // The prompt was blocked - check for error output or non-zero exit
-        // (exact behavior depends on implementation)
       },
       { timeout: 180000 },
     );
   });
-
-  // ============================================================================
-  // Multiple Hooks
-  // NOTE: Only PreToolUse and PostToolUse work in headless mode. SessionStart
-  // and UserPromptSubmit only fire in interactive mode (App.tsx).
-  // ============================================================================
 
   describe("Multiple hooks", () => {
     test(
@@ -644,11 +574,9 @@ describe.skipIf(isWindows)("Hooks E2E Tests", () => {
 
         const marker = readMarker(env);
 
-        // PreToolUse should fire before PostToolUse
         expect(marker).toContain("1:PreToolUse");
         expect(marker).toContain("2:PostToolUse");
 
-        // Verify order: PreToolUse comes before PostToolUse
         const preIndex = marker.indexOf("1:PreToolUse");
         const postIndex = marker.indexOf("2:PostToolUse");
         expect(preIndex).toBeLessThan(postIndex);

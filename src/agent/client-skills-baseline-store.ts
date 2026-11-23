@@ -1,18 +1,3 @@
-/**
- * On-disk store for per-conversation `client_skills` baselines.
- *
- * Each conversation scope gets one small JSON file under the server-scoped
- * state directory used by other durable harness state:
- *
- *   <config-dir>/state/<backend-namespace>/client-skills-baselines/<scope>.json
- *
- * The namespace is a hash of the backend identity (API server URL, or the
- * local backend's storage dir), so baselines from different servers or
- * backends never mix. Every operation is best-effort: a missing, corrupt, or
- * unreadable file loads as "no baseline", and a failed write is swallowed so
- * it can never fail a send.
- */
-
 import { createHash, randomUUID } from "node:crypto";
 import {
   mkdirSync,
@@ -42,24 +27,18 @@ type BaselineFile = PersistedClientSkillsBaseline & {
   updatedAtMs: number;
 };
 
-/** Files untouched for this long describe conversations nobody resumes. */
 const STALE_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
-/** Upper bound on files kept per backend namespace (oldest pruned first). */
 const MAX_FILES_PER_NAMESPACE = 500;
 
 type StoreConfig = {
-  /** Root replacing `<config-dir>/state`; null disables persistence. */
   rootDir: string | null;
-  /** Backend identity override; null means "not persistable". */
   identify?: (backend: object) => string | null;
 };
 
 let configOverride: StoreConfig | undefined;
-/** Writes per namespace since its last prune; prune on first and every Nth. */
 const writesSincePrune = new Map<string, number>();
 const PRUNE_EVERY_WRITES = 100;
 
-/** Test-only: redirect (or disable with `null`) baseline persistence. */
 export function configureClientSkillsBaselineStoreForTests(
   config: StoreConfig | undefined,
 ): void {
@@ -73,10 +52,6 @@ function stateRoot(): string | null {
   return join(resolveGlobalConfigDir(), "state");
 }
 
-/**
- * Stable identity of the server or store behind `backend`, or null when the
- * backend has no durable identity (in-memory dev backends, test fakes).
- */
 export function clientSkillsBackendIdentity(backend: object): string | null {
   if (configOverride?.identify) return configOverride.identify(backend);
   const localStorageDir = (
@@ -87,7 +62,6 @@ export function clientSkillsBackendIdentity(backend: object): string | null {
     try {
       return getServerUrl();
     } catch {
-      // Settings may not be loaded yet; use getServerUrl's env/default order.
       return process.env.LETTA_BASE_URL || LETTA_CLOUD_API_URL;
     }
   }
@@ -103,8 +77,6 @@ function namespaceDir(backend: object): string | null {
   if (!root) return null;
   const identity = clientSkillsBackendIdentity(backend);
   if (!identity) return null;
-  // API identities hash the bare server URL, matching the namespace other
-  // server-scoped state already uses under `state/`.
   return join(root, shortHash(identity), "client-skills-baselines");
 }
 
@@ -131,7 +103,6 @@ function parseBaselineFile(
     typeof parsed !== "object" ||
     parsed === null ||
     parsed.version !== 1 ||
-    // Guards against a hash collision or a hand-copied file.
     parsed.scope !== scope ||
     !isClientSkillList(parsed.frozen) ||
     !isClientSkillList(parsed.announced) ||
@@ -158,7 +129,6 @@ export function loadClientSkillsBaseline(
       scope,
     );
   } catch {
-    // Missing or corrupt: fall back to a fresh baseline.
     return null;
   }
 }
@@ -194,7 +164,6 @@ export function saveClientSkillsBaseline(
       writesSincePrune.set(dir, writes + 1);
     }
   } catch {
-    // Best-effort: the in-memory baseline still applies to this process.
     if (tmp) {
       try {
         unlinkSync(tmp);
@@ -203,11 +172,6 @@ export function saveClientSkillsBaseline(
   }
 }
 
-/**
- * Remove stale baselines and leftover temp files, then cap the namespace at
- * MAX_FILES_PER_NAMESPACE by dropping the least recently written files.
- * Runs on a namespace's first write in a process and periodically after.
- */
 export function pruneBaselineFiles(dir: string, nowMs: number): void {
   const live: { path: string; mtimeMs: number }[] = [];
   for (const name of readdirSync(dir)) {
@@ -215,7 +179,6 @@ export function pruneBaselineFiles(dir: string, nowMs: number): void {
     try {
       const { mtimeMs } = statSync(path);
       if (!name.endsWith(".json") || nowMs - mtimeMs > STALE_AFTER_MS) {
-        // Temp files younger than a minute may belong to a concurrent writer.
         if (name.endsWith(".json") || nowMs - mtimeMs > 60_000) {
           unlinkSync(path);
         }

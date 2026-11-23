@@ -296,10 +296,6 @@ export class TurnLifecycle {
   }): TurnCancellationTransition {
     const state = this.#state;
     if (state.kind === "cancelling") {
-      // A later explicit user abort is authoritative over an earlier transport
-      // interruption: the human asked to discard the continuation. It also adds
-      // the external-settlement fence because backend cancellation still has to
-      // complete before a replacement turn may start.
       if (options.cause === "explicit_user") {
         this.#state = {
           ...state,

@@ -41,17 +41,11 @@ interface AgentSelectorProps {
   onSelect: (agentId: string, backendMode: AgentBackendMode) => void;
   onCancel: () => void;
   onLogin?: () => void;
-  /** Called when user creates a new agent (from New tab or N shortcut) */
   onCreateNewAgent?: (name: string, backendMode: AgentBackendMode) => void;
-  /** The command that triggered this selector (e.g., "/agents" or "/resume") */
   command?: string;
-  /** Override the overlay title. */
   title?: string;
-  /** Whether to show the New tab and N shortcut. */
   showNewTab?: boolean;
-  /** Whether Shift+D can delete agents from the selector. */
   allowDelete?: boolean;
-  /** Whether Shift+P can unpin agents from the selector. */
   allowPinActions?: boolean;
 }
 
@@ -82,8 +76,6 @@ export function AgentSelector({
 }: AgentSelectorProps) {
   const terminalWidth = useTerminalWidth();
 
-  // Tab state
-  // Eagerly check for local agents (synchronous disk read) to determine tab visibility
   const [hasLocalAgents, setHasLocalAgents] = useState(() => {
     try {
       return listLocalAgentsFromDisk().length > 0;
@@ -93,7 +85,6 @@ export function AgentSelector({
   });
   const [hasCloudAuth, setHasCloudAuth] = useState<boolean | null>(null);
 
-  // Compute visible tabs — Local tab only shown when there are local agents
   const visibleTabs = useMemo(
     () =>
       getVisibleAgentSelectorTabs({ showNewTab, hasLocalAgents, hasCloudAuth }),
@@ -102,7 +93,6 @@ export function AgentSelector({
 
   const [activeTab, setActiveTab] = useState<AgentSelectorTabId>("pinned");
 
-  // If active tab is no longer visible (e.g. local tab hidden after deleting all local agents), fall back
   useEffect(() => {
     if (activeTab === "local" && !hasLocalAgents) {
       setActiveTab("cloud");
@@ -113,20 +103,17 @@ export function AgentSelector({
     }
   }, [activeTab, hasCloudAuth, hasLocalAgents, showNewTab]);
 
-  // Pinned tab state
   const [pinnedAgents, setPinnedAgents] = useState<PinnedAgentData[]>([]);
   const [pinnedLoading, setPinnedLoading] = useState(true);
   const [pinnedSelectedIndex, setPinnedSelectedIndex] = useState(0);
   const [pinnedPage, setPinnedPage] = useState(0);
 
-  // Local tab state (reads from disk, no API calls)
   const [localAgents, setLocalAgents] = useState<AgentState[]>([]);
   const [localLoading, setLocalLoading] = useState(false);
   const [localSelectedIndex, setLocalSelectedIndex] = useState(0);
   const [localPage, setLocalPage] = useState(0);
   const [localLoaded, setLocalLoaded] = useState(false);
 
-  // Cloud tab state (fetches from API)
   const [cloudAgents, setCloudAgents] = useState<AgentState[]>([]);
   const [cloudCursor, setCloudCursor] = useState<string | null>(null);
   const [cloudLoading, setCloudLoading] = useState(false);
@@ -138,7 +125,6 @@ export function AgentSelector({
   const [cloudLoaded, setCloudLoaded] = useState(false);
   const [cloudQuery, setCloudQuery] = useState<string>("");
 
-  // Shared tab state (fetches from Cloud's shared-with-me endpoint)
   const [sharedAgents, setSharedAgents] = useState<AgentSelectorListAgent[]>(
     [],
   );
@@ -152,22 +138,18 @@ export function AgentSelector({
   const [sharedLoaded, setSharedLoaded] = useState(false);
   const [sharedQuery, setSharedQuery] = useState<string>("");
 
-  // Search state (shared across list tabs)
   const [searchInput, setSearchInput] = useState("");
   const [activeQuery, setActiveQuery] = useState("");
 
-  // Delete confirmation state
   const [viewState, setViewState] = useState<ViewState>({ type: "list" });
   const [deleteConfirmInput, setDeleteConfirmInput] = useState("");
   const [deleteLoading, setDeleteLoading] = useState(false);
 
-  // New agent tab state
   const [newAgentNameInput, setNewAgentNameInput] = useState("");
   const [newAgentNameError, setNewAgentNameError] = useState("");
   const [newAgentBackendMode, setNewAgentBackendMode] =
     useState<AgentBackendMode>(NEW_AGENT_DEFAULT_BACKEND);
 
-  // Load pinned agents
   const loadPinnedAgents = useCallback(async () => {
     setPinnedLoading(true);
     try {
@@ -188,7 +170,6 @@ export function AgentSelector({
     }
   }, []);
 
-  // Load local agents from disk
   const loadLocalAgents = useCallback(() => {
     setLocalLoading(true);
     try {
@@ -206,7 +187,6 @@ export function AgentSelector({
     }
   }, []);
 
-  // Fetch Cloud agents from cloud API directly (not via getBackend, which may be local)
   const fetchCloudAgents = useCallback(
     async (afterCursor?: string | null, query?: string) => {
       const { getClient } = await import("@/backend/api/client");
@@ -231,7 +211,6 @@ export function AgentSelector({
     [],
   );
 
-  // Load Cloud agents
   const loadCloudAgents = useCallback(
     async (query?: string) => {
       setCloudLoading(true);
@@ -254,7 +233,6 @@ export function AgentSelector({
     [fetchCloudAgents],
   );
 
-  // Fetch more Cloud agents (pagination)
   const fetchMoreCloudAgents = useCallback(async () => {
     if (cloudLoadingMore || !cloudHasMore || !cloudCursor) return;
 
@@ -268,7 +246,6 @@ export function AgentSelector({
       setCloudCursor(result.nextCursor);
       setCloudHasMore(result.nextCursor !== null);
     } catch {
-      // Silently fail on pagination errors
     } finally {
       setCloudLoadingMore(false);
     }
@@ -320,23 +297,19 @@ export function AgentSelector({
       setSharedCursor(result.nextCursor ?? null);
       setSharedHasMore(Boolean(result.nextCursor));
     } catch {
-      // Silently fail on pagination errors
     } finally {
       setSharedLoadingMore(false);
     }
   }, [sharedLoadingMore, sharedHasMore, sharedCursor, activeQuery]);
 
-  // Check cloud credentials on mount (sync — reads from the in-memory keychain cache)
   useEffect(() => {
     setHasCloudAuth(hasCloudCredentials());
   }, []);
 
-  // Load pinned agents on mount
   useEffect(() => {
     loadPinnedAgents();
   }, [loadPinnedAgents]);
 
-  // Load tab data when switching tabs (only if not already loaded)
   useEffect(() => {
     if (activeTab === "local" && !localLoaded && !localLoading) {
       loadLocalAgents();
@@ -375,7 +348,6 @@ export function AgentSelector({
     }
   }, [activeTab]);
 
-  // Reload current tab when search query changes (only if query differs from cached)
   useEffect(() => {
     if (activeTab === "cloud" && hasCloudAuth && activeQuery !== cloudQuery) {
       loadCloudAgents(activeQuery || undefined);
@@ -393,7 +365,6 @@ export function AgentSelector({
     hasCloudAuth,
   ]);
 
-  // Pagination calculations - Pinned (filter out 404 agents)
   const validPinnedAgents = pinnedAgents.filter((p) => p.agent !== null);
   const pinnedTotalPages = Math.ceil(
     validPinnedAgents.length / DISPLAY_PAGE_SIZE,
@@ -404,7 +375,6 @@ export function AgentSelector({
     pinnedStartIndex + DISPLAY_PAGE_SIZE,
   );
 
-  // Pagination calculations - Local (current agent pinned to top)
   const sortedLocalAgents = useMemo(
     () =>
       localAgents.toSorted((a, b) => {
@@ -423,7 +393,6 @@ export function AgentSelector({
     localStartIndex + DISPLAY_PAGE_SIZE,
   );
 
-  // Pagination calculations - Cloud
   const cloudTotalPages = Math.ceil(cloudAgents.length / DISPLAY_PAGE_SIZE);
   const cloudStartIndex = cloudPage * DISPLAY_PAGE_SIZE;
   const cloudPageAgents = cloudAgents.slice(
@@ -432,7 +401,6 @@ export function AgentSelector({
   );
   const cloudCanGoNext = cloudPage < cloudTotalPages - 1 || cloudHasMore;
 
-  // Pagination calculations - Shared
   const sharedTotalPages = Math.ceil(sharedAgents.length / DISPLAY_PAGE_SIZE);
   const sharedStartIndex = sharedPage * DISPLAY_PAGE_SIZE;
   const sharedPageAgents = sharedAgents.slice(
@@ -441,7 +409,6 @@ export function AgentSelector({
   );
   const sharedCanGoNext = sharedPage < sharedTotalPages - 1 || sharedHasMore;
 
-  // Current tab's state (computed)
   let currentLoading = false;
   let currentError: string | null = null;
   let currentAgents: AgentSelectorListAgent[] = [];
@@ -467,14 +434,12 @@ export function AgentSelector({
     currentAgents = cloudPageAgents;
   }
 
-  // Submit search
   const submitSearch = useCallback(() => {
     if (searchInput !== activeQuery) {
       setActiveQuery(searchInput);
     }
   }, [searchInput, activeQuery]);
 
-  // Clear search (effect will handle reload when query changes)
   const clearSearch = useCallback(() => {
     setSearchInput("");
     if (activeQuery) {
@@ -482,7 +447,6 @@ export function AgentSelector({
     }
   }, [activeQuery]);
 
-  // Handle agent deletion
   const handleDeleteAgent = useCallback(async () => {
     if (viewState.type !== "deleteConfirm") return;
     const { agent, agentId, isLocal } = viewState;
@@ -492,44 +456,36 @@ export function AgentSelector({
 
     setDeleteLoading(true);
     try {
-      // Use the correct backend for this agent's mode
       const backend = isLocal
         ? getBackendForMode("local")
         : getBackendForMode("api");
       await backend.deleteAgent(agentId);
 
-      // Reset state and refresh tabs
       setViewState({ type: "list" });
       setDeleteConfirmInput("");
-      // Reload pinned and invalidate cached tabs
       loadPinnedAgents();
       setLocalLoaded(false);
       setCloudLoaded(false);
       setSharedLoaded(false);
     } catch {
-      // Stay on confirmation screen on error
     } finally {
       setDeleteLoading(false);
     }
   }, [viewState, deleteConfirmInput, loadPinnedAgents]);
 
   useInput((input, key) => {
-    // CTRL-C: immediately cancel
     if (key.ctrl && input === "c") {
       onCancel();
       return;
     }
 
-    // Handle delete confirmation view
     if (viewState.type === "deleteConfirm") {
-      // Always allow Esc to back out (even during deletion)
       if (key.escape) {
         setViewState({ type: "list" });
         setDeleteConfirmInput("");
         return;
       }
 
-      // Disable all other input while deleting
       if (deleteLoading) return;
 
       if (key.return) {
@@ -542,9 +498,6 @@ export function AgentSelector({
       return;
     }
 
-    // List view handlers below
-
-    // Tab key cycles through tabs
     if (key.tab) {
       const currentIndex = visibleTabs.findIndex((t) => t.id === activeTab);
       const nextIndex = (currentIndex + 1) % visibleTabs.length;
@@ -554,8 +507,6 @@ export function AgentSelector({
 
     if (currentLoading) return;
 
-    // New tab has its own input handling via PasteAwareTextInput.
-    // Only handle Escape here.
     if (activeTab === "new") {
       if (hasCloudAuth && key.ctrl && input.toLowerCase() === "b") {
         setNewAgentBackendMode((prev) => (prev === "api" ? "local" : "api"));
@@ -580,7 +531,6 @@ export function AgentSelector({
     } else if (key.downArrow) {
       setCurrentSelectedIndex((prev: number) => Math.min(maxIndex, prev + 1));
     } else if (key.return) {
-      // If typing a search query (list tabs only), submit it
       if (
         activeTab !== "pinned" &&
         searchInput &&
@@ -590,7 +540,6 @@ export function AgentSelector({
         return;
       }
 
-      // Select agent
       if (activeTab === "pinned") {
         const selected = pinnedPageAgents[pinnedSelectedIndex];
         if (selected?.agent) {
@@ -617,7 +566,6 @@ export function AgentSelector({
         }
       }
     } else if (key.escape) {
-      // If typing search (list tabs), clear it first
       if (activeTab !== "pinned" && searchInput) {
         clearSearch();
         return;
@@ -628,7 +576,6 @@ export function AgentSelector({
         setSearchInput((prev) => prev.slice(0, -1));
       }
     } else if (key.leftArrow) {
-      // Previous page
       if (activeTab === "pinned") {
         if (pinnedPage > 0) {
           setPinnedPage((prev) => prev - 1);
@@ -651,7 +598,6 @@ export function AgentSelector({
         }
       }
     } else if (key.rightArrow) {
-      // Next page
       if (activeTab === "pinned") {
         if (pinnedPage < pinnedTotalPages - 1) {
           setPinnedPage((prev) => prev + 1);
@@ -692,7 +638,6 @@ export function AgentSelector({
       activeTab === "pinned" &&
       (input === "p" || input === "P")
     ) {
-      // Unpin from current scope (pinned tab only)
       const selected = pinnedPageAgents[pinnedSelectedIndex];
       if (selected) {
         const backend = getBackendForMode(selected.backendMode);
@@ -701,7 +646,6 @@ export function AgentSelector({
         });
       }
     } else if (allowDelete && input === "D" && activeTab !== "shared") {
-      // Delete agent - open confirmation
       let selectedAgent: AgentState | null = null;
       let selectedAgentId: string | null = null;
       let selectedIsLocal = false;
@@ -733,14 +677,11 @@ export function AgentSelector({
         setDeleteConfirmInput("");
       }
     } else if (showNewTab && (input === "n" || input === "N")) {
-      // Switch to New tab
       setActiveTab("new");
     } else if (activeTab !== "pinned" && input && !key.ctrl && !key.meta) {
-      // Type to search (list tabs only)
       setSearchInput((prev) => prev + input);
     }
   });
-  // Render agent item (shared between tabs)
   const renderAgentItem = (
     agent: AgentSelectorListAgent,
     _index: number,
@@ -813,7 +754,6 @@ export function AgentSelector({
     );
   };
 
-  // Render pinned agent item (may have error)
   const renderPinnedItem = (
     data: PinnedAgentData,
     index: number,
@@ -823,7 +763,6 @@ export function AgentSelector({
       return renderAgentItem(data.agent, index, isSelected, {});
     }
 
-    // Error state for missing agent
     return (
       <Box key={data.agentId} flexDirection="column" marginBottom={1}>
         <Box flexDirection="row">
@@ -849,7 +788,6 @@ export function AgentSelector({
     );
   };
 
-  // If in delete confirmation view, render that instead of the list
   if (viewState.type === "deleteConfirm") {
     const displayName = viewState.agent.name || viewState.agentId.slice(0, 12);
     return (
@@ -908,7 +846,6 @@ export function AgentSelector({
         <Box height={1} />
       </Box>
 
-      {/* Search input - list tabs only */}
       {activeTab !== "pinned" &&
         activeTab !== "new" &&
         (searchInput || activeQuery) && (
@@ -924,7 +861,6 @@ export function AgentSelector({
           </Box>
         )}
 
-      {/* Error state - list tabs */}
       {activeTab !== "pinned" && currentError && (
         <Box flexDirection="column">
           <Text color="red">Error: {currentError}</Text>
@@ -932,19 +868,16 @@ export function AgentSelector({
         </Box>
       )}
 
-      {/* Loading state */}
       {currentLoading && (
         <Box>
           <Text dimColor>{"  "}Loading agents...</Text>
         </Box>
       )}
 
-      {/* Cloud upsell when not logged in */}
       {activeTab === "cloud" && !currentLoading && hasCloudAuth === false && (
         <CloudLoginPrompt loginCommand="/login" />
       )}
 
-      {/* Empty state */}
       {!currentLoading &&
         ((activeTab === "pinned" && validPinnedAgents.length === 0) ||
           (activeTab !== "new" &&
@@ -963,7 +896,6 @@ export function AgentSelector({
           </Box>
         )}
 
-      {/* Shared tab content */}
       {activeTab === "shared" &&
         !sharedLoading &&
         !sharedError &&
@@ -977,7 +909,6 @@ export function AgentSelector({
           </Box>
         )}
 
-      {/* Pinned tab content */}
       {activeTab === "pinned" &&
         !pinnedLoading &&
         validPinnedAgents.length > 0 && (
@@ -988,7 +919,6 @@ export function AgentSelector({
           </Box>
         )}
 
-      {/* Local tab content */}
       {activeTab === "local" && !localLoading && localAgents.length > 0 && (
         <Box flexDirection="column">
           {localPageAgents.map((agent, index) =>
@@ -999,7 +929,6 @@ export function AgentSelector({
         </Box>
       )}
 
-      {/* Cloud tab content */}
       {activeTab === "cloud" &&
         !cloudLoading &&
         !cloudError &&
@@ -1013,7 +942,6 @@ export function AgentSelector({
           </Box>
         )}
 
-      {/* New tab content */}
       {activeTab === "new" && (
         <Box flexDirection="column">
           <Box paddingLeft={2}>

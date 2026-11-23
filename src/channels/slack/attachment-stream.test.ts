@@ -36,7 +36,6 @@ test("a stalled stream fails with a read-idle timeout and removes the partial fi
   const body = new ReadableStream<Uint8Array>({
     start(controller) {
       controller.enqueue(new Uint8Array([1, 2, 3]));
-      // Never enqueue again and never close: a dead TCP stream.
     },
   });
 

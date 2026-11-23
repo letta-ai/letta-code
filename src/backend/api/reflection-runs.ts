@@ -47,7 +47,6 @@ function admissionError(error: APIError): Error {
   );
 }
 
-/** Enqueue only. SDK credentials (including live Desktop credentials) stay intact. */
 export async function postReflectionRun(
   client: Letta,
   agentId: string,
@@ -63,8 +62,6 @@ export async function postReflectionRun(
           body: {
             conversation_id: request.conversation_id,
           },
-          // Admission failures are decisions, not transport retry signals. A user
-          // can retry explicitly; never silently retry a 409/429/503 or denial.
           maxRetries: 0,
           timeout: 30_000,
         },

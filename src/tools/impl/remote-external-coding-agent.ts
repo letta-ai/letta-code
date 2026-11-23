@@ -1,8 +1,3 @@
-/**
- * Runs a claude-code/codex worker on a connected computer. The computer
- * launches it with `notify: "caller"` and publishes the final report on its
- * subagent snapshot; this process owns the local task and its notification.
- */
 import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
 import {
@@ -66,7 +61,6 @@ interface ParentScope {
   actingUserId?: string | null;
 }
 
-/** The subset of spawnBackgroundSubagentTask used here (injected to avoid a cycle). */
 export type SpawnRemoteFollowTask = (args: {
   subagentType: string;
   config: SubagentConfig;
@@ -83,7 +77,6 @@ export interface RemoteExternalCodingAgentLaunch {
   computer: string;
   cloudOptions?: AgentSandboxOptions;
   prompt: string;
-  /** The destination reads the parent history and writes its own transcript file. */
   forkContext?: boolean;
   description: string;
   model?: string;
@@ -165,8 +158,6 @@ async function resolveQualifiedComputer(deviceId: string, scope: ParentScope) {
   }
 
   if (!isEnvironmentOnline(environment) || !environment.connectionId) {
-    // Neither the sandbox creation response nor the environment record exposes
-    // the conversation. Only accept the caller's exact sandbox device format.
     const prefix = `sandbox-${scope.agentId}-`;
     const suffix = deviceId.startsWith(prefix)
       ? deviceId
@@ -192,15 +183,9 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/**
- * The computer's listener no longer has the worker. Subagent state lives in
- * the listener process, so this means the listener restarted (taking the CLI
- * child with it) before the caller saw a result.
- */
 class RemoteWorkerLostError extends Error {}
 
 class OutdatedRemoteWorkerError extends Error {}
-/** Fixed telemetry categories; never include error text in the returned code. */
 export function classifyRemoteExternalWorkerControlError(
   error: unknown,
 ): string {
@@ -243,22 +228,17 @@ export function classifyRemoteExternalWorkerControlError(
   return "other";
 }
 
-/** Longest wait between reconnect attempts while the computer is unreachable. */
 const MAX_RECONNECT_DELAY_MS = 30_000;
 
-/** Follows the computer's snapshot for one launch, reconnecting if the socket drops. */
 class RemoteSubagentFollower {
   private latest: SubagentSnapshot | undefined;
   private client: AppServerClient | undefined;
   private detach: (() => void) | undefined;
   private wake = Promise.withResolvers<void>();
   private closed = false;
-  /** Aborted by close() so an in-flight reconnect stops waiting. */
   private readonly stopping = new AbortController();
   private disconnected = false;
-  /** The computer dropped the entry before this follower saw it finish. */
   private lost = false;
-  /** The computer accepted the launch, so its snapshot must include the entry. */
   private launched = false;
 
   constructor(
@@ -298,12 +278,10 @@ class RemoteSubagentFollower {
     };
   }
 
-  /** Call once the launch succeeds; the entry is registered before the response. */
   markLaunched(): void {
     this.launched = true;
   }
 
-  /** Read the worker's events after `afterSeq` over the current connection. */
   async readEvents(afterSeq: number) {
     const subagentId = this.latest?.subagent_id;
     if (!this.client || this.disconnected || !subagentId)
@@ -320,7 +298,6 @@ class RemoteSubagentFollower {
     return page;
   }
 
-  /** The worker's native ID from the most recent status update, if any. */
   latestAgentId(): string | undefined {
     return this.latest?.agent_id ?? undefined;
   }
@@ -348,7 +325,6 @@ class RemoteSubagentFollower {
     this.stopping.abort();
   }
 
-  /** Settles with `promise`, or rejects as soon as `signal` aborts or this follower closes. */
   private untilStopped<T>(
     promise: Promise<T>,
     signal: AbortSignal | undefined,
@@ -366,7 +342,6 @@ class RemoteSubagentFollower {
     });
   }
 
-  /** Resolves with the terminal snapshot, or throws once the computer is unreachable. */
   async waitForTerminal(
     signal: AbortSignal | undefined,
     onProgress: (snapshot: SubagentSnapshot) => void,
@@ -374,9 +349,6 @@ class RemoteSubagentFollower {
     const onAbort = () => this.wake.resolve();
     signal?.addEventListener("abort", onAbort, { once: true });
     let failedReconnects = 0;
-    // The worker reports only to this caller (`notify: "caller"`), and the
-    // computer keeps its final result for the published-result retention
-    // window. Keep reconnecting until that window could have passed.
     let disconnectedSince: number | undefined;
     try {
       while (true) {
@@ -390,7 +362,6 @@ class RemoteSubagentFollower {
         if (this.disconnected) {
           disconnectedSince ??= Date.now();
           const offlineSince = disconnectedSince;
-          // Abort and close resolve `wake`, so a long backoff stays interruptible.
           this.wake = Promise.withResolvers<void>();
           let timer: ReturnType<typeof setTimeout> | undefined;
           await Promise.race([
@@ -409,7 +380,6 @@ class RemoteSubagentFollower {
           signal?.throwIfAborted();
           if (this.closed) throw new Error("Stopped following the subagent");
           try {
-            // Abort and close must interrupt a reconnect that never settles.
             const connecting = this.connect();
             const client = await this.untilStopped(connecting, signal).catch(
               (error: unknown) => {
@@ -425,7 +395,6 @@ class RemoteSubagentFollower {
               throw new Error("Stopped following the subagent");
             }
             this.attach(client);
-            // Replays the snapshot, including a completion missed while offline.
             await this.untilStopped(
               client.sync({
                 runtime: {
@@ -534,7 +503,6 @@ export async function launchRemoteExternalCodingAgent(
       connect,
       deps.reconnectDelayMs ?? 2_000,
     );
-    // Listen before launching: a fast worker can finish before the response.
     next.attach(client);
     return next;
   };
@@ -550,10 +518,6 @@ export async function launchRemoteExternalCodingAgent(
           : {}),
       },
       args: {
-        // Listeners since 0.34.40 accept `harness` and `fork_context`, even
-        // before advertising `external_fork_context`. Send the choice explicitly
-        // so versions that fork by default preserve a no-fork launch.
-        // Older or unrecognized listeners keep the legacy `subagent_type` wire.
         ...(sendsForkContext
           ? { harness: type, fork_context: params.forkContext === true }
           : { subagent_type: type }),
@@ -577,7 +541,6 @@ export async function launchRemoteExternalCodingAgent(
       launched = await launch();
     } catch (error) {
       follower.close();
-      // Resolving "cloud" again would create a different sandbox.
       let resolved: Awaited<ReturnType<typeof resolveComputer>>;
       try {
         resolved = await resolveComputer(
@@ -626,14 +589,11 @@ export async function launchRemoteExternalCodingAgent(
       ? formatExternalCodingAgentId(parsed.type, parsed.sessionId, deviceId)
       : null;
   };
-  // The computer waits for the native session before answering the launch,
-  // so prefer the ID it returned; status updates can lag behind it.
   const launchedAgentId = qualify(launched.agent_id);
   const qualifiedAgentId = supportsSteering
     ? (launchedAgentId ??
       qualify(await follower.waitForAgentId(deps.agentIdWaitMs ?? 2_000)))
     : null;
-  // The final result names the worker, never the parent.
   const workerAgentId = () =>
     qualify(follower.latestAgentId()) ??
     qualifiedAgentId ??
@@ -663,7 +623,6 @@ export async function launchRemoteExternalCodingAgent(
             });
             progress.recordSnapshot(snapshot);
           });
-          // The terminal snapshot can carry progress no earlier update showed.
           await progress.finish(final);
           return {
             agentId: workerAgentId(),

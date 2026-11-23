@@ -7,8 +7,6 @@ import { fileURLToPath } from "node:url";
 import { createHeadlessResponseState } from "@/headless-response-state";
 import { createIsolatedCliTestEnv } from "@/test-utils/test-process-env";
 
-// Only the backend is fake. Exercise the real headless entrypoint, stream
-// parser, local tools, permissions, and continuation requests in a subprocess.
 const fixture = `
 import { __testSetBackend } from "./src/backend";
 import { setConfiguredBackendMode } from "./src/backend/backend-mode";

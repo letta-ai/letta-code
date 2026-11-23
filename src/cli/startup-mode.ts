@@ -9,13 +9,10 @@ export function isHeadlessStartup(
     return true;
   }
 
-  // Subcommands have already been routed. A remaining positional is an unknown
-  // command unless the caller explicitly selected headless prompt mode.
   if (firstPositional) {
     return false;
   }
 
-  // Preserve stdin-only prompt transport for pipes and spawned subagents.
   return stdinIsTTY !== true;
 }
 

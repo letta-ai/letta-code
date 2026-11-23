@@ -34,7 +34,6 @@ export function transportFixture(options: { exitOnStdinEnd?: boolean } = {}) {
   };
   const emit = (value: Record<string, unknown>) =>
     stdout.write(`${JSON.stringify(value)}\n`);
-  /** Echoes a written user input the way `--replay-user-messages` does. */
   const echo = (index: number) => {
     const input = JSON.parse(writes[index] ?? "") as Record<string, unknown>;
     emit({ ...input, isReplay: true, session_id: SESSION_ID });
@@ -61,13 +60,8 @@ export function parseWrite(
 
 export const base = { parentAgentId: "parent", cwd: "/repo" };
 
-/** Background-wait tests must fail fast instead of hanging the shard. */
 export const BACKGROUND_TEST_TIMEOUT_MS = 5_000;
 
-/**
- * Keep a ref'd handle alive while awaiting, so the test never depends on
- * whether the runtime keeps the loop alive for the session's own timers.
- */
 export async function awaitWithLiveLoop<T>(promise: Promise<T>): Promise<T> {
   const keepAlive = setInterval(() => undefined, 5);
   try {
@@ -77,7 +71,6 @@ export async function awaitWithLiveLoop<T>(promise: Promise<T>): Promise<T> {
   }
 }
 
-/** End the fake process so no stream or timer leaks into the next test. */
 export function teardownFixture(
   fixture: ReturnType<typeof transportFixture>,
 ): void {
@@ -87,7 +80,6 @@ export function teardownFixture(
   fixture.finish({ exitCode: 0, exitSignal: null });
 }
 
-/** Fixtures a test may leave open; torn down after every test. */
 const openFixtures: Array<ReturnType<typeof transportFixture>> = [];
 
 export function trackedFixture(
@@ -98,7 +90,6 @@ export function trackedFixture(
   return fixture;
 }
 
-/** Tears down tracked fixtures; call from `afterEach` before resetting sessions. */
 export function teardownOpenFixtures(): void {
   for (const fixture of openFixtures.splice(0)) teardownFixture(fixture);
 }

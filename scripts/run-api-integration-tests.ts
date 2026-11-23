@@ -9,12 +9,8 @@ import {
 import { getApiRequestConfig } from "@/backend/api/request";
 import { settingsManager } from "@/settings-manager";
 
-// Share only the public model catalog, not credentials or per-test settings.
-// Warm it before parallel CLI startups so a failed refresh can use real data.
 const cacheDir = await mkdtemp(join(tmpdir(), "letta-api-test-catalog-"));
 process.env.LETTA_MODEL_CATALOG_CACHE_DIR = cacheDir;
-// This one-time warmup is the only network fetch the shard depends on before
-// any test runs, so a single slow response must not fail the whole shard.
 const WARMUP_ATTEMPTS = 4;
 const WARMUP_BACKOFF_MS = 3_000;
 

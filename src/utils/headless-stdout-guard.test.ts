@@ -12,7 +12,6 @@ function runWithStdoutError(options: {
     `const { installHeadlessStdoutGuard } = await import(${JSON.stringify(guardUrl)});`,
     "installHeadlessStdoutGuard();",
     `process.stdout.emit("error", Object.assign(new Error("stream failed"), { code: ${JSON.stringify(options.code ?? "EPIPE")} }));`,
-    // Only reached if the handler neither exited nor threw.
     "process.exit(42);",
   ].join("\n");
 

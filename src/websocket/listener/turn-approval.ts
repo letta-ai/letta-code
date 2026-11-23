@@ -159,22 +159,16 @@ export async function handleApprovalStop(params: {
   turnCorrelation?: TurnCorrelation;
   allowQueuedContinuation?: boolean;
   onConsumeQueuedTurn?: (queuedTurn: IncomingMessage) => void | Promise<void>;
-  /** This turn's output is owned by an in-process caller, not a relay client. */
   processOwnedTurn?: boolean;
-  /** Relay connection that originated this turn; replacements retain this id. */
   originConnectionId?: string;
-  /** Whether the origin can return under the same logical connection id. */
   originConnectionCanResume?: boolean;
-  /** Recovery authority fences transport/finalization without aborting effects. */
   authorityGuard?: () => boolean;
-  /** Mutable CAS chain shared by stream and nested approval checkpoints. */
   interruptedRevisionRef?: { current: string | undefined };
   recoveryLineageId?: string;
   recoveryAuthorityStore?: RecoveryAuthorityStore;
   buildSendOptions: () => Parameters<
     typeof sendApprovalContinuationWithRetry
   >[2];
-  /** Receives this batch's unsent results when the continuation send throws. */
   onContinuationSendError?: (progress: ApprovalBranchProgress) => void;
   dependencies?: {
     classifyApprovals?: typeof classifyApprovalsWithSuggestions;
@@ -714,7 +708,6 @@ export async function handleApprovalStop(params: {
       afterToolExecution: effectBoundary.afterToolExecution,
     });
   } catch (error) {
-    // Persist partial results before delivery waits; recovery never replays effects.
     const boundaryResults = effectBoundary.results;
     const failureResults = [
       ...boundaryResults,
@@ -734,7 +727,6 @@ export async function handleApprovalStop(params: {
       "after_tool_execution",
     );
 
-    // Close tool starts after throws; cancellation still owns terminal delivery.
     emitToolExecutionOutput.flush();
     if (!shouldInterrupt() && !processOwnedTurn && !isDeliveryReady()) {
       await waitForTransportOpen(isDeliveryReady, shouldInterrupt);
@@ -776,18 +768,12 @@ export async function handleApprovalStop(params: {
     persistedExecutionResults,
   );
   lastExecutionResults = persistedExecutionResults;
-  // Tool side effects are already committed. Durably replace the pre-execution
-  // empty checkpoint before any transport readiness or delivery await so a
-  // crash/re-registration recovers the exact outcomes rather than stale denials.
   await checkpoint(
     { results: persistedExecutionResults, unstartedToolCallIds: [] },
     "after_tool_execution",
   );
   if (shouldInterrupt()) return interruptTermination();
 
-  // A relay can disconnect after client-side execution begins. Do not drop the
-  // terminal tool frames into the startup barrier of its replacement: wait
-  // until that connection has completed state sync and becomes routable.
   if (!processOwnedTurn && !isDeliveryReady()) {
     const transportOpenResult = await waitForTransportOpen(
       isDeliveryReady,
@@ -878,8 +864,6 @@ export async function handleApprovalStop(params: {
   if (consumedQueuedTurn) {
     const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
     await params.onConsumeQueuedTurn?.(queuedTurn);
-    // The queued user owns this continuation request. Assignment (rather than a
-    // conditional spread) also clears an actor inherited from the prior input.
     sendOptions.actingUserId = queuedTurn.actingUserId ?? null;
     turnCorrelation?.appendDequeuedBatch(dequeuedBatch.batchId);
     continuationBatchId = dequeuedBatch.batchId;

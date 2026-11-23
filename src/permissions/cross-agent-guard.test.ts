@@ -94,10 +94,6 @@ afterEach(() => {
   permissionMode.reset();
 });
 
-// ---------------------------------------------------------------------------
-// resolveAllowedAgents
-// ---------------------------------------------------------------------------
-
 describe("resolveAllowedAgents", () => {
   test("self-only when no parent is configured", () => {
     const allowed = resolveAllowedAgents();
@@ -153,10 +149,6 @@ describe("resolveAllowedAgents", () => {
     expect(isMemoryGuardDisabled()).toBe(false);
   });
 });
-
-// ---------------------------------------------------------------------------
-// extractTargetAgentPaths
-// ---------------------------------------------------------------------------
 
 describe("extractTargetAgentPaths", () => {
   test("file-tool targeting own memory", () => {
@@ -236,8 +228,6 @@ describe("extractTargetAgentPaths", () => {
   });
 
   test("shell tools are not path-analyzed (the kernel sandbox confines spawned shells)", () => {
-    // Shell command analysis was removed: spawned shells run inside the kernel
-    // filesystem sandbox, so the guard no longer tokenizes shell commands.
     const result = extractTargetAgentPaths(
       "Bash",
       { command: `cat ${otherMemory("system/persona.md")}` },
@@ -256,10 +246,6 @@ describe("extractTargetAgentPaths", () => {
     ).toEqual(new Set([OTHER]));
   });
 });
-
-// ---------------------------------------------------------------------------
-// evaluateCrossAgentGuard
-// ---------------------------------------------------------------------------
 
 describe("evaluateCrossAgentGuard", () => {
   beforeEach(() => {
@@ -392,10 +378,6 @@ describe("evaluateCrossAgentGuard", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Integration with checkPermission — when enabled, guard is unbypassable by any mode
-// ---------------------------------------------------------------------------
-
 describe("checkPermission integration", () => {
   const permissions = { allow: [], deny: [], ask: [] };
 
@@ -466,8 +448,6 @@ describe("checkPermission integration", () => {
         permissions,
         selfMemory(),
       );
-      // Read on own memory should not be guard-denied (guard returns null,
-      // other rules decide; Read defaults to allow).
       expect(result.matchedRule).not.toBe("cross-agent guard");
     }
   });
@@ -480,8 +460,6 @@ describe("checkPermission integration", () => {
       permissions,
       "/tmp",
     );
-    // The static guard no longer analyzes shell commands; the kernel filesystem
-    // sandbox confines the spawned shell instead.
     expect(result.matchedRule).not.toBe("cross-agent guard");
   });
 
@@ -494,19 +472,9 @@ describe("checkPermission integration", () => {
       permissions,
       "/tmp",
     );
-    // acceptEdits allows writes, and the guard is intentionally disabled.
     expect(result.decision).toBe("allow");
   });
 });
-
-// ---------------------------------------------------------------------------
-// Regression tests: Grep / Glob ancestor-path bypass.
-//
-// The classifier used to require `<home>/.letta/agents/<id>/memory` to
-// match, so pointing Grep or Glob at `.letta/agents` (the tree root)
-// slipped through entirely — leaking file contents and enumerating every
-// agent on disk.
-// ---------------------------------------------------------------------------
 
 describe("Grep/Glob ancestor-path regression tests", () => {
   const agentsTreeRoot = join(HOME, ".letta", "agents");
@@ -575,9 +543,6 @@ describe("Grep/Glob ancestor-path regression tests", () => {
   });
 
   test("Grep on the filesystem root is denied for the same reason", () => {
-    // Use the home drive's root so the test works on Windows (where `/`
-    // resolves to the current drive and may not be an ancestor of the
-    // home drive in CI).
     const fsRoot = parse(HOME).root;
     const result = evaluateCrossAgentGuard(
       "Grep",
@@ -629,8 +594,6 @@ describe("Grep/Glob ancestor-path regression tests", () => {
 
   test("Read on $HOME (ancestor) is not a cross-agent hit — Read targets a single file, not a tree", () => {
     const result = evaluateCrossAgentGuard("Read", { file_path: HOME }, "/tmp");
-    // Read on a dir would fail at the tool level anyway; guard shouldn't
-    // block generic home-dir file reads.
     expect(result).toBeNull();
   });
 
@@ -645,9 +608,6 @@ describe("Grep/Glob ancestor-path regression tests", () => {
 });
 
 describe("symlink-escape (realpath classification of in-process file tools)", () => {
-  // Real temp dirs with real symlinks: the realpath classification only has
-  // teeth when the paths actually exist on disk. Each test builds a throwaway
-  // home (~/.letta/agents/<id>/memory) and injects it as the guard's homeDir.
   const tempHomes: string[] = [];
 
   function makeTempHome(): string {
@@ -697,7 +657,6 @@ describe("symlink-escape (realpath classification of in-process file tools)", ()
     mkdirSync(otherMem, { recursive: true });
     writeFileSync(join(otherMem, "secret.md"), "TOPSECRET");
 
-    // A benign-looking symlink in the user's project pointing into other's memory.
     const projectDir = join(home, "project");
     mkdirSync(projectDir, { recursive: true });
     const link = join(projectDir, "link");
@@ -724,7 +683,7 @@ describe("symlink-escape (realpath classification of in-process file tools)", ()
 
     const targets = extractTargetAgentPaths(
       "Write",
-      { file_path: join(link, "implanted.md") }, // leaf does not exist yet
+      { file_path: join(link, "implanted.md") },
       home,
       {},
       home,
@@ -741,8 +700,6 @@ describe("symlink-escape (realpath classification of in-process file tools)", ()
     mkdirSync(otherMem, { recursive: true });
     writeFileSync(join(otherMem, "secret.md"), "TOPSECRET");
 
-    // The hole that a lexical-only check (or a realpath check skipped when the
-    // lexical path already looks like self) would miss.
     const sneaky = join(selfMem, "sneaky");
     symlinkSync(otherMem, sneaky);
 
@@ -754,7 +711,6 @@ describe("symlink-escape (realpath classification of in-process file tools)", ()
       home,
     );
 
-    // Lexically this is agent-self (allowed); realpath reveals agent-other.
     expect([...targets.agentIds]).toContain("agent-self");
     expect([...targets.agentIds]).toContain("agent-other");
   });
@@ -802,8 +758,6 @@ describe("symlink-escape (realpath classification of in-process file tools)", ()
 });
 
 describe("sandboxed subagent defers entirely to the kernel", () => {
-  // A subagent confined as a whole process by the kernel sandbox (sentinel set)
-  // gets cross-agent isolation enforced for every tool, so the guard skips.
   const subagentEnv = {
     LETTA_CODE_AGENT_ROLE: "subagent",
     LETTA_PARENT_AGENT_ID: "agent-parent",
@@ -829,10 +783,6 @@ describe("sandboxed subagent defers entirely to the kernel", () => {
 });
 
 describe("local-backend memfs tree", () => {
-  // Local-backend memory lives at ~/.letta/lc-local-backend/memfs/<id>/memory,
-  // not ~/.letta/agents. The kernel sandbox confines local subagents and shells,
-  // but the parent agent's in-process Read/Edit/Write never fork, so this guard
-  // is their only cross-agent backstop on local too.
   const localMemfs = (id: string, rel = ""): string =>
     join(HOME, ".letta", "lc-local-backend", "memfs", id, "memory", rel);
 
@@ -902,12 +852,6 @@ describe("local-backend memfs tree", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Toolset alignment: the guard covers Codex file tools (not just Claude)
-// on BOTH the API and local trees. Tool names are canonicalized; path args
-// converge on file_path / path / notebook_path / patch input.
-// ---------------------------------------------------------------------------
-
 describe("toolset alignment (Codex file tools)", () => {
   const localMemfs = (id: string, rel = ""): string =>
     join(HOME, ".letta", "lc-local-backend", "memfs", id, "memory", rel);
@@ -916,7 +860,6 @@ describe("toolset alignment (Codex file tools)", () => {
     cliPermissions.setMemoryGuardDisabled(false);
   });
 
-  // [toolName, args] pairs that each target OTHER's memory, for both trees.
   const cases: Array<[string, (target: string) => Record<string, unknown>]> = [
     ["read_file", (t) => ({ file_path: t })],
     [

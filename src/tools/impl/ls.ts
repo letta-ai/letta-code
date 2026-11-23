@@ -58,7 +58,6 @@ export async function ls(
         : a.name.localeCompare(b.name),
     );
 
-    // Apply entry limit to prevent massive directories
     const totalEntries = fileInfos.length;
     let truncated = false;
     if (totalEntries > LIMITS.LS_MAX_ENTRIES) {
@@ -98,7 +97,6 @@ function formatTree(
     );
   });
 
-  // Add truncation notice if applicable
   if (truncated) {
     lines.push("");
     lines.push(

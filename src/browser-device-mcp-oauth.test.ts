@@ -327,7 +327,6 @@ describe("browser device MCP OAuth", () => {
     });
     expect(imported).toBe(0);
 
-    // Matching, missing, and non-allowlisted domains proceed unchanged.
     for (const domain of [
       "datadoghq.com",
       "app.datadoghq.com",

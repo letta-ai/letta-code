@@ -420,7 +420,6 @@ export function createDiscordAdapter(
           return;
         }
 
-        // ── DM handling ──────────────────────────────────────────
         if (chatType === "direct") {
           if (markIngressMessageSeen(message.id)) return;
 
@@ -463,12 +462,6 @@ export function createDiscordAdapter(
           return;
         }
 
-        // ── Guild handling ────────────────────────────────────────
-        // Outside a thread:
-        //   - "open" channels process every non-bot message
-        //   - "mention-only" channels process @mentions only
-        // Inside a thread: surface messages and let the registry decide whether
-        // the thread is already routed, or whether a new mention is required.
         const parentChannelId =
           (message.channel as { parentId?: string | null }).parentId ?? null;
         const channelMode = resolveDiscordChannelMode(
@@ -480,8 +473,6 @@ export function createDiscordAdapter(
         const isOpenChannel = channelMode === "open";
         if (!isThread && !wasMentioned && !isOpenChannel) return;
 
-        // Channel allowlist: when configured, only process guild messages whose
-        // channel ID (or parent channel ID for thread messages) is allowed.
         if (
           !isDiscordGuildChannelAllowed({
             channelId: message.channelId,
@@ -499,11 +490,6 @@ export function createDiscordAdapter(
           ? message.channelId
           : null;
 
-        // If mentioned outside a thread, create one — but only when the
-        // account/channel is configured to auto-thread on mention. When
-        // auto-threading is disabled, the mention routes to the channel
-        // itself (effectiveChatId stays as message.channelId and
-        // effectiveThreadId stays null) instead of spawning a new thread.
         if (!isThread && wasMentioned) {
           if (shouldAutoThreadOnDiscordMention(config, message.channelId)) {
             const createdThread = await createThreadForMention(
@@ -527,8 +513,6 @@ export function createDiscordAdapter(
           payload.attachments,
           effectiveChatId,
         );
-        // A bare mention inside a Discord thread can recover a thread whose
-        // route provisioning failed. Other empty guild messages stay inert.
         if (
           !payload.text &&
           (!attachments || attachments.length === 0) &&
@@ -570,14 +554,12 @@ export function createDiscordAdapter(
         }
       });
 
-      // ── Reaction events ──────────────────────────────────────
       const handleReactionEvent = async (
         reaction: DiscordReactionLike,
         user: DiscordUserLike,
         action: "added" | "removed",
       ) => {
         if (!adapter.onMessage) return;
-        // Ignore bot reactions
         if (user.bot) return;
         if (user.id === botUserId) return;
 
@@ -604,10 +586,8 @@ export function createDiscordAdapter(
           typeof msg.channel.isThread === "function" &&
           msg.channel.isThread();
 
-        // In guilds, only react on messages in threads we're tracking
         if (chatType === "channel" && !isThread) return;
 
-        // Apply channel allowlist gating in guilds (parent channel of the thread)
         if (
           chatType === "channel" &&
           isThread &&
@@ -805,7 +785,6 @@ export function createDiscordAdapter(
         return { messageId: result.id };
       }
 
-      // Handle text messages
       const targetChannelId = msg.threadId ?? msg.chatId;
       const channel = await client.channels.fetch(targetChannelId);
       if (!isDiscordSendableChannel(channel)) {

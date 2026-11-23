@@ -63,9 +63,7 @@ afterEach(() => {
   for (const process of backgroundProcesses.values()) {
     try {
       process.process.kill("SIGTERM");
-    } catch {
-      // Already stopped.
-    }
+    } catch {}
     if (process.outputFile && existsSync(process.outputFile)) {
       rmSync(process.outputFile, { force: true });
     }

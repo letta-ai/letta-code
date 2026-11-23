@@ -35,9 +35,7 @@ function signalProcessGroup(
   } catch {
     try {
       childProcess.kill(signal);
-    } catch {
-      // The process already exited.
-    }
+    } catch {}
   }
 }
 
@@ -62,7 +60,6 @@ async function waitForProcessGroupExit(
   return true;
 }
 
-/** Kills the child and its descendants, including a shim's cmd.exe wrapper. */
 export async function killWindowsProcessTree(
   childProcess: ChildProcessWithoutNullStreams,
 ): Promise<void> {
@@ -81,9 +78,7 @@ export async function killWindowsProcessTree(
       if (!succeeded) {
         try {
           childProcess.kill("SIGKILL");
-        } catch {
-          // The process already exited.
-        }
+        } catch {}
       }
       resolve();
     };
@@ -104,8 +99,6 @@ async function terminateSubagentProcessTree(
   }
 
   const pid = childProcess.pid;
-  // Headless mode converts SIGINT into the turn AbortSignal. That gives each
-  // active tool a chance to clean up its own subprocesses before escalation.
   signalProcessGroup(childProcess, "SIGINT");
   if (await waitForProcessGroupExit(pid, forceKillGraceMs)) return;
 
@@ -113,16 +106,11 @@ async function terminateSubagentProcessTree(
   await waitForProcessGroupExit(pid, FORCE_KILL_SETTLE_MS);
 }
 
-/**
- * Spawns one local subagent in its own process group and ties cancellation to
- * the full group instead of only the headless launcher PID.
- */
 export function spawnSubagentProcess(
   command: string,
   args: string[],
   options: SpawnSubagentProcessOptions,
 ): RunningSubagentProcess {
-  // Default stdio is "pipe", so all three streams exist.
   const childProcess = getCommandProcessFactory()(command, args, {
     cwd: options.cwd,
     env: options.env,
@@ -172,12 +160,6 @@ export function spawnSubagentProcess(
   };
 }
 
-/**
- * Spawns an external coding-agent CLI in the managed workload slice when Cloud
- * configures one, so the CLI and everything it runs share the workload memory
- * limit instead of the listener's cgroup. `systemd-run --scope` execs the CLI
- * in place, keeping its PID, process group, and stdio pipes intact.
- */
 export function spawnManagedWorkloadProcess(
   command: string,
   args: string[],

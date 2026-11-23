@@ -15,31 +15,13 @@ import {
 
 const WORKTREES_DIR = ".letta/worktrees";
 
-/**
- * Debounce delay after a filesystem event before we act on it.
- * `git worktree add` creates the directory and populates it in stages,
- * so we wait a bit before switching CWD.
- */
 const DEBOUNCE_MS = 500;
 
 export interface WorktreeWatcherState {
-  /** The AbortController whose signal cancels the watch loop. */
   abort: AbortController;
-  /** The directory being watched (e.g. `<cwd>/.letta/worktrees`). */
   watchedDir: string;
 }
 
-/**
- * Start watching `<cwd>/.letta/worktrees/` for new directories.
- *
- * When a new directory appears that wasn't present at watch-start time,
- * the conversation's CWD is automatically updated to point at the new
- * worktree — unless the stream-based detection already switched it.
- *
- * Returns a `WorktreeWatcherState` handle that must be passed to
- * `stopWorktreeWatcher()` on cleanup, or `null` if the directory
- * doesn't exist (no-op).
- */
 export function startWorktreeWatcher(params: {
   runtime: ListenerRuntime;
   agentId: string | null;
@@ -52,7 +34,6 @@ export function startWorktreeWatcher(params: {
   const abort = new AbortController();
   const state: WorktreeWatcherState = { abort, watchedDir: worktreesDir };
 
-  // Fire-and-forget the async watcher loop. Errors are logged, not thrown.
   runWatchLoop({
     worktreesDir,
     abort,
@@ -60,7 +41,6 @@ export function startWorktreeWatcher(params: {
     agentId,
     conversationId,
   }).catch((err) => {
-    // AbortError is expected when the watcher is stopped.
     if ((err as NodeJS.ErrnoException).name === "AbortError") return;
     debugWarn("WorktreeWatcher", "watch loop error:", err);
   });
@@ -68,16 +48,10 @@ export function startWorktreeWatcher(params: {
   return state;
 }
 
-/**
- * Stop an active worktree watcher.
- */
 export function stopWorktreeWatcher(state: WorktreeWatcherState): void {
   state.abort.abort();
 }
 
-/**
- * Stop all active worktree watchers for a listener.
- */
 export function stopAllWorktreeWatchers(runtime: ListenerRuntime): void {
   for (const watcher of runtime.worktreeWatcherByConversation.values()) {
     stopWorktreeWatcher(watcher);
@@ -85,10 +59,6 @@ export function stopAllWorktreeWatchers(runtime: ListenerRuntime): void {
   runtime.worktreeWatcherByConversation.clear();
 }
 
-/**
- * Convenience: stop any existing watcher for a scope, then start a new one.
- * Called after every CWD change.
- */
 export function restartWorktreeWatcher(params: {
   runtime: ListenerRuntime;
   agentId: string | null;
@@ -109,8 +79,6 @@ export function restartWorktreeWatcher(params: {
   }
 }
 
-// ─── Internal ────────────────────────────────────────────
-
 async function runWatchLoop(params: {
   worktreesDir: string;
   abort: AbortController;
@@ -120,24 +88,17 @@ async function runWatchLoop(params: {
 }): Promise<void> {
   const { worktreesDir, abort, runtime, agentId, conversationId } = params;
 
-  // Check if the worktrees directory exists.
   const dirExists = await directoryExists(worktreesDir);
   if (!dirExists) {
-    // Watch the parent (.letta/) for worktrees/ creation, then recurse.
     const lettaDir = path.dirname(worktreesDir);
     const lettaDirExists = await directoryExists(lettaDir);
     if (!lettaDirExists) {
-      // No .letta/ directory either — nothing to watch.
       return;
     }
 
-    // Wait for `worktrees/` to appear inside `.letta/`.
     await waitForDirectoryCreation(lettaDir, "worktrees", abort.signal);
-
-    // Now the worktrees dir exists — fall through to watch it.
   }
 
-  // Snapshot existing entries so we only react to *new* ones.
   const existingEntries = new Set(await safeReaddir(worktreesDir));
 
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -145,13 +106,10 @@ async function runWatchLoop(params: {
   const watcher = watch(worktreesDir, { signal: abort.signal });
 
   for await (const event of watcher) {
-    // `rename` fires for both creation and deletion on most platforms.
     if (event.eventType !== "rename" || !event.filename) continue;
 
-    // Skip entries that existed at watch start.
     if (existingEntries.has(event.filename)) continue;
 
-    // Debounce: git worktree add creates the dir in stages.
     if (debounceTimer) clearTimeout(debounceTimer);
     const filename = event.filename;
     debounceTimer = setTimeout(() => {
@@ -178,15 +136,8 @@ async function handleNewWorktree(params: {
   const { worktreesDir, filename, runtime, agentId, conversationId } = params;
   const newWorktreePath = path.join(worktreesDir, filename);
 
-  // Verify it's actually a directory.
   if (!(await directoryExists(newWorktreePath))) return;
 
-  // Only react if THIS conversation asked git to create this exact worktree
-  // path. Multiple conversations in the same project share
-  // `.letta/worktrees/`, so they all receive the same filesystem event when
-  // any agent creates a worktree. Ownership comes from the tracked expected
-  // path, which stays live briefly after the turn so the debounced watcher can
-  // still attribute the event correctly.
   const conversationRuntime = getConversationRuntime(
     runtime,
     agentId,
@@ -196,7 +147,6 @@ async function handleNewWorktree(params: {
     return;
   }
 
-  // Check if CWD already points here (stream detection got it first).
   const currentCwd = getConversationWorkingDirectory(
     runtime,
     agentId,
@@ -222,10 +172,6 @@ async function handleNewWorktree(params: {
   });
 }
 
-/**
- * Wait for a specific subdirectory to appear inside `parentDir`.
- * Resolves once the directory is created, or rejects on abort.
- */
 async function waitForDirectoryCreation(
   parentDir: string,
   targetName: string,

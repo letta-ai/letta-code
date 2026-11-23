@@ -1,24 +1,3 @@
-/**
- * Per-conversation `client_skills` baseline.
- *
- * The server renders `client_skills` into the prompt prefix on every request,
- * so any change to it invalidates the provider prompt cache and drops earlier
- * thinking blocks. Each conversation scope therefore keeps a frozen payload
- * that is sent on every request. Later catalog changes reach the model only
- * through a skill-delta reminder, diffed against `announced` (the frozen list
- * plus deltas already delivered). A compaction rewrites the conversation
- * history anyway, which also drops earlier reminders, so it re-baselines:
- * the next request sends the current catalog as the new frozen list.
- *
- * Baselines are cached in memory and persisted per conversation scope to the
- * server-scoped local state dir (see client-skills-baseline-store.ts), so a
- * restarted or resumed process keeps sending the same frozen payload and
- * diffs against what the model was already told. A scope with no in-memory
- * baseline loads it lazily from disk; accepted requests and compaction's
- * re-baseline flag are written back. Missing or corrupt data falls back to a
- * fresh baseline, and persistence failures never fail a send.
- */
-
 import type { Backend } from "@/backend";
 import { onConversationCompacted } from "@/backend/compaction-events";
 import {
@@ -44,28 +23,16 @@ export type ClientSkillsScope = {
 };
 
 export type ClientSkillsRequestPlan = {
-  /** The payload to send as `client_skills`. */
   clientSkills: ClientSkillsPayload;
-  /** A skill-delta reminder to append to this request, if the catalog changed. */
   reminder: string | null;
-  /**
-   * Record the request as accepted. Call only after the server accepts it,
-   * so a rejected request does not consume the reminder. Returns a callback
-   * for compaction seen on this request's stream; it ignores a late summary
-   * from a stream that a newer accepted request has superseded.
-   */
   accept(): () => void;
 };
 
-// Backend identity and agent/default-conversation scope must not share a
-// baseline. Discovery cache invalidation must not clear it either. The disk
-// store keys on a stable backend identity instead of the object.
 let baselinesByBackend = new WeakMap<
   object,
   Map<string, ClientSkillsBaseline>
 >();
 
-// Manual compacts and resumed streams are reported by the backend.
 onConversationCompacted(({ backend, conversationId, agentId }) =>
   markClientSkillsCompacted(backend, { conversationId, agentId }),
 );
@@ -80,8 +47,6 @@ function getBaselines(backend: object): Map<string, ClientSkillsBaseline> {
 }
 
 function scopeKey({ conversationId, agentId }: ClientSkillsScope): string {
-  // Non-default conversation ids are globally unique; the default
-  // conversation is per agent.
   return conversationId === "default" && agentId
     ? `${conversationId}:${agentId}`
     : conversationId;
@@ -154,22 +119,15 @@ function markRebaseline(
   saveClientSkillsBaseline(backend, key, baseline);
 }
 
-/**
- * Re-baseline after a compaction observed outside this request's send stream
- * (manual compact, or a resumed stream). The next request sends the current
- * catalog as the new frozen list.
- */
 function markClientSkillsCompacted(
   backend: object,
   scope: ClientSkillsScope,
 ): void {
   const key = scopeKey(scope);
-  // After a restart the baseline may exist only on disk.
   const baseline = getOrLoadBaseline(backend, getBaselines(backend), key);
   if (baseline) markRebaseline(backend, key, baseline);
 }
 
-/** Test-only: forget in-memory baselines, as a process restart would. */
 export function resetClientSkillsBaselinesForTests(): void {
   baselinesByBackend = new WeakMap();
 }

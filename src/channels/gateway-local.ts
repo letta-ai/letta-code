@@ -462,10 +462,6 @@ export async function startLocalChannelGateway(
       { predicate: isExecuteCommandResponse },
     );
 
-  // In-process transport for the shared runtime-command executor: the same
-  // command semantics Letta Cloud reaches over its listener relay, backed
-  // here by the direct App Server connection. Local-only side effects
-  // (recent-model tracking, gateway model-status cache) stay in this client.
   const runtimeCommandClient: RuntimeCommandClient = {
     listModels: async () => {
       const response = await client.request<ListModelsResponseMessage>(
