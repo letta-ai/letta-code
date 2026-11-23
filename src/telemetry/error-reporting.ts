@@ -105,7 +105,9 @@ export type ExternalWorkerFailureStage =
   | "follow_up";
 
 export function extractHttpStatus(message: string): number | undefined {
-  const match = /(?:^|:\s*|API error \()(?:HTTP\s+)?([45]\d{2})\b/.exec(message);
+  const match = /(?:^|:\s*|API error \()(?:HTTP\s+)?([45]\d{2})\b/.exec(
+    message,
+  );
   return match ? Number(match[1]) : undefined;
 }
 
