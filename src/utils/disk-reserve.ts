@@ -22,7 +22,6 @@ function device(path: string): number {
   return statSync(candidate).dev;
 }
 
-/** One reserve per listener state volume, shared across process restarts. */
 export class DiskReserve {
   constructor(
     readonly path: string,
@@ -54,7 +53,6 @@ export class DiskReserve {
       if (used >= 0.95) {
         return this.release(sample.path);
       }
-      // Keep both the percentage and absolute low-space thresholds clear.
       if (
         used >= 0.9 ||
         sample.availableBytes - this.bytes <= sample.totalBytes * 0.1 ||
@@ -65,7 +63,6 @@ export class DiskReserve {
       mkdirSync(dirname(this.path), { recursive: true });
       const fd = openSync(this.path, "wx", 0o600);
       try {
-        // Writing every byte allocates real blocks, unlike truncate.
         const chunk = Buffer.alloc(Math.min(this.bytes, 1024 ** 2));
         let remaining = this.bytes;
         while (remaining > 0) {
@@ -105,7 +102,6 @@ export function updateDiskReserve(sample: {
   return activeReserve?.update(sample) ?? false;
 }
 
-/** Release same-volume emergency space and retry an ENOSPC exactly once. */
 export function withDiskReserveRetry<T>(path: string, operation: () => T): T {
   try {
     return operation();

@@ -392,9 +392,6 @@ describe("EnterWorktree tool", () => {
         ),
       ).toBe(worktreePath);
 
-      // The regression under test: subsequent tool calls in the SAME turn
-      // resolve their cwd from the prepared execution context, which the
-      // listener branch previously never updated.
       const pwdResult = await executeTool(
         "Bash",
         { command: 'node -e "console.log(process.cwd())"' },
@@ -547,7 +544,6 @@ describe("EnterWorktree tool", () => {
     if (!result.worktree_path) {
       throw new Error("Expected EnterWorktree to return a worktree path");
     }
-    // node_modules must not be present (neither symlinked nor copied).
     const linked = await lstat(
       path.join(result.worktree_path, "node_modules"),
     ).catch(() => null);
@@ -832,7 +828,6 @@ describe("EnterWorktree tool", () => {
       throw new Error("Expected EnterWorktree to return worktree paths");
     }
 
-    // conv-a takes worktree one, then moves to worktree two (releasing one).
     await runWithRuntimeContext(
       { conversationId: "conv-a", workingDirectory: repo },
       () => enter_worktree({ path: pathOne }),
@@ -842,7 +837,6 @@ describe("EnterWorktree tool", () => {
       () => enter_worktree({ path: pathTwo }),
     );
 
-    // conv-b can now take worktree one because conv-a's lock there was freed.
     const reused = await runWithRuntimeContext(
       { conversationId: "conv-b", workingDirectory: repo },
       () => enter_worktree({ path: pathOne }),
@@ -869,8 +863,6 @@ describe("EnterWorktree tool", () => {
     }
     const gitDir = git(["rev-parse", "--absolute-git-dir"], worktree);
 
-    // A lock left by a process that no longer exists. 999999 is above the
-    // default max pid on the platforms this runs on, so it is never live.
     await writeFile(
       path.join(gitDir, "letta-enter.lock"),
       JSON.stringify({

@@ -77,7 +77,6 @@ export interface McpOAuthConnection {
   close(): Promise<void>;
 }
 
-/** Package-owned structural fetch shape for MCP network requests. */
 export type McpFetch = (
   url: string | URL,
   init?: RequestInit,
@@ -85,7 +84,6 @@ export type McpFetch = (
 
 export interface ConnectMcpServerOptions {
   clientInfo?: { name: string; version: string };
-  /** Custom fetch used for MCP transport and every SDK OAuth request. */
   fetch?: McpFetch;
   stderr?: "inherit" | "pipe";
   oauth?: McpOAuthConnection;
@@ -99,10 +97,6 @@ const DEFAULT_CLIENT_INFO = {
   version: typeof LETTA_VERSION === "undefined" ? "0" : LETTA_VERSION,
 };
 
-/**
- * Connect to an MCP server from the client process and expose its tools through
- * a small transport-neutral interface suitable for SDK and channel adapters.
- */
 export async function connectMcpServer(
   config: McpServerConfig,
   options: ConnectMcpServerOptions = {},
@@ -224,7 +218,6 @@ async function withAbort<T>(
   }
 }
 
-/** Start a stdio MCP server on the client machine. */
 export function connectStdioMcpServer(
   config: StdioMcpServerConfig,
   options: ConnectMcpServerOptions = {},

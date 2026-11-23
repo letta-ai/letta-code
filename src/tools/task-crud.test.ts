@@ -204,7 +204,6 @@ describe("Task CRUD family", () => {
   test("TaskUpdate bumps updatedAt", async () => {
     const t = await task_create({ subject: "x", description: "y" });
     const originalUpdatedAt = t.updatedAt;
-    // Busy-wait a ms so Date.now() moves forward
     await new Promise((r) => setTimeout(r, 2));
     const updated = await task_update({
       taskId: t.taskId,

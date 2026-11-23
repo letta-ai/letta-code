@@ -244,8 +244,6 @@ function resolveModelForUpdateBase(
   if (typeof payload.model_id === "string" && payload.model_id.length > 0) {
     const byId = getModelInfo(payload.model_id);
     if (byId) {
-      // Channels echo the picker ID into both fields. Resolve that ID through
-      // the catalog; preserve a distinct explicit handle for BYOK tier changes.
       const explicitHandle =
         typeof payload.model_handle === "string" &&
         payload.model_handle !== byId.id &&
@@ -340,9 +338,6 @@ export async function resolveModelForUpdateWithInventory(
   payload: UpdateModelPayload,
 ): Promise<ResolvedModelForUpdate | null> {
   const handle = payload.model_handle ?? payload.model_id;
-  // A first-contact /model <BYOK handle>, or a click after a listener restart,
-  // has not necessarily listed models. Load its provider identity before
-  // constructing settings; hosted catalog selections need no inventory probe.
   if (
     resolveBackendMode() === "api" &&
     isCloudServerUrl() &&
@@ -651,31 +646,21 @@ export async function applyToolsetUpdateForRuntime(params: {
   };
 }
 
-/**
- * Build the full list_models_response payload, including availability data.
- * Fetches available handles and BYOK provider aliases in parallel (best-effort).
- */
 export async function buildListModelsResponse(
   requestId: string,
   options: { forceRefresh?: boolean } = {},
 ): Promise<ListModelsResponseMessage> {
   const cloud = resolveBackendMode() === "api" && isCloudServerUrl();
   const [handlesResult, providersResult] = await Promise.allSettled([
-    // User-initiated refreshes bypass the availability cache: within the
-    // cache TTL a stale snapshot would otherwise make every "Refresh model
-    // list" click return the same wrong answer.
     getAvailableModelHandles(
       options.forceRefresh === true ? { forceRefresh: true } : undefined,
     ),
     listProviders(),
-    // Refresh the runtime catalog alongside availability. API mode keeps the
-    // persisted cloud catalog on temporary failures; local mode projects pi-ai.
     refreshModelCatalog(
       options.forceRefresh === true ? { force: true } : undefined,
     ),
   ]);
 
-  // listProviders already degrades to [] on failure, but handle rejection too
   const providers =
     providersResult.status === "fulfilled" ? providersResult.value : [];
   const byokProviderAliases = buildByokProviderAliases(providers);
@@ -702,8 +687,6 @@ export async function buildListModelsResponse(
     };
   });
 
-  // Channel clients use this list as selectable inventory, not just a hint.
-  // In Cloud mode it must not reintroduce legacy hosted rows or gate presets.
   const availableHandles: string[] | null = cloud
     ? [...new Set(entries.map((entry) => entry.handle))]
     : handlesResult.status === "fulfilled"

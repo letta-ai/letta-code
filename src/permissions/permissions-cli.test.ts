@@ -8,21 +8,15 @@ beforeEach(() => {
   permissionMode.setMode("standard");
 });
 
-// Clean up after each test
 afterEach(() => {
   cliPermissions.clear();
   permissionMode.reset();
 });
 
-// ============================================================================
-// CLI Permission Parsing Tests
-// ============================================================================
-
 test("Parse simple tool list", () => {
   cliPermissions.setAllowedTools("Bash,Read,Write");
   const tools = cliPermissions.getAllowedTools();
 
-  // Bash is normalized to Bash(:*), file tools get (**) wildcard
   expect(tools).toEqual(["Bash(:*)", "Read(**)", "Write(**)"]);
 });
 
@@ -79,10 +73,6 @@ test("clear resets disable-memory-guard CLI override", () => {
   cliPermissions.clear();
   expect(cliPermissions.isMemoryGuardDisabled()).toBe(false);
 });
-
-// ============================================================================
-// CLI allowedTools Override Tests
-// ============================================================================
 
 test("allowedTools overrides settings deny rules", () => {
   cliPermissions.setAllowedTools("Bash");
@@ -141,7 +131,6 @@ test("allowedTools pattern does not match different command", () => {
     "/Users/test/project",
   );
 
-  // Should not match, fall back to default behavior
   expect(result.decision).toBe("ask");
   expect(result.reason).toBe("Default behavior for tool");
 });
@@ -177,7 +166,7 @@ test("allowedTools with wildcard prefix matches multiple commands", () => {
     permissions,
     "/Users/test/project",
   );
-  expect(result3.decision).toBe("ask"); // Should not match
+  expect(result3.decision).toBe("ask");
 });
 
 test("allowedTools applies to multiple tools", () => {
@@ -213,10 +202,6 @@ test("allowedTools applies to multiple tools", () => {
   );
   expect(writeResult.decision).toBe("allow");
 });
-
-// ============================================================================
-// CLI disallowedTools Override Tests
-// ============================================================================
 
 test("disallowedTools denies tool", () => {
   cliPermissions.setDisallowedTools("WebFetch");
@@ -310,15 +295,10 @@ test("disallowedTools does NOT override settings deny rules", () => {
     "/Users/test/project",
   );
 
-  // Settings deny should take precedence
   expect(result.decision).toBe("deny");
   expect(result.reason).toBe("Matched deny rule");
   expect(result.matchedRule).toBe("Bash(rm -rf:*)");
 });
-
-// ============================================================================
-// Combined allowedTools and disallowedTools Tests
-// ============================================================================
 
 test("disallowedTools takes precedence over allowedTools", () => {
   cliPermissions.setAllowedTools("Bash");
@@ -330,7 +310,6 @@ test("disallowedTools takes precedence over allowedTools", () => {
     ask: [],
   };
 
-  // curl should be denied
   const curlResult = checkPermission(
     "Bash",
     { command: "curl https://example.com" },
@@ -339,7 +318,6 @@ test("disallowedTools takes precedence over allowedTools", () => {
   );
   expect(curlResult.decision).toBe("deny");
 
-  // other commands should be allowed
   const lsResult = checkPermission(
     "Bash",
     { command: "ls" },
@@ -384,10 +362,6 @@ test("allowedTools and disallowedTools with multiple tools", () => {
   expect(writeResult.decision).toBe("deny");
 });
 
-// ============================================================================
-// Precedence Tests
-// ============================================================================
-
 test("Precedence: settings deny > CLI disallowedTools", () => {
   cliPermissions.setDisallowedTools("Bash(npm:*)");
 
@@ -397,7 +371,6 @@ test("Precedence: settings deny > CLI disallowedTools", () => {
     ask: [],
   };
 
-  // Settings deny should match first
   const result = checkPermission(
     "Bash",
     { command: "curl https://example.com" },
@@ -419,7 +392,6 @@ test("Precedence: CLI allowedTools > settings allow", () => {
     ask: [],
   };
 
-  // CLI should match for npm install
   const npmResult = checkPermission(
     "Bash",
     { command: "npm install" },
@@ -429,7 +401,6 @@ test("Precedence: CLI allowedTools > settings allow", () => {
   expect(npmResult.decision).toBe("allow");
   expect(npmResult.matchedRule).toBe("Bash(npm install) (CLI)");
 
-  // Settings should match for docker (non-read-only command)
   const dockerResult = checkPermission(
     "Bash",
     { command: "docker build ." },

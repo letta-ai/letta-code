@@ -6,9 +6,6 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import WebSocket from "ws";
 
-// Exercise the shipping entrypoints, not a second command handler. All outbound
-// fetches are blocked except api.letta.com requests rewritten to our HTTP server.
-// Run the built path after `bun run build` with LETTA_TEST_BUILT_ARTIFACT=1.
 const runtimes: ("bun" | "node")[] =
   process.env.LETTA_TEST_BUILT_ARTIFACT === "1" ? ["bun", "node"] : ["bun"];
 
@@ -143,7 +140,6 @@ globalThis.fetch = (input, init) => {
       });
       socket = new WebSocket(url);
       await once(socket, "open");
-      // This ID correlates WebSocket responses only, not backend admission.
       const id = "dream-transport-request";
       const frame = {
         type: "execute_command",

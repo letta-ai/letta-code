@@ -11,11 +11,6 @@ type ChannelRuntimeToolRegistrar = {
     | null;
 };
 
-/**
- * Give the process-owned channel gateway a chance to publish tools for a
- * runtime before the listener snapshots its toolset. This is best-effort so a
- * channel subsystem failure never blocks an otherwise valid device turn.
- */
 export async function publishChannelRuntimeToolsForTurn(
   listener: ChannelRuntimeToolRegistrar,
   runtime: RuntimeScope,
@@ -43,7 +38,6 @@ export async function publishChannelRuntimeToolsForTurn(
   return false;
 }
 
-/** Remove tools that were published only for one listener-owned turn. */
 export async function releaseChannelRuntimeToolsForTurn(
   listener: ChannelRuntimeToolRegistrar,
   runtime: RuntimeScope,

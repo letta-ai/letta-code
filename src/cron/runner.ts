@@ -1,16 +1,3 @@
-/**
- * Cron runner resolution for `letta cron` (LET-9692).
- *
- * Two runners own scheduled tasks:
- * - "local": the runtime-local scheduler (~/.letta/crons.json), executed by
- *   the WS listener process on this device. Dies with the device/sandbox.
- * - "cloud": durable Cloud schedules (`/v1/agents/:id/schedule`), fired by a
- *   cloud worker into a target listener or the agent's managed Cloud sandbox.
- *
- * Cloud runtimes use durable schedules. Only interactive TUI and Desktop
- * sessions, local backends, and servers without schedule routes use local crons.
- */
-
 import { isLocalAgentId } from "@/agent/agent-id";
 import type { EnvironmentConnection } from "@/backend/api/environments";
 import { ApiRequestError } from "@/backend/api/request";
@@ -32,9 +19,7 @@ export function isManagedCloudSandbox(
 
 export interface ResolveCronRunnerParams {
   managedCloudSandbox: boolean;
-  /** Active backend mode ("api" | "local"). */
   backendMode: "api" | "local";
-  /** Whether the configured server serves the Cloud schedule routes. */
   cloudSchedulesSupported?: boolean;
   listenerDeviceId?: string;
   localSchedulesAllowed?: boolean;
@@ -87,7 +72,6 @@ export function resolveCronRunner(
   };
 }
 
-/** Local execution is reserved for interactive and Desktop-owned sessions. */
 function allowsLocalCloudSchedules(): boolean {
   return (
     process.env.LETTA_DESKTOP_MODE === "1" ||
@@ -95,7 +79,6 @@ function allowsLocalCloudSchedules(): boolean {
   );
 }
 
-/** Guard the legacy local scheduler and protocol mutations without altering inventory. */
 export function getLocalCronExecutionError(action = "run"): string | undefined {
   if (isManagedCloudSandbox()) {
     return `This schedule cannot ${action === "run" ? "run" : `be ${action}`} here. Create a replacement with Wake or letta cron.`;
@@ -130,7 +113,6 @@ async function probeCloudScheduleSupport(agentId: string): Promise<boolean> {
   }
 }
 
-/** Resolve schedule ownership from the current execution environment. */
 export async function resolveCronRunnerForAgent(
   agentId: string,
 ): Promise<ResolveCronRunnerResult> {
@@ -170,33 +152,11 @@ export async function resolveCronRunnerForAgent(
   });
 }
 
-// ── Target device pre-validation ────────────────────────────────────
-
-/**
- * Synthetic ids the Desktop environment proxy injects into
- * `letta computers list` responses. Neither is a targetable device:
- * - "__letta_cloud__": the synthetic "Cloud" row (the sandbox target)
- * - "local": the synthetic offline placeholder when no local device is registered
- * Values mirror CLOUD_DEVICE_ID / LOCAL_CONNECTION_ID in the desktop app.
- */
 const SYNTHETIC_CLOUD_DEVICE_ID = "__letta_cloud__";
 const SYNTHETIC_LOCAL_PLACEHOLDER_ID = "local";
 
 export type TargetDeviceValidity = { ok: true } | { ok: false; error: string };
 
-/**
- * Pre-validate a `--computer` value against its resolved environment
- * entry, catching entries that appear in `letta computers list` but are
- * not valid Cloud-schedule targets. In Desktop/local-proxy contexts the list
- * merges desktop-local listener connections (organizationId "local" — they
- * exist only in the local proxy, not the Letta API's environments registry)
- * and a synthetic Cloud row. Targeting either would earn an unhelpful server
- * 404; fail earlier with an actionable message instead.
- *
- * `environment` is null when the device wasn't found locally — that case is
- * allowed through so the server's own registry check stays the backstop
- * (the local list may be unavailable or incomplete).
- */
 export function validateTargetDevice(
   deviceId: string,
   environment: { organizationId?: string } | null,
@@ -243,16 +203,6 @@ type TargetDeviceResolution =
   | { deviceId: string; environment: EnvironmentConnection }
   | { error: string };
 
-/**
- * Resolve a `--computer` selector to the computer's deviceId, matching the
- * Agent tool's selector forms (connection id, environment id, deviceId, or
- * name). The Cloud schedule API only accepts deviceIds, so passing the `id`
- * column from `letta computers list` would otherwise earn a 404.
- *
- * Offline computers still resolve: schedules may target them. Returns null
- * when the environments list is unavailable so the caller can fall back to
- * the raw value and leave the server authoritative.
- */
 async function resolveTargetDeviceSelector(
   selector: string,
 ): Promise<TargetDeviceResolution | null> {
@@ -269,7 +219,6 @@ async function resolveTargetDeviceSelector(
     environments.environmentMatchesSelector(environment, selector),
   );
   if (matches.length === 0) {
-    // A truncated list cannot prove absence; let the server decide.
     if (response.hasNextPage) return null;
     return {
       error: `Computer "${selector}" not found. Run \`letta computers list\` and pass its deviceId (or name).`,
@@ -282,8 +231,6 @@ async function resolveTargetDeviceSelector(
     };
   }
 
-  // Several listener rows for one device are still one computer; prefer the
-  // most recently active row for the organization check.
   matches.sort(
     (a, b) =>
       Math.max(b.lastHeartbeat ?? 0, b.lastSeenAt) -
@@ -301,12 +248,6 @@ export type CronCreatePlacement =
     }
   | { error: string };
 
-/**
- * Resolve where a newly-created schedule should live and execute.
- *
- * Both `letta cron` and Wake use this path. Registered listeners default to
- * their own device; `--computer` overrides the target of a Cloud schedule.
- */
 export async function resolveCronCreatePlacement(params: {
   agentId: string;
   targetDeviceId?: string;
@@ -352,8 +293,6 @@ export async function resolveCronCreatePlacement(params: {
   return { runner: resolved.runner, targetDeviceId: resolution.deviceId };
 }
 
-// ── Cloud payload mapping ───────────────────────────────────────────
-
 export interface BuildCloudScheduleParams {
   name: string;
   description: string;
@@ -362,7 +301,6 @@ export interface BuildCloudScheduleParams {
   cron: string;
   recurring: boolean;
   scheduledFor?: Date;
-  /** Optional connected computer to execute on (offline → occurrence fails, no fallback). */
   targetDeviceId?: string;
 }
 
@@ -377,15 +315,9 @@ export interface BuiltCloudSchedule {
       | { type: "one-time"; scheduled_at: number };
     target_device_id?: string;
   };
-  /** Caveats to surface in CLI output. */
   notes: string[];
 }
 
-/**
- * Recurring Cloud schedules currently parse bare cron expressions in the
- * cloud worker's timezone (UTC) — the contract has no IANA timezone field
- * yet (LET-9815). Surface that so agents/users aren't surprised.
- */
 export const CLOUD_CRON_UTC_NOTE =
   "Recurring schedules interpret cron expressions in UTC.";
 

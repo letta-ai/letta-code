@@ -22,7 +22,6 @@ afterEach(() => {
 function backendWithTags(tags: string[]) {
   return {
     retrieveAgent: async (_id: string, options?: AgentRetrieveOptions) => {
-      // Cloud only returns tags when explicitly included.
       const includesTags = options?.include?.includes("agent.tags") ?? false;
       return { id: "agent-hayt", name: "Hayt", tags: includesTags ? tags : [] };
     },

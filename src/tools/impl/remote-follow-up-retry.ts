@@ -1,10 +1,8 @@
 import type { AppServerClient } from "@/app-server-client";
 import { REMOTE_SUBAGENT_MESSAGE_TIMEOUT_MS } from "./claude-steer-timeouts";
 
-/** No answer to a follow-up in time; the listener may still deliver it. */
 export class RemoteFollowUpTimeoutError extends Error {}
 
-/** Both sockets closed before confirming whether the follow-up was delivered. */
 export class RemoteFollowUpSocketClosedError extends Error {}
 
 export async function sendRemoteFollowUpWithReconnect(
@@ -28,7 +26,6 @@ export async function sendRemoteFollowUpWithReconnect(
       client.close();
       const reconnected = await connect();
       attach(reconnected);
-      // Reuse the whole command: the listener deduplicates pending and completed requests.
       return await reconnected.sendSubagentMessage(command, {
         timeoutMs: REMOTE_SUBAGENT_MESSAGE_TIMEOUT_MS,
       });

@@ -1,10 +1,3 @@
-/**
- * Scope matching shared by the interrupt paths and the stop-failure
- * notification selector, so a notification's "Press Esc to retry" hint is
- * only ever written for rows an Esc can actually reach: agent matching is
- * exact (a row with no recorded parent does not match a specific agent),
- * while an unscoped conversation matches every conversation.
- */
 export interface SubagentScope {
   agentId?: string;
   conversationId?: string;

@@ -1,14 +1,3 @@
-/**
- * Turn-local rotation between connected ChatGPT (chatgpt_oauth BYOK)
- * plans when one hits its usage limit. Orgs register multiple ChatGPT plans
- * as separate BYOK providers (e.g. `chatgpt-caren`, `chatgpt-jin`) exposing
- * the same models; when a plan reports `usage_limit_reached` the consumers
- * (TUI / listener / headless) call `rotateChatGPTPlanOnQuotaLimit` from
- * their post-stop retry handling to swap the active conversation onto a
- * sibling plan and resend. A plan that lists a model but rejects it
- * (`model_not_found`) rotates the same way. No swap-back; no auth failover.
- */
-
 import {
   getAvailableModelHandles,
   getCachedAvailableModels,
@@ -24,17 +13,14 @@ import { getBackend } from "@/backend";
 import type { ChatGPTUsageSnapshot } from "@/providers/chatgpt-usage-service";
 import { isRecord } from "@/utils/type-guards";
 
-/** Maximum plan swaps per turn, enforced by each consumer. */
 export const CHATGPT_PLAN_ROTATION_MAX_SWAPS_PER_TURN = 3;
 
-/** Only account-wide limits apply to every model exposed by a plan. */
 export function isChatGPTPlanExhausted(
   usage: ChatGPTUsageSnapshot,
   now = Date.now(),
 ): boolean {
   const fetchedAt = Date.parse(usage.fetchedAt);
   if (!Number.isFinite(fetchedAt) || now - fetchedAt > 30_000) return false;
-  // Subscription windows can be full while the account still has credits.
   const hasCredits =
     usage.credits?.unlimited === true || usage.credits?.hasCredits === true;
   if (hasCredits) return false;
@@ -52,7 +38,6 @@ export interface ChatGPTPlanRotationResult {
   toProvider: string;
   toHandle: string;
   resetsAt: number | null;
-  /** Set when the plan rejected the model instead of hitting its limit. */
   unsupportedModel?: string;
 }
 
@@ -94,10 +79,6 @@ function contextWindowFromEntityRecord(entity: unknown): number | null {
   return null;
 }
 
-/**
- * Read the effective configuration before changing accounts. A different
- * conversation model does not inherit the agent's model configuration.
- */
 async function resolveScopedModelState(
   agentId: string,
   conversationId: string,
@@ -126,8 +107,6 @@ async function resolveScopedModelState(
         ? agentRecord.model_settings
         : {};
     const runtimeSettings: Record<string, unknown> = { ...savedSettings };
-    // Cloud also consumes these legacy flat fields. Preserve them when an
-    // inherited conversation becomes an explicit model override on rotation.
     for (const key of [
       "temperature",
       "parallel_tool_calls",
@@ -191,15 +170,6 @@ async function resolveScopedModelState(
   }
 }
 
-/**
- * Attempt to rotate the active conversation to the same model on a sibling
- * ChatGPT plan. The default conversation still uses the agent's base model,
- * matching the scope rules used by `/model`.
- * Returns null when the detail is not a usage-limit or unsupported-model
- * (`model_not_found`) error, the current
- * handle is not a ChatGPT BYOK handle, no eligible sibling exists, or the
- * model update fails; callers fall through to existing error handling.
- */
 export async function rotateChatGPTPlanOnQuotaLimit(params: {
   agentId: string;
   conversationId: string;
@@ -226,11 +196,7 @@ export async function rotateChatGPTPlanOnQuotaLimit(params: {
   }
   if (!models) return null;
 
-  // The caller's render-time handle can be stale after an automatic swap.
-  // Resolve the handle and configuration together from persisted scoped state.
   const scopedState = await resolveScopedModelState(agentId, conversationId);
-  // Do not rotate with unknown settings or replace a missing window with the
-  // destination account's maximum. Leave existing error handling in control.
   if (!scopedState || !scopedState.contextWindowLimit) return null;
   const currentHandle = scopedState.handle;
   if (!currentHandle || !isChatGPTByokHandleInModels(currentHandle, models)) {
@@ -240,12 +206,8 @@ export async function rotateChatGPTPlanOnQuotaLimit(params: {
   const fromProvider = providerFromHandle(currentHandle);
   if (!fromProvider) return null;
 
-  // The current plan is out of quota (or cannot serve this model) regardless
-  // of whether a sibling exists.
   exhaustedProviders.add(fromProvider);
 
-  // Check candidates before changing the model, not by spending a swap/run on
-  // each exhausted plan. Failed usage reads leave the old fallback available.
   const excludedProviders = new Set(exhaustedProviders);
   const timeout = AbortSignal.timeout(3_000);
   const usageSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
@@ -263,9 +225,7 @@ export async function rotateChatGPTPlanOnQuotaLimit(params: {
     try {
       usage =
         (await getBackend().readChatGPTUsage?.(provider, usageSignal)) ?? null;
-    } catch {
-      // Unsupported servers and unavailable usage are not proof of exhaustion.
-    }
+    } catch {}
     if (signal?.aborted) return null;
     if (
       !usage ||
@@ -281,8 +241,6 @@ export async function rotateChatGPTPlanOnQuotaLimit(params: {
   const toProvider = providerFromHandle(toHandle);
   if (!toProvider) return null;
 
-  // This is an account change, not a model selection. Generic model-selection
-  // helpers rebuild settings and derive the destination's maximum window.
   const backend = getBackend();
   const payload = {
     model: toHandle,
@@ -320,7 +278,6 @@ export async function rotateChatGPTPlanOnQuotaLimit(params: {
   };
 }
 
-// e.g. `chatgpt-caren hit its usage limit (resets 3:40 PM) — switched to chatgpt-jin`
 export function formatPlanRotationNotice(params: {
   fromProvider: string;
   toProvider: string;

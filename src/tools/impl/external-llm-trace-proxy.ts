@@ -42,7 +42,6 @@ export interface ExternalTraceRow extends ExternalTraceScope {
   created_at: string;
 }
 
-/** Loopback-only reverse proxy. Credentials pass upstream but never enter trace metadata. */
 export async function startTraceProxy(options: {
   upstream: string;
   harness: ExternalTraceRow["harness"];
@@ -101,14 +100,11 @@ export async function startTraceProxy(options: {
       if (finished) return;
       finished = true;
       if (!capture) return;
-      // Let pipe deliver its final bytes before processing the captured copy.
-      // Keep the slot until processing finishes so deferred buffers stay bounded.
       const work = new Promise<void>((resolve) =>
         setImmediate(() => {
           try {
             processCapture(transportError);
           } catch {
-            // Malformed/deep JSON and telemetry callbacks must never break transport.
           } finally {
             activeCaptures--;
             resolve();
@@ -142,7 +138,6 @@ export async function startTraceProxy(options: {
         responseBuffered = false;
       }
       const responseText = responseBuffered ? responseRaw.toString("utf8") : "";
-      // Some Responses endpoints omit or mislabel the SSE content type.
       streaming ||= /(?:^|\r?\n)data:/.test(responseText);
       const assembled = assembleTraceResponse(responseText, streaming);
       let responseJson = responseBuffered

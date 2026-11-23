@@ -80,7 +80,6 @@ describe("Task agent selection fields", () => {
   test("the model-facing description does not mention agent_type", () => {
     expect(taskDescription).not.toMatch(/\bagent_type\b/);
   });
-  // Launch behavior is covered by the existing routing and fork-receipt suites.
 });
 
 describe("resolveBackendSpecificToolAssets Task dispatch", () => {

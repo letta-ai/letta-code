@@ -358,9 +358,6 @@ describe("connect subcommand", () => {
     );
   });
 
-  // Regression for #3381: the API key was validated against the provider's
-  // default endpoint because --base-url never reached checkProviderApiKey, so
-  // any third-party key failed with a 401 from api.openai.com.
   test("validates the API key against the supplied base URL", async () => {
     const { deps } = createIoDeps();
     setProviderTarget("api");

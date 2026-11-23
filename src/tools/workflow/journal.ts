@@ -1,13 +1,3 @@
-/**
- * Run persistence: every workflow run gets a directory holding the script it
- * ran, its args, and a JSONL journal with one line per completed subagent
- * call. The journal is a debugging record (what each agent actually
- * returned); nothing replays from it.
- *
- * Everything here holds prompts, responses, and script source, so files are
- * created owner-only regardless of the process umask.
- */
-
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { resolveGlobalConfigDir } from "@/utils/settings-path";
@@ -23,7 +13,6 @@ export type JournalEntry =
       callIndex: number;
       label: string;
       prompt: string;
-      /** Present on a continuation attempt; outcome carries the same worker ID. */
       resumedConversationId?: string;
       outcome: SubagentOutcome;
     }
@@ -56,7 +45,6 @@ export function newExecutionId(): string {
   return `wf-${suffix}`;
 }
 
-/** Create the run directory and persist the script (and args) it will run. */
 const DIR_MODE = 0o700;
 const FILE_MODE = 0o600;
 

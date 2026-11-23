@@ -4,14 +4,6 @@ import { QueueRuntime } from "@/queue/queue-runtime";
 import { debugLog } from "@/utils/debug";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
 
-/**
- * The TUI's authoritative queue. `queueDisplay` is derived UI state kept in
- * sync only through these callbacks: enqueue appends, dequeue/remove drop by
- * queue item id, clear empties, and pause/resume re-project the paused flags.
- *
- * maxItems: Infinity disables drop limits to match the earlier unbounded
- * array semantics.
- */
 export function createTuiQueueRuntime(
   setQueueDisplay: Dispatch<SetStateAction<QueuedMessage[]>>,
 ): QueueRuntime {
@@ -32,8 +24,6 @@ export function createTuiQueueRuntime(
           "queue-lifecycle",
           `dequeued batch_id=${batch.batchId} merged_count=${batch.mergedCount} queue_len_after=${batch.queueLenAfter}`,
         );
-        // Drop by id, not by head count: a dequeue may skip Esc-parked user
-        // messages sitting ahead of the items it consumed.
         const consumed = new Set(batch.items.map((item) => item.id));
         setQueueDisplay((prev) =>
           prev.filter(

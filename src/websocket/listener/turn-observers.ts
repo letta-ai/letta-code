@@ -1,17 +1,6 @@
 import { debugWarn } from "@/utils/debug";
 import type { IncomingMessage } from "./types";
 
-/**
- * Turn lifecycle observers keyed by message OTID.
- *
- * In-process protocol consumers (e.g. the OpenAI-compat HTTP bridge) need to
- * know when the specific turn carrying THEIR message starts and finishes.
- * Closure identity cannot provide this: the queue pump drains queued turns
- * with whichever processQueuedTurn closure scheduled it, so a turn may be
- * processed by another caller's closure. The turn processor itself notifies
- * this registry for every turn, keyed by the OTIDs of the messages it
- * carries, making correlation independent of the dispatch path.
- */
 export interface TurnLifecycleHooks {
   onStarted?: () => void;
   onFinished: () => void;
@@ -19,7 +8,6 @@ export interface TurnLifecycleHooks {
 
 const hooksByOtid = new Map<string, TurnLifecycleHooks>();
 
-/** Returns an unregister function. */
 export function registerTurnObserver(
   otid: string,
   hooks: TurnLifecycleHooks,

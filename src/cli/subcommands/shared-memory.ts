@@ -11,21 +11,6 @@ import { ApiRequestError, apiRequest } from "@/backend/api/request";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
 import { settingsManager } from "@/settings-manager";
 
-/**
- * `letta shared-memory` — management plane for shared memory repositories.
- *
- * Shared memory repositories are org-owned git repos served over the same
- * smart-HTTP transport as agent MemFS (`/v1/git/<agent>/repositories/<name>.git`).
- * The DATA plane is the local mount at `$MEMORY_DIR/../<name>`: read, edit,
- * and commit there with plain git. The harness pushes clean commits after
- * turns, like MemFS. This subcommand
- * only covers the operations that genuinely need the API — create/list/
- * attach/detach/history — plus `sync`, which materializes local mounts.
- *
- * Uses harness auth (OAuth keychain token or API key), so it works in
- * environments where `LETTA_API_KEY` is not exported in the shell.
- */
-
 interface RepositorySummary {
   id: string;
   name: string;
@@ -147,10 +132,6 @@ async function listAgentRepositories(
   );
 }
 
-/**
- * Resolve a user-supplied name or repository id against the org's
- * repositories. Ids (`repo-...`) match on id; anything else matches on name.
- */
 export function resolveRepositoryReference(
   repositories: RepositorySummary[],
   reference: string,
@@ -171,10 +152,6 @@ async function resolveRepositoryReferenceFromApi(
   const trimmed = reference.trim();
   if (!trimmed) return null;
 
-  // Repository ids have a point-lookup endpoint. Avoid turning a known id into
-  // an organization-wide paginated scan. Names may also start with `repo-`, so
-  // a 404 falls through to exact-name resolution; authorization and other API
-  // failures continue to surface unchanged.
   if (trimmed.startsWith("repo-")) {
     try {
       return await request<RepositorySummary>(
@@ -188,9 +165,6 @@ async function resolveRepositoryReferenceFromApi(
     }
   }
 
-  // The repository list contract currently exposes only limit and offset; it
-  // has no exact-name filter. Keep scanning every page and match locally rather
-  // than using a lossy search or silently missing exact names on later pages.
   const repositories = await listOrgRepositories(request);
   return resolveRepositoryReference(repositories, trimmed);
 }
@@ -221,13 +195,6 @@ async function defaultRecompileAgent(agentId: string): Promise<void> {
   await client.agents.recompile(agentId, { update_timestamp: false });
 }
 
-/**
- * Recompile, returning the failure message instead of throwing.
- *
- * A failed recompile does not undo the attach/detach, so it must not fail the
- * command — but it does mean the system prompt projection disagrees with disk
- * until the next natural recompile, which the caller reports rather than hides.
- */
 async function recompileAndReportFailure(
   recompileAgent: (agentId: string) => Promise<void>,
   agentId: string,
@@ -409,13 +376,9 @@ export async function runSharedMemorySubcommand(
             2,
           ),
         );
-        // The attach itself succeeded; a stale projection self-heals on the
-        // next recompile. A missing mount does not: it breaks the documented
-        // git workflow, so it must not be reported as success.
         return mounted ? 0 : 1;
       }
 
-      // detach
       await request(
         "DELETE",
         `/v1/agents/${encodeURIComponent(agentId)}/repositories/${encodeURIComponent(repository.id)}`,

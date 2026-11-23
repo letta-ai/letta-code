@@ -1,13 +1,3 @@
-/**
- * Host-owned panels around the input: the product-status row above it (the
- * "dreaming" spinner for silent background agents) and the Workflow run
- * rows below it.
- *
- * Everything here reads external stores (subagent lifecycle, workflow
- * execution registry) and a 1 s ticker while something is active, so the
- * rows stay live without any state living in App.tsx.
- */
-
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import {
   getSubagentLifecycleSnapshot,
@@ -56,9 +46,6 @@ export function useProductStatusPanels(params: {
   );
   const [subagentLifecycleTick, setSubagentLifecycleTick] = useState(0);
 
-  // Runs worth a row: running, or finished within the linger window.
-  // Re-evaluated on registry changes and on the ticker (so elapsed time
-  // advances and finished rows eventually drop off).
   const workflowExecutions = useMemo(() => {
     void workflowExecutionsVersion;
     void subagentLifecycleTick;

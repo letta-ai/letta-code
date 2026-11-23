@@ -9,9 +9,6 @@ function makeMessageCreate(text: string): MessageCreate {
   return { role: "user", content: text } as unknown as MessageCreate;
 }
 
-/**
- * Mirrors listen-client arrival + turn-start/turn-end queue wiring.
- */
 function simulateListenerScript(
   script: Array<"arrive_a" | "arrive_b" | "turn_a" | "turn_b">,
 ): DequeuedBatch[] {
@@ -79,9 +76,6 @@ function simulateListenerScript(
   return dequeuedBatches;
 }
 
-/**
- * Mirrors TUI queue wiring at the QueueRuntime boundary for the same scripts.
- */
 function simulateTuiScript(
   script: Array<"arrive_a" | "arrive_b" | "turn_a" | "turn_b">,
 ): DequeuedBatch[] {
@@ -108,7 +102,6 @@ function simulateTuiScript(
       continue;
     }
 
-    // TUI drains all currently pending queue items when turn processing starts.
     if (pendingTurns.value > 0) {
       q.consumeItems(pendingTurns.value);
       pendingTurns.value = 0;

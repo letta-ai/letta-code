@@ -264,7 +264,6 @@ describe("subagent command context", () => {
       },
     );
     expect(notifyCaller).toBe(true);
-    // Relays scope the reply by runtime; the acting user stays private.
     expect(response).toEqual({
       type: "launch_subagent_response",
       request_id: "routed-launch",

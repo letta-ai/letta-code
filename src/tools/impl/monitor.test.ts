@@ -50,7 +50,6 @@ async function waitFor(
   }
 }
 
-/** The output file path as the model sees it in the Monitor tool result. */
 function outputFileOf(result: Awaited<ReturnType<typeof monitor>>): string {
   const outputFile = result.content[0]?.text.match(/^Output file: (.+)$/m)?.[1];
   if (!outputFile) throw new Error("Monitor result omitted its output file");
@@ -103,9 +102,7 @@ describe("Monitor", () => {
       processState.completionNotificationSuppressed = true;
       try {
         processState.process.kill("SIGKILL");
-      } catch {
-        // The source already ended.
-      }
+      } catch {}
     }
     backgroundProcesses.clear();
     setMessageQueueAdder(null);
@@ -164,7 +161,7 @@ describe("Monitor", () => {
         const result = await monitor({
           description: "Cloud lifetime test",
           persistent: true,
-          timeout_ms: 1000, // Persistent still ignores this, but not the Cloud cap.
+          timeout_ms: 1000,
           parentScope: { agentId: "agent-cloud", conversationId: "conv-cloud" },
           ...(source === "command"
             ? { command: nodeCommand("setInterval(() => {}, 1000)") }

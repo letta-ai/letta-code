@@ -1,7 +1,3 @@
-/**
- * Bounds an await that would otherwise hang until the per-test timeout, so a
- * stall reports which step never settled instead of a bare timeout.
- */
 export async function settleWithin<T>(
   promise: Promise<T>,
   message: string,

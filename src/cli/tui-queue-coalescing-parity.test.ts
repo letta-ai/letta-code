@@ -1,12 +1,3 @@
-/**
- * Golden parity test: buildContentFromQueueBatch (new QueueRuntime path) must
- * produce identical output to buildQueuedContentParts (current messageQueue path)
- * for the same logical input.
- *
- * This test must pass before any state is swapped in the PRQ4 cutover.
- * If these two functions ever diverge, the cutover has introduced a regression.
- */
-
 import { describe, expect, test } from "bun:test";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import {
@@ -17,9 +8,6 @@ import { QueueRuntime } from "@/queue/queue-runtime";
 import { buildExternalToolNotificationContent } from "@/queue/turn-queue-runtime";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
 
-// ── Helpers ───────────────────────────────────────────────────────
-
-/** Build a DequeuedBatch from a list of (kind, text) pairs via QueueRuntime. */
 function makeBatch(
   items: Array<{
     kind: "user" | "task_notification";
@@ -49,7 +37,6 @@ function makeBatch(
   return batch;
 }
 
-/** Build the QueuedMessage[] equivalent for the old path. */
 function makeQueued(
   items: Array<{
     kind: "user" | "task_notification";
@@ -63,8 +50,6 @@ function makeQueued(
     content: item.content,
   }));
 }
-
-// ── Fixtures ──────────────────────────────────────────────────────
 
 const SINGLE_USER = [{ kind: "user" as const, text: "hello world" }];
 
@@ -103,8 +88,6 @@ const THREE_ITEMS = [
 const MULTILINE_USER = [
   { kind: "user" as const, text: "line one\nline two\nline three" },
 ];
-
-// ── Tests ─────────────────────────────────────────────────────────
 
 describe("buildContentFromQueueBatch parity with buildQueuedContentParts", () => {
   test("single user message", () => {
@@ -185,14 +168,12 @@ describe("buildContentFromQueueBatch parity with buildQueuedContentParts", () =>
   });
 
   test("empty batch returns []", () => {
-    // Empty queue: consumeItems returns null, so test the null→[] path directly
     const q = new QueueRuntime({ maxItems: Infinity });
     q.enqueue({ kind: "message", source: "user", content: "x" } as Parameters<
       typeof q.enqueue
     >[0]);
     const batch = q.consumeItems(1);
     if (!batch) throw new Error("expected non-null batch");
-    // Override items to empty to test the null-merged → [] return
     const emptyBatch = { ...batch, items: [] };
     expect(buildContentFromQueueBatch(emptyBatch)).toEqual(
       buildQueuedContentParts([]),
@@ -211,9 +192,7 @@ describe("buildContentFromQueueBatch parity with buildQueuedContentParts", () =>
     const queued = makeQueued(USER_THEN_NOTIF);
     const newResult = buildContentFromQueueBatch(batch);
     const oldResult = buildQueuedContentParts(queued);
-    // Both should have a text separator part between the two items
     expect(newResult).toEqual(oldResult);
-    // Verify separator is present (text part with \n between items)
     const parts = newResult as Array<{ type: string; text?: string }>;
     const sepIdx = parts.findIndex((p) => p.type === "text" && p.text === "\n");
     expect(sepIdx).toBeGreaterThan(0);
@@ -221,7 +200,6 @@ describe("buildContentFromQueueBatch parity with buildQueuedContentParts", () =>
 });
 
 describe("toQueuedMsg", () => {
-  // Imported lazily here to keep test readable
   test("user message with string content round-trips to QueuedMessage", async () => {
     const { toQueuedMsg } = await import("@/cli/helpers/queued-message-parts");
     const item = {

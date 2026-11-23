@@ -1,13 +1,3 @@
-/**
- * In-process registry of Workflow tool runs, kept for status reporting.
- *
- * The Workflow tool launches a run in the background and returns at once; the
- * run then reports progress here. The /workflows command, the status rows
- * under the input, and the completion summary read from it; the TUI
- * subscribes to change notifications so nothing polls. Entries for finished
- * runs are retained for a short while so the final numbers stay visible.
- */
-
 import type { WorkflowMeta, WorkflowProgressEvent } from "./types.ts";
 
 export type WorkflowExecutionStatus = "running" | "completed" | "failed";
@@ -46,7 +36,6 @@ export interface WorkflowExecutionSnapshot {
   status: WorkflowExecutionStatus;
   error?: string;
   finishedAt?: number;
-  /** Wall-clock so far (running) or total (finished). */
   durationMs: number;
   agentsTotal: number;
   agentsDone: number;
@@ -67,13 +56,6 @@ const MAX_LOG_LINES = 50;
 let version = 0;
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
-/**
- * Coalesce change notifications to one per tick. The engine emits bursts
- * (every agent of a pipeline is queued in the same tick), and one forced
- * useSyncExternalStore re-render per event can exceed React's nested-update
- * limit under Ink ("Maximum update depth exceeded"; see #3964 for the same
- * failure in the mod registry). Readers see the latest state either way.
- */
 function notify(): void {
   if (flushTimer) return;
   flushTimer = setTimeout(() => {
@@ -86,15 +68,10 @@ function notify(): void {
   }
 }
 
-/**
- * Monotonic change counter; a stable primitive for useSyncExternalStore so
- * UI subscribers re-render only when the registry actually changes.
- */
 export function getWorkflowExecutionsVersion(): number {
   return version;
 }
 
-/** Subscribe to registry changes; returns an unsubscribe function. */
 export function subscribeToWorkflowExecutions(
   listener: () => void,
 ): () => void {
@@ -131,7 +108,6 @@ export function registerWorkflowExecution(params: {
   notify();
 }
 
-/** Apply one engine progress event to a run. */
 export function recordWorkflowProgress(
   taskId: string,
   event: WorkflowProgressEvent,
@@ -160,8 +136,6 @@ export function recordWorkflowProgress(
         status: event.status,
         detail: event.detail,
         durationMs: event.durationMs ?? previous?.durationMs,
-        // Cumulative per agent: a running event carries usage so far, the
-        // terminal event the final figure.
         totalTokens: event.totalTokens ?? previous?.totalTokens,
       });
       break;
@@ -179,7 +153,6 @@ export function finishWorkflowExecution(
   record.status = outcome.status;
   record.error = outcome.error;
   record.finishedAt = Date.now();
-  // Anything still marked queued/running never reported back (aborted).
   for (const agent of record.agents.values()) {
     if (agent.status === "queued" || agent.status === "running") {
       agent.status = "error";
@@ -247,7 +220,6 @@ export function getWorkflowExecution(
   return record ? snapshot(record, Date.now()) : null;
 }
 
-/** All retained runs, oldest first. */
 export function listWorkflowExecutions(): WorkflowExecutionSnapshot[] {
   const now = Date.now();
   return [...runs.values()]

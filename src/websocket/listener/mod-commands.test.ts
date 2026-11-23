@@ -127,7 +127,6 @@ describe("listener mod commands", () => {
 
     const runtime = fakeConversationRuntime(fakeListener(adapter, root));
 
-    // The loaded command carries its args hint into the advertised descriptor.
     expect(listListenerModCommands(runtime.listener)).toContainEqual({
       id: "greet",
       description: "Greets with args and conversation id",

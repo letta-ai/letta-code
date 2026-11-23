@@ -83,7 +83,6 @@ beforeEach(async () => {
   wsUrl = `ws://127.0.0.1:${(server.address() as AddressInfo).port}`;
   server.on("connection", (socket) => {
     serverSockets.push(socket);
-    // Keep transport liveness healthy even while startup is blocked.
     const pongs = setInterval(() => {
       if (socket.readyState === WebSocket.OPEN) socket.send('{"type":"pong"}');
     }, 10);
@@ -137,7 +136,6 @@ test(
         response.end(JSON.stringify({ id: "agent-1", name: "agent" }));
         return;
       }
-      // Anything else (the resume fetch) never answers.
     });
     await new Promise<void>((resolve) =>
       backend.listen(0, "127.0.0.1", resolve),

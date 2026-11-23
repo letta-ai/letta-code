@@ -9,11 +9,6 @@ import {
   __testSetRunTurnImpl,
 } from "@/websocket/app-server-openai";
 
-// Conformance tests: drive the /v1 routes through the real OpenAI SDK
-// instead of raw fetch, proving an unmodified OpenAI client round-trips
-// against the App Server. Wire-format assertions live in
-// app-server-openai.test.ts; these assert client-level compatibility.
-
 const TEST_AGENTS = [
   { id: "agent-local-111", name: "memo" },
   { id: "agent-local-222", name: "patch" },
@@ -126,9 +121,6 @@ describe("app-server OpenAI SDK conformance", () => {
       }),
     });
 
-    // Explicit try/catch rather than expect(...).rejects: the SDK's lazy
-    // PagePromise thenable defers the request in a way bun's rejects
-    // matcher does not observe.
     const client = sdkClient(handle, "wrong-token");
     let status: number | null = null;
     try {

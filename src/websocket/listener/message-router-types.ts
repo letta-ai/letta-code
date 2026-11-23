@@ -1,8 +1,3 @@
-/**
- * Shared types for the listener message router and its input-frame routing
- * module, kept in a leaf module so message-router.ts and
- * input-frame-router.ts do not depend on each other (cycle check).
- */
 import type WebSocket from "ws";
 import type {
   AbortMessageCommand,

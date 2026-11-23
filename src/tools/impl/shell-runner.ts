@@ -22,7 +22,6 @@ export class ShellExecutionError extends Error {
   code?: string;
   executable?: string;
   cwd?: string;
-  /** Distinguishes which lookup failed when `code` is ENOENT. */
   reason?: "executable_missing" | "cwd_missing";
 }
 
@@ -32,14 +31,11 @@ export type ShellSpawnOptions = {
   cwd: string;
   env: NodeJS.ProcessEnv;
   timeoutMs: number;
-  /** Command before launcher and sandbox wrapping, used for completion metadata. */
   sourceCommand?: ShellSourceCommand;
   signal?: AbortSignal;
-  /** Keep the TERM grace period after the launcher closes if its group survives. */
   waitForProcessGroupOnClose?: boolean;
   onOutput?: (chunk: string, stream: ShellOutputStream) => void;
   tty?: boolean;
-  /** Disable when the caller already keeps its own bounded output buffer. */
   captureOutput?: boolean;
 };
 
@@ -196,17 +192,13 @@ function killChildProcessTree(
     taskkill.once("error", () => {
       try {
         childProcess.kill("SIGKILL");
-      } catch {
-        // Already dead, ignore.
-      }
+      } catch {}
     });
     taskkill.once("close", (code) => {
       if (code === 0) return;
       try {
         childProcess.kill("SIGKILL");
-      } catch {
-        // Already dead, ignore.
-      }
+      } catch {}
     });
     return;
   }
@@ -216,9 +208,7 @@ function killChildProcessTree(
   } catch {
     try {
       childProcess.kill(signal as NodeJS.Signals);
-    } catch {
-      // Already dead, ignore.
-    }
+    } catch {}
   }
 }
 
@@ -231,7 +221,6 @@ function interruptChildProcessTree(childProcess: ChildProcess): void {
   killChildProcessTree(childProcess, "SIGINT");
 }
 
-/** Stop inherited pipe handles from extending a forced termination indefinitely. */
 function createPipeProcessKiller(
   childProcess: ChildProcess,
 ): ShellProcessHandle["kill"] {
@@ -241,10 +230,6 @@ function createPipeProcessKiller(
   childProcess.once("close", () => clearTimeout(drainTimer));
   const closePipes = () => {
     if (!exited || !forced || drainTimer) return;
-    // `exit` only waits for the launcher; `close` also waits for every process
-    // inheriting these handles. MSYS descendants can outlive taskkill's snapshot.
-    // Allow buffered output and the tree kill to finish normally first, but
-    // bound the wait for handles retained by orphaned descendants.
     drainTimer = setTimeout(() => {
       childProcess.stdin?.destroy();
       childProcess.stdout?.destroy();
@@ -258,8 +243,6 @@ function createPipeProcessKiller(
   return (signal?: string | number) => {
     forced ||=
       process.platform === "win32" || signal === "SIGKILL" || signal === 9;
-    // Issue the tree kill before releasing pipes. On POSIX, keep waiting through
-    // SIGTERM so the grace timer still escalates for stubborn descendants.
     killChildProcessTree(childProcess, signal);
     closePipes();
   };
@@ -304,9 +287,7 @@ function spawnPipeProcess(
     interrupt() {
       interruptChildProcessTree(childProcess);
     },
-    write(_input: string) {
-      // Pipe-mode shell processes deliberately keep stdin closed.
-    },
+    write(_input: string) {},
   };
 }
 
@@ -400,18 +381,11 @@ function spawnPtyProcess(
   options: ShellSpawnOptions,
   events: ProcessEvents,
 ): ShellProcessHandle {
-  // node-pty's native handles do not integrate reliably when loaded into
-  // Bun's event loop. Local Bun dev/tests use a tiny Node bridge; the
-  // distributed CLI runs under Node and uses node-pty directly.
   return typeof Bun !== "undefined"
     ? spawnPtyBridgeProcess(launcher, options, events)
     : spawnNativePtyProcess(launcher, options, events);
 }
 
-/**
- * Starts one shell process. Every built-in shell surface uses this function,
- * while its adapter decides whether to await completion or expose a session.
- */
 export function startShellProcess(
   launcher: string[],
   options: ShellSpawnOptions,
@@ -451,10 +425,7 @@ export function startShellProcess(
         },
         getClient: async () => await getClient(),
       });
-    } catch {
-      // A local broker failure must not break unrelated shell commands. A
-      // restricted MCP call from this child will continue to fail closed.
-    }
+    } catch {}
   }
   const launchOptions: ShellSpawnOptions = broker
     ? { ...options, env: { ...options.env, ...broker.env } }
@@ -581,8 +552,6 @@ export function startShellProcess(
     },
     close(code, signal, processGroup) {
       if (completed) return;
-      // A redirected descendant can still be cleaning up after its launcher and
-      // pipes have closed. Keep the original TERM deadline for that group.
       if (
         launchOptions.waitForProcessGroupOnClose &&
         forceKillTimer &&
@@ -632,8 +601,6 @@ export function startShellProcess(
     cleanup();
     const failure = error instanceof Error ? error : new Error(String(error));
     rejectCompletion(failure);
-    // Preserve synchronous startup errors without leaving the deferred
-    // completion promise unhandled.
     void completion.catch(() => {});
     throw failure;
   }
@@ -653,9 +620,6 @@ export function startShellProcess(
   return { process: processHandle, completion, terminate: terminateProcess };
 }
 
-/**
- * Compatibility helper for callers that wait for the process to finish.
- */
 export async function spawnWithLauncher(
   launcher: string[],
   options: ShellSpawnOptions,

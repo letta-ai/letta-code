@@ -1,8 +1,3 @@
-/**
- * SessionStart feedback is rebuilt by runSessionStartHooks rather than taken
- * from the executor result, so its cap is tested through that entry point.
- */
-
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   existsSync,
@@ -19,7 +14,6 @@ import { expectPrefixPreview } from "@/test-utils/overflow-preview";
 import { getOverflowDirectory } from "@/tools/impl/overflow";
 import { LIMITS } from "@/tools/impl/truncation";
 
-// Skip on Windows - the hook command uses POSIX shell quoting
 const isWindows = process.platform === "win32";
 
 describe.skipIf(isWindows)("SessionStart hook feedback", () => {
@@ -28,14 +22,12 @@ describe.skipIf(isWindows)("SessionStart hook feedback", () => {
   let originalHome: string | undefined;
 
   beforeEach(async () => {
-    // Reset settings manager FIRST before changing HOME
     await settingsManager.reset();
 
     baseDir = join(
       tmpdir(),
       `hooks-session-start-${process.pid}-${Math.random().toString(36).slice(2)}`,
     );
-    // Separate HOME and project directories to avoid double-loading settings
     const fakeHome = join(baseDir, "home");
     projectDir = join(baseDir, "project");
     mkdirSync(fakeHome, { recursive: true });
@@ -83,7 +75,6 @@ describe.skipIf(isWindows)("SessionStart hook feedback", () => {
 
     expect(result.feedback).toHaveLength(1);
     expectPrefixPreview(result.feedback[0] ?? "", "s");
-    // The executor must not also cap (and save) the stdout it hands back
     expect(readdirSync(getOverflowDirectory(projectDir))).toHaveLength(1);
   });
 

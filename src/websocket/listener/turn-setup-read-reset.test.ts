@@ -38,7 +38,6 @@ test.each(["body", "wrapped"])(
     const client = new Letta({
       apiKey: "test",
       baseURL: "http://localhost.invalid",
-      // Exercise the SDK wrapper after its fetch retries are exhausted.
       ...(shape === "wrapped" ? { maxRetries: 0 } : {}),
       fetch: async (url, init) => {
         if (init?.method === "GET") {
@@ -48,7 +47,6 @@ test.each(["body", "wrapped"])(
           reads++;
           if (reads === 1) {
             if (shape === "wrapped") throw reset;
-            // Fetch succeeded: SDK retries do not cover response.json().
             return new Response(
               new ReadableStream({
                 start(controller) {

@@ -175,18 +175,15 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
   );
   const [errorMessage, setErrorMessage] = useState<string>("");
 
-  // Repo state
   const [currentRepo, setCurrentRepo] = useState<string | null>(null);
   const [repoChoiceIndex, setRepoChoiceIndex] = useState<number>(0);
   const [repoInput, setRepoInput] = useState<string>("");
   const [repo, setRepo] = useState<string>("");
   const [repoError, setRepoError] = useState<string>("");
 
-  // Secret state
   const [apiKeyInput, setApiKeyInput] = useState<string>("");
   const [envApiKey, setEnvApiKey] = useState<string | null>(null);
 
-  // Agent state
   const [currentAgentId, setCurrentAgentIdState] = useState<string | null>(
     null,
   );
@@ -197,13 +194,11 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
   const [agentNameInput, setAgentNameInput] = useState<string>("");
   const [agentIdInput, setAgentIdInput] = useState<string>("");
 
-  // Workflow + result state
   const [workflowPath, setWorkflowPath] = useState<string>(
     ".github/workflows/letta.yml",
   );
   const [result, setResult] = useState<InstallGithubAppResult | null>(null);
 
-  // Choices
   const repoChoices = useMemo(() => {
     if (currentRepo) {
       return [
@@ -242,7 +237,6 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
     return choices;
   }, [currentAgentId]);
 
-  // Determine what API key we have available
   const availableApiKey = useMemo(() => {
     if (apiKeyInput.trim()) return apiKeyInput.trim();
     if (envApiKey) return envApiKey;
@@ -304,11 +298,9 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
         setWorkflowPath(getDefaultWorkflowPath(setup.workflowExists));
 
         if (envApiKey) {
-          // Already have API key from environment — skip to agent choice
           setAgentChoiceIndex(0);
           setStep("choose-agent");
         } else {
-          // Need to collect API key
           setStep("enter-api-key");
         }
       } catch (error) {
@@ -319,7 +311,6 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
     [envApiKey],
   );
 
-  // Preflight check
   useEffect(() => {
     if (step !== "checking") return;
 
@@ -342,7 +333,6 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
         setRepoInput(preflight.currentRepo);
       }
 
-      // Check for existing API key in environment
       const settings = settingsManager.getSettings();
       const existingKey =
         process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY || null;
@@ -350,13 +340,10 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
         setEnvApiKey(existingKey);
       }
 
-      // Try to get current agent ID
       try {
         const agentId = getCurrentAgentId();
         setCurrentAgentIdState(agentId);
-      } catch {
-        // No agent context — that's fine
-      }
+      } catch {}
 
       setStep("choose-repo");
     } catch (error) {
@@ -365,7 +352,6 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
     }
   }, [step]);
 
-  // After agent selection, proceed to install — API key is always available at this point
   const proceedFromAgent = useCallback(
     (
       mode: "current" | "existing" | "create",
@@ -478,7 +464,6 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
     }
   });
 
-  // Handlers for text input steps
   const handleApiKeySubmit = useCallback((value: string) => {
     const trimmed = value.trim();
     if (!trimmed) return;
@@ -505,8 +490,6 @@ export const InstallGithubAppFlow = memo(function InstallGithubAppFlow({
     },
     [proceedFromAgent],
   );
-
-  // === RENDER ===
 
   if (step === "checking") {
     return renderPanel(

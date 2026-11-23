@@ -74,7 +74,6 @@ test.each(["openai-responses", "openai-codex-responses"] as const)(
                 },
               }),
             )}.signature`,
-            // Run adapter hooks before capturing the final provider request.
             onPayload: async (request: unknown, requestModel: typeof model) => {
               payload =
                 (await options?.onPayload?.(request, requestModel)) ?? request;
@@ -116,7 +115,6 @@ test.each(["openai-responses", "openai-codex-responses"] as const)(
           clientTools: [],
           clientSkills: [],
         })) {
-          // Drain through the provider boundary.
         }
       } catch (error) {
         expect(String(error)).toContain("captured request without inference");
@@ -156,7 +154,6 @@ test("an agent's model_settings.temperature reaches the request", async () => {
       storageDir,
       providerType: "openai",
       providerName: "lc-openai",
-      // pi-ai treats a non-"sk-" OpenAI key as ChatGPT sign-in, which omits temperature.
       apiKey: "sk-unused-test-key",
     });
     const adapter = new PiStreamAdapter({
@@ -200,7 +197,6 @@ test("an agent's model_settings.temperature reaches the request", async () => {
           clientTools: [],
           clientSkills: [],
         })) {
-          // Drain through the provider boundary.
         }
       } catch (error) {
         expect(String(error)).toContain("captured request without inference");

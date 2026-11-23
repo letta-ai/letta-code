@@ -4,7 +4,6 @@ import { executeWorkflow } from "./workflow-engine.ts";
 
 const META = `export const meta = { name: 'budget', description: 'budget test' }\n`;
 
-/** Each agent reports `costUsd` live and in its outcome. */
 function pricedSpawner(
   costUsd: number,
   spawned: string[] = [],

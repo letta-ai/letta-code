@@ -112,9 +112,7 @@ test("real caller busy branches recover before reporting final exhaustion", asyn
       "const blockingRunId = extractConversationBusyRunId(errorDetail);",
     );
     const end = source.indexOf(
-      surface === "tui"
-        ? "// Retry pre-stream transient errors"
-        : 'if (preStreamAction === "retry_transient")',
+      'if (preStreamAction === "retry_transient")',
       start,
     );
     const finalStart = source.indexOf(
@@ -125,8 +123,8 @@ test("real caller busy branches recover before reporting final exhaustion", asyn
     );
     const finalEnd = source.indexOf("throw preStreamError;", finalStart);
     expect(start).toBeGreaterThan(0);
+    expect(end).toBeGreaterThan(start);
     expect(finalStart).toBeGreaterThan(end);
-    // Execute the actual caller branch and final failure site, with network/UI boundaries mocked.
     const code = new Bun.Transpiler({ loader: "ts" }).transformSync(
       `async function run() { do { ${source.slice(start, end)} ${source.slice(finalStart, finalEnd + "throw preStreamError;".length)} ${surface === "tui" ? "}" : ""} return "replayed"; } while (false); return "settled"; }`,
     );
@@ -185,7 +183,6 @@ test("real caller busy branches recover before reporting final exhaustion", asyn
       if (outcome === "unavailable")
         await expect(run(scope)).rejects.toBe(error);
       else if (surface === "headless" && outcome === "replayed") {
-        // Existing headless fallthrough still throws, but accepted replay must not be labelled exhausted.
         await expect(run(scope)).rejects.toBe(error);
       } else expect(await run(scope)).toBe(outcome);
       expect(
@@ -261,7 +258,7 @@ test("retries and rotating blockers cannot crowd out bounded snapshots/outcomes 
     "stream_failed",
   ] as const)
     report(phase, { otid: "request" });
-  expect(state.events).toHaveLength(6); // Two reserved outcomes, not three.
+  expect(state.events).toHaveLength(6);
   __testResetBusyRecoveryBudget();
   state.events = [];
 
@@ -317,7 +314,6 @@ test("checkpoints observe original/recovered hangs and retire 128 slots before l
       backend,
       clock,
     );
-    // Half never iterate; half wait on a genuinely unresolved second read.
     if (n % 2 === 0) {
       const reader = stream[Symbol.asyncIterator]();
       await reader.next();
@@ -360,7 +356,7 @@ test("checkpoints observe original/recovered hangs and retire 128 slots before l
   for (const cleanup of cleanups) await cleanup();
   expect(returned).toBe(128);
   add();
-  expect(timers).toHaveLength(128); // Late old cleanup must not free new slots.
+  expect(timers).toHaveLength(128);
   now = 420000;
   timers[0]?.();
   expect(contexts().some((r) => r.conversation_id === "conv-next")).toBe(true);

@@ -98,15 +98,10 @@ interface CatalogTool {
 
 interface ToolCatalog {
   tools: CatalogTool[];
-  /** True when hosted Letta Cloud excluded stdio-type cloud servers. */
   excludedHostedStdioServers: boolean;
   close(): Promise<void>;
 }
 
-/**
- * Hosted Letta Cloud cannot execute stdio-type cloud-connected servers, so
- * their synced tools must not surface through tools/schema/search/call.
- */
 function defaultIsHostedLettaCloud(): boolean {
   try {
     return getServerUrl() === LETTA_CLOUD_API_URL;
@@ -191,7 +186,6 @@ function redactUrl(value: string): string {
   }
 }
 
-/** Redact values that follow (or are inline with) sensitive-named flags. */
 function redactArgs(args: string[]): string[] {
   const redacted: string[] = [];
   let redactNext = false;
@@ -384,8 +378,6 @@ async function buildToolCatalog(
     ? servers.filter((target) => target.kind === options.targetKind)
     : servers;
   if (options.serverAliasGroup !== undefined) {
-    // Trailing underscores and minted suffixes (foo_ -> foo__2) can overlap
-    // the delimiter. Group both server aliases and call names identically.
     activeServers = servers.filter(
       (target) =>
         serverAliasGroup(aliases.get(serverKey(target)) ?? "") ===
@@ -696,9 +688,6 @@ async function runSearch(
               tool.target.toolId === result.toolId,
           );
           if (!callable) {
-            // The server-side index still contains tools from servers the
-            // catalog excluded (stdio-type cloud servers on hosted Letta
-            // Cloud); drop those instead of surfacing uncallable results.
             if (resolvedCatalog.excludedHostedStdioServers) {
               return [];
             }
@@ -777,17 +766,9 @@ async function callCatalogTool(
       `MCP tool '${toolName}' is not available`,
     );
   }
-  // When this call runs inside a listener turn attributed to a cloud super
-  // run, forward that run's originator token (in-memory store lookup only;
-  // the value is never logged here). Unattributed callers omit the header.
   const originatorSuperRunId = getRuntimeContext()?.mcpOriginatorSuperRunId;
   const originatorToken = getMcpOriginatorToken(originatorSuperRunId);
   if (originatorSuperRunId && !originatorToken) {
-    // The turn is attributed to a super run but holds no token — expected
-    // after a listener restart, when the durable ledger replays an
-    // acknowledged input but the memory-only token store was cleared. The
-    // call proceeds without the header; the server fails closed on any
-    // restricted connection. Surface the loss so it is never silent.
     console.warn(
       `[mcp-originator] no originator token held for super run ${originatorSuperRunId}; running tool call unattributed (expected after listener restart)`,
     );
@@ -806,10 +787,6 @@ async function callCatalogTool(
       );
 }
 
-/**
- * Call one agent-scoped MCP tool by its `mcp__server__tool` name, resolving it
- * through the same catalog as `letta mcp call`.
- */
 export async function callAgentMcpTool(
   agentId: string,
   toolName: string,
@@ -834,10 +811,6 @@ export interface AgentMcpSession {
   close(): Promise<void>;
 }
 
-/**
- * Resolve server identities once, then load only servers a script uses.
- * Concurrent calls share each server's catalog and connection until close().
- */
 export function createAgentMcpSession(
   agentId: string,
   deps: McpSubcommandDependencies = {},

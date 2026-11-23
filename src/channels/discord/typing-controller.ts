@@ -7,9 +7,6 @@ import { isNonEmptyString } from "./utils";
 
 const OUTBOUND_TYPING_SUPPRESSION_MS = 1_000;
 export const DISCORD_TYPING_REFRESH_MS = 8_000;
-// Lifecycle owns normal cleanup. This remains only as a lost-terminal backstop
-// and slides on external activity (outbound output / new owners). Controller-
-// generated typing pulses must not keep an orphaned entry alive forever.
 export const DISCORD_TYPING_MAX_MS = 6 * 60 * 60 * 1000;
 
 type DiscordTypingEntry = {
@@ -101,9 +98,6 @@ export function createDiscordTypingController(deps: {
     typingByChannelId.set(channelId, entry);
     if (!(await deps.sendTypingAction(channelId))) {
       const current = typingByChannelId.get(channelId);
-      // Only tear down if this source is still the sole owner — siblings may
-      // have been refcounted onto the entry while the initial typing await was
-      // in flight.
       if (
         current === entry &&
         current.sourceKeys.size === 1 &&

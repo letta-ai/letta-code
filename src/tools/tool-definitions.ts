@@ -163,7 +163,6 @@ const toolDefinitions = {
     description: GrepDescription.trim(),
     impl: grep,
   }),
-  // Used by the Docs Ezra Agent SDK toolset to inspect repository roots.
   LS: defineTool({
     schema: LSSchema,
     description: LSDescription.trim(),
@@ -206,7 +205,6 @@ const toolDefinitions = {
     description: WakeDescription.trim(),
     impl: wake,
   }),
-  // LSP-enhanced Read - used when LETTA_ENABLE_LSP is set
   ReadLSP: defineTool({
     schema: ReadLSPSchema,
     description: ReadLSPDescription.trim(),

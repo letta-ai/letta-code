@@ -30,11 +30,6 @@ const acquireTestClaim = async () => {
   } as never;
 };
 
-/**
- * A run that stops for a client-side tool finishes server-side as
- * `completed` with `requires_approval`, even while its listener is down.
- * Its pending approval is the rest of the turn, not a stale leftover.
- */
 test.each([
   ["completed", "requires_approval", 1],
   ["completed", "end_turn", 0],

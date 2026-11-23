@@ -252,8 +252,6 @@ describe("listener runtime_start external tool bridge", () => {
     );
     expect(other.clientTools).toEqual([]);
 
-    // Process-owned turns carry no connection ID. The tool remains visible
-    // only in its conversation and executes through its captured controller.
     const queued = await prepareToolExecutionContextForModel(
       "anthropic/claude-sonnet-5",
       {

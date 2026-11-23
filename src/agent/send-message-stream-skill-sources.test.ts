@@ -92,7 +92,6 @@ describe("sendMessageStream skill sources", () => {
       headers?: Record<string, string>;
     }> = [];
     let rejectNext = false;
-    // Capture the backend boundary; skill discovery and file parsing are real.
     const backend = {
       createConversationMessageStream: async (
         conversationId: string,
@@ -140,7 +139,6 @@ describe("sendMessageStream skill sources", () => {
         options,
       );
       for await (const _chunk of stream) {
-        /* consume response-state metadata */
       }
     };
     try {
@@ -169,7 +167,6 @@ describe("sendMessageStream skill sources", () => {
       expect(content.content).toContain("<system-reminder>");
       expect(content.content).toContain("Newly cloned skill");
       expect(JSON.stringify(content)).not.toContain("BODY_MUST_STAY_LAZY");
-      // The catalog stays frozen at the first send; the reminder carries it.
       expect(accepted?.client_skills).toEqual([]);
       expect(recorded.at(-2)?.body.messages).toEqual(accepted?.messages);
       await send("conv-a");

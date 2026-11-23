@@ -1,9 +1,3 @@
-/**
- * ChatGPT OAuth provider management backed by the active provider store.
- * API mode stores a chatgpt_oauth provider on Letta; local mode stores OAuth
- * tokens in the local provider auth file and uses a local fetch shim at runtime.
- */
-
 import { getBalanceMetadata } from "@/backend/api/metadata";
 import type { ChatGPTOAuthConfig } from "@/types/chatgpt-oauth";
 
@@ -21,12 +15,10 @@ import { OPENAI_CODEX_PROVIDER_NAME } from "./openai-codex-constants";
 
 export { listProviders };
 
-// Provider name constant for letta-code's ChatGPT OAuth provider
 export { OPENAI_CODEX_PROVIDER_NAME };
 
 const CHATGPT_OAUTH_PROVIDER_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
 
-// Provider type for ChatGPT OAuth (backend handles transformation)
 export const CHATGPT_OAUTH_PROVIDER_TYPE = "chatgpt_oauth";
 
 export function normalizeChatGPTOAuthProviderName(
@@ -60,9 +52,6 @@ function encodeOAuthConfig(config: ChatGPTOAuthConfig): string {
   });
 }
 
-/**
- * Get the chatgpt-plus-pro provider if it exists
- */
 export async function getOpenAICodexProvider(
   options: ProviderOperationOptions = {},
   providerName: string = OPENAI_CODEX_PROVIDER_NAME,
@@ -73,10 +62,6 @@ export async function getOpenAICodexProvider(
   );
 }
 
-/**
- * Create a new ChatGPT OAuth provider
- * OAuth config is JSON-encoded in api_key field for API-mode compatibility.
- */
 export async function createOpenAICodexProvider(
   config: ChatGPTOAuthConfig,
   options: ProviderOperationOptions = {},
@@ -94,10 +79,6 @@ export async function createOpenAICodexProvider(
   );
 }
 
-/**
- * Update an existing ChatGPT OAuth provider with new OAuth config
- * OAuth config is JSON-encoded in api_key field for API-mode compatibility.
- */
 export async function updateOpenAICodexProvider(
   providerId: string,
   config: ChatGPTOAuthConfig,
@@ -113,17 +94,6 @@ export async function updateOpenAICodexProvider(
   );
 }
 
-/**
- * Create or update the ChatGPT OAuth provider
- * This is the main function called after successful /connect codex
- *
- * In API mode the Letta backend will:
- * 1. Store the OAuth tokens securely
- * 2. Handle token refresh when needed
- * 3. Transform requests from OpenAI format to ChatGPT backend format
- * 4. Add required headers (Authorization, ChatGPT-Account-Id, etc.)
- * 5. Forward to chatgpt.com/backend-api/codex
- */
 export async function createOrUpdateOpenAICodexProvider(
   config: ChatGPTOAuthConfig,
   options: ProviderOperationOptions = {},
@@ -148,16 +118,11 @@ export async function createOrUpdateOpenAICodexProvider(
   return createOpenAICodexProvider(config, options, normalizedProviderName);
 }
 
-/**
- * Check if user is eligible for ChatGPT OAuth
- * Requires Pro or Enterprise billing tier
- */
 export async function checkOpenAICodexEligibility(): Promise<EligibilityCheckResult> {
   try {
     const balance = await getBalanceMetadata();
     const billingTier = balance.billing_tier.toLowerCase();
 
-    // OAuth is available for pro and enterprise tiers
     if (billingTier === "pro" || billingTier === "enterprise") {
       return {
         eligible: true,
@@ -171,8 +136,6 @@ export async function checkOpenAICodexEligibility(): Promise<EligibilityCheckRes
       reason: `ChatGPT OAuth requires a Pro or Enterprise plan. Current plan: ${balance.billing_tier}`,
     };
   } catch (error) {
-    // If we can't check eligibility, allow the flow to continue
-    // The provider creation will handle the error appropriately
     console.warn("Failed to check ChatGPT OAuth eligibility:", error);
     return {
       eligible: true,

@@ -13,7 +13,6 @@ test("normalizeSandboxPath strips trailing slashes and forward-slashes", () => {
 });
 
 test("normalizeSandboxPath anchors relative paths at root, never cwd", () => {
-  // A malformed relative root must not silently scope to the working dir.
   expect(normalizeSandboxPath("relative/path")).toBe("/relative/path");
 });
 

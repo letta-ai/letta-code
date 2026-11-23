@@ -111,7 +111,6 @@ test.each(["new user message", "resume_queue"])(
         stopped: true,
         cleanup_confirmed: true,
       });
-      // The real abort's finally pump runs, but a stop does not resume old work.
       await child.messageQueue;
       expect(child.turnLifecycle.kind).toBe("idle");
       expect(processed).toHaveLength(0);

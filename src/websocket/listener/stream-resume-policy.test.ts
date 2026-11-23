@@ -116,7 +116,6 @@ function backendThatFailsFirstResume(): { startingAfter: number[] } {
     async (_runId: string, body: { starting_after?: number | null }) => {
       startingAfter.push(body.starting_after ?? -1);
       if (startingAfter.length === 1) {
-        // cloud-api is still down when the first resume is attempted.
         throw new Error("socket closed unexpectedly");
       }
       return stream([stop("run-1", 2, "end_turn")]);
@@ -174,9 +173,6 @@ describe("listener stream resume policy", () => {
   });
 
   test("waits about five minutes across resume attempts", () => {
-    // A cloud-api rolling restart takes minutes, and after reconnecting the
-    // server waits 90 s of producer silence before reporting loss. One
-    // immediate attempt (the drainStreamWithResume default) covers neither.
     const waitMs = totalWaitMs(LISTENER_STREAM_RESUME_POLICY);
     expect(LISTENER_STREAM_RESUME_POLICY.maxAttempts).toBeGreaterThan(1);
     expect(waitMs).toBeGreaterThanOrEqual(4 * 60_000);

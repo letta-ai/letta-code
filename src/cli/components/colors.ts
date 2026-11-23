@@ -1,19 +1,9 @@
-/**
- * Letta Code Color System
- *
- * This file defines all colors used in the application.
- * No colors should be hardcoded in components - all should reference this file.
- */
-
 import {
   getTerminalBackgroundColor,
   getTerminalTheme,
   type TerminalRgb,
 } from "@/cli/helpers/terminal-theme";
 
-/**
- * Parse a hex color (#RRGGBB) to RGB components.
- */
 function parseHex(hex: string): { r: number; g: number; b: number } {
   const h = hex.replace("#", "");
   return {
@@ -56,86 +46,68 @@ function getCodexUserMessageBackground(): string {
   return rgbToHex(blendRgb(overlay.color, terminalBg, overlay.alpha));
 }
 
-/**
- * Convert a hex color (#RRGGBB) to an ANSI 24-bit background escape sequence.
- */
 export function hexToBgAnsi(hex: string): string {
   const { r, g, b } = parseHex(hex);
   return `\x1b[48;2;${r};${g};${b}m`;
 }
 
-/**
- * Convert a hex color (#RRGGBB) to an ANSI 24-bit foreground escape sequence.
- */
 export function hexToFgAnsi(hex: string): string {
   const { r, g, b } = parseHex(hex);
   return `\x1b[38;2;${r};${g};${b}m`;
 }
 
-// Brand colors (dark mode)
 export const brandColors = {
-  orange: "#FF5533", // dark orange
-  blue: "#0707AC", // dark blue
-  // text colors
-  primaryAccent: "#8C8CF9", // lighter blue
-  primaryAccentLight: "#BEBEEE", // even lighter blue
-  textMain: "#DEE1E4", // white
-  textSecondary: "#A5A8AB", // light grey
-  textDisabled: "#46484A", // dark grey
-  // status colors
-  statusSuccess: "#64CF64", // green
-  statusWarning: "#FEE19C", // yellow
-  statusError: "#F1689F", // red
+  orange: "#FF5533",
+  blue: "#0707AC",
+  primaryAccent: "#8C8CF9",
+  primaryAccentLight: "#BEBEEE",
+  textMain: "#DEE1E4",
+  textSecondary: "#A5A8AB",
+  textDisabled: "#46484A",
+  statusSuccess: "#64CF64",
+  statusWarning: "#FEE19C",
+  statusError: "#F1689F",
 } as const;
 
-// Brand colors (light mode)
 export const brandColorsLight = {
-  orange: "#FF5533", // dark orange
-  blue: "#0707AC", // dark blue
-  // text colors
-  primaryAccent: "#3939BD", // lighter blue
-  primaryAccentLight: "#A9A9DE", // even lighter blue
-  textMain: "#202020", // white
-  textSecondary: "#797B7D", // light grey
-  textDisabled: "#A5A8AB", // dark grey
-  // status colors
-  statusSuccess: "#28A428", // green
-  statusWarning: "#B98813", // yellow
-  statusError: "#BA024C", // red
+  orange: "#FF5533",
+  blue: "#0707AC",
+  primaryAccent: "#3939BD",
+  primaryAccentLight: "#A9A9DE",
+  textMain: "#202020",
+  textSecondary: "#797B7D",
+  textDisabled: "#A5A8AB",
+  statusSuccess: "#28A428",
+  statusWarning: "#B98813",
+  statusError: "#BA024C",
 } as const;
 
-// Semantic color system
 const _colors = {
-  // Welcome screen
   welcome: {
     border: brandColors.primaryAccent,
     accent: brandColors.primaryAccent,
   },
 
-  // Selector boxes (model, agent, generic select)
   selector: {
     border: brandColors.primaryAccentLight,
     title: brandColors.primaryAccentLight,
     itemHighlighted: brandColors.primaryAccent,
-    itemCurrent: brandColors.statusSuccess, // for "(current)" label
+    itemCurrent: brandColors.statusSuccess,
   },
 
-  // Command autocomplete and command messages
   command: {
     selected: brandColors.primaryAccent,
-    inactive: brandColors.textDisabled, // uses dimColor prop
+    inactive: brandColors.textDisabled,
     border: brandColors.textDisabled,
     running: brandColors.textSecondary,
     error: brandColors.statusError,
   },
 
-  // Approval/HITL screens
   approval: {
     border: brandColors.primaryAccentLight,
     header: brandColors.primaryAccent,
   },
 
-  // Code and markdown elements (use terminal theme colors)
   code: {
     inline: "green",
   },
@@ -150,39 +122,34 @@ const _colors = {
     secondary: brandColors.primaryAccent,
   },
 
-  // Status indicators
   status: {
     error: brandColors.statusError,
     success: brandColors.statusSuccess,
     interrupt: brandColors.statusError,
-    processing: brandColors.primaryAccent, // base text color
-    processingShimmer: brandColors.primaryAccentLight, // shimmer highlight
+    processing: brandColors.primaryAccent,
+    processingShimmer: brandColors.primaryAccentLight,
   },
 
-  // Tool calls
   tool: {
-    pending: brandColors.textSecondary, // blinking dot (ready/waiting for approval)
-    completed: brandColors.statusSuccess, // solid green dot (finished successfully)
-    streaming: brandColors.textSecondary, // solid gray dot (streaming/in progress)
-    running: brandColors.textSecondary, // blinking gray dot (executing)
-    error: brandColors.statusError, // solid red dot (failed)
-    memoryName: brandColors.primaryAccent, // memory tool name highlight (matches thinking spinner)
+    pending: brandColors.textSecondary,
+    completed: brandColors.statusSuccess,
+    streaming: brandColors.textSecondary,
+    running: brandColors.textSecondary,
+    error: brandColors.statusError,
+    memoryName: brandColors.primaryAccent,
   },
 
-  // Input box
   input: {
     border: brandColors.textDisabled,
     prompt: brandColors.textMain,
   },
 
-  // Bash mode
   bash: {
-    prompt: brandColors.statusError, // Red ! prompt
-    border: brandColors.statusError, // Red horizontal bars
-    dot: brandColors.statusError, // Red dot in output
+    prompt: brandColors.statusError,
+    border: brandColors.statusError,
+    dot: brandColors.statusError,
   },
 
-  // Shell command syntax highlighting
   shellSyntaxDark: {
     prompt: "#cba6f7",
     text: "#cdd6f4",
@@ -218,41 +185,34 @@ const _colors = {
     substitution: "#e64553",
   },
 
-  // Todo list
   todo: {
-    completed: brandColors.primaryAccent, // Same blue as in-progress, with strikethrough
+    completed: brandColors.primaryAccent,
     inProgress: brandColors.primaryAccent,
   },
 
-  // Subagent display
   subagent: {
     header: brandColors.primaryAccent,
     running: brandColors.statusWarning,
     completed: brandColors.statusSuccess,
     error: brandColors.statusError,
     treeChar: brandColors.textSecondary,
-    hint: "#808080", // Grey to match Ink's dimColor
+    hint: "#808080",
   },
 
-  // Background subagent
   bgSubagent: {
     label: "#87af87",
     spinner: "#5faf5f",
   },
 
-  // Info/modal views
   info: {
     border: brandColors.primaryAccent,
     prompt: brandColors.primaryAccent,
   },
 
-  // Diff rendering (line bg palette matches Codex CLI dark theme, see
-  // ~/dev/codex/codex-rs/tui/src/diff_render.rs lines 60-61)
   diff: {
     addedLineBg: "#213A2B",
     removedLineBg: "#4A221D",
     contextLineBg: undefined,
-    // Word-level highlight colors (used by MemoryDiffRenderer)
     addedWordBg: "#2d7a2d",
     removedWordBg: "#7a2d2d",
     textOnDark: "white",
@@ -262,36 +222,31 @@ const _colors = {
     symbolContext: undefined,
   },
 
-  // Error display
   error: {
     border: "red",
     text: "red",
   },
 
-  // Generic text colors (used with dimColor prop or general text)
   text: {
     normal: "white",
     dim: "gray",
     bold: "white",
   },
 
-  // Footer bar
   footer: {
     agentName: brandColors.primaryAccent,
   },
 
-  // Context window breakdown categories
   contextBreakdown: {
-    system: "#E07050", // coral-red
-    coreMemory: "#E0A040", // amber
-    tools: "#20B2AA", // turquoise
-    messages: "#8C8CF9", // brand purple
-    summaryMemory: "#D0B060", // gold
-    other: "#A0A0A0", // light grey
+    system: "#E07050",
+    coreMemory: "#E0A040",
+    tools: "#20B2AA",
+    messages: "#8C8CF9",
+    summaryMemory: "#D0B060",
+    other: "#A0A0A0",
   },
 } as const;
 
-// Combine static colors with theme-aware dynamic properties
 export const colors = {
   ..._colors,
 
@@ -301,12 +256,10 @@ export const colors = {
       : _colors.shellSyntaxDark;
   },
 
-  // User messages (past prompts) - theme-aware background
-  // Uses getter to read theme at render time (after async init)
   get userMessage() {
     return {
       background: getCodexUserMessageBackground(),
-      text: undefined, // use default terminal text color
+      text: undefined,
     };
   },
 };

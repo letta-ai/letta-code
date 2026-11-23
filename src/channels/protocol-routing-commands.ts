@@ -12,15 +12,6 @@ import {
 } from "@/channels/protocol-command-helpers";
 import { LEGACY_DEFAULT_CHANNEL_ID } from "@/channels/types";
 
-/**
- * Handles routing, pairing, and target channel protocol commands.
- * Returns `true` when the command was handled, `false` when the command type
- * does not belong to this group (so the caller can try the next handler).
- *
- * If none of the explicit type guards match the command is assumed to be
- * `channel_route_remove` — mirroring the original fall-through behaviour
- * since `isDetachedChannelsCommand` has already validated the union.
- */
 export function handleRoutingPairingTargetCommand(
   parsed: ChannelsCommand,
   socket: WebSocket,
@@ -36,8 +27,6 @@ export function handleRoutingPairingTargetCommand(
     removeChannelRouteLive,
     updateChannelRouteLive,
   } = service;
-
-  // -- channel_pairings_list -------------------------------------------------
 
   if (parsed.type === "channel_pairings_list") {
     try {
@@ -84,8 +73,6 @@ export function handleRoutingPairingTargetCommand(
     }
     return true;
   }
-
-  // -- channel_pairing_bind --------------------------------------------------
 
   if (parsed.type === "channel_pairing_bind") {
     try {
@@ -134,8 +121,6 @@ export function handleRoutingPairingTargetCommand(
     return true;
   }
 
-  // -- channel_routes_list ---------------------------------------------------
-
   if (parsed.type === "channel_routes_list") {
     try {
       const channelId = parsed.channel_id ?? LEGACY_DEFAULT_CHANNEL_ID;
@@ -174,8 +159,6 @@ export function handleRoutingPairingTargetCommand(
     return true;
   }
 
-  // -- channel_targets_list --------------------------------------------------
-
   if (parsed.type === "channel_targets_list") {
     try {
       safeSocketSend(
@@ -213,8 +196,6 @@ export function handleRoutingPairingTargetCommand(
     }
     return true;
   }
-
-  // -- channel_target_bind ---------------------------------------------------
 
   if (parsed.type === "channel_target_bind") {
     try {
@@ -268,8 +249,6 @@ export function handleRoutingPairingTargetCommand(
     return true;
   }
 
-  // -- channel_route_update --------------------------------------------------
-
   if (parsed.type === "channel_route_update") {
     try {
       const route = updateChannelRouteLive(
@@ -316,12 +295,6 @@ export function handleRoutingPairingTargetCommand(
     }
     return true;
   }
-
-  // -- channel_route_remove (fall-through) -----------------------------------
-  // If none of the explicit routing type guards above matched, the command
-  // must be `channel_route_remove` — `isDetachedChannelsCommand` has already
-  // validated the union and the account/config/lifecycle handler has already
-  // returned `false` for non-routing commands.
 
   if (parsed.type === "channel_route_remove") {
     try {
