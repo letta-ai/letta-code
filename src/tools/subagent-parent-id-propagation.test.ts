@@ -9,19 +9,6 @@ import {
 } from "@/tools/impl/process_manager";
 import { spawnBackgroundSubagentTask } from "@/tools/impl/task";
 
-/**
- * Covers the fix for the async-drift race where `executeSubagent` inside
- * `spawnSubagent` re-derives parentAgentId from getCurrentAgentId() after
- * multiple async yields — by which point the listener's in-process agent
- * context may have changed. The fix is to capture parentAgentId
- * synchronously at the call site (from parentScope) and plumb it through to
- * spawnSubagent.
- *
- * Verifying at the spawnBackgroundSubagentTask boundary: whatever
- * parentScope callers pass in MUST reach the spawnSubagentImpl as explicit
- * parent scope arguments — not be re-read from a global context.
- */
-
 describe("parentScope.agentId propagation to spawnSubagent", () => {
   const PARENT_AGENT_ID = "agent-parent-abc123";
   let subagentCounter = 0;
@@ -76,17 +63,10 @@ describe("parentScope.agentId propagation to spawnSubagent", () => {
     clearAllSubagents();
   });
 
-  // Positional args of spawnSubagent:
-  //   0: type, 1: prompt, 2: userModel, 3: subagentId, 4: signal,
-  //   5: existingAgentId, 6: existingConversationId, 7: maxTurns,
-  //   8: forkedContext, 9: parentAgentId, 10: transcriptPath,
-  //   11: parentConversationId, 12: memoryScope
   const PARENT_ID_ARG_INDEX = 9;
   const PARENT_CONVERSATION_ID_ARG_INDEX = 11;
   const MEMORY_SCOPE_ARG_INDEX = 12;
 
-  // Typed stub matching spawnSubagent's shape so mock.calls is inferred
-  // as a tuple with the 10th element addressable.
   type SpawnArgs = [
     type: string,
     prompt: string,
@@ -142,7 +122,6 @@ describe("parentScope.agentId propagation to spawnSubagent", () => {
       },
     });
 
-    // fire-and-forget — give the microtask queue a tick
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(spawnSubagentImpl).toHaveBeenCalledTimes(1);
@@ -163,7 +142,6 @@ describe("parentScope.agentId propagation to spawnSubagent", () => {
       subagentType: "reflection",
       prompt: "Reflect",
       description: "Test",
-      // No parentScope — simulates legacy callers pre-fix
       deps: {
         spawnSubagentImpl,
         addToMessageQueueImpl,
@@ -181,9 +159,6 @@ describe("parentScope.agentId propagation to spawnSubagent", () => {
     expect(spawnSubagentImpl).toHaveBeenCalledTimes(1);
     const call = spawnSubagentImpl.mock.calls[0] as SpawnArgs | undefined;
     expect(call).toBeDefined();
-    // spawnSubagent will fall back to getCurrentAgentId() internally; at
-    // this layer we just confirm that without parentScope, nothing is
-    // forwarded (so fallback will be exercised).
     expect(call?.[PARENT_ID_ARG_INDEX]).toBeUndefined();
     expect(call?.[PARENT_CONVERSATION_ID_ARG_INDEX]).toBeUndefined();
   });

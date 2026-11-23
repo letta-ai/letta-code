@@ -145,7 +145,6 @@ describe("runChannelModelListCommand", () => {
     expect(result.text).toContain("Available models:");
     expect(result.text).toContain("Claude Opus");
     expect(result.text).toContain("/model model-opus");
-    // Availability was reported, so no fallback note is rendered.
     expect(result.text).not.toContain("Availability lookup failed");
     expect(result.text).not.toContain("Available model data was not returned");
   });
@@ -281,8 +280,6 @@ describe("runChannelModelUpdateCommand", () => {
       modelIdentifier: "opus",
     });
 
-    // No server handle and no label resolver: the identifier stands in for
-    // both, so the parenthetical handle suffix collapses.
     expect(result.modelHandle).toBe("opus");
     expect(result.text).toBe("Telegram updated this agent's model to opus.");
   });

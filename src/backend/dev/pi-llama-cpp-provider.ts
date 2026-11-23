@@ -10,7 +10,6 @@ import {
 export const LLAMA_CPP_PI_PROVIDER_ID = "llama-cpp";
 
 export interface LlamaCppPiProviderOptions {
-  /** Base URL as configured; `/v1` is appended/stripped as needed. */
   baseURL: string;
   apiKey?: string;
   fetchImpl?: typeof fetch;
@@ -48,13 +47,6 @@ function parseLlamaCppProps(data: unknown): LlamaCppServerProps {
   };
 }
 
-/**
- * Per-model metadata from the native `/models` catalog: entries carry
- * `status.value`, `architecture.input_modalities`, and `meta.n_ctx` with
- * `meta.n_ctx_train` as the fallback. Returns undefined when no entry carries
- * per-model metadata (plain OpenAI id list), so discovery falls back to
- * `/props?model=<id>`.
- */
 function parseLlamaCppNativeModels(
   data: unknown,
 ): LocalEndpointModelMetadata[] | undefined {
@@ -114,10 +106,6 @@ function parseLlamaCppNativeModels(
     ) {
       sawMetadata = true;
     }
-    // The upstream provider exposes unloaded models through a separate management
-    // command. Letta Code's model picker is the only selection surface, so also
-    // publish states that llama.cpp can serve transparently: sleeping models wake
-    // on request, and non-failed unloaded models load on demand in router mode.
     const selectable =
       status === undefined ||
       status === "loaded" ||
@@ -136,12 +124,6 @@ function parseLlamaCppNativeModels(
   return sawMetadata ? parsed : undefined;
 }
 
-/**
- * Upstream model construction: the engine context applies first and
- * maxTokens tracks it; the shared provider then applies Letta's conservative
- * harness default to both values. Compat flags match the current upstream
- * llama.cpp provider literally.
- */
 function llamaCppModelMetadata(
   id: string,
   input: { vision?: boolean; contextLength?: number },
@@ -164,29 +146,13 @@ function llamaCppModelMetadata(
   };
 }
 
-/**
- * llama.cpp capability discovery with per-model metadata. Preference order:
- *
- * 1. The native `/models` catalog (distinct from the OpenAI-compatible
- *    `/v1/models` list): per-model `status`, `architecture.input_modalities`,
- *    `meta.n_ctx`/`n_ctx_train` — authoritative per model, including router
- *    mode where one server hosts many on-demand models.
- * 2. `GET /props?model=<id>` per model from the `/v1/models` id list.
- *    Single-model servers ignore the query parameter and return their
- *    global props, which is correct there.
- * 3. The model's last-known published Model, else text-only — one model's
- *    metadata is never applied to another, and capabilities are never
- *    guessed from the model name.
- */
 const llamaCppDiscover: LocalEndpointDiscover = async (context) => {
   try {
     const native = parseLlamaCppNativeModels(
       await context.fetchJson(`${context.nativeBaseURL}/models`),
     );
     if (native) return native.map(context.buildModel);
-  } catch {
-    // Native catalog unavailable; fall back to the OpenAI-compatible list.
-  }
+  } catch {}
 
   const list = await context.fetchJson(`${context.openAIBaseURL}/models`);
   const modelIds = modelIdsFromOpenAICompatibleList(list);
@@ -215,13 +181,6 @@ const llamaCppDiscover: LocalEndpointDiscover = async (context) => {
   );
 };
 
-/**
- * Real dynamic pi-ai Provider for a llama.cpp server. Replaces the Letta
- * connector that fabricated Models from name substrings; mirrors upstream
- * Pi's first-class llama.cpp provider design (per-model engine metadata
- * owns capabilities). See `createLocalEndpointPiProvider` for shared
- * refresh/auth semantics.
- */
 export function createLlamaCppPiProvider(
   options: LlamaCppPiProviderOptions,
 ): Provider<"openai-completions"> {

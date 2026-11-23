@@ -1,5 +1,3 @@
-// src/cli/app/useInterruptHandler.ts
-
 import {
   type Dispatch,
   type MutableRefObject,
@@ -151,9 +149,6 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
     waitingForQueueCancelRef,
   } = ctx;
 
-  // The interrupted turn's finally block settles the interrupt once it has
-  // unwound (cancelling -> idle). If no turn is in flight there is no owner to
-  // do so, so the interrupt settles immediately.
   const settleIfNoTurnInFlight = () => {
     if (processingConversationRef.current > 0) return;
     if (!abortControllerRef.current) {
@@ -167,21 +162,11 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
     });
   };
 
-  // Latched interrupt state, written synchronously on the first Esc: the
-  // aborted controller is the escalation witness (a rapid second Esc can
-  // arrive before React commits interruptRequested, and a stuck turn keeps
-  // its controller after force-settle), and the captured target keeps the
-  // escalated cancel aimed at the interrupted conversation even if a queued
-  // conversation switch runs while the turn unwinds.
   const interruptEscalationRef = useRef<{
     controller: AbortController | null;
     target: string | null;
   } | null>(null);
 
-  // Fire the backend cancel. The local interrupt already gave the user
-  // feedback, but a failed backend cancel leaves the server-side run
-  // executing and the next send hitting CONFLICT, so surface the failure
-  // instead of swallowing it.
   const sendBackendCancel = () => {
     Promise.resolve()
       .then(() => {
@@ -209,7 +194,6 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: refs are stable objects; .current is read dynamically when interrupt fires.
   const handleInterrupt = useCallback(async () => {
-    // If we're executing client-side tools, abort them AND the main stream
     const hasTrackedTools =
       executingToolCallIdsRef.current.length > 0 ||
       autoAllowedExecutionRef.current?.results;
@@ -234,15 +218,8 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       latchInterruptTarget();
       toolAbortControllerRef.current.abort();
 
-      // Mark any in-flight conversation as stale, consistent with EAGER_CANCEL.
-      // Increment before tagging queued results so they are tied to the post-interrupt state.
-      // The stale turn keeps its processing count and abort controller until its
-      // finally block runs; that block settles the interrupt.
       conversationGenerationRef.current += 1;
 
-      // Mark the interrupt in-flight until the stale turn unwinds, matching
-      // EAGER_CANCEL: a second Esc in this window must reach the escalation
-      // branch below (InputRich only forwards while streaming or requested).
       setInterruptRequested(true);
 
       const autoAllowedResults = autoAllowedExecutionRef.current?.results;
@@ -269,7 +246,6 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       executingToolCallIdsRef.current = [];
       autoAllowedExecutionRef.current = null;
 
-      // ALSO abort the main stream - don't leave it running
       buffersRef.current.abortGeneration =
         (buffersRef.current.abortGeneration || 0) + 1;
       const toolsCancelled = markIncompleteToolsAsCancelled(
@@ -278,40 +254,27 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
         "user_interrupt",
       );
 
-      // Mark any running subagents as interrupted. If this interrupted a
-      // background reflection, also release its launch reservation so ESC does
-      // not leave future reflections blocked waiting for an onComplete callback
-      // that may never fire.
       interruptSubagentsAndReleaseReflection(
         agentId,
-        // Pass the conversation id as-is: "default" must scope to tasks whose
-        // parentConversationId is "default" (or unset for legacy rows), not
-        // to every subagent of this agent.
         conversationIdRef.current,
       );
 
-      // Show interrupt feedback (yellow message if no tools were cancelled)
       if (!toolsCancelled) {
         appendError(INTERRUPT_MESSAGE, true);
       }
 
-      // Abort only. The turn's finally block clears the controller so nothing
-      // can dequeue a replacement turn while cancellation unwinds.
       abortControllerRef.current?.abort();
 
       pendingInterruptRecoveryConversationIdRef.current =
         conversationIdRef.current;
-      userCancelledRef.current = true; // Prevent dequeue
-      tuiQueueRef.current?.pause(); // Park queued user messages until resume
+      userCancelledRef.current = true;
+      tuiQueueRef.current?.pause();
       setStreaming(false);
       resetTrajectoryBases();
       setIsExecutingTool(false);
       toolResultsInFlightRef.current = false;
       refreshDerived();
 
-      // Send cancel request to backend (fire-and-forget).
-      // Without this, the backend stays in requires_approval state after tool interrupt,
-      // causing CONFLICT on the next user message.
       sendBackendCancel();
 
       settleIfNoTurnInFlight();
@@ -368,12 +331,6 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
             : {}),
         });
       }
-      // Idle: no turn is streaming or unwinding, but a background task whose
-      // remote stop failed is still running. Esc retries its stop through
-      // the re-armed hook — the only user-reachable retry, because the row's
-      // Task line was promoted and no longer renders the live row. Only the
-      // failed rows are retried: a healthy same-scope background task must
-      // survive its sibling's stop retry.
       const retried = interruptStopFailedSubagents(INTERRUPTED_BY_USER, {
         agentId,
         conversationId: conversationIdRef.current,
@@ -394,13 +351,10 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       return;
     }
 
-    // If we're in the middle of queue cancel, set flag to restore instead of auto-send
     if (waitingForQueueCancelRef.current) {
       setRestoreQueueOnCancel(true);
-      // Don't reset flags - let the cancel complete naturally
     }
 
-    // If EAGER_CANCEL is enabled, immediately stop everything client-side first
     if (EAGER_CANCEL) {
       latchInterruptTarget();
       staleTurnUnwindingRef.current =
@@ -409,8 +363,6 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       // Prevent multiple handleInterrupt calls while state updates are pending
       setInterruptRequested(true);
 
-      // Set interrupted flag FIRST, before abort() triggers any async work.
-      // This ensures onChunk and other guards see interrupted=true immediately.
       buffersRef.current.abortGeneration =
         (buffersRef.current.abortGeneration || 0) + 1;
       const toolsCancelled = markIncompleteToolsAsCancelled(
@@ -419,36 +371,20 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
         "user_interrupt",
       );
 
-      // Mark any running subagents as interrupted. If this interrupted a
-      // background reflection, also release its launch reservation so ESC does
-      // not leave future reflections blocked waiting for an onComplete callback
-      // that may never fire.
       interruptSubagentsAndReleaseReflection(
         agentId,
         conversationIdRef.current,
       );
 
-      // NOW abort the stream - interrupted flag is already set. The controller
-      // stays set until the turn's finally block clears it: isAgentBusy() must
-      // report busy while the cancelled turn unwinds.
       abortControllerRef.current?.abort();
 
-      // Set cancellation flag to prevent processConversation from starting
       pendingInterruptRecoveryConversationIdRef.current =
         conversationIdRef.current;
       userCancelledRef.current = true;
-      // Park the user's queued messages: Esc stops the turn and holds them
-      // until Enter on an empty input or the next message. System items
-      // (task notifications, cron, mod continuations) still drain on settle.
       tuiQueueRef.current?.pause();
 
-      // Increment generation to mark any in-flight processConversation as stale.
-      // The stale turn keeps its processing count until its finally block runs;
-      // that block settles the interrupt (cancelling -> idle) and wakes dequeue.
       conversationGenerationRef.current += 1;
 
-      // Stop streaming and show error message (unless tool calls were cancelled,
-      // since the tool result will show "Interrupted by user")
       setStreaming(false);
       resetTrajectoryBases();
       toolResultsInFlightRef.current = false;
@@ -458,7 +394,6 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       }
       refreshDerived();
 
-      // Cache pending approvals, plus any auto-handled results, for the next message.
       const denialResults: ApprovalResult[] = pendingApprovals.map(
         (approval) => ({
           type: "approval" as const,
@@ -490,16 +425,12 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
         queueApprovalResults(queuedResults);
       }
 
-      // Clear local approval state
       setPendingApprovals([]);
       setApprovalContexts([]);
       setApprovalResults([]);
       setAutoHandledResults([]);
       setAutoDeniedApprovals([]);
 
-      // Send cancel request to backend asynchronously (fire-and-forget).
-      // Failures are surfaced so a server-side run isn't left executing
-      // while the client believes it stopped.
       sendBackendCancel();
 
       settleIfNoTurnInFlight();

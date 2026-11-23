@@ -13,7 +13,6 @@ describe("truncation with overflow support", () => {
   });
 
   afterEach(() => {
-    // Clean up test files
     if (fs.existsSync(overflowDir)) {
       const files = fs.readdirSync(overflowDir);
       for (const file of files) {
@@ -56,10 +55,9 @@ describe("truncation with overflow support", () => {
       });
 
       expect(result.wasTruncated).toBe(true);
-      expect(result.content).toContain("a".repeat(300)); // beginning
-      expect(result.content).toContain("b".repeat(300)); // end
+      expect(result.content).toContain("a".repeat(300));
+      expect(result.content).toContain("b".repeat(300));
       expect(result.content).toContain("characters omitted");
-      // "MIDDLE" should be omitted
       expect(result.content.split("[")[0]).not.toContain("MIDDLE");
     });
 
@@ -133,10 +131,10 @@ describe("truncation with overflow support", () => {
       });
 
       expect(result.wasTruncated).toBe(true);
-      expect(result.content).toContain("item1"); // beginning
-      expect(result.content).toContain("item25"); // end of first half
-      expect(result.content).toContain("item76"); // beginning of second half
-      expect(result.content).toContain("item100"); // end
+      expect(result.content).toContain("item1");
+      expect(result.content).toContain("item25");
+      expect(result.content).toContain("item76");
+      expect(result.content).toContain("item100");
       expect(result.content).toContain("omitted from middle");
     });
 

@@ -68,8 +68,6 @@ describe("deriveToolsetFromModel", () => {
   });
 
   test("keeps OpenAI-compatible proxy models on the default toolset", () => {
-    // Generic OpenAI-compatible endpoints report provider_type "openai" but
-    // may serve non-GPT models; the proxy marker excludes them.
     expect(
       deriveToolsetFromModel("lc-openai-compatible/llama-3.3-70b", "openai", {
         openAICompatibleProxy: true,

@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { dirname } from "node:path";
 import { getServerUrl } from "@/backend/api/server-url";
+import { withDiskReserveRetry } from "@/utils/disk-reserve";
 import { renameSyncWithRetry } from "@/utils/rename-sync-with-retry";
 import {
   acquireDurableFileLock,
@@ -48,27 +49,17 @@ import type {
   InputIdentity,
   ListenerRuntime,
 } from "./types";
-
 export const ACCEPTED_INPUT_DISPOSITION_TTL_MS = 60 * 60 * 1000;
 export const MAX_ACCEPTED_INPUT_DISPOSITIONS_PER_SCOPE = 4096;
 export const MAX_ACCEPTED_INPUT_DISPOSITIONS = 65_536;
-// Web clients send image attachments inline as base64, so an accepted input can
-// be as large as the web enqueue body cap (letta-cloud
-// MAX_ENQUEUE_MESSAGE_BODY_BYTES = 20 MiB). Allow 1 MiB of headroom for the
-// listener envelope (scope, identity, acting user) so a body Cloud accepted is
-// never dropped here.
 export const MAX_DURABLE_QUEUED_INPUT_BYTES = 21 * 1024 * 1024;
-// Bounds the full-file read/rewrite done by every durable transaction while
-// leaving room for several maximum-size inputs in flight at once.
 export const MAX_INPUT_DISPOSITION_STORE_BYTES = 128 * 1024 * 1024;
 const LOCK_WAIT_MS = 2_000;
-
 export function ordinaryInputIdentity(
   clientMessageId: string | undefined,
 ): InputIdentity | undefined {
   return clientMessageId ? { domain: "input", id: clientMessageId } : undefined;
 }
-
 export function teleportInputIdentity(teleportId: string): InputIdentity {
   return { domain: "teleport", id: teleportId };
 }
@@ -488,16 +479,18 @@ export function durableTransaction<T>(
   path: string,
   transaction: (store: DurableStore) => { result: T; changed: boolean },
 ): T {
-  const release = acquireLock(path);
-  try {
-    const store = readDurableStore(path);
-    const pruned = pruneDurableStore(store, Date.now());
-    const { result, changed } = transaction(store);
-    if (pruned || changed) writeDurableStore(path, store);
-    return result;
-  } finally {
-    release();
-  }
+  return withDiskReserveRetry(path, () => {
+    const release = acquireLock(path);
+    try {
+      const store = readDurableStore(path);
+      const pruned = pruneDurableStore(store, Date.now());
+      const { result, changed } = transaction(store);
+      if (pruned || changed) writeDurableStore(path, store);
+      return result;
+    } finally {
+      release();
+    }
+  });
 }
 
 export function syncMemoryFromDurable(
@@ -687,8 +680,6 @@ export function commitInputDisposition(
   queuedInput?: Omit<DurableQueuedInput, "scope" | "identity">,
 ): boolean {
   if (!reservation) {
-    // A queued acknowledgement is final to Cloud. Without a stable identity it
-    // cannot be represented in the durable store or restored exactly once.
     return !(
       disposition === "queued" && getLedger(runtime.listener).persistentPath
     );
@@ -863,7 +854,6 @@ export function forgetQueuedInputDispositions(
   return true;
 }
 
-/** Atomically transition queued dispositions while retaining crash-replay payloads. */
 export function markQueuedInputDispositionsStarted(
   runtime: ConversationRuntime,
   identities: readonly InputIdentity[],
@@ -949,7 +939,6 @@ export function requeueStartedInputDispositions(
   return true;
 }
 
-/** Read every replay payload under the store lock for startup restore. */
 export function loadDurableQueuedInputs(
   listener: ListenerRuntime,
 ): DurableQueuedInput[] {

@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { experimentManager } from "@/experiments/manager";
 import { settingsManager } from "@/settings-manager";
+import { removeTestDir } from "@/test-utils/test-fs";
 import {
   read_artifact_file,
   write_artifact_file,
@@ -34,7 +35,7 @@ afterEach(async () => {
   clearCapturedToolExecutionContexts();
   await settingsManager.reset();
   if (testHomeDir) {
-    await rm(testHomeDir, { recursive: true, force: true });
+    await removeTestDir(testHomeDir);
     testHomeDir = "";
   }
   process.env.HOME = originalHome;

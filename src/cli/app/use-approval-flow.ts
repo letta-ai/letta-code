@@ -1,5 +1,3 @@
-// src/cli/app/useApprovalFlow.ts
-
 import { randomUUID } from "node:crypto";
 import {
   type Dispatch,
@@ -332,7 +330,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
     };
   }, [conversationId, restoredApprovalRecoveryRef]);
 
-  // Restore pending approval from startup when ready.
   useEffect(() => {
     const approvals =
       startupApprovals?.length > 0
@@ -351,7 +348,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
     startupApprovals,
   ]);
 
-  // Helper to send all approval results when done
   // biome-ignore lint/correctness/useExhaustiveDependencies: approval refs are stable objects; .current is read dynamically during the approval send.
   const sendAllResults = useCallback(
     async (
@@ -360,11 +356,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
         | { type: "deny"; approval: ApprovalRequest; reason: string },
     ) => {
       const approvalAbortController = new AbortController();
-      // Snapshot current state before clearing dialog. Companion results
-      // (auto-handled + auto-denied) are built here — before the try — so
-      // the catch below can still overlay them on a grace-expiry abort:
-      // the server's approval batch must contain every decision, not just
-      // the manually-executed ones.
       const approvalResultsSnapshot = [...approvalResults];
       const autoHandledSnapshot = [...autoHandledResults];
       const autoDeniedSnapshot = [...autoDeniedApprovals];
@@ -374,7 +365,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
         autoDeniedSnapshot,
       );
       try {
-        // Don't send results if user has already cancelled
         if (
           userCancelledRef.current ||
           abortControllerRef.current?.signal.aborted
@@ -386,7 +376,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           setApprovalResults([]);
           setAutoHandledResults([]);
           setAutoDeniedApprovals([]);
-          // Mirror the finally cleanup: this return precedes controller install.
           clearApprovalToolContext();
           toolAbortControllerRef.current = null;
           executingToolCallIdsRef.current = [];
@@ -395,22 +384,18 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           return;
         }
 
-        // Clear dialog state immediately so UI updates right away
         setPendingApprovals([]);
         setApprovalContexts([]);
         setApprovalResults([]);
         setAutoHandledResults([]);
         setAutoDeniedApprovals([]);
 
-        // Show "thinking" state and lock input while executing approved tools client-side
         setStreaming(true);
         openTrajectorySegment();
-        // Ensure interrupted flag is cleared for this execution
         buffersRef.current.interrupted = false;
 
         toolAbortControllerRef.current = approvalAbortController;
 
-        // Combine all decisions using snapshots
         const allDecisions = [
           ...approvalResultsSnapshot,
           ...(additionalDecision ? [additionalDecision] : []),
@@ -433,7 +418,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           (decision) => decision.approval.toolCallId,
         );
 
-        // Set phase to "running" for all approved tools
         if (runningDecisions.length > 0) {
           setToolCallsRunning(
             buffersRef.current,
@@ -442,7 +426,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
         }
         refreshDerived();
 
-        // Execute approved tools and format results using shared function
         const { executeApprovalBatch } = await import(
           "@/agent/approval-execution"
         );
@@ -461,7 +444,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
             allDecisions,
             (chunk) => {
               onChunk(buffersRef.current, chunk);
-              // Also log errors to the UI error display
               if (
                 chunk.status === "error" &&
                 chunk.message_type === "tool_return_message"
@@ -476,7 +458,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
                   });
                 }
               }
-              // Flush UI so completed tools show up while the batch continues
               refreshDerived();
             },
             {
@@ -492,17 +473,13 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           });
         }
 
-        // Orphan guard: controller replaced/cleared — skip this stale batch.
         if (toolAbortControllerRef.current !== approvalAbortController) {
           return;
         }
 
-        // Combine with companion results (pre-built above)
         const allResults = [...companionResults, ...executedResults];
 
-        // Dev-only validation: ensure outgoing IDs match expected IDs (using snapshots)
         if (process.env.NODE_ENV !== "production") {
-          // Include ALL tool call IDs: auto-handled, auto-denied, and pending approvals
           const expectedIds = new Set([
             ...autoHandledSnapshot.map((ar) => ar.toolCallId),
             ...autoDeniedSnapshot.map((ad) => ad.approval.toolCallId),
@@ -528,25 +505,18 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           }
         }
 
-        // Rotate to a new thinking message
         setThinkingMessage(getRandomThinkingVerb());
         refreshDerived();
 
         const wasAborted = approvalAbortController.signal.aborted;
-        // ESC cancel: wasAborted primary; userCancelledRef covers late cancels.
         const userCancelled = userCancelledRef.current;
 
         if (wasAborted || userCancelled) {
-          // Queue results with the next message: stops re-requested approvals.
-          // Always queue the REAL results — when Esc already queued synthetic
-          // interrupted results, the settled outputs must replace them so a
-          // completed side effect is not reported as interrupted/retriable.
           queueApprovalResults(allResults as ApprovalResult[]);
           setStreaming(false);
           closeTrajectorySegment();
           syncTrajectoryElapsedBase();
 
-          // Reset queue-cancel flag so dequeue effect can fire
           waitingForQueueCancelRef.current = false;
           queueSnapshotRef.current = [];
         } else {
@@ -567,7 +537,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           if (queuedTurn.hasQueuedMessage || hadNotifications) {
             refreshDerived();
           }
-          // Flush finished items before reentry so deferred non-Task commits cannot delay Task grouping.
           flushEligibleLinesBeforeReentry(
             commitEligibleLines,
             buffersRef.current,
@@ -576,24 +545,18 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           await processConversation(queuedTurn.input, queuedTurn.options);
           toolResultsInFlightRef.current = false;
 
-          // Clear stale queued results: they'd cause "Invalid tool call IDs".
           queueApprovalResults(null);
         }
       } catch (error) {
-        // Orphan guard: a newer batch owns the refs; don't clobber it.
         if (toolAbortControllerRef.current !== approvalAbortController) {
           return;
         }
         if (isUserAbortError(error)) {
-          // Grace-expiry abort: overlay real partials over the synthetics.
           markIncompleteToolsAsCancelled(
             buffersRef.current,
             true,
             "user_interrupt",
           );
-          // Grace-expiry abort: overlay the executed partials plus the
-          // companion snapshots over Esc's synthetics, so the recovery
-          // queue carries a complete approval batch.
           const merged = overlayPartialResults(
             queuedApprovalResultsRef.current,
             [
@@ -602,8 +565,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
               ...companionResults,
             ],
           );
-          // Only re-queue when there is something to send: queueing [] would
-          // still stamp queue metadata for the next submit.
           if (merged.length > 0) {
             queueApprovalResults(merged);
           }
@@ -628,7 +589,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
         syncTrajectoryElapsedBase();
         refreshDerived();
       } finally {
-        // Release the guard only if no newer batch took over the refs.
         if (toolAbortControllerRef.current === approvalAbortController) {
           clearApprovalToolContext();
           setIsExecutingTool(false);
@@ -675,7 +635,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
     ],
   );
 
-  // Handle approval callbacks - sequential review
   // biome-ignore lint/correctness/useExhaustiveDependencies: diff cache ref is stable; .current is read dynamically.
   const handleApproveCurrent = useCallback(
     async (diffs?: Map<string, AdvancedDiffSuccess>) => {
@@ -686,7 +645,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
 
       if (!currentApproval) return;
 
-      // Store precomputed diffs before execution
       if (diffs) {
         for (const [key, diff] of diffs) {
           precomputedDiffsRef.current.set(key, diff);
@@ -696,18 +654,14 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
       setIsExecutingTool(true);
 
       try {
-        // Store approval decision (don't execute yet - batch execute after all approvals)
         const decision = {
           type: "approve" as const,
           approval: currentApproval,
         };
 
-        // Check if we're done with all approvals
         if (currentIndex + 1 >= pendingApprovals.length) {
-          // All approvals collected: sendAllResults owns the lock release
           await sendAllResults(decision);
         } else {
-          // Not done yet, store decision and show next approval
           setApprovalResults((prev) => [...prev, decision]);
           setIsExecutingTool(false);
         }
@@ -784,7 +738,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
         setUiPermissionMode("acceptEdits");
         cmd.finish("Permission mode set to acceptEdits (session only)", true);
       } else {
-        // Save the permission rule
         try {
           await savePermissionRule(rule, "allow", actualScope);
         } catch (error) {
@@ -793,13 +746,11 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           return;
         }
 
-        // Show confirmation in transcript
         const scopeText =
           actualScope === "session" ? " (session only)" : " (project)";
         cmd.finish(`Added permission: ${rule}${scopeText}`, true);
       }
 
-      // Re-check remaining approvals against the saved permission for auto-allow
       const remainingApprovals = pendingApprovals.slice(currentIndex + 1);
       if (remainingApprovals.length > 0) {
         const recheckResults = await Promise.all(
@@ -830,12 +781,10 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
             r.permission.decision === "alwaysAsk",
         );
 
-        // Only auto-handle if ALL remaining are now allowed (avoids partial-batch sync issues)
         if (stillNeedAsking.length === 0 && nowAutoAllowed.length > 0) {
           const currentApproval = pendingApprovals[currentIndex];
           if (!currentApproval) return;
 
-          // Store diffs before execution
           if (diffs) {
             for (const [key, diff] of diffs) {
               precomputedDiffsRef.current.set(key, diff);
@@ -844,17 +793,15 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
 
           setIsExecutingTool(true);
 
-          // Snapshot BEFORE clearing (ID matching): include ALL prior decisions
           const approvalResultsSnapshot = [...approvalResults];
           const autoHandledSnapshot = [...autoHandledResults];
           const autoDeniedSnapshot = [...autoDeniedApprovals];
 
-          // Build ALL decisions: previous + current + auto-allowed remaining
           const allDecisions: Array<
             | { type: "approve"; approval: ApprovalRequest }
             | { type: "deny"; approval: ApprovalRequest; reason: string }
           > = [
-            ...approvalResultsSnapshot, // Include decisions from previous rounds
+            ...approvalResultsSnapshot,
             { type: "approve", approval: currentApproval },
             ...nowAutoAllowed.map((r) => ({
               type: "approve" as const,
@@ -862,7 +809,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
             })),
           ];
 
-          // Clear dialog state immediately
           setPendingApprovals([]);
           setApprovalContexts([]);
           setApprovalResults([]);
@@ -873,7 +819,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           openTrajectorySegment();
           buffersRef.current.interrupted = false;
 
-          // Set phase to "running" for all approved tools
           setToolCallsRunning(
             buffersRef.current,
             allDecisions
@@ -883,7 +828,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           refreshDerived();
 
           try {
-            // Execute ALL decisions together
             const { executeApprovalBatch } = await import(
               "@/agent/approval-execution"
             );
@@ -906,7 +850,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
               },
             );
 
-            // Combine with auto-handled and auto-denied results (from initial check)
             const allResults = [
               ...autoHandledSnapshot.map((ar) => ({
                 type: "tool" as const,
@@ -928,7 +871,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
             setThinkingMessage(getRandomThinkingVerb());
             refreshDerived();
 
-            // Continue conversation with all results
             await processConversation([
               {
                 type: "approval",
@@ -954,11 +896,10 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           } finally {
             setIsExecutingTool(false);
           }
-          return; // Don't call handleApproveCurrent - we handled everything
+          return;
         }
       }
 
-      // Fallback: proceed with normal flow (will prompt for remaining approvals)
       await handleApproveCurrent(diffs);
     },
     [
@@ -1005,20 +946,16 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
       setIsExecutingTool(true);
 
       try {
-        // Store denial decision
         const decision = {
           type: "deny" as const,
           approval: currentApproval,
           reason: reason || "User denied the tool execution",
         };
 
-        // Check if we're done with all approvals
         if (currentIndex + 1 >= pendingApprovals.length) {
-          // All approvals collected: sendAllResults owns the lock release
           setThinkingMessage(getRandomThinkingVerb());
           await sendAllResults(decision);
         } else {
-          // Not done yet, store decision and show next approval
           setApprovalResults((prev) => [...prev, decision]);
           setIsExecutingTool(false);
         }
@@ -1053,12 +990,10 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
     ],
   );
 
-  // Cancel pending approvals: queue denials with the next message.
   // biome-ignore lint/correctness/useExhaustiveDependencies: buffersRef is stable; .current is read dynamically.
   const handleCancelApprovals = useCallback(() => {
     if (pendingApprovals.length === 0) return;
 
-    // Create denial results for all pending approvals and queue for next message
     const denialResults = pendingApprovals.map((approval) => ({
       type: "approval" as const,
       tool_call_id: approval.toolCallId,
@@ -1067,11 +1002,9 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
     }));
     queueApprovalResults(denialResults);
 
-    // Mark the pending approval tool calls as cancelled in the buffers
     markIncompleteToolsAsCancelled(buffersRef.current, true, "approval_cancel");
     refreshDerived();
 
-    // Clear all approval state
     setPendingApprovals([]);
     setApprovalContexts([]);
     setApprovalResults([]);
@@ -1088,7 +1021,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
     setPendingApprovals,
   ]);
 
-  // Live area shows only in-progress items
   return {
     recoverRestoredPendingApprovals,
     handleApproveCurrent,

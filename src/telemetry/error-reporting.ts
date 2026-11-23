@@ -46,7 +46,6 @@ export function reportListenerStateWriteFailure(options: {
   runId?: string;
   toolCallId?: string;
 }): void {
-  // Filesystem messages contain paths; report only codes and opaque IDs.
   try {
     const safeId = (id: string | undefined) =>
       id && /^[a-zA-Z0-9_-]{1,128}$/.test(id) ? id : undefined;
@@ -72,9 +71,7 @@ export function reportListenerStateWriteFailure(options: {
       { runId: safeId(options.runId), omitDebugLogTail: true },
     );
     void telemetry.flush().catch(() => {});
-  } catch {
-    // A diagnostic must never mask the original filesystem failure.
-  }
+  } catch {}
 }
 
 export function trackEndTurnNoAssistant(params: {
@@ -97,4 +94,53 @@ export function trackEndTurnNoAssistant(params: {
       fallbackKind: params.fallbackKind,
     },
   );
+}
+
+export type ExternalWorkerFailureStage =
+  | "resolve_computer"
+  | "outdated_computer"
+  | "connect"
+  | "launch_request"
+  | "launch_rejected"
+  | "follow_up";
+
+export function extractHttpStatus(message: string): number | undefined {
+  const match = /(?:^|:\s*)(?:HTTP\s+)?([45]\d{2})\b/.exec(message);
+  return match ? Number(match[1]) : undefined;
+}
+
+export function reportExternalWorkerLaunchFailure(options: {
+  stage: ExternalWorkerFailureStage;
+  harness: string;
+  computer?: string;
+  error: unknown;
+  errorCode?: string;
+  agentId?: string;
+  conversationId?: string;
+  toolCallId?: string;
+}): void {
+  try {
+    const safe = (value: string | undefined, pattern: RegExp) =>
+      value && pattern.test(value) ? value : undefined;
+    const safeId = (id: string | undefined) =>
+      safe(id, /^[a-zA-Z0-9_-]{1,128}$/);
+    const httpStatus = extractHttpStatus(
+      formatTelemetryErrorMessage(options.error),
+    );
+    telemetry.trackError(
+      "external_worker_launch_failed",
+      "External worker launch failed",
+      JSON.stringify({
+        stage: options.stage,
+        harness: safe(options.harness, /^[a-z-]{1,32}$/),
+        computer: safe(options.computer, /^[a-zA-Z0-9_.:-]{1,128}$/),
+        error_code: safe(options.errorCode, /^[a-zA-Z0-9_]{1,64}$/),
+        agent_id: safeId(options.agentId),
+        conversation_id: safeId(options.conversationId),
+        tool_call_id: safeId(options.toolCallId),
+      }),
+      { httpStatus, omitDebugLogTail: true },
+    );
+    void telemetry.flush().catch(() => {});
+  } catch {}
 }

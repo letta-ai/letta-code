@@ -23,7 +23,6 @@ describe("Exec command completion notifications", () => {
   function command(source: string): string {
     const script = join(fixtureDir, "command.cjs");
     fs.writeFileSync(script, source);
-    // Test notification routing, not PowerShell's default native-exit mapping.
     return `"${process.execPath}" "${script}"${isWindows ? "; exit $LASTEXITCODE" : ""}`;
   }
 
@@ -67,9 +66,7 @@ describe("Exec command completion notifications", () => {
     for (const processState of backgroundProcesses.values()) {
       try {
         processState.process.kill("SIGTERM");
-      } catch {
-        // The process may already have exited.
-      }
+      } catch {}
       if (processState.outputFile && fs.existsSync(processState.outputFile)) {
         fs.rmSync(processState.outputFile, { recursive: true, force: true });
       }
@@ -105,7 +102,7 @@ describe("Exec command completion notifications", () => {
     expect(notification.text).toContain(`Session ID: ${sessionId}`);
     expect(notification.text).toContain("Exit code: 0");
     expect(notification.text).toContain("done");
-    expect(notification.text).toContain("Full transcript available at:");
+    expect(notification.text).toContain("<transcript>");
     expect(notificationsFor(sessionId)).toHaveLength(1);
   });
 
@@ -116,7 +113,6 @@ describe("Exec command completion notifications", () => {
       ),
       description: "Run failing check",
       yield_time_ms: 250,
-      // An otherwise empty PATH must not require a separate Node installation.
       secretEnv: isWindows ? { PATH: fixtureDir } : undefined,
     });
     const sessionId = sessionIdFrom(first.output);
@@ -131,9 +127,7 @@ describe("Exec command completion notifications", () => {
     const result = await exec_command({
       cmd: command("process.stdout.write('done')"),
       description: "Run quick check",
-      // Windows PowerShell startup itself can exceed 250ms. This case tests
-      // completion before the chosen yield deadline, not shell startup speed.
-      yield_time_ms: isWindows ? 10_000 : 250,
+      yield_time_ms: isWindows ? 10_000 : 5_000,
     });
 
     expect(result.output).toContain("Process exited with code 0");

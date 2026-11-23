@@ -18,7 +18,10 @@ import {
   createInterruptedTurnStore,
   recordedToolResults,
 } from "./interrupted-turn-record";
-import { resolveRecordedRunId } from "./recorded-run-resolution";
+import {
+  resolveRecordedRunId,
+  retireMissingRun,
+} from "./recorded-run-resolution";
 import {
   hasCompletedTeleportInput,
   hasRecordedTerminalEvidence,
@@ -81,7 +84,6 @@ const retryTimers = new WeakMap<
   ListenerRuntime,
   ReturnType<typeof setTimeout>
 >();
-/** Reconnect can retry a deferred record, but observing a conversation creates none. */
 export async function recoverRecordedTurns(
   listener: ListenerRuntime,
   deps: Partial<{
@@ -513,15 +515,18 @@ export async function recoverRecordedTurns(
           deferred = true;
           continue;
         }
-        const recordedRunId = await resolveRecordedRunId(
+        const resolution = await resolveRecordedRunId(
           backend,
           recoveryRecord,
           pending,
+          runtime,
         );
-        if (!recordedRunId) {
-          deferred = true;
+        if (resolution.status !== "found") {
+          const missing = resolution.status === "not_found" && unchanged();
+          deferred = !retireMissingRun(store, record, missing) || deferred;
           continue;
         }
+        const recordedRunId = resolution.runId;
         const recordedRun =
           recordedRunId && typeof backend.retrieveRun === "function"
             ? await backend.retrieveRun(recordedRunId)
@@ -530,9 +535,6 @@ export async function recoverRecordedTurns(
           deferred = true;
           continue;
         }
-        // A finished run's approvals are stale, except when it finished by
-        // stopping for one: `completed` + `requires_approval` is how every
-        // client-side tool step ends, including while this listener was down.
         if (
           recordedRun &&
           recordedRun.status !== "running" &&
@@ -802,7 +804,6 @@ export async function recoverRecordedTurns(
               },
               record.revision ?? null,
             );
-        // results below replace those, rather than appending a second result.
         runtime.pendingInterruptedResults = null;
         runtime.pendingInterruptedContext = null;
         runtime.pendingInterruptedToolCallIds = null;

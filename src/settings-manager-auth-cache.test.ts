@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { settingsManager } from "@/settings-manager";
+import { removeTestDir } from "@/test-utils/test-fs";
 import {
   __setSecretGetOverrideForTests,
   setServiceName,
@@ -27,7 +28,7 @@ describe("settings auth cache", () => {
     settingsManager.isKeychainAvailable = originalIsKeychainAvailable;
     __setSecretGetOverrideForTests(null);
     await settingsManager.reset();
-    await rm(testHome, { recursive: true, force: true });
+    await removeTestDir(testHome);
     process.env.HOME = originalHome;
     setServiceName("letta-code");
   });

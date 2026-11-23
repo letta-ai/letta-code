@@ -3,6 +3,7 @@ import WebSocket from "ws";
 import {
   addToolCall,
   clearAllSubagents,
+  completeSubagent,
   registerSubagent,
 } from "@/agent/subagent-state";
 import {
@@ -18,7 +19,7 @@ import {
   installProcessEventRouting,
 } from "./process-services";
 import { emitStateSync } from "./protocol-outbound";
-import { setActiveRuntime } from "./runtime";
+import { evictConversationRuntimeIfIdle, setActiveRuntime } from "./runtime";
 import type { StartListenerOptions } from "./types";
 
 type SentFrame = {
@@ -112,8 +113,6 @@ test("subagent changes only emit state to conversations whose snapshot changed",
       takeSubagentUpdates().map((f) => f.runtime?.conversation_id),
     ).toEqual(["conv-owner"]);
 
-    // Store change that leaves every scoped snapshot unchanged: a silent
-    // foreground subagent is filtered out of all snapshots.
     registerSubagent(
       "subagent-silent",
       "reflection",
@@ -125,7 +124,6 @@ test("subagent changes only emit state to conversations whose snapshot changed",
     );
     expect(takeSubagentUpdates()).toEqual([]);
 
-    // The owning conversation gets one final empty snapshot on removal.
     clearAllSubagents();
     const cleared = takeSubagentUpdates();
     expect(cleared.map((f) => f.runtime?.conversation_id)).toEqual([
@@ -170,7 +168,6 @@ test("explicit state syncs always emit subagent state", () => {
 });
 
 test("changes missed while disconnected do not suppress updates after reconnect", () => {
-  // Fixed clock so re-registering yields a byte-identical snapshot.
   setSystemTime(new Date("2026-01-01T00:00:00Z"));
   const { listener, socket, setOpen, takeSubagentUpdates } = setupListener();
   const ownerScope = { agent_id: AGENT_ID, conversation_id: "conv-owner" };
@@ -188,14 +185,12 @@ test("changes missed while disconnected do not suppress updates after reconnect"
     registerChild();
     expect(takeSubagentUpdates()).toHaveLength(1);
 
-    // The subagent goes away while no connection can receive it.
     setOpen(false);
     clearAllSubagents();
     setOpen(true);
     emitStateSync(socket, listener, ownerScope);
     expect(takeSubagentUpdates()[0]?.subagents).toEqual([]);
 
-    // Same snapshot as before the disconnect, but the client now holds [].
     registerChild();
     const updates = takeSubagentUpdates();
     expect(updates.map((f) => f.runtime?.conversation_id)).toEqual([
@@ -204,6 +199,39 @@ test("changes missed while disconnected do not suppress updates after reconnect"
     expect(updates[0]?.subagents?.map((s) => s.subagent_id)).toEqual([
       "subagent-1",
     ]);
+  } finally {
+    clearProcessServices(listener);
+  }
+});
+
+test("terminal subagent state reaches an evicted launch scope after a handoff", () => {
+  const { listener, takeSubagentUpdates } = setupListener();
+  try {
+    registerSubagent(
+      "stopped-child",
+      "claude-code",
+      "Stoppable child",
+      "stop-call",
+      true,
+      false,
+      { agentId: AGENT_ID, conversationId: "conv-owner" },
+    );
+    takeSubagentUpdates();
+    const owner = getOrCreateScopedRuntime(listener, AGENT_ID, "conv-owner");
+    expect(evictConversationRuntimeIfIdle(owner)).toBe(true);
+    completeSubagent("stopped-child", {
+      success: false,
+      error: "Stopped by parent",
+    });
+    const updates = takeSubagentUpdates();
+    expect(updates.map((frame) => frame.runtime?.conversation_id)).toEqual([
+      "conv-owner",
+    ]);
+    expect(updates[0]?.subagents).toMatchObject([
+      { subagent_id: "stopped-child", status: "error" },
+    ]);
+    clearAllSubagents();
+    expect(takeSubagentUpdates().map((frame) => frame.subagents)).toEqual([[]]);
   } finally {
     clearProcessServices(listener);
   }

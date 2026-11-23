@@ -137,8 +137,6 @@ export function searchLocalMcpTools(params: {
     );
   }
 
-  // Local agents have no MCP embedding index. Hybrid therefore uses the same
-  // deterministic lexical ranking as fts instead of making a network request.
   return params.tools
     .map((tool) => ({
       tool,

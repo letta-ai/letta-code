@@ -197,10 +197,6 @@ describe("PiStreamAdapter", () => {
     const events = await collectEvents(
       adapter.stream({
         ...baseInput,
-        // Semantic image cost is tiny (1200 tokens), but the raw base64 body is
-        // oversized. After a real transport failure, retry with provider-only
-        // image elision instead of persisting a compaction that may not shed the
-        // kept image bytes.
         uiMessages: [
           {
             id: "ui-msg-large-image",
@@ -493,8 +489,6 @@ describe("PiStreamAdapter", () => {
     const adapter = new PiStreamAdapter({
       stream,
       onContextWindowOverflow: async () => {
-        // Simulates a summarizer failure (for example the summarization model
-        // call being rejected by the provider).
         throw new Error("Local compaction failed");
       },
     });
@@ -513,9 +507,6 @@ describe("PiStreamAdapter", () => {
       }),
     );
 
-    // The retryable transport error must win over the compaction failure:
-    // the turn retries and completes instead of surfacing the summarizer
-    // error as a non-retryable run failure.
     expect(providerCalls).toBe(2);
     expect(events).toContainEqual(
       expect.objectContaining({
@@ -595,7 +586,6 @@ describe("PiStreamAdapter", () => {
         model_settings: { provider_type: "openai" },
       },
     })) {
-      // drain
     }
 
     expect(sanitizedPayload).toMatchObject({
@@ -646,7 +636,7 @@ describe("PiStreamAdapter", () => {
         ...baseInput,
         agent: {
           ...baseInput.agent,
-          model: "openrouter/anthropic/claude-sonnet-4",
+          model: "openrouter/anthropic/claude-sonnet-4.6",
           model_settings: { provider_type: "openrouter" },
         },
         uiMessages: [
@@ -679,7 +669,7 @@ describe("PiStreamAdapter", () => {
             ],
             api: "openai-completions",
             provider: "openrouter",
-            model: "anthropic/claude-sonnet-4",
+            model: "anthropic/claude-sonnet-4.6",
             usage: emptyLocalUsage(),
             stopReason: "toolUse",
             timestamp: Date.now(),
@@ -695,7 +685,6 @@ describe("PiStreamAdapter", () => {
           },
         ],
       })) {
-        // drain
       }
 
       const messages = capturedContext?.messages ?? [];
@@ -770,7 +759,6 @@ describe("PiStreamAdapter", () => {
         localProviderAuthStorageDir: storageDir,
       });
       for await (const _event of adapter.stream(input())) {
-        // drain
       }
 
       expect(capturedOptions).toMatchObject({ region: "us-west-2" });
@@ -849,10 +837,9 @@ describe("PiStreamAdapter", () => {
           },
         },
       })) {
-        // drain
       }
 
-      expect(capturedOptions).toMatchObject({ reasoning: "xhigh" });
+      expect(capturedOptions).toMatchObject({ reasoning: "max" });
       const rewrittenPayload = await capturedOptions?.onPayload?.(
         {
           model: "claude-fable-5",
@@ -884,8 +871,6 @@ describe("PiStreamAdapter", () => {
 
     const adapter = new PiStreamAdapter({ stream });
 
-    // Simulate the retry scenario: conversation ends with a partial assistant
-    // message (e.g. after a timeout), and the retry sends no new user input.
     const inputWithTrailingAssistant: ProviderTurnInput = {
       ...input(),
       uiMessages: [
@@ -910,13 +895,11 @@ describe("PiStreamAdapter", () => {
     };
 
     for await (const _event of adapter.stream(inputWithTrailingAssistant)) {
-      // drain
     }
 
     expect(capturedContext).toBeDefined();
     // biome-ignore lint/style/noNonNullAssertion: capturedContext is asserted defined on the line above
     const messages = capturedContext!.messages;
-    // The trailing assistant message should be stripped
     expect(messages.at(-1)?.role).toBe("user");
     expect(messages).toHaveLength(1);
   });
@@ -985,7 +968,6 @@ describe("PiStreamAdapter", () => {
     };
 
     for await (const _event of adapter.stream(turnInput)) {
-      // drain
     }
 
     expect(capturedContext).toBeDefined();
@@ -1106,14 +1088,13 @@ describe("PiStreamAdapter", () => {
         ...baseInput,
         agent: {
           ...baseInput.agent,
-          model: "openai-codex/gpt-5.5",
+          model: "openai-codex/gpt-6.1-sol",
           model_settings: {
             provider_type: "chatgpt_oauth",
             service_tier: "priority",
           },
         },
       })) {
-        // drain
       }
 
       expect(capturedOptions).toMatchObject({ serviceTier: "priority" });

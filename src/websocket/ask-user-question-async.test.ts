@@ -292,8 +292,6 @@ test.each(["answered", "dismissed"] as const)(
         toolset: { include: ["AskUserQuestion"] },
       });
 
-      // Restart the listener with no local defaults, as on a fresh destination.
-      // Only the wire snapshot below can restore this conversation's opt-in.
       client.close();
       await server.close();
       settingsManager.setClientPreferences(

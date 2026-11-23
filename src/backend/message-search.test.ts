@@ -23,7 +23,6 @@ import { runWithRuntimeContext } from "@/runtime-context";
 
 async function drain(stream: AsyncIterable<unknown>): Promise<void> {
   for await (const _chunk of stream) {
-    // drain
   }
 }
 
@@ -422,7 +421,6 @@ describe("message search backend routing", () => {
         query: "large_needle",
         limit: 10,
       });
-      // BM25 order is unchanged by streaming: the denser match ranks first.
       expect(results.map((result) => result.message_id)).toEqual([
         "user-23",
         "user-7",

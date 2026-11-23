@@ -2,21 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-/**
- * Push-before-notify contract for GUI-initiated memory writes (LET-9481).
- *
- * Server-of-record reads (e.g. cloud-api's agent profile picture endpoint)
- * are served from the remote memfs (Pierre), so `memory_updated` and the
- * `write_memory_file_response` / `delete_memory_file_response` frames must
- * not be emitted until the push has completed. Otherwise the UI invalidates
- * its query caches, refetches stale bytes from the remote, and drops its
- * optimistic state (the "profile picture doesn't refresh" bug).
- *
- * Source-level pins are used because the handler wires the sync via dynamic
- * imports and `mock.module` in other suites is process-global under Bun
- * (matching the `acting-user-attribution.test.ts` convention).
- */
-
 const handlerSource = readFileSync(
   fileURLToPath(new URL("./memory.ts", import.meta.url)),
   "utf-8",
@@ -45,9 +30,6 @@ describe("listener memory write push ordering (contract)", () => {
     test(`${name} awaits the bounded push before emitting memory_updated`, () => {
       const pushIdx = block.indexOf("await awaitMemoryPushBounded(");
       const memoryUpdatedIdx = block.indexOf('type: "memory_updated"');
-      // The success-path response emission is the last occurrence — the
-      // first occurrence is the `sendFailure` helper at the top of each
-      // handler.
       const responseIdx = block.lastIndexOf(`type: "${name}_response"`);
 
       expect(pushIdx).toBeGreaterThan(-1);
@@ -71,10 +53,6 @@ describe("listener memory write push ordering (contract)", () => {
   });
 
   test("push-await cap stays below the desktop UI's 10s device-command timeout", () => {
-    // useSendDeviceCommand in letta-cloud rejects after DEFAULT_TIMEOUT_MS
-    // (10s) — the skills install/uninstall UI sends write/delete_memory_file
-    // through it with no override. A cap at or above 10s would turn slow
-    // pushes into spurious client-side failures.
     const match = handlerSource.match(
       /const MEMORY_PUSH_AWAIT_CAP_MS = ([\d_]+);/,
     );

@@ -117,7 +117,6 @@ async function persistedSession(redirectUrl: string, redirectUris: string[]) {
   return oauth;
 }
 
-/** Mirrors the pre-normalization key derivation, which hashed the raw URL. */
 function legacyRawUrlKey(serverUrl: string): string {
   const digest = createHash("sha256")
     .update(`${AGENT_ID}\0${SERVER_NAME}\0${serverUrl}`)

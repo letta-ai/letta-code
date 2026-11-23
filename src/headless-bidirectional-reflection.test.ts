@@ -43,8 +43,6 @@ interface BidirectionalReflectionSummary {
 const cliProcesses = new Set<ChildProcessWithoutNullStreams>();
 const tempRoots: string[] = [];
 const reflectionWaitTimeoutMs = 10_000;
-// Keep the original startup/turn budget in addition to all three sequential
-// reflection waits. A whole-scenario deadline must not cut a valid wait short.
 const scenarioTimeoutMs = 25_000 + 3 * reflectionWaitTimeoutMs;
 
 afterAll(async () => {
@@ -77,10 +75,6 @@ describe("headless bidirectional auto-reflection", () => {
       '"source_message_id":"ui-msg-2"',
     );
 
-    // Reflection launches post-turn, so every completed turn gets reflected.
-    // The harness waits for each reflection cycle to finish before sending the
-    // next message, making the final state exact: any silent breakage in the
-    // trigger or launcher fails these assertions.
     expect(summary.reflectionLaunchCount, formatSummary(summary)).toBe(3);
     expect(summary.payloadFiles.length, formatSummary(summary)).toBe(3);
     expect(summary.state?.total_completed_steps, formatSummary(summary)).toBe(
@@ -161,13 +155,9 @@ async function runBidirectionalReflectionScenario(): Promise<BidirectionalReflec
       env: createIsolatedCliTestEnv({
         HOME: homeDir,
         LETTA_LOCAL_BACKEND_DIR: localBackendDir,
-        // Ordinary turns still return pong, while reflection turns execute a
-        // real Bash read of TRANSCRIPT_PATH before returning success.
         LETTA_LOCAL_BACKEND_EXECUTOR: "deterministic-reflection",
         LETTA_ENABLE_WINDOWS_AUTO_REFLECTION: "1",
         LETTA_TRANSCRIPT_ROOT: transcriptRoot,
-        // This test exercises transcript-driven reflection, not kernel sandbox
-        // behavior. Keep it independent of host bwrap/seatbelt availability.
         LETTA_FS_SANDBOX: "0",
         USER_CWD: projectDir,
         LETTA_DEBUG: "1",
@@ -253,10 +243,6 @@ async function runBidirectionalReflectionScenario(): Promise<BidirectionalReflec
 
       if (parsed.type === "result") {
         resultCount += 1;
-        // Each turn's reflection launches post-turn. The next turn is allowed
-        // to start only after that background reflection finishes; otherwise
-        // the active-reflection guard correctly skips duplicate launches and
-        // the final counts would depend on timing instead of being exact.
         if (resultCount === 1) {
           void waitForReflectionProgress(transcriptDir, {
             reflectedCompletedSteps: 1,

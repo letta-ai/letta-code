@@ -50,8 +50,6 @@ describe("probeInstalledSdkDirs", () => {
   test("returns nothing when no install exists on the path", () => {
     const root = mkdtempSync(join(tmpdir(), "sdk-probe-empty-"));
     try {
-      // The temp root itself has no node_modules; ancestors of tmpdir are
-      // not expected to either, but tolerate a machine where they do.
       const found = probeInstalledSdkDirs([root]);
       expect(found.every((dir) => !dir.startsWith(root))).toBe(true);
     } finally {
@@ -60,20 +58,12 @@ describe("probeInstalledSdkDirs", () => {
   });
 });
 
-// realpathSync.native: on Windows the plain form keeps 8.3 short names
-// (RUNNER~1) while the subprocess's process.cwd() reports the long name; on
-// macOS both resolve the /var -> /private/var symlink.
 describe("loadAgentSdk after a late install", () => {
   test("loads through the probe when the resolver already cached a miss", async () => {
-    // A subprocess whose loader copy and cwd start without the SDK: the
-    // resolver paths fail (and may be cached), then the package appears on
-    // disk and the next load must still succeed via the direct probe.
     const root = realpathSync.native(
       mkdtempSync(join(tmpdir(), "sdk-late-install-")),
     );
     try {
-      // An empty node_modules keeps Bun from auto-installing the package
-      // from its cache, which would defeat the "not installed yet" setup.
       mkdirSync(join(root, "src"), { recursive: true });
       mkdirSync(join(root, "node_modules"), { recursive: true });
       writeFileSync(join(root, "package.json"), '{"name":"scratch"}');
@@ -136,7 +126,6 @@ describe("loadAgentSdk after a late install", () => {
         join(root, "src", "types.ts"),
         "export type SdkClient = unknown;\n",
       );
-      // Present on disk but its entry throws, so every specifier fails.
       const dir = installFakeSdk(root);
       writeFileSync(join(dir, "dist", "index.js"), "throw new Error('boom')");
       writeFileSync(

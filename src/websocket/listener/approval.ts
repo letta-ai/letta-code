@@ -336,9 +336,6 @@ export function rejectPendingApprovalResolversForConnection(
     );
     runtime.pendingApprovalResolvers.delete(requestKey);
     if (pending.connectionIds.size === 0) {
-      // Codex keeps a thread-scoped server request alive when its last
-      // subscriber disconnects and replays it to a later subscriber. The
-      // listener turn's abort signal remains the authority for cancellation.
       keepPendingApprovalUnowned(runtime, pending);
     }
   }

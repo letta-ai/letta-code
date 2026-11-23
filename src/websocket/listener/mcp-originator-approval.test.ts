@@ -27,8 +27,6 @@ for (const [queuedId, recovery] of [
   ["B", true],
 ] as const) {
   test(`A tool result appends queued ${queuedId} unless recovering, recovery=${recovery}`, async () => {
-    // Steering drains every queued input regardless of originator; only a
-    // recovery continuation (approval results alone) leaves the queue alone.
     const drained = !recovery;
     const runtime = getOrCreateScopedRuntime(
       createRuntime(),
@@ -150,7 +148,6 @@ for (const [queuedId, recovery] of [
     expect(runtime.queueRuntime.length).toBe(drained ? 0 : 1);
     expect(runtime.queuedMessagesByItemId.size).toBe(drained ? 0 : 1);
     expect(JSON.stringify(sent).includes('"queued"')).toBe(drained);
-    // A mixed-origin drain retires the queued run's token (origin swap).
     expect(getMcpOriginatorToken("B")).toBe(
       drained && queuedId === "B" ? undefined : "token-B",
     );

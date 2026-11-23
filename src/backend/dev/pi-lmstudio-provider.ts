@@ -9,7 +9,6 @@ import {
 export const LMSTUDIO_PI_PROVIDER_ID = "lmstudio";
 
 export interface LmStudioPiProviderOptions {
-  /** Base URL as configured; `/v1` is appended/stripped as needed. */
   baseURL: string;
   apiKey?: string;
   fetchImpl?: typeof fetch;
@@ -38,7 +37,6 @@ function parseLmStudioModels(data: unknown): LocalEndpointModelMetadata[] {
       max_context_length?: unknown;
     };
     if (typeof record.id !== "string" || record.id.length === 0) continue;
-    // Embedding models are not chat models; keep them out of /model.
     if (record.type === "embeddings") continue;
     const capabilities = stringArray(record.capabilities);
     const loadedContextLength =
@@ -65,18 +63,6 @@ function parseLmStudioModels(data: unknown): LocalEndpointModelMetadata[] {
   return models;
 }
 
-/**
- * LM Studio capability discovery: the native REST API
- * (`GET /api/v0/models`) reports each downloaded model's authoritative
- * metadata — `type` (`"vlm"` = vision-language model), an optional
- * `capabilities` array, the loaded runtime window, and the architectural
- * maximum. A loaded runtime window takes precedence before the shared
- * provider applies its conservative harness default. When the native API
- * is unavailable (older LM Studio), discovery falls back to the
- * OpenAI-compatible `/v1/models` id list and each model keeps its
- * last-known published Model or is published text-only — capabilities are
- * explicitly unknown, never guessed from the model id.
- */
 const lmStudioDiscover: LocalEndpointDiscover = async (context) => {
   try {
     const native = await context.fetchJson(
@@ -84,9 +70,7 @@ const lmStudioDiscover: LocalEndpointDiscover = async (context) => {
     );
     const models = parseLmStudioModels(native);
     if (models.length > 0) return models.map(context.buildModel);
-  } catch {
-    // Native metadata API unavailable; fall through to the id-only list.
-  }
+  } catch {}
 
   const list = await context.fetchJson(`${context.openAIBaseURL}/models`);
   return modelIdsFromOpenAICompatibleList(list).map(
@@ -95,11 +79,6 @@ const lmStudioDiscover: LocalEndpointDiscover = async (context) => {
   );
 };
 
-/**
- * Real dynamic pi-ai Provider for an LM Studio server, replacing the Letta
- * connector that fabricated Models from name substrings. See
- * `createLocalEndpointPiProvider` for shared refresh/auth semantics.
- */
 export function createLmStudioPiProvider(
   options: LmStudioPiProviderOptions,
 ): Provider<"openai-completions"> {

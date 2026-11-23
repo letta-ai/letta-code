@@ -9,17 +9,12 @@ import {
 import { OPENAI_COMPATIBLE_PROXY_UPDATE_ARG } from "@/utils/openai-endpoint";
 import { ERROR_FEEDBACK_HINT, PROVIDER_STATUS_PAGES } from "./constants";
 
-/**
- * Derives the current reasoning effort from agent state (canonical) with llm_config as fallback.
- * model_settings is the source of truth; llm_config.reasoning_effort is a legacy field.
- */
 export function deriveReasoningEffort(
   modelSettings: AgentState["model_settings"] | undefined | null,
   llmConfig: LlmConfig | null | undefined,
 ): ModelReasoningEffort | null {
   if (modelSettings && "provider_type" in modelSettings) {
     const providerType = modelSettings.provider_type as string | undefined;
-    // OpenAI/OpenRouter: reasoning.reasoning_effort
     if (
       (providerType === "openai" ||
         providerType === "openai-codex" ||
@@ -45,7 +40,6 @@ export function deriveReasoningEffort(
       }
     }
 
-    // Anthropic/Bedrock: effort field
     if (providerType === "anthropic" || providerType === "bedrock") {
       const effort = (modelSettings as { effort?: string | null }).effort;
       if (effort === "low" || effort === "medium" || effort === "high")
@@ -54,7 +48,6 @@ export function deriveReasoningEffort(
         return effort as ModelReasoningEffort;
     }
   }
-  // Fallback: deprecated llm_config fields
   const re = llmConfig?.reasoning_effort as string | null | undefined;
   if (
     re === "none" ||
@@ -160,12 +153,6 @@ export function providerTypeFromModelSettings(
     : null;
 }
 
-/**
- * Provider type for toolset auto-detection. Generic OpenAI-compatible proxy
- * models report provider_type "openai" but are not necessarily GPT-family, so
- * they get the non-matching "openai-compatible" label and keep handle-based
- * detection (which resolves them to the default toolset).
- */
 export function toolsetProviderTypeFromSettings(
   modelSettings: unknown,
 ): string | null {
@@ -200,7 +187,6 @@ export function mapHandleToLlmConfigPatch(
   ) as Partial<LlmConfig>;
 }
 
-// Helper to get appropriate error hint based on stop reason and current model
 export function getErrorHintForStopReason(
   stopReason: StopReasonType | null,
   currentModelId: string | null,
@@ -210,10 +196,6 @@ export function getErrorHintForStopReason(
     return ERROR_FEEDBACK_HINT;
   }
 
-  // When the user is on an auto-routed model (letta/auto*), the reported
-  // model_endpoint_type reflects whichever downstream provider the proxy chose,
-  // not a provider the user explicitly selected. Don't blame a specific
-  // provider in that case -- the issue may be on the proxy side.
   const isAutoModel = currentModelId?.startsWith("auto") ?? false;
   const statusInfo =
     modelEndpointType && !isAutoModel

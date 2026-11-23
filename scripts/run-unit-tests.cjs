@@ -10,8 +10,6 @@ const {
   readPullRequestShas,
 } = require("./unit-test-impact.cjs");
 
-// Unit test directories — bun discovers *.test.ts / *.test.tsx within each.
-// Listed explicitly so we skip src/integration-tests (API-gated).
 const dirs = [
   "src/agent",
   "src/auth",
@@ -97,8 +95,6 @@ for (const entry of isolatedTests) {
 function runTests(files, timeoutMs, env = {}) {
   execFileSync("bun", ["test", ...files, "--timeout", String(timeoutMs)], {
     stdio: "inherit",
-    // Unit tests must never emit product telemetry or make test fixtures look
-    // like real users. Only isolated telemetry contract tests may opt back in.
     env: { ...process.env, LETTA_CODE_TELEM: "0", ...env },
   });
 }
@@ -197,8 +193,6 @@ function selectTestFiles() {
 let exitCode = 0;
 const shardIndex = process.argv.indexOf("--shard");
 const shard = shardIndex === -1 ? undefined : (process.argv[shardIndex + 1] ?? "");
-// Validate outside selection's full-suite fallback: an invalid shard must fail,
-// not make several jobs duplicate the entire suite or silently run nothing.
 shardTestFiles([], shard);
 const selectedTestFiles = shardTestFiles(selectTestFiles(), shard);
 if (shard) {
@@ -206,9 +200,6 @@ if (shard) {
 }
 const selectedTestPaths = new Set(selectedTestFiles);
 
-// Bun module mocks and process-global state are shared within one test process.
-// Keep the explicitly stateful suites in fresh processes so they cannot poison
-// the ordinary unit batch or inherit another suite's cwd/env/module registry.
 for (const entry of isolatedTests.filter((entry) =>
   selectedTestPaths.has(entry.path),
 )) {
@@ -223,9 +214,6 @@ const sharedProcessTests = selectedTestFiles.filter(
   (file) => !isolatedPaths.has(file),
 );
 
-// Passing argv directly avoids cmd.exe's shorter shell command-line limit on
-// Windows. Bounded batches also stay below CreateProcess's 32k limit as the
-// suite grows.
 for (const batch of chunkByCommandLength(sharedProcessTests)) {
   try {
     runTests(batch, 15000);

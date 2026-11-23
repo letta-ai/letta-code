@@ -1,17 +1,3 @@
-/**
- * Integration-level tests for PRQ5: queue lifecycle event emission in
- * listen-client.ts.
- *
- * These tests drive QueueRuntime directly, mirroring the wiring pattern in
- * listen-client to verify:
- *  - Single message: enqueued → dequeued, no blocked, real queue_len
- *  - Two rapid synchronous arrivals: second gets blocked(runtime_busy)
- *    because pendingTurns is incremented before the .then() chain
- *  - Connection close: queue clear still happens once in QueueRuntime
- *  - Per-turn error: no queue clear — queue continues for remaining turns
- *  - ApprovalCreate payloads (no `content` field) are not enqueued
- */
-
 import { describe, expect, test } from "bun:test";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
@@ -22,8 +8,6 @@ import type {
   QueueItem,
 } from "@/queue/queue-runtime";
 import { QueueRuntime } from "@/queue/queue-runtime";
-
-// ── Helpers ───────────────────────────────────────────────────────
 
 type Recorded = {
   enqueued: Array<{ item: QueueItem; queueLen: number }>;
@@ -50,7 +34,6 @@ function buildRuntime(): { q: QueueRuntime; rec: Recorded } {
   return { q, rec };
 }
 
-/** Mirrors listen-client message arrival logic for a MessageCreate payload. */
 function simulateMessageArrival(
   q: QueueRuntime,
   pendingTurnsRef: { value: number },
@@ -69,11 +52,10 @@ function simulateMessageArrival(
       q.tryDequeue("runtime_busy");
     }
   }
-  pendingTurnsRef.value++; // synchronous before .then()
+  pendingTurnsRef.value++;
   return { isUserMessage, queueItemId };
 }
 
-/** Mirrors the start of the .then() chain callback. */
 function simulateTurnStart(
   q: QueueRuntime,
   _pendingTurnsRef: { value: number },
@@ -100,7 +82,6 @@ function simulateTurnStart(
   }
 }
 
-/** Mirrors the finally block. */
 function simulateTurnEnd(
   q: QueueRuntime,
   pendingTurnsRef: { value: number },
@@ -114,11 +95,8 @@ function makeMessageCreate(text = "hello"): MessageCreate {
 }
 
 function makeApprovalCreate(): ApprovalCreate {
-  // ApprovalCreate does NOT have a `content` field — used for legacy approval path
   return { type: "approval", approvals: [] } as unknown as ApprovalCreate;
 }
-
-// ── Tests ─────────────────────────────────────────────────────────
 
 describe("single message — idle path", () => {
   test("enqueued → dequeued, no blocked, real queue_len values", () => {
@@ -148,16 +126,14 @@ describe("two rapid messages — busy path", () => {
     const turns = { value: 0 };
     const skipIds = new Set<string>();
 
-    // First message arrives
     const arrival1 = simulateMessageArrival(
       q,
       turns,
       makeMessageCreate("first"),
     );
-    expect(turns.value).toBe(1); // synchronously incremented
-    expect(rec.blocked).toHaveLength(0); // was 0 at arrival
+    expect(turns.value).toBe(1);
+    expect(rec.blocked).toHaveLength(0);
 
-    // Second message arrives BEFORE first turn's .then() runs
     const arrival2 = simulateMessageArrival(
       q,
       turns,
@@ -166,17 +142,15 @@ describe("two rapid messages — busy path", () => {
     expect(turns.value).toBe(2);
     expect(rec.blocked).toHaveLength(1);
     expect(rec.blocked.at(0)?.reason).toBe("runtime_busy");
-    expect(rec.blocked.at(0)?.queueLen).toBe(2); // both enqueued
+    expect(rec.blocked.at(0)?.queueLen).toBe(2);
 
-    // First turn runs
     simulateTurnStart(q, turns, arrival1, skipIds);
     expect(rec.dequeued).toHaveLength(1);
     expect(rec.dequeued.at(0)?.mergedCount).toBe(2);
     expect(rec.dequeued.at(0)?.queueLenAfter).toBe(0);
     simulateTurnEnd(q, turns);
-    expect(turns.value).toBe(1); // second still pending
+    expect(turns.value).toBe(1);
 
-    // Second callback no-ops (item already consumed in coalesced batch).
     simulateTurnStart(q, turns, arrival2, skipIds);
     expect(rec.dequeued).toHaveLength(1);
     simulateTurnEnd(q, turns);
@@ -189,11 +163,10 @@ describe("two rapid messages — busy path", () => {
     const skipIds = new Set<string>();
 
     const arrivalA = simulateMessageArrival(q, turns, makeMessageCreate("a"));
-    const arrivalB = simulateMessageArrival(q, turns, makeMessageCreate("b")); // blocked
-    const arrivalC = simulateMessageArrival(q, turns, makeMessageCreate("c")); // same reason — no extra blocked
+    const arrivalB = simulateMessageArrival(q, turns, makeMessageCreate("b"));
+    const arrivalC = simulateMessageArrival(q, turns, makeMessageCreate("c"));
     expect(rec.blocked).toHaveLength(1);
 
-    // Drain all three
     const queuedArrivals = [arrivalA, arrivalB, arrivalC];
     for (let i = 0; i < 3; i++) {
       const queuedArrival = queuedArrivals[i];
@@ -205,17 +178,13 @@ describe("two rapid messages — busy path", () => {
     }
     expect(turns.value).toBe(0);
 
-    // New arrival after full drain — should be idle (no blocked)
     simulateMessageArrival(q, turns, makeMessageCreate("d"));
-    expect(rec.blocked).toHaveLength(1); // still just the original one
+    expect(rec.blocked).toHaveLength(1);
   });
 });
 
 describe("pendingTurns safety — always decremented", () => {
   test("pendingTurns decrements even when simulateTurnStart would throw", () => {
-    // Mirrors the production fix: onStatusChange("receiving") moved inside try
-    // so the finally always fires. Here we verify that the turn-end path
-    // (finally equivalent) always restores pendingTurns to 0.
     const { q } = buildRuntime();
     const turns = { value: 0 };
     const skipIds = new Set<string>();
@@ -223,11 +192,9 @@ describe("pendingTurns safety — always decremented", () => {
     const arrival = simulateMessageArrival(q, turns, makeMessageCreate("msg"));
     expect(turns.value).toBe(1);
 
-    // Simulate: consumeItems fires, then an error before handleIncomingMessage
     simulateTurnStart(q, turns, arrival, skipIds);
-    // finally fires (error path)
     simulateTurnEnd(q, turns);
-    expect(turns.value).toBe(0); // not leaked
+    expect(turns.value).toBe(0);
     expect(q.length).toBe(0);
   });
 });
@@ -241,9 +208,8 @@ describe("ApprovalCreate payloads", () => {
     const arrival = simulateMessageArrival(q, turns, makeApprovalCreate());
     expect(arrival.isUserMessage).toBe(false);
     expect(rec.enqueued).toHaveLength(0);
-    expect(turns.value).toBe(1); // pendingTurns still increments
+    expect(turns.value).toBe(1);
 
-    // No consumeItems called in .then()
     simulateTurnStart(q, turns, arrival, skipIds);
     expect(rec.dequeued).toHaveLength(0);
     simulateTurnEnd(q, turns);
@@ -264,7 +230,7 @@ describe("connection close", () => {
     const { q, rec } = buildRuntime();
     const turns = { value: 0 };
     simulateMessageArrival(q, turns, makeMessageCreate("pending"));
-    q.clear("shutdown"); // connection closed before turn ran
+    q.clear("shutdown");
     expect(rec.cleared.at(0)?.count).toBe(1);
     expect(q.length).toBe(0);
   });
@@ -287,16 +253,14 @@ describe("per-turn error — no queue_cleared", () => {
       makeMessageCreate("second"),
     );
 
-    // First turn: simulate error — finally still runs
     simulateTurnStart(q, turns, arrival1, skipIds);
-    simulateTurnEnd(q, turns); // error path still hits finally
-    expect(rec.cleared).toHaveLength(0); // no queue clear
+    simulateTurnEnd(q, turns);
+    expect(rec.cleared).toHaveLength(0);
 
-    // Second callback no-ops; first turn already consumed coalesced batch.
     simulateTurnStart(q, turns, arrival2, skipIds);
     expect(rec.dequeued).toHaveLength(1);
     simulateTurnEnd(q, turns);
     expect(turns.value).toBe(0);
-    expect(rec.cleared).toHaveLength(0); // still no queue clear
+    expect(rec.cleared).toHaveLength(0);
   });
 });

@@ -189,8 +189,6 @@ describe("local MCP tool search", () => {
   });
 
   test("matches camelCase schema words as separate terms", () => {
-    // `variableName` must be searchable by its trailing word; a whole-token
-    // prefix match alone cannot find it.
     expect(
       searchLocalMcpTools({
         tools,

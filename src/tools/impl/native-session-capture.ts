@@ -14,6 +14,13 @@ import { ApiRequestError, apiRequest } from "@/backend/api/request";
 import { getServerUrl, isCloudServerUrl } from "@/backend/api/server-url";
 import { debugWarn } from "@/utils/debug";
 
+import {
+  clearNativeSessionOwnersForTests,
+  type NativeSessionOwner,
+  persistNativeSessionOwner,
+  readNativeSessionOwner,
+} from "./native-session-owner";
+
 export type NativeSessionSource = "claude_code" | "codex";
 export interface NativeSessionScope {
   agentId: string;
@@ -275,10 +282,7 @@ async function retireFailedCaptureSession(
       admission.sessionId,
       admission.env,
     );
-  } catch {
-    // Keep the remembered state fenced. A later reservation must establish a
-    // verified EOF drop boundary before another actor may start.
-  }
+  } catch {}
 }
 
 async function resetCaptureBoundary(
@@ -359,9 +363,6 @@ export async function reserveNativeSessionCapture(
       try {
         await resetCaptureBoundary(state, source, sessionId, env);
       } catch (error) {
-        // Capture is auxiliary. Keep this actor's admission/fence, but allow
-        // the native turn to recreate or relocate its session file; the EOF
-        // finalizer will retry the reset without bricking every later send.
         reportNativeSessionCaptureFailure(source, sessionId, error);
       }
     }
@@ -401,7 +402,6 @@ async function entries(path: string, directories: boolean): Promise<string[]> {
     throw error;
   }
 }
-/** Find the exact native file for a CLI session, not a stdout projection. */
 export async function findNativeSessionPath(
   source: NativeSessionSource,
   sessionId: string,
@@ -689,8 +689,6 @@ async function discardRejectedSegment(state: CaptureState): Promise<void> {
   if (!segment) return;
   const directory = join(segment.path, "..");
   await cleanupSpoolDirectory(directory);
-  // Only the head segment was rejected. Later segments can belong to other
-  // actors and must each receive their own upload attempt.
   state.ackedOffset = segment.end;
   state.retryDelayMs = INITIAL_DRAIN_RETRY_MS;
 }
@@ -717,9 +715,6 @@ function startDrain(
       reportNativeSessionCaptureFailure(source, sessionId, error);
       const segment = state.segments[0];
       if (error instanceof NativeChunkAcknowledgmentError) {
-        // The server may have committed the attempted index before returning a
-        // malformed response. Never reuse that ambiguous idempotency slot for
-        // another actor's bytes.
         state.chunkIndex = Math.max(
           state.chunkIndex,
           error.attemptedChunkIndex + 1,
@@ -760,7 +755,6 @@ function startDrain(
     });
 }
 
-/** Resolves once the turn's bytes are immutable on disk; network drain is background work. */
 export function captureNativeSession(
   source: NativeSessionSource,
   sessionId: string,
@@ -787,9 +781,6 @@ export function captureNativeSession(
     .then(() =>
       seal(state, source, sessionId, frozenScope, env, frozenOptions),
     );
-  // Production callers hold a per-session admission until this actor's exact
-  // boundary succeeds. Keep the queue usable for that same reservation's
-  // bounded retry rather than poisoning every future attempt in the process.
   state.sealing = sealing.catch(() => undefined);
   return sealing.then(() => startDrain(state, source, sessionId));
 }
@@ -812,29 +803,30 @@ export async function awaitNativeSessionCaptureDrainForTests(
   }
 }
 
-// The parent conversation that launched each native session. Unlike the
-// capture state, this is kept for every server: remote steering and resume
-// check it once the launch's background task and subagent row are evicted.
 const MAX_NATIVE_SESSION_OWNERS = 1024;
-const owners = new Map<string, NativeSessionScope>();
+const owners = new Map<string, NativeSessionOwner>();
 
 export function getNativeSessionOwner(
   source: NativeSessionSource,
   sessionId: string,
-): NativeSessionScope | undefined {
-  return owners.get(key(source, sessionId));
+): NativeSessionOwner | undefined {
+  return (
+    owners.get(key(source, sessionId)) ??
+    readNativeSessionOwner(source, sessionId)
+  );
 }
 
 export function rememberNativeSession(
   source: NativeSessionSource,
   sessionId: string,
-  scope: NativeSessionScope,
+  scope: NativeSessionOwner,
   cloudUrl = getServerUrl(),
 ): void {
   scavengeStaleSpoolDirectories();
   const id = key(source, sessionId);
   if (!owners.has(id)) {
-    owners.set(id, { ...scope });
+    persistNativeSessionOwner(source, sessionId, scope);
+    owners.set(id, readNativeSessionOwner(source, sessionId) ?? { ...scope });
     if (owners.size > MAX_NATIVE_SESSION_OWNERS) {
       const oldest = owners.keys().next().value;
       if (oldest !== undefined) owners.delete(oldest);
@@ -861,6 +853,7 @@ export async function clearNativeSessionCaptureForTests(): Promise<void> {
   const captured = [...states.values()];
   states.clear();
   owners.clear();
+  clearNativeSessionOwnersForTests();
   for (const admission of admissions.values()) admission.release();
   admissions.clear();
   for (const state of captured) {
@@ -893,7 +886,6 @@ export function setNativeSessionCaptureDrainHookForTests(
   drainHookForTests = hook;
 }
 
-/** Report delivery failure without logging raw transcripts or response bodies. */
 export function reportNativeSessionCaptureFailure(
   source: NativeSessionSource,
   sessionId: string,

@@ -1,15 +1,32 @@
-// Bridges SIGINT delivery to AbortSignal-based cancellation.
+type Interrupt = "SIGINT" | "SIGTERM";
 
-interface SigintSource {
-  once(event: "SIGINT", listener: () => void): unknown;
+interface SignalSource {
+  removeListener(event: Interrupt, listener: () => void): unknown;
+  once(event: Interrupt, listener: () => void): unknown;
+}
+
+export function createProcessAbortSignal(
+  events: readonly Interrupt[],
+  proc: SignalSource = process,
+) {
+  const controller = new AbortController();
+  const listeners = events.map((event) => {
+    const listener = () =>
+      controller.abort(new DOMException(event, "AbortError"));
+    proc.once(event, listener);
+    return { event, listener };
+  });
+  return {
+    signal: controller.signal,
+    dispose() {
+      for (const { event, listener } of listeners)
+        proc.removeListener(event, listener);
+    },
+  };
 }
 
 export function createSigintAbortSignal(
-  proc: SigintSource = process,
+  proc: SignalSource = process,
 ): AbortSignal {
-  const controller = new AbortController();
-  proc.once("SIGINT", () => {
-    controller.abort();
-  });
-  return controller.signal;
+  return createProcessAbortSignal(["SIGINT"], proc).signal;
 }

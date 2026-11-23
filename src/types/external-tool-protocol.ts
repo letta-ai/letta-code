@@ -1,35 +1,26 @@
 import type { RuntimeScope } from "./runtime-scope";
+import type { ToolsetPreference } from "./toolset-protocol";
 
 export interface ExternalToolDefinitionPayload {
   name: string;
   label?: string;
   description: string;
   parameters: Record<string, unknown>;
-  /** Controller-requested wait for a result; expiry does not cancel remote work. */
   timeout_ms?: number;
-  /** Yield to a scoped task notification after 10s by default; false waits inline. */
   auto_background?: boolean;
 }
 
 export interface RuntimeStartExternalToolsGroup {
-  /** Hidden controller-defined scope used to select these tools on input turns. */
-  scope_id?: string;
   tools: readonly ExternalToolDefinitionPayload[];
+  capabilities?: { external_tool_call_cancel?: boolean };
 }
 
-/**
- * Applies one external-tool definition set to one or more exact runtimes.
- * Empty external_tools removes the controller's tools for those runtimes.
- */
 export interface RuntimeExternalToolsUpdateGroup {
   runtimes: readonly RuntimeScope<string | null>[];
   external_tools: readonly RuntimeStartExternalToolsGroup[];
+  tool_policy?: RuntimeToolPolicy;
 }
 
-/**
- * Publishes runtime-owned external tools without starting or subscribing to
- * each runtime. Registrations remain owned by the sending connection.
- */
 export interface RuntimeExternalToolsUpdateCommand {
   type: "runtime_external_tools_update";
   request_id: string;
@@ -47,11 +38,21 @@ export interface ExternalToolCallRequestMessage {
   type: "external_tool_call_request";
   request_id: string;
   runtime?: RuntimeScope<string | null>;
-  scope_id?: string;
+  turn_started_at?: number;
   tool_call_id: string;
   tool_name: string;
   input: Record<string, unknown>;
 }
+
+export interface ExternalToolCallCancelMessage {
+  type: "external_tool_call_cancel";
+  request_id: string;
+  reason?: string;
+}
+
+export type ExternalToolCallMessage =
+  | ExternalToolCallRequestMessage
+  | ExternalToolCallCancelMessage;
 
 export interface ExternalToolCallResultContent {
   type: string;
@@ -70,4 +71,11 @@ export interface ExternalToolCallResponseCommand {
   request_id: string;
   result?: ExternalToolCallResult;
   error?: string;
+}
+
+export interface RuntimeToolPolicy {
+  toolset?: { base?: ToolsetPreference; include?: readonly string[] };
+  allowlist?: readonly string[];
+  exclude_interactive?: boolean;
+  foreground_yield_ms?: number;
 }

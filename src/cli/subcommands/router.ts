@@ -12,6 +12,7 @@ import { runMemorySubcommand } from "./memory";
 import { runMessagesSubcommand } from "./messages";
 import { runModelSubcommand } from "./model";
 import { runModsSubcommand } from "./mods";
+import { runMonitorsSubcommand } from "./monitors";
 import { runPermissionsSubcommand } from "./permissions";
 import { runSandboxSubcommand } from "./sandbox";
 import { runSecretSubcommand } from "./secret";
@@ -23,6 +24,7 @@ import { runStepsSubcommand } from "./steps";
 import { runTeleportSubcommand } from "./teleport";
 import { runTrajectoriesSubcommand } from "./trajectories";
 import { runUsageSubcommand } from "./usage";
+import { runVariableSubcommand } from "./variable";
 
 async function runUpdateSubcommand(): Promise<number> {
   const { manualUpdate } = await import("@/updater/auto-update");
@@ -61,6 +63,8 @@ export function subcommandNeedsEarlyBackendMode(
     case "permissions":
     case "remote":
     case "sandbox":
+    case "monitors":
+    case "variable":
     case "secret":
     case "server":
     case "shared-memory":
@@ -87,12 +91,12 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
     case "upgrade":
       return runUpdateSubcommand();
     case "memory":
-    case "memfs": // legacy alias
+    case "memfs":
       return runMemorySubcommand(rest);
     case "agents":
       return runAgentsSubcommand(rest);
     case "model":
-    case "models": // alias
+    case "models":
       return runModelSubcommand(rest);
     case "usage":
       return runUsageSubcommand(rest);
@@ -110,13 +114,15 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
     case "mcp":
       return runMcpSubcommand(rest);
     case "computers":
-    case "environments": // legacy alias
-    case "envs": // legacy alias
+    case "environments":
+    case "envs":
       return runEnvironmentsSubcommand(rest);
     case "mods":
       return runModsSubcommand(rest);
     case "sandbox":
       return runSandboxSubcommand(rest);
+    case "variable":
+      return runVariableSubcommand(rest);
     case "secret":
       return runSecretSubcommand(rest);
     case "teleport":
@@ -125,7 +131,7 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runServerSubcommand(rest);
     case "feedback":
       return runFeedbackSubcommand(rest);
-    case "remote": // alias
+    case "remote":
       return runListenSubcommand(rest);
     case "connect":
       return runConnectSubcommand(rest);
@@ -139,6 +145,8 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runSharedMemorySubcommand(rest);
     case "skills":
       return runSkillsSubcommand(rest);
+    case "monitors":
+      return runMonitorsSubcommand(rest);
     case "cron":
       return runCronSubcommand(rest);
     case "channels":
@@ -150,7 +158,7 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
     case "local-backend":
       return runLocalBackendSubcommand(rest);
     case "trajectories":
-    case "trajectory": // alias
+    case "trajectory":
       return runTrajectoriesSubcommand(rest);
     default:
       return null;

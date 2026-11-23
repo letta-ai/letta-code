@@ -21,34 +21,19 @@ function getTerminalThemeState(): TerminalThemeState {
   return globalObject[TERMINAL_THEME_STATE_KEY];
 }
 
-/**
- * Normalize a hex color component of any length to 8-bit (0-255).
- * OSC 11 responses may return 1, 2, 3, or 4 hex digits per component.
- */
 export function parseHexComponent(hex: string): number {
   const value = parseInt(hex, 16);
   const maxForLength = (1 << (hex.length * 4)) - 1;
   return Math.round((value / maxForLength) * 255);
 }
 
-/**
- * Query terminal background color using OSC 11 escape sequence.
- * Returns the RGB values or null if query fails/times out.
- *
- * OSC 11 query: \x1b]11;?\x1b\\ or \x1b]11;?\x07
- * Response: \x1b]11;rgb:RRRR/GGGG/BBBB\x1b\\ (or \x07 terminator)
- *
- * IMPORTANT: Must be called before ink takes control of stdin.
- */
 async function queryTerminalBackground(
   timeoutMs = 100,
 ): Promise<TerminalRgb | null> {
-  // Skip if not a TTY
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     return null;
   }
 
-  // Capture initial stdin state to restore it reliably
   const wasRaw = process.stdin.isRaw;
   const wasFlowing = process.stdin.readableFlowing;
 
@@ -61,14 +46,11 @@ async function queryTerminalBackground(
       resolved = true;
       try {
         process.stdin.removeListener("data", onData);
-        // Restore stdin to its original state
         process.stdin.setRawMode?.(wasRaw ?? false);
         if (!wasFlowing) {
           process.stdin.pause();
         }
-      } catch {
-        // Ignore cleanup errors — stdin may already be in a valid state
-      }
+      } catch {}
     };
 
     const timeout = setTimeout(() => {
@@ -79,8 +61,6 @@ async function queryTerminalBackground(
     const onData = (data: Buffer) => {
       response += data.toString();
 
-      // Look for OSC 11 response: ESC]11;rgb:RRRR/GGGG/BBBB followed by ESC\ or BEL
-      // Build regex with ESC character to avoid lint warning about control chars in literals
       const ESC = "\x1b";
       const oscPattern = new RegExp(
         `${ESC}\\]11;rgb:([0-9a-fA-F]+)/([0-9a-fA-F]+)/([0-9a-fA-F]+)`,
@@ -99,12 +79,10 @@ async function queryTerminalBackground(
     };
 
     try {
-      // Set raw mode to capture response
       process.stdin.setRawMode?.(true);
       process.stdin.resume();
       process.stdin.on("data", onData);
 
-      // Send OSC 11 query (using ST terminator \x1b\\)
       process.stdout.write("\x1b]11;?\x1b\\");
     } catch {
       clearTimeout(timeout);
@@ -114,13 +92,7 @@ async function queryTerminalBackground(
   });
 }
 
-/**
- * Calculate perceived luminance using relative luminance formula.
- * Returns value between 0 (black) and 1 (white).
- * Using sRGB to linear conversion and ITU-R BT.709 coefficients.
- */
 export function calculateLuminance(r: number, g: number, b: number): number {
-  // Normalize to 0-1
   const toLinear = (c: number): number => {
     const s = c / 255;
     return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
@@ -130,26 +102,17 @@ export function calculateLuminance(r: number, g: number, b: number): number {
   const gLin = toLinear(g);
   const bLin = toLinear(b);
 
-  // ITU-R BT.709 coefficients
   return 0.2126 * rLin + 0.7152 * gLin + 0.0722 * bLin;
 }
 
-/**
- * Detect terminal theme using OSC 11 query.
- * Falls back to COLORFGBG env var, then defaults to dark.
- */
 export async function detectTerminalThemeAsync(): Promise<TerminalTheme> {
-  // Try OSC 11 query first
   const bg = await queryTerminalBackground(100);
   if (bg) {
     getTerminalThemeState().cachedBackground = bg;
     const luminance = calculateLuminance(bg.r, bg.g, bg.b);
-    // Threshold: 0.5 is mid-gray, but use 0.4 to be more conservative
-    // (most "light" themes have luminance > 0.7)
     return luminance > 0.4 ? "light" : "dark";
   }
 
-  // Fall back to COLORFGBG env var
   const colorfgbg = process.env.COLORFGBG;
   if (colorfgbg) {
     const parts = colorfgbg.split(";");
@@ -157,14 +120,9 @@ export async function detectTerminalThemeAsync(): Promise<TerminalTheme> {
     if (bgIdx === 7 || bgIdx === 15) return "light";
   }
 
-  // Default to dark (most common terminal theme)
   return "dark";
 }
 
-/**
- * Synchronous theme detection using only COLORFGBG.
- * Use detectTerminalThemeAsync() for more accurate OSC 11 detection.
- */
 export function detectTerminalThemeSync(): TerminalTheme {
   const colorfgbg = process.env.COLORFGBG;
   if (colorfgbg) {
@@ -175,10 +133,6 @@ export function detectTerminalThemeSync(): TerminalTheme {
   return "dark";
 }
 
-/**
- * Get the cached terminal theme, or detect synchronously if not yet cached.
- * Call initTerminalTheme() early in app startup for async detection.
- */
 export function getTerminalTheme(): TerminalTheme {
   const state = getTerminalThemeState();
   if (state.cachedTheme) return state.cachedTheme;
@@ -186,18 +140,10 @@ export function getTerminalTheme(): TerminalTheme {
   return state.cachedTheme;
 }
 
-/**
- * Get the cached terminal background color from the OSC 11 query, if available.
- * Returns null when the terminal did not respond or async detection has not run.
- */
 export function getTerminalBackgroundColor(): TerminalRgb | null {
   return getTerminalThemeState().cachedBackground;
 }
 
-/**
- * Initialize terminal theme detection asynchronously.
- * Should be called early in app startup before UI renders.
- */
 export async function initTerminalTheme(): Promise<TerminalTheme> {
   const state = getTerminalThemeState();
   state.cachedTheme = await detectTerminalThemeAsync();

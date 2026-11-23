@@ -3,19 +3,18 @@ import { isToolsetPreference } from "./tools/toolset-catalog";
 import type { ToolsetPreference } from "./tools/toolset-types";
 import type { ClientPreferences } from "./types/client-preferences";
 
-/** Per-agent settings; baseUrl is omitted for the Letta API. */
 export interface AgentSettings {
   clientPreferencesByConversation?: Record<string, ClientPreferences>;
   agentId: string;
-  baseUrl?: string; // undefined = Letta API (api.letta.com)
-  pinned?: boolean; // true if agent is pinned
-  memfs?: boolean; // true if memory filesystem is enabled
-  toolset?: ToolsetPreference; // Virtual default-conversation preference
+  baseUrl?: string;
+  pinned?: boolean;
+  memfs?: boolean;
+  toolset?: ToolsetPreference;
   toolsetsByConversation?: Record<string, Exclude<ToolsetPreference, "auto">>;
-  systemPromptPreset?: string; // known preset ID, "custom", or undefined (legacy/subagent)
-  systemPromptHash?: string; // hash of the managed prompt content last written by Letta Code
-  systemPromptVersion?: string; // Letta Code version that wrote systemPromptHash
-  mcpServers?: McpServerConfig[]; // MCP servers available only to this agent
+  systemPromptPreset?: string;
+  systemPromptHash?: string;
+  systemPromptVersion?: string;
+  mcpServers?: McpServerConfig[];
 }
 
 export function stripEmptyAgentSettings(

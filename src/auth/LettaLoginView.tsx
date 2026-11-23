@@ -96,13 +96,9 @@ export function LettaLoginView({
             open(deviceData.verification_uri_complete, { wait: false }),
           )
           .then((subprocess) => {
-            subprocess.on("error", () => {
-              // Silently ignore - user can manually visit the URL shown above
-            });
+            subprocess.on("error", () => {});
           })
-          .catch(() => {
-            // Silently ignore any failures
-          });
+          .catch(() => {});
 
         const deviceId = settingsManager.getOrCreateDeviceId();
         const deviceName = hostname();

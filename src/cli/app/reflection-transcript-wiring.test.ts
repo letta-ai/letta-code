@@ -51,7 +51,7 @@ describe("interactive reflection transcript wiring", () => {
       compactIndex,
     );
     const reflectionIndex = source.indexOf(
-      "// Manual /compact bypasses stream compaction events",
+      "void launchReflectionArena({",
       compactIndex,
     );
 

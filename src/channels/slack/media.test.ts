@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { __testOverrideChannelsRoot } from "@/channels/config";
+import { removeTestDir } from "@/test-utils/test-fs";
 
 const originalFetch = globalThis.fetch;
 const originalOpenAIKey = process.env.OPENAI_API_KEY;
@@ -36,7 +37,7 @@ afterEach(async () => {
   }
   __testOverrideChannelsRoot(null);
   if (channelsRoot) {
-    await rm(channelsRoot, { recursive: true, force: true });
+    await removeTestDir(channelsRoot);
     channelsRoot = null;
   }
 });
@@ -158,8 +159,6 @@ test("resolveSlackThreadStarter downloads Slack files for thread context", async
     sizeBytes: 4,
     localPath: expect.stringContaining("root.png"),
   });
-  // Images are not inlined as base64; the agent Reads local_path on demand
-  // (LET-9517 — inlined attachments accumulated past provider byte limits).
   expect(attachment.imageDataBase64).toBeUndefined();
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });

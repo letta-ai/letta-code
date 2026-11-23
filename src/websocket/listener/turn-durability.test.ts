@@ -243,7 +243,6 @@ test("a backpressure drop replays turn_finished once to its replacement", async 
   expect(terminals[0]?.idempotency_key).toBe(
     store.read("agent-1", "conversation-1")?.terminals[0]?.id,
   );
-  // Local send settlement is not an application receipt.
   expect(store.read("agent-1", "conversation-1")?.terminals).toHaveLength(1);
   expect(
     acknowledgeTurnFinished({
@@ -561,9 +560,6 @@ test("agent-free App Server terminals are explicitly best effort", async () => {
         JSON.parse(payload) as { type?: string; idempotency_key?: string },
     )
     .find((frame) => frame.type === "turn_finished");
-  // Best effort still delivers the terminal; it simply never becomes
-  // replayable. The frame carries a transport sequence key, never a durable
-  // replay identity minted by the store.
   expect(terminal).toBeDefined();
   expect(store.read(null, "app-conversation")).toBeNull();
   expect(terminal?.idempotency_key).not.toMatch(
@@ -709,8 +705,6 @@ test("terminal replay expires at 24 hours and removes an empty scope file", () =
   expect(existsSync(recordPath)).toBe(true);
 
   setSystemTime(new Date(startedAt + TURN_FINISHED_REPLAY_TTL_MS));
-  // Construction performs the global sweep even when this dormant/deleted
-  // runtime scope is never recreated or explicitly read.
   createTurnFinishedStore(directory);
   expect(existsSync(recordPath)).toBe(false);
   expect(
@@ -852,7 +846,6 @@ test("durable terminals require every expected consumer and reject foreign ACKs"
   expect(
     store.read("agent", "conversation")?.terminals[0]?.acknowledgedConsumerIds,
   ).toEqual(["slack:agent"]);
-  // Duplicate expected ACK is idempotent and cannot retire another consumer.
   expect(
     acknowledgeTurnFinished({
       agentId: "agent",
@@ -950,8 +943,6 @@ test("record locks never evict a live paused owner and recover a dead owner", ()
       processStart: "dead",
     }),
   );
-  // Allow real directory fsync latency on hosted macOS; the live-owner case
-  // above retains the intentionally tiny timeout assertion.
   const recovered = createTurnFinishedStore(directory, {
     lockAttempts: 100,
   }).put("agent", "conversation", {

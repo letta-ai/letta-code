@@ -13,12 +13,6 @@ interface SkillInjectionContext {
   conversationId?: string | null;
 }
 
-/**
- * Append queued Skill tool content as a trailing user message.
- *
- * Ordering is preserved: existing messages stay in place and skill content,
- * when present, is appended at the end.
- */
 export function injectQueuedSkillContent(
   messages: Array<MessageCreate | ApprovalCreate>,
   context?: SkillInjectionContext,

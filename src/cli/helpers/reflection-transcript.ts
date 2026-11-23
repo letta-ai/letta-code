@@ -56,8 +56,8 @@ type TranscriptEntry =
       kind: "user" | "assistant" | "reasoning" | "error";
       text: string;
       captured_at: string;
-      source_line_id?: string; // local transcript row id; may be synthetic
-      source_message_id?: string; // canonical backend message.id when known
+      source_line_id?: string;
+      source_message_id?: string;
     }
   | {
       kind: "tool_call";
@@ -66,12 +66,11 @@ type TranscriptEntry =
       resultText?: string;
       resultOk?: boolean;
       captured_at: string;
-      source_line_id?: string; // local transcript row id; may be synthetic
-      source_message_id?: string; // canonical backend message.id when known
+      source_line_id?: string;
+      source_message_id?: string;
     };
 
 export interface ReflectionTranscriptPaths {
-  /** ~/.letta/transcripts/{agentId}/{conversationId}/ */
   rootDir: string;
   transcriptPath: string;
   statePath: string;
@@ -233,7 +232,6 @@ interface ParentMemoryFile {
 }
 
 interface ParentMemorySnapshotOptions {
-  /** Maximum characters for the full rendered parent memory preview. */
   maxChars?: number;
   memoryFormat?: LocalMemoryFormat;
 }
@@ -291,9 +289,7 @@ async function collectParentMemoryFiles(
           content,
           description,
         });
-      } catch {
-        // Skip unreadable files.
-      }
+      } catch {}
     }
   };
 
@@ -620,10 +616,6 @@ function countAssistantRows(entries: TranscriptEntry[]): number {
   return entries.filter((entry) => entry.kind === "assistant").length;
 }
 
-/**
- * Normalize a selected client-transcript fragment into the shared trajectory
- * record format consumed by reflection agents.
- */
 function normalizeReflectionTranscript(entries: TranscriptEntry[]): string {
   const transcript = entries.map((entry) => JSON.stringify(entry)).join("\n");
   const { records } = normalizeTranscript({
@@ -950,11 +942,6 @@ export async function appendTranscriptDeltaJsonl(
   });
 }
 
-/**
- * A transcript entry supplied by an external source adapter (e.g. converted
- * OpenHands events). Mirrors the on-disk TranscriptEntry shape, but
- * captured_at may be omitted (stamped at append time).
- */
 export type ExternalTranscriptEntry =
   | {
       kind: "user" | "assistant" | "reasoning" | "error";
@@ -999,12 +986,6 @@ function externalToTranscriptEntry(
   };
 }
 
-/**
- * Append externally-sourced transcript entries (already in transcript shape)
- * for later processing by a reflection pass. Entries whose source_message_id
- * already exists in the transcript are skipped, so repeated ingestion of an
- * overlapping event window is idempotent.
- */
 export async function appendExternalTranscriptEntries(
   agentId: string,
   conversationId: string,
@@ -1399,9 +1380,7 @@ export async function buildReflectionAutoPayload(options: {
         conversationSummaries.set(conversation.id, conversation.summary.trim());
       }
     }
-  } catch {
-    // Summaries are helpful metadata but not required for auto selection.
-  }
+  } catch {}
 
   const searchResultsByQuery = await Promise.allSettled(
     REFLECTION_AUTO_QUERIES.map(async ({ id, query }) => {

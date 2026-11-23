@@ -55,7 +55,6 @@ describe("accumulator usage statistics", () => {
     expect(buffers.usage.cachedInputTokens).toBe(65);
     expect(buffers.usage.cacheWriteTokens).toBe(14);
     expect(buffers.usage.reasoningTokens).toBe(9);
-    // context_tokens is a snapshot value, so we keep the latest one.
     expect(buffers.usage.contextTokens).toBe(640);
   });
 

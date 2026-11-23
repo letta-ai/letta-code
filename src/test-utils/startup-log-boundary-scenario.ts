@@ -13,7 +13,6 @@ import { createListenerMessageHandler } from "@/websocket/listener/message-route
 import { setActiveRuntime } from "@/websocket/listener/runtime";
 import type { StartListenerOptions } from "@/websocket/listener/types";
 
-// Run in a fresh process: neither the marker singleton nor module mocks leak.
 const mode = process.argv[2];
 const listener = createRuntime();
 const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
@@ -36,7 +35,6 @@ const opts: StartListenerOptions = {
   onConnected: () => {
     connected += 1;
     log("CONNECTED_PRIVATE");
-    // A gateway can synchronously receive input inside onConnected.
     void handleMessage(input);
   },
   onDisconnected: () => {},
@@ -153,7 +151,6 @@ try {
     await Promise.resolve();
     assert.equal(listener.lastPongAt, null);
     log("AFTER_PONG_STARTUP");
-    // Deliver the first frame before the connected runtime has ever started.
     const early = handleMessage(
       mode === "malformed" ? Buffer.from("MALFORMED_PRIVATE") : input,
     );
@@ -170,5 +167,4 @@ try {
   stopRuntime(listener, true);
   setActiveRuntime(null);
 }
-// Listener dependencies can own timers; all assertions above have completed.
 process.exit(0);

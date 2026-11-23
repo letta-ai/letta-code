@@ -1,16 +1,15 @@
-/**
- * Approval recovery helpers.
- *
- * Pure policy logic lives in `./turn-recovery-policy.ts` and is re-exported
- * here for backward compatibility. Async helpers that require backend access
- * stay in this module.
- */
-
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { type ConversationMessageStreamBody, getBackend } from "@/backend";
 import {
+  getBusyRecoveryHttpStatus,
+  reportBusyRecovery,
+  traceBusyRecoveryStream,
+} from "@/telemetry/busy-recovery";
+import {
+  extractConversationBusyRunId,
+  isConversationBusyError,
   rebuildInputWithFreshDenials,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
 } from "./turn-recovery-policy";
@@ -61,7 +60,6 @@ export type {
   PreStreamErrorOptions,
   RetryDelayCategory,
 } from "./turn-recovery-policy";
-// ── Re-export pure policy helpers (single source of truth) ──────────
 export {
   buildFreshDenialApprovals,
   classifyPreStreamConflict,
@@ -88,7 +86,17 @@ export {
   shouldRetryRunMetadataError,
 } from "./turn-recovery-policy";
 
-// ── Async helpers (network side effects — stay here) ────────────────
+export function reportBusyRetryExhausted(
+  detail: unknown,
+  retries: number,
+  maxRetries: number,
+): void {
+  if (isConversationBusyError(detail) && retries >= maxRetries) {
+    reportBusyRecovery("retry_budget_exhausted", {
+      blockerRunId: extractConversationBusyRunId(detail) ?? undefined,
+    });
+  }
+}
 
 async function sleepWithAbort(
   delayMs: number,
@@ -110,12 +118,36 @@ async function sleepWithAbort(
   });
 }
 
-/**
- * Wait for a server-named conversation lock owner to finish. Callers keep one
- * absolute deadline across successive blocker ids so healthy rotating runs do
- * not consume the generic three-attempt fallback budget or wait forever.
- */
 export async function waitForConversationBusyRun(
+  runId: string,
+  signal?: AbortSignal,
+  options: BlockingRunWaitOptions = {},
+): Promise<BlockingRunWaitResult> {
+  const now = options.now ?? Date.now;
+  const start = now();
+  const report = (phase: Parameters<typeof reportBusyRecovery>[0]) =>
+    reportBusyRecovery(phase, {
+      blockerRunId: runId,
+      elapsedMs: now() - start,
+    });
+  report("poll_started");
+  try {
+    const result = await waitForBlockingRun(runId, signal, options);
+    report(
+      result === "settled"
+        ? "poll_settled"
+        : result === "timed_out"
+          ? "poll_timed_out"
+          : "poll_unavailable",
+    );
+    return result;
+  } catch (error) {
+    report(signal?.aborted ? "cancelled" : "poll_failed");
+    throw error;
+  }
+}
+
+async function waitForBlockingRun(
   runId: string,
   signal?: AbortSignal,
   options: BlockingRunWaitOptions = {},
@@ -147,8 +179,12 @@ export async function waitForConversationBusyRun(
           timeout: Math.min(remainingMs, pollIntervalMs),
         })
       ).status;
-    } catch {
+    } catch (error) {
       signal?.throwIfAborted();
+      reportBusyRecovery("poll_failed", {
+        blockerRunId: runId,
+        httpStatus: getBusyRecoveryHttpStatus(error),
+      });
       return "unavailable";
     }
 
@@ -182,7 +218,6 @@ export async function waitForConversationBusyRunOrThrow(
   return result === "settled";
 }
 
-/** Resume only the rejected request's OTID; a missing lookup is not success. */
 export async function resumeConversationBusyRequest(
   conversationId: string,
   agentId: string | undefined,
@@ -193,10 +228,14 @@ export async function resumeConversationBusyRequest(
   const otid = input
     .map((item) => (item as Record<string, unknown>).otid)
     .find((value): value is string => typeof value === "string");
-  if (!otid) return null;
+  const fields = { conversationId, otid };
+  if (!otid) {
+    reportBusyRecovery("replay_missing_otid", fields);
+    return null;
+  }
 
   try {
-    return await getBackend().streamConversationMessages(
+    const stream = await getBackend().streamConversationMessages(
       conversationId,
       {
         agent_id: conversationId === "default" ? agentId : undefined,
@@ -206,7 +245,12 @@ export async function resumeConversationBusyRequest(
       } as unknown as ConversationMessageStreamBody,
       signal ? { signal } : undefined,
     );
-  } catch {
+    return traceBusyRecoveryStream(stream, conversationId, otid, signal);
+  } catch (error) {
+    reportBusyRecovery(signal?.aborted ? "cancelled" : "replay_unavailable", {
+      ...fields,
+      httpStatus: getBusyRecoveryHttpStatus(error),
+    });
     signal?.throwIfAborted();
     return null;
   }

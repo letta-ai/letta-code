@@ -10,7 +10,6 @@ import type {
 } from "@/websocket/listener/types";
 import type { GetOrCreateScopedRuntime, SafeSocketSend } from "./types";
 
-/** Mutate the listener's queue without submitting a new user message. */
 export function handleQueueCommand(
   command: ResumeQueueCommand | RemoveQueueItemCommand,
   deps: {
@@ -40,7 +39,6 @@ export function handleQueueCommand(
       "remove_queue_item_response",
       "remove_queue_item",
     );
-    // Even a missing item requires a snapshot to repair a stale client queue.
     emitQueueUpdateIfOpen(deps.listener, command.runtime);
     return;
   }

@@ -1,6 +1,3 @@
-/**
- * Model resolution and handling utilities
- */
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-constants";
 import {
   getDefaultModel,
@@ -17,8 +14,6 @@ import {
   normalizeModelHandleForRegistry,
 } from "./model-handles";
 
-// Pure lookups over the runtime-populated catalog live in model-catalog.ts;
-// re-exported here so CLI code keeps a single import surface for model utilities.
 export { getDefaultModel, models, resolveModel };
 export {
   mapModelHandleToLlmConfigPatch,
@@ -36,7 +31,6 @@ export type ModelReasoningEffort =
   | "xhigh"
   | "max";
 
-/** Null means use the upstream provider's default and omit reasoning_effort. */
 export type ModelReasoningSelection = ModelReasoningEffort | null;
 
 type ReasoningCapabilities = {
@@ -260,29 +254,15 @@ export function getPreferredReasoningOption<
   );
 }
 
-/**
- * Get the default model handle based on billing tier.
- * All tiers use the same default selection path.
- * @param billingTier - The user's billing tier (e.g., "free", "pro", "enterprise")
- * @returns The model handle to use as default
- */
 export function getDefaultModelForTier(billingTier?: string | null): string {
   void billingTier;
   return getDefaultModel();
 }
 
-/**
- * Format available models for error messages
- */
 export function formatAvailableModels(): string {
   return models.map((m) => `  ${m.id.padEnd(20)} ${m.handle}`).join("\n");
 }
 
-/**
- * Get model info by ID or handle
- * @param modelIdentifier - Can be either a model ID (e.g., "opus-4.5") or a full handle (e.g., "anthropic/claude-opus-4-5")
- * @returns The model info if found, null otherwise
- */
 export function getModelInfo(modelIdentifier: string) {
   const direct = resolveCatalogModel(modelIdentifier);
   if (direct) return direct;
@@ -291,15 +271,6 @@ export function getModelInfo(modelIdentifier: string) {
   return normalizedHandle ? resolveCatalogModel(normalizedHandle) : null;
 }
 
-/**
- * Get model info by handle + llm_config.
- *
- * This exists because many model "tiers" (e.g. gpt-5.2-none/low/medium/high)
- * share the same handle and differ only by updateArgs like reasoning_effort.
- *
- * When resuming a session we want `/model` to highlight the tier that actually
- * matches the agent configuration.
- */
 export function getModelInfoForLlmConfig(
   modelHandle: string,
   llmConfig?: {
@@ -313,17 +284,13 @@ export function getModelInfoForLlmConfig(
     modelHandle,
     llmConfig?.service_tier ?? null,
   );
-  // Try ID/handle direct resolution first.
   const direct = getModelInfo(registryHandle);
 
-  // Collect all candidates that share this handle.
   let candidates = models.filter((m) => m.handle === registryHandle);
   if (candidates.length === 0) {
     return direct;
   }
 
-  // When context_window is known, narrow candidates to the matching tier
-  // so that e.g. 1M variants don't collapse into 200k variants.
   let narrowedByCtx = false;
   const ctxWindow = llmConfig?.context_window ?? null;
   if (ctxWindow !== null) {
@@ -357,7 +324,6 @@ export function getModelInfoForLlmConfig(
     }
   }
 
-  // Anthropic-style toggle (best-effort; llm_config may not always include it)
   if (llmConfig?.enable_reasoner === false) {
     const match = candidates.find(
       (m) =>
@@ -367,9 +333,6 @@ export function getModelInfoForLlmConfig(
     if (match) return match;
   }
 
-  // When candidates were narrowed by context_window, prefer the narrowed set
-  // over `direct` (which is the first model with this handle — always the 200k
-  // variant — and ignores context_window entirely).
   if (narrowedByCtx) {
     return candidates[0] ?? direct ?? null;
   }
@@ -386,27 +349,8 @@ function buildModelHandleFromConfig(
   return config.model ?? null;
 }
 
-/**
- * The server's legacy global context-window clamp
- * (`model_settings.global_max_context_window_limit`, default 128000). Any
- * model-bearing update that omitted `context_window_limit` historically got
- * its window clamped to this value regardless of the model's real window
- * (LET-9786).
- */
 export const LEGACY_SERVER_CONTEXT_WINDOW_CLAMP = 128000;
 
-/**
- * Return the current context window if it is safe to preserve across a
- * model-settings update, or undefined when it looks like the server's legacy
- * 128k clamp rather than a deliberate value.
- *
- * A value of exactly 128000 that matches no registry preset for the handle is
- * indistinguishable from server-clamp poisoning (LET-9786) — and poisoned
- * values are self-perpetuating if preserved. Callers should fall back to the
- * selected preset / catalog value when this returns undefined. Models whose
- * presets legitimately include 128000 (e.g. Codex Spark tiers) are preserved
- * normally.
- */
 export function preservableContextWindow(
   current: number | null | undefined,
   modelHandle: string,
@@ -432,20 +376,6 @@ type ModelSelectionContextWindowInput = {
   selectedContextWindow?: number;
 };
 
-/**
- * The current context window to re-send for a model selection, or undefined
- * when the selected catalog entry's window applies.
- *
- * Switching to a different model (or a different context-window variant of
- * the same model, e.g. base <-> 1M dual listings) resets the context window
- * to the selected entry's preset. Only a tier change within the same variant
- * preserves the current window, and it preserves by RE-SENDING the current
- * value explicitly, never by omitting the field: the server treats an omitted
- * context_window_limit as "re-derive from the handle" and clamps it to a
- * legacy global default (128k). A current value that looks like that clamp is
- * not preservable, so poisoned agents heal to the preset even on same-variant
- * tier changes. See LET-9786.
- */
 export function contextWindowToPreserveForModelSelection(
   input: ModelSelectionContextWindowInput,
 ): number | undefined {
@@ -496,11 +426,6 @@ function isSameVariantModelSelection(
   );
 }
 
-/**
- * Get updateArgs for a model by ID or handle
- * @param modelIdentifier - Can be either a model ID (e.g., "opus-4.5") or a full handle (e.g., "anthropic/claude-opus-4-5")
- * @returns The updateArgs if found, undefined otherwise
- */
 export function getModelUpdateArgs(
   modelIdentifier?: string,
 ): Record<string, unknown> | undefined {
@@ -519,12 +444,6 @@ type AgentModelSnapshot = {
   } | null;
 };
 
-/**
- * Resolve the current model preset + updateArgs for an existing agent.
- *
- * Used during startup/resume refresh to re-apply only preset-defined fields
- * (without requiring an explicit --model flag).
- */
 export function getModelPresetUpdateForAgent(
   agent: AgentModelSnapshot,
 ): { modelHandle: string; updateArgs: Record<string, unknown> } | null {
@@ -571,34 +490,17 @@ export function getModelPresetUpdateForAgent(
   };
 }
 
-/**
- * Fields synced during resume preset refresh.
- * This is the single source of truth for which preset fields are
- * auto-applied on resume and the comparison logic that decides
- * whether an update is needed.
- */
 const RESUME_REFRESH_FIELDS = ["parallel_tool_calls"] as const;
 
-/**
- * Build the subset of preset updateArgs that should be synced on resume,
- * and check whether the agent already has those values.
- *
- * Returns `{ updateArgs, needsUpdate }`:
- *  - `updateArgs` contains only the resume-scoped fields from the preset.
- *  - `needsUpdate` is false when the agent already matches, so the caller
- *    can skip the expensive PATCH.
- */
 export function getResumeRefreshArgs(
   presetUpdateArgs: Record<string, unknown>,
   agent: {
     llm_config?: { max_tokens?: number | null } | null;
-    // Accept the broad AgentState union; we only read parallel_tool_calls.
     model_settings?: { parallel_tool_calls?: boolean } | null;
   },
 ): { updateArgs: Record<string, unknown>; needsUpdate: boolean } {
   const updateArgs: Record<string, unknown> = {};
 
-  // Extract only the resume-scoped fields from the full preset
   for (const field of RESUME_REFRESH_FIELDS) {
     const value = presetUpdateArgs[field];
     if (typeof value === "boolean") {
@@ -610,7 +512,6 @@ export function getResumeRefreshArgs(
     return { updateArgs, needsUpdate: false };
   }
 
-  // Compare against the agent's current values
   const currentParallel = agent.model_settings?.parallel_tool_calls;
   const wantParallel = updateArgs.parallel_tool_calls as boolean | undefined;
   const parallelMatch =
@@ -619,11 +520,6 @@ export function getResumeRefreshArgs(
   return { updateArgs, needsUpdate: !parallelMatch };
 }
 
-/**
- * Find a model entry by handle with fuzzy matching support
- * @param handle - The full model handle
- * @returns The model entry if found, null otherwise
- */
 function findModelByHandle(handle: string): (typeof models)[number] | null {
   const pickPreferred = (candidates: (typeof models)[number][]) =>
     candidates.find((m) => m.isDefault) ??
@@ -643,22 +539,15 @@ function findModelByHandle(handle: string): (typeof models)[number] | null {
 
   const registryHandle = normalizeModelHandleForRegistry(handle) ?? handle;
 
-  // Try exact match first
   const exactMatch = models.find((m) => m.handle === registryHandle);
   if (exactMatch) return exactMatch;
 
-  // For handles like "bedrock/claude-opus-4-5-20251101" where the API returns without
-  // vendor prefix or version suffix, but the runtime catalog has
-  // "bedrock/us.anthropic.claude-opus-4-5-20251101-v1:0", try fuzzy matching
   const [provider, ...rest] = registryHandle.split("/");
   if (provider && rest.length > 0) {
     const modelPortion = rest.join("/");
-    // Find catalog entries with the same provider where the model portion is
-    // contained in the catalog handle (handles vendor prefixes and version suffixes)
     const providerMatches = models.filter((m) => {
       if (!m.handle.startsWith(`${provider}/`)) return false;
       const mModelPortion = m.handle.slice(provider.length + 1);
-      // Check if either contains the other (handles both directions)
       return (
         mModelPortion.includes(modelPortion) ||
         modelPortion.includes(mModelPortion)
@@ -667,9 +556,6 @@ function findModelByHandle(handle: string): (typeof models)[number] | null {
     const providerMatch = pickPreferred(providerMatches);
     if (providerMatch) return providerMatch;
 
-    // Cross-provider fallback by model suffix. This helps when llm_config reports
-    // provider_type=openai for BYOK models represented in the runtime catalog
-    // under a different provider prefix (e.g. chatgpt-plus-pro/*).
     const suffixMatches = models.filter((m) =>
       m.handle.endsWith(`/${modelPortion}`),
     );
@@ -680,46 +566,21 @@ function findModelByHandle(handle: string): (typeof models)[number] | null {
   return null;
 }
 
-/**
- * Get a display-friendly name for a model by its handle
- * @param handle - The full model handle (e.g., "anthropic/claude-sonnet-4-5-20250929")
- * @returns The display name (e.g., "Sonnet 4.5") if found, null otherwise
- */
 export function getModelDisplayName(handle: string): string | null {
   const model = findModelByHandle(handle);
   return model?.label ?? null;
 }
 
-/**
- * Get a short display name for a model (for status bar)
- * Falls back to full label if no shortLabel is defined
- * @param handle - The full model handle
- * @returns The short name (e.g., "Opus 4.5 BR") if found, null otherwise
- */
 export function getModelShortName(handle: string): string | null {
   const model = findModelByHandle(handle);
   if (!model) return null;
-  // Use shortLabel if available, otherwise fall back to label
   return (model as { shortLabel?: string }).shortLabel ?? model.label;
 }
 
-/**
- * Resolve a model ID from the llm_config.model value
- * The llm_config.model is the model portion without the provider prefix
- * (e.g., "z-ai/glm-4.6:exacto" for handle "openrouter/z-ai/glm-4.6:exacto")
- *
- * Note: This may not distinguish between variants like gpt-5.2-medium vs gpt-5.2-high
- * since they share the same handle. For provider fallback, this is acceptable.
- *
- * @param llmConfigModel - The model value from agent.llm_config.model
- * @returns The model ID if found, null otherwise
- */
 export function resolveModelByLlmConfig(llmConfigModel: string): string | null {
-  // Try to find a model whose handle ends with the llm_config model value
   const match = models.find((m) => m.handle.endsWith(`/${llmConfigModel}`));
   if (match) return match.id;
 
-  // Also try exact match on the model portion (for simple cases like "gpt-5.2")
   const exactMatch = models.find((m) => {
     const parts = m.handle.split("/");
     return parts.slice(1).join("/") === llmConfigModel;

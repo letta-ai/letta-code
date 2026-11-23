@@ -64,8 +64,6 @@ function withAvailableModelMetadata(
 export function buildNativeModelEntry(
   model: AvailableModel,
 ): ListModelsResponseModelEntry {
-  // A BYOK provider name is organization-specific. Match metadata by route
-  // type and model name, but never replace its execution handle or selector ID.
   const preset =
     model.providerCategory === "byok" && model.providerType
       ? models.find(
@@ -114,7 +112,6 @@ export function buildListModelsEntries(
 ): ListModelsResponseModelEntry[] {
   const presetEntries = models.map((model) => {
     const entry = buildPresetEntry(model);
-    // Cloud hosted presets never depend on the legacy runtime inventory.
     if (options.cloud) return entry;
     const availableModel = findAvailableModelForPreset(
       entry.handle,
@@ -153,12 +150,6 @@ function providerNameFromHandle(handle: string): string | undefined {
   return slashIndex > 0 ? handle.slice(0, slashIndex) : undefined;
 }
 
-/**
- * Two BYOK connections of the same provider type (for example two ChatGPT
- * accounts) resolve to the same preset label, so the picker shows identical
- * rows that route to different accounts. Suffix the connection name onto
- * BYOK rows whose label collides with another BYOK row.
- */
 function disambiguateByokLabels(
   entries: ListModelsResponseModelEntry[],
   byokHandles: ReadonlySet<string>,

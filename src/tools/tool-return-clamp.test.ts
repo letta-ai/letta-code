@@ -24,8 +24,6 @@ describe("clampToolReturnContent", () => {
   });
 
   test("passes through output already clamped by a per-tool 30K limit", () => {
-    // Bash/Task clamp to 30K then append a notice; the backstop must not
-    // re-truncate that.
     const alreadyClamped = `${"b".repeat(30_000)}\n\n[Output truncated: showing 30,000 of 100,000 characters.]`;
     expect(clampToolReturnContent(alreadyClamped, "Bash")).toBe(alreadyClamped);
   });
@@ -99,9 +97,6 @@ describe("clampRawToolReturn", () => {
   });
 
   test("passes through returns already clamped by the tool manager", () => {
-    // The manager's backstop appends a notice (and overflow path) on top of
-    // the TOOL_RETURN_MAX_CHARS excerpt; the transcript clamp must not
-    // truncate that a second time.
     const alreadyClamped = `${"a".repeat(LIMITS.TOOL_RETURN_MAX_CHARS)}\n\n[Output truncated: showing 32,000 of 100,000 characters.]\n[Full output written to: /tmp/overflow.txt]`;
     expect(clampRawToolReturn(alreadyClamped, "SomeTool")).toBe(alreadyClamped);
   });

@@ -8,6 +8,8 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { updateMonitorState } from "@/backend/api/monitors";
+import { experimentManager } from "@/experiments/manager";
 import { isManagedCloudRuntime } from "@/managed-cloud-runtime";
 import {
   getCurrentWorkingDirectory,
@@ -17,7 +19,14 @@ import {
 import { scrubSecretsFromString } from "@/tools/secret-substitution";
 import { resolveGlobalConfigDir } from "@/utils/settings-path";
 import { resolveNotificationScope } from "@/utils/task-notifications";
-import { diffGitHubPullRequestSnapshots } from "./github-pull-request-diff";
+import {
+  createGitHubPullRequestSnapshotFetcher,
+  GitHubPullRequestSnapshotPending,
+} from "./github-pull-request-cloud";
+import {
+  diffGitHubPullRequestSnapshots,
+  type PullRequestEventKind,
+} from "./github-pull-request-diff";
 import {
   describeGitHubPullRequestSnapshot,
   hasGitHubPullRequestReadyConditions,
@@ -26,12 +35,13 @@ import type {
   GitHubPullRequestRef,
   GitHubPullRequestSnapshot,
 } from "./github-pull-request-types";
+import { parseGitHubPullRequestUrl } from "./github-pull-request-watch";
 import {
-  fetchGitHubPullRequestSnapshot,
-  parseGitHubPullRequestUrl,
-} from "./github-pull-request-watch";
+  createGitHubWorkflowRunFetcher,
+  describeWorkflowRun,
+  parseGitHubWorkflowRunUrl,
+} from "./github-workflow-run";
 import {
-  getMonitorTimeoutEvent,
   installMonitorProcessExitCleanup,
   MonitorOutputWriter,
   markMonitorFinished,
@@ -42,22 +52,31 @@ import {
   MONITOR_EVENT_BATCH_CHARS,
   MONITOR_EVENT_LINE_CHARS,
 } from "./monitor-event-stream";
-import { getMonitorMaxTimeoutMs } from "./monitor-timeout";
+import { readResumableMonitor } from "./monitor-resume";
+import { withMonitorState } from "./monitor-state";
+import {
+  getMonitorMaxTimeoutMs,
+  getMonitorTimeoutEvent,
+} from "./monitor-timeout";
 import {
   assertBackgroundProcessCapacity,
   type BackgroundProcess,
   backgroundProcesses,
   createBackgroundOutputFile,
-  getNextMonitorId,
   notifyBackgroundProcessStateChanged,
   unrefTimer,
 } from "./process_manager";
+import { startCloudPullRequestWatch } from "./watch-pr-cloud";
 
 const WATCH_POLL_MS = 30_000;
 const WATCH_MAX_POLL_MS = 5 * 60_000;
+const WATCH_FRESH_SNAPSHOT_NOTIFY_AFTER_MS = 30 * 60_000;
 
 interface WatchPullRequestArgs {
-  url: string;
+  toolCallId?: string;
+  resume?: string;
+  url?: string;
+  notify_on?: PullRequestEventKind[];
   parentScope?: { agentId: string; conversationId: string };
   signal?: AbortSignal;
 }
@@ -75,6 +94,7 @@ interface WatchPullRequestDeps {
     ref: GitHubPullRequestRef,
     options: { cwd: string; signal?: AbortSignal },
   ) => Promise<GitHubPullRequestSnapshot>;
+  now?: () => number;
   wait?: (signal: AbortSignal, milliseconds: number) => Promise<void>;
   createOutputWriter?: (path: string) => { append(text: string): boolean };
 }
@@ -98,7 +118,6 @@ async function defaultWait(
   await delay(milliseconds, undefined, { signal });
 }
 
-// Cache failures must never prevent a watch from starting or polling.
 function saveSnapshot(
   path: string | undefined,
   snapshot: GitHubPullRequestSnapshot,
@@ -111,7 +130,6 @@ function saveSnapshot(
       return;
     }
     mkdirSync(dirname(path), { recursive: true });
-    // Previous discussion bodies and authors are not needed by the diff.
     const compact = {
       ...snapshot,
       ref: undefined,
@@ -146,19 +164,17 @@ function saveSnapshot(
     );
     renameSync(temporary, path);
   } catch {
-    // Best effort: GitHub remains the source of truth.
   } finally {
     try {
       rmSync(temporary, { force: true });
-    } catch {
-      /* Best effort cleanup. */
-    }
+    } catch {}
   }
 }
 
 function resumedChanges(
   path: string | undefined,
   initial: GitHubPullRequestSnapshot,
+  notifyOn?: readonly PullRequestEventKind[],
 ): string {
   if (!path) return "";
   try {
@@ -168,9 +184,9 @@ function resumedChanges(
     const changes = diffGitHubPullRequestSnapshots(
       saved.snapshot,
       initial,
+      notifyOn,
     ).events;
     if (!changes.length) return "";
-    // Use the same line and notification limits as live monitor events.
     let text = changes
       .map((line) =>
         line.length > MONITOR_EVENT_LINE_CHARS
@@ -190,16 +206,42 @@ export async function watch_pr(
   args: WatchPullRequestArgs,
   deps: WatchPullRequestDeps = {},
 ): Promise<WatchPullRequestResult> {
+  const cloud = await startCloudPullRequestWatch(args);
+  if (cloud) return cloud;
+  const resumeRecord = args.resume
+    ? await readResumableMonitor(args.resume, args.parentScope)
+    : undefined;
+  if (resumeRecord) {
+    if (resumeRecord.kind !== "github_pull_request")
+      throw new Error("Use Monitor to resume this monitor.");
+    args = {
+      ...resumeRecord.args,
+      resume: resumeRecord.monitor_id,
+      parentScope: args.parentScope,
+      signal: args.signal,
+    };
+  }
   args.signal?.throwIfAborted();
   if (typeof args.url !== "string") {
     throw new Error("WatchPR url is required");
   }
-  const ref = parseGitHubPullRequestUrl(args.url);
+  const isRun = args.url.includes("/actions/runs/");
+  const ref = isRun
+    ? parseGitHubWorkflowRunUrl(args.url)
+    : parseGitHubPullRequestUrl(args.url);
+  const describe = isRun
+    ? describeWorkflowRun
+    : describeGitHubPullRequestSnapshot;
   const cwd = getCurrentWorkingDirectory();
   const fetchSnapshot =
     deps.fetchSnapshot ??
-    ((pullRequestRef, options) =>
-      fetchGitHubPullRequestSnapshot(pullRequestRef, options));
+    (isRun
+      ? createGitHubWorkflowRunFetcher()
+      : createGitHubPullRequestSnapshotFetcher({
+          allowInaccessibleFallback:
+            experimentManager.isEnabled("cloud_watch_pr") &&
+            isManagedCloudRuntime(),
+        }));
   const runtimeContext = getRuntimeContext();
   const parentScope =
     args.parentScope ??
@@ -212,30 +254,48 @@ export async function watch_pr(
   const scope = resolveNotificationScope(parentScope);
   let snapshotPath: string | undefined;
   try {
-    snapshotPath = scope
-      ? join(
-          resolveGlobalConfigDir(),
-          "cache",
-          "watch-pr",
-          `${createHash("sha256")
-            .update(
-              JSON.stringify([
-                scope.agentId,
-                scope.conversationId,
-                ref.owner.toLowerCase(),
-                ref.repo.toLowerCase(),
-                ref.number,
-              ]),
-            )
-            .digest("hex")}.json`,
-        )
-      : undefined;
-  } catch {
-    // Invalid config paths disable persistence, not the watch.
-  }
+    snapshotPath =
+      scope && !isRun
+        ? join(
+            resolveGlobalConfigDir(),
+            "cache",
+            "watch-pr",
+            `${createHash("sha256")
+              .update(
+                JSON.stringify([
+                  scope.agentId,
+                  scope.conversationId,
+                  ref.owner.toLowerCase(),
+                  ref.repo.toLowerCase(),
+                  ref.number,
+                ]),
+              )
+              .digest("hex")}.json`,
+          )
+        : undefined;
+  } catch {}
   const initial = await fetchSnapshot(ref, { cwd, signal: args.signal });
   args.signal?.throwIfAborted();
-  const changesSincePreviousWatch = resumedChanges(snapshotPath, initial);
+  const changesSincePreviousWatch = resumedChanges(
+    snapshotPath,
+    initial,
+    args.notify_on,
+  );
+  if ((isRun || resumeRecord) && initial.state !== "OPEN") {
+    if (resumeRecord)
+      await updateMonitorState(resumeRecord.monitor_id, {
+        status: "completed",
+        exit_code: 0,
+        output_file: resumeRecord.output_file,
+      });
+    return {
+      content: [{ type: "text", text: describe(initial) }],
+      taskId: resumeRecord?.monitor_id ?? "",
+      url: ref.url,
+      headSha: initial.headSha,
+      persistent: false,
+    };
+  }
   if (initial.state !== "OPEN") {
     saveSnapshot(snapshotPath, initial);
     throw new Error(
@@ -245,177 +305,244 @@ export async function watch_pr(
 
   assertBackgroundProcessCapacity();
   installMonitorProcessExitCleanup();
-  const taskId = getNextMonitorId();
-  const outputFile = createBackgroundOutputFile(taskId);
-  const output =
-    deps.createOutputWriter?.(outputFile) ??
-    new MonitorOutputWriter(outputFile);
-  if (
-    !output.append(
-      `[initial snapshot]\n${describeGitHubPullRequestSnapshot(initial)}${changesSincePreviousWatch}\n`,
-    )
-  ) {
-    rmSync(outputFile, { force: true });
-    throw new Error(`WatchPR could not write its output file: ${outputFile}`);
-  }
-  saveSnapshot(snapshotPath, initial);
-  const actingUserId = getRuntimeActingUserAttribution();
-  const description = `PR ${ref.owner}/${ref.repo}#${ref.number} checks, reviews, and mergeability`;
-  const controller = new AbortController();
-  const secrets: Readonly<Record<string, string>> = {};
-  let processState: BackgroundProcess;
-  const persistent = !isManagedCloudRuntime();
-  const maxTimeoutMs = getMonitorMaxTimeoutMs();
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-
-  const events = createMonitorEventStream({
-    emit(event) {
-      queueMonitorEvent({
-        taskId,
-        event,
-        scope,
-        actingUserId,
-        secrets,
-      });
-    },
-    stopSource() {
-      if (!processState || processState.status !== "running") return;
-      processState.completionNotificationSuppressed = true;
-      output.append("\n[stopped: output rate too high]\n");
-      markMonitorFinished(taskId, processState, "failed", null);
-      controller.abort();
-    },
-  });
-
-  const emit = (lines: readonly string[]): void => {
-    if (lines.length === 0 || processState.status !== "running") return;
-    const text = scrubSecretsFromString(`${lines.join("\n")}\n`, {});
-    if (!output.append(text)) {
-      processState.completionNotificationSuppressed = true;
-      markMonitorFinished(taskId, processState, "failed", null);
-      controller.abort();
-      return;
-    }
-    events.onData(text);
-  };
-
-  processState = {
-    process: {
-      kill() {
-        clearTimeout(timeout);
-        events.cancel();
-        controller.abort();
+  const description = isRun
+    ? `Workflow run ${ref.owner}/${ref.repo}#${ref.number}`
+    : `PR ${ref.owner}/${ref.repo}#${ref.number} checks, reviews, and mergeability`;
+  const persistent = !resumeRecord?.expires_at && !isManagedCloudRuntime();
+  return withMonitorState<WatchPullRequestResult>(
+    {
+      description,
+      persistent,
+      resumeRecord,
+      timeoutMs: persistent ? 0 : getMonitorMaxTimeoutMs(),
+      args: {
+        url: args.url,
+        ...(args.notify_on ? { notify_on: args.notify_on } : {}),
       },
+      command: ref.url,
+      kind: "github_pull_request",
+      parentScope,
+      signal: args.signal,
     },
-    command: ref.url,
-    status: "running",
-    exitCode: null,
-    startTime: new Date(),
-    outputFile,
-    runtimeScope: scope,
-    actingUserId,
-    kind: "monitor",
-    description,
-    monitorSource: "github_pull_request",
-    persistent,
-    secrets,
-  };
-  backgroundProcesses.set(taskId, processState);
-  notifyBackgroundProcessStateChanged(scope);
-
-  if (!persistent) {
-    timeout = setTimeout(() => {
-      if (processState.status !== "running") return;
-      events.finish();
-      if (processState.status !== "running") return;
-      const event = getMonitorTimeoutEvent(maxTimeoutMs, "WatchPR");
-      output.append(`\n${event}\n`);
-      queueMonitorEvent({ taskId, event, scope, actingUserId, secrets });
-      processState.completionNotificationSuppressed = true;
-      markMonitorFinished(taskId, processState, "failed", null);
-      processState.process.kill();
-    }, maxTimeoutMs);
-    unrefTimer(timeout);
-  }
-
-  const wait = deps.wait ?? defaultWait;
-  void (async () => {
-    let previous = initial;
-    let failedPolls = 0;
-    let lastError = "";
-    while (processState.status === "running") {
-      try {
-        await wait(controller.signal, pollDelayMs(failedPolls));
-        if (processState.status !== "running") return;
-        const current = await fetchSnapshot(ref, {
-          cwd,
-          signal: controller.signal,
-        });
-        if (processState.status !== "running") return;
-        if (failedPolls > 0) {
-          emit([
-            `WatchPR recovered after ${failedPolls} failed poll${failedPolls === 1 ? "" : "s"}.`,
-          ]);
-          failedPolls = 0;
-          lastError = "";
-        }
-        const sameHead = current.headSha === previous.headSha;
-        const stableCurrent = { ...current, readinessConfirmed: false };
-        stableCurrent.readinessConfirmed = Boolean(
-          sameHead &&
-            hasGitHubPullRequestReadyConditions(previous) &&
-            hasGitHubPullRequestReadyConditions(stableCurrent),
+    (taskId) => {
+      const outputFile = createBackgroundOutputFile(taskId);
+      const output =
+        deps.createOutputWriter?.(outputFile) ??
+        new MonitorOutputWriter(outputFile);
+      if (
+        !output.append(
+          `[initial snapshot]\n${describe(initial)}${changesSincePreviousWatch}\n`,
+        )
+      ) {
+        rmSync(outputFile, { force: true });
+        throw new Error(
+          `WatchPR could not write its output file: ${outputFile}`,
         );
-        saveSnapshot(snapshotPath, stableCurrent);
-        const diff = diffGitHubPullRequestSnapshots(previous, stableCurrent);
-        emit(diff.events);
-        previous = stableCurrent;
-        if (diff.terminal) {
-          events.finish();
-          if (processState.status === "running") {
-            markMonitorFinished(taskId, processState, "completed", 0);
-          }
-          return;
-        }
-      } catch (error) {
-        if (controller.signal.aborted || processState.status !== "running") {
-          return;
-        }
-        failedPolls += 1;
-        const message = errorText(error);
-        if (!output.append(`[poll error ${failedPolls}] ${message}\n`)) {
+      }
+      saveSnapshot(snapshotPath, initial);
+      const actingUserId = getRuntimeActingUserAttribution();
+      const controller = new AbortController();
+      const secrets: Readonly<Record<string, string>> = {};
+      let processState: BackgroundProcess;
+      const maxTimeoutMs = resumeRecord?.expires_at
+        ? Math.max(1, Date.parse(resumeRecord.expires_at) - Date.now())
+        : getMonitorMaxTimeoutMs();
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+
+      const events = createMonitorEventStream({
+        emit(event) {
+          queueMonitorEvent({
+            taskId,
+            event,
+            scope,
+            actingUserId,
+            secrets,
+          });
+        },
+        stopSource() {
+          if (!processState || processState.status !== "running") return;
+          processState.completionNotificationSuppressed = true;
+          output.append("\n[stopped: output rate too high]\n");
+          markMonitorFinished(taskId, processState, "failed", null);
+          controller.abort();
+        },
+      });
+
+      const emit = (lines: readonly string[]): void => {
+        if (lines.length === 0 || processState.status !== "running") return;
+        const text = scrubSecretsFromString(`${lines.join("\n")}\n`, {});
+        if (!output.append(text)) {
           processState.completionNotificationSuppressed = true;
           markMonitorFinished(taskId, processState, "failed", null);
           controller.abort();
           return;
         }
-        if (failedPolls === 1 || message !== lastError) {
-          emit([`WatchPR could not refresh ${ref.url}: ${message}. Retrying.`]);
-        }
-        lastError = message;
-      }
-    }
-  })()
-    .catch((error: unknown) => {
-      if (processState.status !== "running") return;
-      emit([`WatchPR stopped after an unexpected error: ${errorText(error)}`]);
-      events.finish();
-      if (processState.status === "running") {
-        markMonitorFinished(taskId, processState, "failed", null);
-      }
-    })
-    .finally(() => clearTimeout(timeout));
+        events.onData(text);
+      };
 
-  return {
-    content: [
-      {
-        type: "text",
-        text: `WatchPR started (task ${taskId}). It will keep watching after CI finishes and report new failures, reviews, comments, conflicts, head changes, merge-state changes, and watcher errors. It stops when the PR merges/closes, on TaskStop, or when this session ends.${persistent ? "" : ` A hard ${maxTimeoutMs / 3_600_000}-hour limit applies in this Cloud sandbox; call WatchPR again to re-arm it, or use Wake or cron for much longer waits.`}\n\nCurrent state:\n${describeGitHubPullRequestSnapshot(initial)}${changesSincePreviousWatch}\n\nOutput file: ${outputFile}`,
-      },
-    ],
-    taskId,
-    url: ref.url,
-    headSha: initial.headSha,
-    persistent,
-  };
+      processState = {
+        process: {
+          kill() {
+            clearTimeout(timeout);
+            events.cancel();
+            controller.abort();
+          },
+        },
+        command: ref.url,
+        status: "running",
+        exitCode: null,
+        startTime: new Date(),
+        outputFile,
+        runtimeScope: scope,
+        actingUserId,
+        kind: "monitor",
+        description,
+        monitorSource: "github_pull_request",
+        persistent,
+        secrets,
+      };
+      backgroundProcesses.set(taskId, processState);
+      notifyBackgroundProcessStateChanged(scope);
+
+      if (!persistent) {
+        timeout = setTimeout(() => {
+          if (processState.status !== "running") return;
+          events.finish();
+          if (processState.status !== "running") return;
+          const event = getMonitorTimeoutEvent(maxTimeoutMs, "WatchPR");
+          output.append(`\n${event}\n`);
+          queueMonitorEvent({ taskId, event, scope, actingUserId, secrets });
+          processState.completionNotificationSuppressed = true;
+          markMonitorFinished(taskId, processState, "expired", null);
+          processState.process.kill();
+        }, maxTimeoutMs);
+        unrefTimer(timeout);
+      }
+
+      const wait = deps.wait ?? defaultWait;
+      const now = deps.now ?? Date.now;
+      void (async () => {
+        let previous = initial;
+        let lastFreshSnapshotAt = now();
+        let freshnessNoticeSent = false;
+        let nextPollMs = WATCH_POLL_MS;
+        let failedPolls = 0;
+        while (processState.status === "running") {
+          try {
+            await wait(controller.signal, nextPollMs);
+            if (processState.status !== "running") return;
+            const current = await fetchSnapshot(ref, {
+              cwd,
+              signal: controller.signal,
+            });
+            if (processState.status !== "running") return;
+            lastFreshSnapshotAt = now();
+            if (freshnessNoticeSent) {
+              emit(["WatchPR is receiving PR updates again."]);
+              freshnessNoticeSent = false;
+            }
+            nextPollMs = WATCH_POLL_MS;
+            failedPolls = 0;
+            const sameHead = current.headSha === previous.headSha;
+            const stableCurrent = { ...current, readinessConfirmed: false };
+            stableCurrent.readinessConfirmed = Boolean(
+              sameHead &&
+                hasGitHubPullRequestReadyConditions(previous) &&
+                hasGitHubPullRequestReadyConditions(stableCurrent),
+            );
+            saveSnapshot(snapshotPath, stableCurrent);
+            const diff = isRun
+              ? {
+                  events:
+                    previous.workflowRun?.status !==
+                      current.workflowRun?.status ||
+                    previous.workflowRun?.conclusion !==
+                      current.workflowRun?.conclusion
+                      ? [describe(current)]
+                      : [],
+                  terminal: current.state !== "OPEN",
+                }
+              : diffGitHubPullRequestSnapshots(
+                  previous,
+                  stableCurrent,
+                  args.notify_on,
+                );
+            emit(diff.events);
+            previous = stableCurrent;
+            if (diff.terminal) {
+              events.finish();
+              if (processState.status === "running") {
+                markMonitorFinished(taskId, processState, "completed", 0);
+              }
+              return;
+            }
+          } catch (error) {
+            if (
+              controller.signal.aborted ||
+              processState.status !== "running"
+            ) {
+              return;
+            }
+            if (
+              !freshnessNoticeSent &&
+              now() - lastFreshSnapshotAt >=
+                WATCH_FRESH_SNAPSHOT_NOTIFY_AFTER_MS
+            ) {
+              emit([
+                "WatchPR hasn't received fresh PR data for 30 minutes; still watching.",
+              ]);
+              freshnessNoticeSent = true;
+            }
+            if (error instanceof GitHubPullRequestSnapshotPending) {
+              nextPollMs = WATCH_POLL_MS;
+              if (
+                !output.append("[poll pending] Waiting for fresh PR data\n")
+              ) {
+                processState.completionNotificationSuppressed = true;
+                markMonitorFinished(taskId, processState, "failed", null);
+                controller.abort();
+                return;
+              }
+              continue;
+            }
+            failedPolls += 1;
+            nextPollMs = pollDelayMs(failedPolls);
+            const message = errorText(error);
+            if (!output.append(`[poll error ${failedPolls}] ${message}\n`)) {
+              processState.completionNotificationSuppressed = true;
+              markMonitorFinished(taskId, processState, "failed", null);
+              controller.abort();
+              return;
+            }
+          }
+        }
+      })()
+        .catch((error: unknown) => {
+          if (processState.status !== "running") return;
+          emit([
+            `WatchPR stopped after an unexpected error: ${errorText(error)}`,
+          ]);
+          events.finish();
+          if (processState.status === "running") {
+            markMonitorFinished(taskId, processState, "failed", null);
+          }
+        })
+        .finally(() => clearTimeout(timeout));
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: isRun
+              ? `WatchPR started (task ${taskId}). It reports workflow run status changes and completion with conclusion and failed jobs/steps.\n\n${describe(initial)}\n\nOutput file: ${outputFile}`
+              : `WatchPR started (task ${taskId}). ${args.notify_on ? `It will report ${args.notify_on.join(", ")} and watcher errors.` : "It will keep watching after CI finishes and report new failures, reviews, comments, conflicts, head changes, merge-state changes, and watcher errors."} It stops when the PR merges/closes, on TaskStop, or when this session ends.${persistent ? "" : ` A hard ${maxTimeoutMs / 3_600_000}-hour limit applies in this Cloud sandbox; call WatchPR again to re-arm it, or use Wake or cron for much longer waits.`}\n\nCurrent state:\n${describe(initial)}${changesSincePreviousWatch}\n\nOutput file: ${outputFile}`,
+          },
+        ],
+        taskId,
+        url: ref.url,
+        headSha: initial.headSha,
+        persistent,
+      };
+    },
+  );
 }

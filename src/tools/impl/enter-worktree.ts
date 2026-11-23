@@ -141,11 +141,6 @@ async function resolveWorktreeSourceRoot(params: {
   }
 }
 
-/**
- * Resolves the common prelude shared by the create and enter flows: the current
- * cwd, the repo root for `repo_path`/cwd, the primary checkout root, and the
- * managed `.letta/worktrees/` directory under it.
- */
 async function resolveWorktreeContext(params: {
   args: EnterWorktreeArgs;
   runtimeContext: ReturnType<typeof getRuntimeContext>;
@@ -247,11 +242,6 @@ interface ResolvedProvisionConfig {
   include: string[];
 }
 
-/**
- * Reads `.letta/settings.json` directly (rather than going through the settings
- * manager's loaded cache, which may not hold the primary root) and resolves the
- * worktree provisioning config, applying defaults for any missing keys.
- */
 async function readProvisionConfig(
   primaryRoot: string,
 ): Promise<ResolvedProvisionConfig> {
@@ -299,14 +289,6 @@ function isUnsafeRelativePath(relPath: string): boolean {
   return normalized === ".." || normalized.startsWith(`..${path.sep}`);
 }
 
-/** True when `child` is `parent` or nested under it (path-based, no realpath). */
-
-/**
- * Symlinks `relDir` from the primary checkout into the worktree so large,
- * gitignored directories (node_modules, populated hook dirs) are shared instead
- * of duplicated. Best-effort: skips silently when the source is absent and
- * refuses to clobber a populated destination.
- */
 async function symlinkDirIntoWorktree(
   primaryRoot: string,
   worktreePath: string,
@@ -322,7 +304,7 @@ async function symlinkDirIntoWorktree(
   const source = path.join(primaryRoot, normalized);
   const sourceStats = await lstat(source).catch(() => null);
   if (!sourceStats) {
-    return skip(""); // nothing to link (e.g. dependencies not installed in the primary checkout)
+    return skip("");
   }
 
   const dest = path.join(worktreePath, normalized);
@@ -345,8 +327,6 @@ async function symlinkDirIntoWorktree(
   }
 
   await mkdir(path.dirname(dest), { recursive: true });
-  // On Windows, directory symlinks require admin privileges or Developer Mode.
-  // Junctions achieve the same result without elevated permissions.
   await symlink(
     source,
     dest,
@@ -358,13 +338,6 @@ async function symlinkDirIntoWorktree(
   };
 }
 
-/**
- * Points the worktree at the primary checkout's git hooks. Worktrees inherit a
- * relative `core.hooksPath` (e.g. husky's `.husky/_`), but that directory's
- * contents are usually gitignored and therefore absent in a fresh worktree, so
- * hooks silently never run. Symlinking the populated hooks dir fixes that
- * without mutating the shared/main git config.
- */
 async function linkGitHooks(
   primaryRoot: string,
   worktreePath: string,
@@ -376,15 +349,11 @@ async function linkGitHooks(
   );
   const hooksPath = result.stdout.trim();
   if (result.exitCode !== 0 || !hooksPath || path.isAbsolute(hooksPath)) {
-    // No custom hooks, or an absolute path that every worktree already shares.
     return "";
   }
   if (isUnsafeRelativePath(hooksPath)) {
     return "";
   }
-  // Skip when the primary checkout has no populated hooks dir (e.g. husky not
-  // installed). readdir also fails cleanly when the path is absent or a file,
-  // so this doubles as the existence/kind check.
   const entries = await readdir(path.join(primaryRoot, hooksPath)).catch(
     () => [] as string[],
   );
@@ -432,11 +401,6 @@ async function readWorktreeIncludeEntries(
   }
 }
 
-/**
- * Copies a gitignored file or directory (relative to the repo root) from the
- * primary checkout into the worktree. Symlinks are skipped and `.git` is never
- * descended into.
- */
 async function copyPathIntoWorktree(
   primaryRoot: string,
   worktreePath: string,
@@ -494,19 +458,6 @@ async function copyIncludedFiles(
     : "";
 }
 
-/**
- * Provisions a freshly created worktree: symlinks heavy gitignored directories,
- * wires git hooks, copies local settings, and copies `.worktreeinclude` paths.
- * Every step is best-effort — failures are reported as notes and never abort
- * worktree creation.
- *
- * `symlinkDependencies` (opt-in; defaulted off at the tool layer) gates only
- * the dependency-directory symlinks. When true, node_modules is shared from the
- * primary checkout to avoid reinstalling — but a package install in the worktree
- * then writes through to the primary checkout, so worktrees stay isolated unless
- * it is explicitly requested. Returns `linkedDependencies` so the caller can
- * tailor its guidance.
- */
 export async function provisionWorktree(params: {
   primaryRoot: string;
   worktreePath: string;
@@ -557,11 +508,6 @@ export async function provisionWorktree(params: {
   return { notes, linkedDependencies };
 }
 
-/**
- * Switches the active session/conversation working directory to `worktreePath`,
- * using the listener-aware path when a runtime is attached and falling back to
- * a plain process chdir otherwise. Shared by the create and enter flows.
- */
 export async function switchSessionToWorktree(params: {
   worktreePath: string;
   shouldSwitchCwd: boolean;
@@ -583,12 +529,6 @@ export async function switchSessionToWorktree(params: {
   return true;
 }
 
-// Session-aware orchestration around the cross-agent worktree lock. The pure
-// file-backed primitive (acquire/release, ownership, liveness) lives in
-// `@/utils/worktree-lock`; the helpers here add git-dir resolution,
-// runtime-context ownership, and the user-facing conflict message.
-
-/** Resolves the per-worktree git admin directory, or null if it cannot. */
 export async function resolveWorktreeGitDir(
   worktreePath: string,
 ): Promise<string | null> {
@@ -621,13 +561,6 @@ function formatLockConflict(lock: WorktreeLock, worktreePath: string): string {
   ].join("\n");
 }
 
-/**
- * Orchestrates the cross-agent lock for a session that is switching into
- * `worktreePath`: acquires the target lock (throwing on an unforced conflict),
- * then releases this owner's lock on the worktree it is leaving so moving
- * between worktrees does not strand a self-held lock that blocks other agents.
- * Returns a short note for the result message.
- */
 async function claimWorktreeLock(params: {
   worktreePath: string;
   previousCwd: string;
@@ -650,10 +583,6 @@ async function claimWorktreeLock(params: {
     throw new Error(formatLockConflict(result.heldBy, params.worktreePath));
   }
 
-  // Release the lock on the worktree we are leaving. A lock can only ever be
-  // held on a managed worktree, so skip the git-dir lookup entirely when the
-  // previous cwd is outside `.letta/worktrees/` (the common case: switching in
-  // from the main checkout).
   if (isPathWithin(params.previousCwd, params.managedDir)) {
     const previousGitDir = await resolveWorktreeGitDir(params.previousCwd);
     if (previousGitDir && previousGitDir !== targetGitDir) {
@@ -671,7 +600,7 @@ async function claimWorktreeLock(params: {
         result.previous ? describeHolder(result.previous) : "another agent"
       })`;
     default:
-      return ""; // reentrant: this conversation already held it
+      return "";
   }
 }
 
@@ -682,10 +611,6 @@ interface RegisteredWorktree {
   prunable: boolean;
 }
 
-/**
- * Parses `git worktree list --porcelain`. The first block is always the main
- * working tree; linked worktrees follow.
- */
 async function listRegisteredWorktrees(
   repoRoot: string,
 ): Promise<RegisteredWorktree[]> {
@@ -731,12 +656,6 @@ async function listRegisteredWorktrees(
   return entries;
 }
 
-/**
- * Switches the session into an existing worktree. Validation-only: the target
- * must be a registered, non-prunable linked worktree of this repository, living
- * under the managed `.letta/worktrees/` directory. Does not create or
- * re-provision anything.
- */
 async function enterExistingWorktree(params: {
   args: EnterWorktreeArgs;
   requestedPath: string;
@@ -794,9 +713,6 @@ async function enterExistingWorktree(params: {
   }
 
   const shouldSwitchCwd = args.switch_cwd !== false;
-  // Acquire the cross-agent lock before switching. A conflict throws and aborts
-  // the enter (caught by enter_worktree's handler). When we are not switching
-  // the session in, we do not take ownership, so we skip the lock.
   const lockNote = shouldSwitchCwd
     ? await claimWorktreeLock({
         worktreePath: resolvedTarget,
@@ -848,7 +764,6 @@ export async function enter_worktree(
   try {
     const runtimeContext = getRuntimeContext();
 
-    // Enter mode: switch into an existing worktree rather than creating one.
     if (requestedPath) {
       if (
         getStringArg(args, "name") ||
@@ -866,7 +781,6 @@ export async function enter_worktree(
       });
     }
 
-    // Create mode.
     const name = getStringArg(args, "name");
     if (!name) {
       return {
@@ -901,9 +815,6 @@ export async function enter_worktree(
     }
 
     await mkdir(managedDir, { recursive: true });
-    // `--no-track` keeps the new branch from adopting the base ref (e.g.
-    // origin/main) as its upstream, which would otherwise produce misleading
-    // ahead/behind status and risk an accidental push to the base branch.
     await addWorktreeSafely({ repoRoot, branchName, worktreePath, baseRef });
 
     const normalizedWorktreePath = path.normalize(await realpath(worktreePath));
@@ -914,9 +825,6 @@ export async function enter_worktree(
       const provisioned = await provisionWorktree({
         primaryRoot,
         worktreePath: normalizedWorktreePath,
-        // Opt-in: only share node_modules when explicitly requested, so a
-        // worktree stays isolated by default and a package install here cannot
-        // write through to the primary checkout's dependencies.
         symlinkDependencies: args.symlink_dependencies === true,
       });
       provisionNotes = provisioned.notes;
@@ -943,8 +851,6 @@ export async function enter_worktree(
           provisionNotes.push(lockNote);
         }
       } catch (error) {
-        // A brand-new worktree should never conflict, but never let locking
-        // abort an otherwise successful creation.
         provisionNotes.push(
           `⚠ cross-agent lock: ${
             error instanceof Error ? error.message : String(error)

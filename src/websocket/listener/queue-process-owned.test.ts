@@ -10,9 +10,6 @@ function scopedRuntime() {
 
 describe("queued turn process ownership", () => {
   test("a cron-only batch is process-owned", () => {
-    // Without this flag the approval path waits for a subscribed client after
-    // tool execution, so an unattended scheduled turn stalls after its first
-    // tools with the results checkpointed but never submitted.
     const runtime = scopedRuntime();
     runtime.queueRuntime.enqueue({
       kind: "cron_prompt",

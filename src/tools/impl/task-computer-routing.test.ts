@@ -18,8 +18,6 @@ import { __testSetBackend, type Backend } from "@/backend";
 import { settingsManager } from "@/settings-manager";
 import { backgroundTasks } from "./process_manager";
 
-// Replace discovery and the child-process boundary, not task() or its background
-// helper. This file runs in a fresh process via isolated-unit-tests.json.
 const config: SubagentConfig = {
   name: "general-purpose",
   description: "Routing fixture",
@@ -68,8 +66,6 @@ const spawn = mock(
       agentId: "agent-routing-child",
       agentURL: "https://example.invalid/agent-routing-child",
     });
-    // Model a still-running child. No timers, completion hooks, or remote calls
-    // are needed to observe the launch contract; afterEach clears its local state.
     return new Promise<SubagentResult>(() => {});
   },
 );
@@ -137,9 +133,16 @@ const launchArgs = {
   description: "Routing contract",
 };
 
+function toolError(result: Awaited<ReturnType<typeof task>>): string {
+  if (typeof result === "string")
+    throw new Error(`Expected a tool error, got: ${result}`);
+  expect(result.status).toBe("error");
+  return result.content;
+}
+
 describe("task computer routing", () => {
   test.each(["reviewer", "custom"])(
-    "the %s preset ignores optional launch overrides",
+    "the %s preset preserves computer and ignores other launch overrides",
     async (subagent_type) => {
       const result = await task({
         ...launchArgs,
@@ -147,7 +150,7 @@ describe("task computer routing", () => {
         harness: "codex",
         fork_context: true,
         model: "ignored-model",
-        computer: "ignored-computer",
+        computer: "office-mac",
         agent_id: "ignored-agent",
         conversation_id: "ignored-conversation",
         mcp: { inherit: false },
@@ -160,10 +163,25 @@ describe("task computer routing", () => {
         undefined,
       ]);
       expect(spawn.mock.calls[0]?.slice(5, 7)).toEqual([undefined, undefined]);
-      expect(receivedEnvironment).toBeUndefined();
+      expect(receivedEnvironment).toBe("office-mac");
       expect(forkConversation).not.toHaveBeenCalled();
     },
   );
+
+  test("forwards cloud provisioning options when launching a preset", async () => {
+    const result = await task({
+      ...launchArgs,
+      subagent_type: "reviewer",
+      computer: "cloud",
+      cloud: { repositories: ["octocat/hello"], sandbox_size: "large" },
+    });
+    expect(result).toContain("Task running in background");
+    expect(receivedEnvironment).toBe("cloud");
+    expect(spawn.mock.calls[0]?.at(-1)).toEqual({
+      githubRepositories: [{ owner: "octocat", repo: "hello" }],
+      sandboxSize: "large",
+    });
+  });
 
   test("forwards a whitespace-padded selector trimmed to the child", async () => {
     const result = await task({ ...launchArgs, computer: " \t office-mac \n" });
@@ -184,10 +202,10 @@ describe("task computer routing", () => {
         computer: " office-mac ",
       });
 
-      expect(result).toContain(
+      expect(toolError(result)).toContain(
         "Error: The computer option requires a Letta Cloud backend.",
       );
-      expect(result).toContain("omit the computer field");
+      expect(toolError(result)).toContain("omit the computer field");
       expect(spawn).not.toHaveBeenCalled();
       expect(forkConversation).not.toHaveBeenCalled();
       expect(retrieveAgent).not.toHaveBeenCalled();
@@ -204,7 +222,7 @@ describe("task computer routing", () => {
         subagent_type: "memory",
         computer: " office-mac ",
       });
-      expect(result).toContain("not a selectable subagent_type");
+      expect(toolError(result)).toContain("not a selectable subagent_type");
       expect(spawn).not.toHaveBeenCalled();
       expect(forkConversation).not.toHaveBeenCalled();
       expect(retrieveAgent).not.toHaveBeenCalled();
@@ -248,15 +266,11 @@ describe("task computer routing", () => {
       },
     );
 
-    test("a fork ignores the default and does not route", async () => {
+    test("a fork uses the default computer", async () => {
       setDefaultComputer("cloud");
-      // The shared fixture rejects forks so other cases can assert none happen;
-      // this one needs the fork to land so the spawn below is observable.
       forkConversation.mockImplementationOnce(
         async () => ({ id: "conv-forked-child" }) as never,
       );
-      // Only this case reaches the post-fork toolset read, so the settings
-      // singleton is initialized here rather than for the whole file.
       const originalHome = process.env.HOME;
       process.env.HOME = scratchpad;
       await settingsManager.reset();
@@ -267,7 +281,7 @@ describe("task computer routing", () => {
         expect(result).toContain("Task running in background with task ID:");
         expect(forkConversation).toHaveBeenCalledTimes(1);
         expect(spawn).toHaveBeenCalledTimes(1);
-        expect(receivedEnvironment).toBeUndefined();
+        expect(receivedEnvironment).toBe("cloud");
       } finally {
         await settingsManager.reset();
         if (originalHome === undefined) {
@@ -285,7 +299,7 @@ describe("task computer routing", () => {
         subagent_type: "memory",
       });
 
-      expect(result).toContain("not a selectable subagent_type");
+      expect(toolError(result)).toContain("not a selectable subagent_type");
       expect(receivedEnvironment).toBeUndefined();
     });
 
@@ -304,7 +318,7 @@ describe("task computer routing", () => {
       capabilities.environmentRouting = false;
       const result = await task({ ...launchArgs, computer: "office-mac" });
 
-      expect(result).toContain(
+      expect(toolError(result)).toContain(
         "Error: The computer option requires a Letta Cloud backend.",
       );
       expect(spawn).not.toHaveBeenCalled();

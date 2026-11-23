@@ -1,27 +1,9 @@
-/**
- * Handler-level tests for bootstrap_session_state using mock backends.
- *
- * Verifies:
- * 1. Correct routing (all paths use backend.listConversationMessages)
- * 2. Response payload shape (agent_id, conversation_id, model, tools, messages, etc.)
- * 3. Pagination fields (next_before, has_more)
- * 4. Timing fields presence
- * 5. Error path — backend throws → error envelope returned
- * 6. Default conversation passes conversation_id="default" with agent_id query
- * 7. Explicit conversation uses backend.listConversationMessages
- *
- * No network. No CLI subprocess. No process.stdout.
- */
 import { describe, expect, mock, test } from "bun:test";
 import type {
   BootstrapHandlerBackend,
   BootstrapHandlerSessionContext,
 } from "@/agent/bootstrap-handler";
 import { handleBootstrapSessionState } from "@/agent/bootstrap-handler";
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Mock factory
-// ─────────────────────────────────────────────────────────────────────────────
 
 function makeBackend(convMessages: unknown[] = []): {
   backend: BootstrapHandlerBackend;
@@ -47,10 +29,6 @@ const BASE_CTX: BootstrapHandlerSessionContext = {
   memfsEnabled: false,
   sessionId: "sess-test",
 };
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Routing
-// ─────────────────────────────────────────────────────────────────────────────
 
 describe("bootstrap_session_state routing", () => {
   test("default conversation passes default + agent_id to backend.listConversationMessages", async () => {
@@ -92,10 +70,6 @@ describe("bootstrap_session_state routing", () => {
     expect(callArgs).toBe("conv-abc-123");
   });
 });
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Response shape
-// ─────────────────────────────────────────────────────────────────────────────
 
 describe("bootstrap_session_state response shape", () => {
   test("success response includes all required fields", async () => {
@@ -174,16 +148,11 @@ describe("bootstrap_session_state response shape", () => {
     expect(typeof timings.resolve_ms).toBe("number");
     expect(typeof timings.list_messages_ms).toBe("number");
     expect(typeof timings.total_ms).toBe("number");
-    // Sanity: total_ms >= list_messages_ms
     expect(timings.total_ms as number).toBeGreaterThanOrEqual(
       timings.list_messages_ms as number,
     );
   });
 });
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Pagination
-// ─────────────────────────────────────────────────────────────────────────────
 
 describe("bootstrap_session_state pagination", () => {
   test("has_more is false when messages < limit", async () => {
@@ -238,7 +207,6 @@ describe("bootstrap_session_state pagination", () => {
     });
     const payload = (resp.response as { response: Record<string, unknown> })
       .response;
-    // Last item in array is oldest when order=desc
     expect(payload.next_before).toBe("msg-oldest");
   });
 
@@ -255,10 +223,6 @@ describe("bootstrap_session_state pagination", () => {
     expect(payload.next_before).toBeNull();
   });
 });
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Error path
-// ─────────────────────────────────────────────────────────────────────────────
 
 describe("bootstrap_session_state error handling", () => {
   test("backend error returns error envelope", async () => {

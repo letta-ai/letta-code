@@ -13,17 +13,6 @@ import {
 
 const isWindows = process.platform === "win32";
 
-/**
- * Regression coverage for letta-ai/letta-code#3226.
- *
- * Bash.md promises the agent it will be notified when a `run_in_background`
- * command finishes, so a completed shell must reach the message queue the same
- * way a background subagent's completion does.
- *
- * Assertions match on the shell's own task id rather than on `queued[0]`: the
- * process registry and the queue bridge are module-level singletons, and a
- * shell torn down by a previous test can deliver its exit event here.
- */
 describe("Background bash completion notifications", () => {
   let queued: QueuedMessage[] = [];
   let fixtureDir: string;
@@ -31,7 +20,6 @@ describe("Background bash completion notifications", () => {
   function command(source: string): string {
     const script = join(fixtureDir, "command.cjs");
     writeFileSync(script, source);
-    // Preserve the explicit shell exit status used by the old Unix fixtures.
     return `"${process.execPath}" "${script}"${isWindows ? "; exit $LASTEXITCODE" : ""}`;
   }
 
@@ -67,7 +55,6 @@ describe("Background bash completion notifications", () => {
   const notificationsFor = (bashId: string): QueuedMessage[] =>
     queued.filter((message) => message.text.includes(`<task-id>${bashId}<`));
 
-  /** Wait for this shell's own notification, ignoring any strays. */
   const waitForNotification = async (
     bashId: string,
     timeoutMs = 5_000,
@@ -96,9 +83,7 @@ describe("Background bash completion notifications", () => {
     for (const proc of backgroundProcesses.values()) {
       try {
         proc.process.kill("SIGTERM");
-      } catch {
-        // Ignore cleanup failures for already-exited processes
-      }
+      } catch {}
     }
     backgroundProcesses.clear();
     rmSync(fixtureDir, { recursive: true, force: true });
@@ -121,7 +106,7 @@ describe("Background bash completion notifications", () => {
       'Background command "Watch deploy" completed',
     );
     expect(notification.text).toContain("deploy finished");
-    expect(notification.text).toContain("Full transcript available at:");
+    expect(notification.text).toContain("<transcript>");
   });
 
   test("routes one completion notification after an ordinary command yields", async () => {
@@ -148,7 +133,6 @@ describe("Background bash completion notifications", () => {
         "setTimeout(() => { console.error('automatic failure'); process.exitCode = 9; }, 100)",
       ),
       description: "Run failing automatic command",
-      // An otherwise empty PATH must not require a separate Node installation.
       secretEnv: isWindows ? { PATH: fixtureDir } : undefined,
     });
 
@@ -208,8 +192,6 @@ describe("Background bash completion notifications", () => {
     expect(notification.text).toContain("<status>failed</status>");
     expect(notification.text).toContain("Command timed out after 150ms");
 
-    // A timed-out shell is force-killed after its completion promise rejects;
-    // that teardown must not queue a second wake-up.
     await new Promise((resolve) => setTimeout(resolve, 400));
     expect(notificationsFor(bashId)).toHaveLength(1);
   });
