@@ -44,7 +44,6 @@ async function drain(
   events: AsyncIterable<ProviderStreamEvent>,
 ): Promise<void> {
   for await (const _event of events) {
-    // Drain the provider stream so the captured request represents a full call.
   }
 }
 

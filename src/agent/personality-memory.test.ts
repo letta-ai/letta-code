@@ -17,11 +17,6 @@ import {
 } from "@/agent/personality-presets";
 import { configureBackendMode } from "@/backend";
 
-/**
- * Runs applyPersonalityToMemory against real local memory repos (with the
- * real pre-commit validator) for the v2 root layout and the legacy layout.
- */
-
 const AGENT_ID = "agent-local-personality-memory-test";
 const ROOT_PERSONA =
   "---\nname: Persona\ndescription: Who I am\n---\n\nOld persona.\n";
@@ -53,7 +48,6 @@ async function initRepo(
   expect(git("status", "--porcelain")).toBe("");
 }
 
-/** Commit a validator config directly; the hook protects it from agents. */
 function commitConfig(config: Record<string, unknown>): void {
   writeFileSync(
     join(memoryDir, ".memfs.config.json"),

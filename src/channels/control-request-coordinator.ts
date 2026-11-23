@@ -184,10 +184,6 @@ export class ChannelControlRequestCoordinator {
     }
     await this.clear(requestId);
     if (result !== "expired") return true;
-    // The listener has no pending approval for this request, so it was
-    // resolved elsewhere or abandoned. An explicit approval still gets told it
-    // didn't land; any other text was never meant as a reply, so it goes to
-    // the agent as a normal message instead of being dropped.
     const wasApproval =
       "decision" in parsed.response &&
       parsed.response.decision?.behavior === "allow";

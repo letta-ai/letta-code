@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import type { Backend } from "@/backend";
 import {
   INLINE_CHARACTER_LIMIT,
+  prepareExternalWorkerPrompt,
   prependParentContext,
+  withReportBackInstruction,
 } from "./external-fork-context";
 
 function fakeBackend(messages: Array<Record<string, unknown>>) {
@@ -56,6 +58,19 @@ describe("prependParentContext", () => {
     });
     if ("error" in result) throw new Error(result.error);
 
+    expect(result.prompt).toContain(
+      "The task after the history block tells you what to do now",
+    );
+    expect(result.prompt).toContain(
+      "use the history as the source for everything else",
+    );
+    expect(result.prompt).toContain(
+      "If the task conflicts with what people said in the history, follow what people said in the history.",
+    );
+    expect(result.prompt).toContain(
+      "Do not resume unrelated work from the history.",
+    );
+    expect(result.prompt).not.toContain("not instructions addressed to you");
     expect(result.prompt).not.toContain(older);
     expect(result.prompt).toContain('"shown":4');
     expect(result.prompt).toContain('"truncated":true');
@@ -63,9 +78,7 @@ describe("prependParentContext", () => {
     expect(result.prompt).toContain(
       'letta messages search --query "<words>" --agent agent-parent --conversation conv-parent',
     );
-    expect(result.prompt).toContain(
-      'letta -p --agent agent-parent --conversation conv-parent --no-wait "<message>"',
-    );
+    expect(result.prompt).not.toContain("letta -p");
     expect(result.prompt).toEndWith("Task:\nWrite the migration.");
   });
 
@@ -275,5 +288,65 @@ describe("prependParentContext", () => {
     expect(result.prompt).toContain("Now migrate the schema.");
     expect(result.prompt).not.toContain("Use Postgres");
     expect(result.prompt).toContain('"shown":1');
+  });
+});
+
+describe("withReportBackInstruction", () => {
+  test("tells the worker to report PRs and blockers to the parent", () => {
+    const prompt = withReportBackInstruction(
+      "Write the migration.",
+      "agent-parent",
+      "conv-parent",
+    );
+    expect(prompt).toStartWith("Write the migration.\n\n");
+    expect(prompt).toContain(
+      "When you open a pull request (draft or ready) or hit a blocker you can't get past, tell the parent right away, then keep working",
+    );
+    expect(prompt).toContain(
+      'For a PR, run `letta -p --conversation conv-parent --no-wait "<what happened, with the link>. Start WatchPR on it, then tell the person who asked; a draft is a result."`',
+    );
+    expect(prompt).toContain(
+      'For a blocker, use the same command and end the message with "Tell the person who asked now."',
+    );
+    expect(prompt).not.toContain(
+      "--agent agent-parent --conversation conv-parent",
+    );
+  });
+
+  test("the default conversation is addressed through its agent", () => {
+    expect(
+      withReportBackInstruction(
+        "Write the migration.",
+        "agent-parent",
+        "default",
+      ),
+    ).toContain(
+      "letta -p --agent agent-parent --conversation default --no-wait",
+    );
+  });
+
+  test("leaves the prompt unchanged without a parent conversation", () => {
+    expect(
+      withReportBackInstruction(
+        "Write the migration.",
+        "agent-parent",
+        undefined,
+      ),
+    ).toBe("Write the migration.");
+  });
+});
+
+describe("prepareExternalWorkerPrompt", () => {
+  test("a non-forked worker gets the instruction after its task", async () => {
+    const result = await prepareExternalWorkerPrompt({
+      ...base,
+      forkContext: false,
+    });
+    if ("error" in result) throw new Error(result.error);
+    expect(result.prompt).toStartWith("Write the migration.\n\n");
+    expect(result.prompt).not.toContain("<parent_history>");
+    expect(result.prompt).toContain(
+      "letta -p --conversation conv-parent --no-wait",
+    );
   });
 });

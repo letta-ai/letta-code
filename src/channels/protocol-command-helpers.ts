@@ -39,10 +39,6 @@ export type ChannelServiceTaskRunner = (
   task: () => Promise<void>,
 ) => void;
 
-// ---------------------------------------------------------------------------
-// Service loader
-// ---------------------------------------------------------------------------
-
 export type ChannelsServiceModule = typeof import("@/channels/service");
 
 let channelsServiceLoaderOverride:
@@ -61,10 +57,6 @@ export async function loadChannelsService(): Promise<ChannelsServiceModule> {
   }
   return import("@/channels/service");
 }
-
-// ---------------------------------------------------------------------------
-// Command union type
-// ---------------------------------------------------------------------------
 
 export type ChannelsCommand =
   | ChannelsListCommand
@@ -87,10 +79,6 @@ export type ChannelsCommand =
   | ChannelTargetBindCommand
   | ChannelRouteUpdateCommand
   | ChannelRouteRemoveCommand;
-
-// ---------------------------------------------------------------------------
-// Emit helpers
-// ---------------------------------------------------------------------------
 
 export function emitChannelsUpdated(
   socket: WebSocket,
@@ -186,10 +174,6 @@ export function emitChannelTargetsUpdated(
   );
 }
 
-// ---------------------------------------------------------------------------
-// Snapshot mappers
-// ---------------------------------------------------------------------------
-
 export function mapChannelSummary(
   summary: ReturnType<ChannelsServiceModule["listChannelSummaries"]>[number],
 ) {
@@ -197,9 +181,7 @@ export function mapChannelSummary(
   try {
     configSchema =
       getChannelPluginMetadata(summary.channelId).configSchema ?? null;
-  } catch {
-    // Unsupported channel — leave schema null.
-  }
+  } catch {}
   return {
     channel_id: summary.channelId,
     display_name: summary.displayName,

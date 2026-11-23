@@ -92,8 +92,6 @@ async function buildDesiredRegistrations(
     }
   }
   const desired = new Map<string, DesiredRuntimeRegistration>();
-  // Hundreds of conversations commonly share one channel/account capability
-  // set. Resolve and serialize that schema once, then fan it out by runtime.
   const toolsByScope = new Map<
     string,
     Promise<ExternalToolDefinitionPayload | null>

@@ -44,6 +44,35 @@ describe("resolveSubagentComputer", () => {
     });
   });
 
+  test.each(["codex", "claude-code", "cursor", "opencode", "fork"])(
+    "forked %s uses the default while memory workers stay local",
+    (harness) => {
+      expect(resolve(undefined, forked, "cloud", harness)).toEqual({
+        computer: "cloud",
+        source: "default",
+      });
+      expect(resolve("local", forked, "cloud", harness)).toEqual({
+        computer: undefined,
+        source: "explicit",
+      });
+      expect(resolve(undefined, memory, "cloud", harness)).toEqual({
+        computer: undefined,
+        source: "none",
+      });
+    },
+  );
+
+  test("recall stays local with a default but accepts an explicit computer", () => {
+    expect(resolve(undefined, forked, "cloud", "recall")).toEqual({
+      computer: undefined,
+      source: "none",
+    });
+    expect(resolve("office-mac", forked, "cloud", "recall")).toEqual({
+      computer: "office-mac",
+      source: "explicit",
+    });
+  });
+
   test.each(["", "   "])("treats a blank env default %j as unset", (value) => {
     expect(resolve(undefined, implementation, value)).toEqual({
       computer: undefined,
@@ -89,15 +118,15 @@ describe("resolveSubagentComputer", () => {
     });
   });
 
-  test.each([
-    ["forks", forked],
-    ["memory-profile subagents", memory],
-  ])("%s ignore the env default", (_label, config) => {
-    expect(resolve(undefined, config, "cloud")).toEqual({
-      computer: undefined,
-      source: "none",
-    });
-  });
+  test.each([["memory-profile subagents", memory]])(
+    "%s ignore the env default",
+    (_label, config) => {
+      expect(resolve(undefined, config, "cloud")).toEqual({
+        computer: undefined,
+        source: "none",
+      });
+    },
+  );
 
   test.each([
     ["forks", forked],
@@ -148,7 +177,6 @@ describe("acceptsDefaultComputer", () => {
   });
 
   test.each([
-    ["fork", "fork", forked],
     ["memory-subagent", "reflection", memory],
     ["memory by name", "memory", implementation],
   ])("rejects %s", (_label, subagentType, config) => {

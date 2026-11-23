@@ -2,39 +2,30 @@ export const APP_SERVER_PROTOCOL_VERSION = 1;
 
 export interface AppServerInfoCommand {
   type: "app_server_info";
-  /** Echoed back in the response for request correlation. */
   request_id: string;
 }
 
 export interface AppServerInfoResponseMessage {
   type: "app_server_info_response";
   request_id: string;
-  /** Synchronous post-auth capability discovery has no domain failure variant. */
   success: true;
   backend: "local" | "api";
   letta_code_version: string;
-  /** Wire value reported by the server; clients compare it with their supported version. */
   protocol_version: number;
   capabilities: {
     agent_management: boolean;
     conversation_management: boolean;
     memory_management: boolean;
     runtime_start: boolean;
-    /** Agent-free conversation creation/resume, including the local backend. */
     agent_free_conversations?: boolean;
     launch_subagent?: boolean;
-    /** `launch_subagent` accepts `notify: "caller"`. */
     launch_subagent_notify_caller?: boolean;
-    /** Supports steering and stopping remote external subagents. */
     subagent_message?: boolean;
     runtime_workspace_sandbox?: boolean;
     runtime_external_tools_update?: boolean;
-    /** `runtime_start` and `runtime_external_tools_update` accept `tool_policy`. */
     runtime_tool_policy?: boolean;
-    /** `tool_policy` accepts `foreground_yield_ms`. */
     runtime_tool_policy_foreground_yield?: boolean;
     structured_outputs?: boolean;
-    /** `write_file` accepts `encoding: "base64"`, `append`, and `move_to`. */
     write_file_base64?: boolean;
     split_channels: boolean;
   };

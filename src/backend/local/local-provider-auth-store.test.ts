@@ -171,7 +171,6 @@ describe("local OAuth provider storage", () => {
   test("getLocalOAuthApiKey refreshes a rotating token once across callers", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-oauth-refresh-"));
     storageDirs.push(storageDir);
-    // A rotating-refresh-token provider: each refresh token works once.
     const usedRefreshTokens = new Set<string>();
     let refreshCalls = 0;
     registerPiProvider("rotating-oauth", {

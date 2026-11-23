@@ -1,12 +1,3 @@
-/**
- * Persistent cron task storage backed by ~/.letta/crons.json.
- * Provides CRUD operations with:
- * - Atomic writes (temp file + rename)
- * - mkdir-based advisory locking for read-modify-write cycles
- * - Scheduler ownership lease (PID + random token)
- * - Garbage collection for terminal tasks older than 24 hours
- */
-
 import { randomBytes } from "node:crypto";
 import {
   existsSync,
@@ -56,7 +47,7 @@ export type CronRunReason =
 export interface SchedulerOwner {
   pid: number;
   token: string;
-  started_at: string; // ISO
+  started_at: string;
   process_start_ticks?: string | null;
   boot_id?: string | null;
 }
@@ -64,39 +55,27 @@ export interface SchedulerOwner {
 export type CronSchedulerScope = "all" | "cloud" | "local";
 
 export interface CronTask {
-  // Identity
   id: string;
   agent_id: string;
-  /**
-   * Conversation target for scheduled fires.
-   * - "default" (default): enqueue into the agent's default conversation
-   * - "new": create a fresh conversation for every fire
-   * - any other string: enqueue into that existing conversation id
-   */
   conversation_id: string;
 
-  // Metadata
   name: string;
   description: string;
 
-  // Schedule
   cron: string;
-  timezone: string; // IANA
+  timezone: string;
   recurring: boolean;
 
-  // Content
   prompt: string;
 
-  // Lifecycle
   status: CronTaskStatus;
-  created_at: string; // ISO
-  expires_at: string | null; // null for all tasks now (no auto-expiry)
+  created_at: string;
+  expires_at: string | null;
   last_fired_at: string | null;
   fire_count: number;
   cancel_reason: CancelReason | null;
   jitter_offset_ms: number;
 
-  // Last run outcome summary (for table/status display without reading logs)
   last_run_at: string | null;
   last_run_outcome: CronRunOutcome | null;
   last_run_reason: CronRunReason | null;
@@ -105,8 +84,7 @@ export interface CronTask {
   missed_count: number;
   failed_count: number;
 
-  // One-shot specific
-  scheduled_for: string | null; // ISO UTC
+  scheduled_for: string | null;
   fired_at: string | null;
   missed_at: string | null;
 }
@@ -120,8 +98,6 @@ interface CronFileData {
   tasks: CronTask[];
 }
 
-// ── Constants ───────────────────────────────────────────────────────
-
 const CRON_FILE_NAME = "crons.json";
 const LOCK_DIR_NAME = "crons.lock";
 const LOCK_TOKEN_FILE = "owner.json";
@@ -129,13 +105,8 @@ const LOCK_TIMEOUT_MS = 5_000;
 const LOCK_RETRY_MS = 50;
 const LOCK_STALE_AGE_MS = 30_000;
 const MAX_ACTIVE_TASKS_PER_AGENT = 50;
-const TASK_ID_BYTES = 4; // 8 hex chars
-// Recurring tasks no longer auto-expire. They remain active until explicitly
-// cancelled. GC still removes terminal tasks (fired, missed, cancelled) after 24h.
-// One-shot tasks already use null for expires_at and are handled separately.
-const GC_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
-
-// ── Paths ───────────────────────────────────────────────────────────
+const TASK_ID_BYTES = 4;
+const GC_AGE_MS = 24 * 60 * 60 * 1000;
 
 function getLettaDir(): string {
   return resolveGlobalStateDir();
@@ -148,8 +119,6 @@ export function getCronFilePath(): string {
 function getLockDirPath(): string {
   return join(getLettaDir(), LOCK_DIR_NAME);
 }
-
-// ── File I/O ────────────────────────────────────────────────────────
 
 function emptyFile(): CronFileData {
   return {
@@ -209,8 +178,6 @@ function writeCronFile(data: CronFileData): void {
   renameSync(tmp, path);
 }
 
-// ── Locking ─────────────────────────────────────────────────────────
-
 interface LockOwner {
   pid: number;
   token: string;
@@ -235,7 +202,6 @@ function writeLockOwner(lockDir: string, owner: LockOwner): void {
 function isLockStale(lockDir: string): boolean {
   const owner = readLockOwner(lockDir);
   if (!owner) {
-    // No owner file → consider stale if dir exists and is old
     try {
       const stat = statSync(lockDir);
       return Date.now() - stat.mtimeMs > LOCK_STALE_AGE_MS;
@@ -244,7 +210,6 @@ function isLockStale(lockDir: string): boolean {
     }
   }
 
-  // Steal only if PID is dead AND lock is older than threshold
   const pidDead = !isProcessAlive(owner.pid, owner);
   const isOld = Date.now() - owner.acquired_at > LOCK_STALE_AGE_MS;
   return pidDead && isOld;
@@ -253,19 +218,13 @@ function isLockStale(lockDir: string): boolean {
 function stealLock(lockDir: string): void {
   try {
     rmSync(lockDir, { recursive: true, force: true });
-  } catch {
-    // Best effort
-  }
+  } catch {}
 }
 
 export interface LockHandle {
   release(): void;
 }
 
-/**
- * Acquire the crons.lock advisory lock.
- * Throws if unable to acquire within LOCK_TIMEOUT_MS.
- */
 export function acquireLock(): LockHandle {
   const lockDir = getLockDirPath();
   const deadline = Date.now() + LOCK_TIMEOUT_MS;
@@ -274,7 +233,6 @@ export function acquireLock(): LockHandle {
   while (Date.now() < deadline) {
     try {
       mkdirSync(lockDir, { recursive: false });
-      // Success — we own the lock
       const owner: LockOwner = {
         pid: process.pid,
         token,
@@ -285,25 +243,20 @@ export function acquireLock(): LockHandle {
       return {
         release() {
           try {
-            // Verify we still own it before releasing
             const current = readLockOwner(lockDir);
             if (current && current.token === token) {
               rmSync(lockDir, { recursive: true, force: true });
             }
-          } catch {
-            // Best effort
-          }
+          } catch {}
         },
       };
     } catch (err: unknown) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === "EEXIST") {
-        // Lock held — check if stale
         if (isLockStale(lockDir)) {
           stealLock(lockDir);
-          continue; // Retry immediately
+          continue;
         }
-        // Wait and retry
         const sleepMs = Math.min(
           LOCK_RETRY_MS + Math.random() * LOCK_RETRY_MS,
           deadline - Date.now(),
@@ -313,17 +266,13 @@ export function acquireLock(): LockHandle {
         }
         continue;
       }
-      throw err; // Unexpected error
+      throw err;
     }
   }
 
   throw new Error("Failed to acquire crons.lock — timed out after 5s");
 }
 
-/**
- * Execute a callback while holding the lock.
- * Lock is released in a finally block.
- */
 export function withLock<T>(fn: () => T): T {
   const lock = acquireLock();
   try {
@@ -332,8 +281,6 @@ export function withLock<T>(fn: () => T): T {
     lock.release();
   }
 }
-
-// ── Task ID ─────────────────────────────────────────────────────────
 
 function generateTaskId(): string {
   return randomBytes(TASK_ID_BYTES).toString("hex");
@@ -347,8 +294,6 @@ function assertValidCronForPersistence(cron: string): void {
   }
 }
 
-// ── Jitter ──────────────────────────────────────────────────────────
-
 function simpleHash(s: string): number {
   let hash = 0;
   for (let i = 0; i < s.length; i++) {
@@ -358,12 +303,6 @@ function simpleHash(s: string): number {
   return Math.abs(hash);
 }
 
-/**
- * Compute jitter offset for a task.
- * - Recurring: late jitter, bounded by min(10% of period, 15 min)
- * - One-shot at :00/:30: early jitter up to 90s (negative offset)
- * - Other one-shots: no jitter (0)
- */
 export function computeJitter(
   taskId: string,
   cron: string,
@@ -374,19 +313,15 @@ export function computeJitter(
   if (recurring) {
     const periodMs = estimatePeriodMs(cron);
     if (periodMs <= 0) return 0;
-    // Cap recurring jitter to < 60s (one tick interval). The scheduler
-    // evaluates once per minute, so cross-minute jitter would be ignored.
     const maxJitter = Math.min(periodMs * 0.1, 59_999);
     return simpleHash(taskId) % Math.max(1, Math.floor(maxJitter));
   }
 
-  // One-shot
   if (!scheduledFor) return 0;
 
   const min = scheduledFor.getMinutes();
   if (min === 0 || min === 30) {
     const offset = -(simpleHash(taskId) % 90_000);
-    // Don't fire before creation time
     if (scheduledFor.getTime() + offset < createdAt.getTime()) return 0;
     return offset;
   }
@@ -394,16 +329,8 @@ export function computeJitter(
   return 0;
 }
 
-// ── CRUD ────────────────────────────────────────────────────────────
-
 export interface AddTaskInput {
   agent_id: string;
-  /**
-   * Conversation target for scheduled fires.
-   * - omitted/"new": fresh conversation per fire
-   * - "default": agent default conversation
-   * - any other string: existing conversation id
-   */
   conversation_id?: string;
   name: string;
   description: string;
@@ -411,7 +338,7 @@ export interface AddTaskInput {
   timezone?: string;
   recurring: boolean;
   prompt: string;
-  scheduled_for?: Date; // for one-shots
+  scheduled_for?: Date;
 }
 
 export interface AddTaskResult {
@@ -419,16 +346,12 @@ export interface AddTaskResult {
   warning?: string;
 }
 
-/**
- * Add a new cron task. Acquires the lock internally.
- */
 export function addTask(input: AddTaskInput): AddTaskResult {
   return withLock(() => {
     const data = readCronFile();
     const agentId = input.agent_id;
     const conversationId = input.conversation_id ?? "new";
 
-    // Pausing a task must not let an agent exceed the persisted schedule limit.
     const scheduledCount = data.tasks.filter(
       (task) =>
         task.agent_id === agentId && !TERMINAL_TASK_STATUSES.has(task.status),
@@ -458,8 +381,6 @@ export function addTask(input: AddTaskInput): AddTaskResult {
       prompt: input.prompt,
       status: "active",
       created_at: now.toISOString(),
-      // Recurring tasks do not auto-expire (expires_at: null)
-      // One-shot tasks also use null (handled by scheduled_for)
       expires_at: null,
       last_fired_at: null,
       fire_count: 0,
@@ -486,9 +407,6 @@ export function addTask(input: AddTaskInput): AddTaskResult {
     data.tasks.push(task);
     writeCronFile(data);
 
-    // A mixed-version tombstone in scheduler_owner does not count as an
-    // all-agent lease — only a real all-lease or the matching scoped owner
-    // suppresses the warning.
     let warning: string | undefined;
     if (
       !hasLiveSchedulerOwner(
@@ -504,9 +422,6 @@ export function addTask(input: AddTaskInput): AddTaskResult {
   });
 }
 
-/**
- * List tasks, optionally filtered by agent and/or conversation.
- */
 export function listTasks(filters?: {
   agent_id?: string;
   conversation_id?: string;
@@ -522,19 +437,11 @@ export function listTasks(filters?: {
   return tasks;
 }
 
-/**
- * Get a single task by ID.
- */
 export function getTask(taskId: string): CronTask | null {
   const data = readCronFile();
   return data.tasks.find((t) => t.id === taskId) ?? null;
 }
 
-/**
- * Delete a task by ID. Physical removal from the file.
- * Acquires the lock internally.
- * Returns true if found and removed, false if not found.
- */
 export function deleteTask(taskId: string): boolean {
   return withLock(() => {
     const data = readCronFile();
@@ -546,11 +453,6 @@ export function deleteTask(taskId: string): boolean {
   });
 }
 
-/**
- * Delete all tasks for a given agent. Physical removal.
- * Acquires the lock internally.
- * Returns the number of tasks removed.
- */
 export function deleteAllTasks(agentId: string): number {
   return withLock(() => {
     const data = readCronFile();
@@ -561,8 +463,6 @@ export function deleteAllTasks(agentId: string): number {
     return removed;
   });
 }
-
-// ── Scheduler lease ─────────────────────────────────────────────────
 
 function isLiveOwner(
   owner: SchedulerOwner | null | undefined,
@@ -595,13 +495,6 @@ function ownerMatches(
   );
 }
 
-/**
- * True when a live lease would process schedules for `backend`.
- * A true all-agent owner (live `scheduler_owner`, no live scoped owners)
- * covers every backend. A scoped owner only covers its own lane. A
- * mixed-version tombstone in `scheduler_owner` does not count as all-owner
- * while a scoped row is live.
- */
 export function hasLiveSchedulerOwner(
   data: {
     scheduler_owner: SchedulerOwner | null;
@@ -645,14 +538,6 @@ function throwIfLiveScopedLease(
   }
 }
 
-/**
- * Claim the scheduler lease. Returns the token on success.
- * Throws if another live process holds the lease.
- *
- * Scoped claims also write a live `scheduler_owner` tombstone so older
- * binaries that only inspect that field refuse `claimSchedulerLease()` and
- * cannot rewrite the file without `scheduler_owners`.
- */
 export function claimSchedulerLease(scope: CronSchedulerScope = "all"): string {
   return withLock(() => {
     const data = readCronFile();
@@ -673,8 +558,6 @@ export function claimSchedulerLease(scope: CronSchedulerScope = "all"): string {
       data.scheduler_owners = {};
       data.scheduler_owner = owner;
     } else {
-      // A live scheduler_owner with no live scoped owners is a real all-agent
-      // lease (or a stale tombstone whose scoped row was stripped). Refuse.
       if (liveScoped.length === 0) {
         throwIfLiveAllLease(liveLegacy, false);
       }
@@ -687,9 +570,6 @@ export function claimSchedulerLease(scope: CronSchedulerScope = "all"): string {
   });
 }
 
-/**
- * Verify we still hold the scheduler lease.
- */
 export function verifySchedulerLease(
   token: string,
   scope: CronSchedulerScope = "all",
@@ -711,11 +591,6 @@ export function __testThrowNextRefreshSchedulerLease(shouldThrow = true): void {
   throwNextRefreshSchedulerLease = shouldThrow;
 }
 
-/**
- * Confirm we still hold the lease. Scoped holders restore a dead tombstone
- * and a missing row when we own it or it matches `knownTombstoneToken`.
- * A different live all-owner is lease loss. Heartbeat, not only the 60s tick.
- */
 export function refreshSchedulerLease(
   token: string,
   scope: CronSchedulerScope = "all",
@@ -761,9 +636,6 @@ export function refreshSchedulerLease(
   });
 }
 
-/**
- * Release the scheduler lease.
- */
 export function releaseSchedulerLease(
   token: string,
   scope: CronSchedulerScope = "all",
@@ -785,13 +657,6 @@ export function releaseSchedulerLease(
   });
 }
 
-// ── Task state updates (used by scheduler) ──────────────────────────
-
-/**
- * Update task state atomically. Acquires the lock.
- * Callback receives the task and can mutate it in-place.
- * Returns the updated task, or null if not found.
- */
 export function updateTask(
   taskId: string,
   updater: (task: CronTask) => void,
@@ -850,7 +715,6 @@ const TERMINAL_TASK_STATUSES = new Set<CronTaskStatus>([
   "cancelled",
 ]);
 
-/** Pause an active task atomically. Repeated pauses are successful no-ops. */
 export function pauseTask(taskId: string): CronStateChangeResult {
   return withLock(() => {
     const data = readCronFile();
@@ -876,10 +740,6 @@ export function pauseTask(taskId: string): CronStateChangeResult {
   });
 }
 
-/**
- * Resume a paused task atomically. An overdue one-off requires a replacement
- * future timestamp in the same operation. Repeated resumes are no-ops.
- */
 export function resumeTask(
   taskId: string,
   scheduledFor?: Date,
@@ -942,12 +802,6 @@ export function resumeTask(
   });
 }
 
-// ── Garbage collection ──────────────────────────────────────────────
-
-/**
- * Remove terminal tasks (fired, missed, cancelled) older than 24 hours.
- * Acquires the lock. Returns the number of tasks removed.
- */
 export function garbageCollect(): number {
   return withLock(() => {
     const data = readCronFile();
@@ -955,11 +809,8 @@ export function garbageCollect(): number {
     const before = data.tasks.length;
 
     data.tasks = data.tasks.filter((t) => {
-      // Keep active, paused, and status values written by newer versions. Only
-      // the known terminal states are eligible for collection.
       if (!TERMINAL_TASK_STATUSES.has(t.status)) return true;
       const createdAt = new Date(t.created_at).getTime();
-      // Use the most recent timestamp for GC age
       const terminalAt = Math.max(
         t.last_fired_at ? new Date(t.last_fired_at).getTime() : 0,
         t.fired_at ? new Date(t.fired_at).getTime() : 0,
@@ -975,21 +826,11 @@ export function garbageCollect(): number {
   });
 }
 
-// ── Get active tasks (for scheduler) ────────────────────────────────
-
-/**
- * Read the cron file and return only active tasks.
- * Does NOT acquire the lock (read-only operation).
- */
 export function getActiveTasks(): CronTask[] {
   const data = readCronFile();
   return data.tasks.filter((t) => t.status === "active");
 }
 
-/**
- * Get the mtime of crons.json for change detection.
- * Returns 0 if the file doesn't exist.
- */
 export function getCronFileMtime(): number {
   const path = getCronFilePath();
   try {

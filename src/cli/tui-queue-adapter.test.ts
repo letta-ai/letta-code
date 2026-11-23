@@ -1,7 +1,3 @@
-/**
- * Unit tests for getTuiBlockedReason() in tuiQueueAdapter.ts.
- */
-
 import { describe, expect, test } from "bun:test";
 import {
   getTuiBlockedReason,

@@ -53,8 +53,6 @@ describe("local conversation refresh", () => {
           packedSummary: "packed summary",
           remainingMessages,
         });
-      // A second compaction replaces ui-msg-13 with ui-msg-14, preserving
-      // both the active message count and the serialized record's byte length.
       if (sameByteLength) compact();
       const recordPath = join(
         storageDir,

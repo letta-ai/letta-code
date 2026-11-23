@@ -1,6 +1,7 @@
 import {
+  getTaskSnapshot,
   TaskNotFoundError,
-  type TaskRecord,
+  type TaskRecordResult,
   type TaskStatus,
   updateTask,
 } from "./tasks/store.js";
@@ -43,7 +44,9 @@ function validateStringArray(
   return value as string[];
 }
 
-export async function task_update(args: TaskUpdateArgs): Promise<TaskRecord> {
+export async function task_update(
+  args: TaskUpdateArgs,
+): Promise<TaskRecordResult> {
   validateRequiredParams(args, ["taskId"], "TaskUpdate");
   if (typeof args.taskId !== "string" || args.taskId.length === 0) {
     throw new Error("TaskUpdate: 'taskId' must be a non-empty string");
@@ -71,7 +74,7 @@ export async function task_update(args: TaskUpdateArgs): Promise<TaskRecord> {
   const addBlockedBy = validateStringArray(args.addBlockedBy, "addBlockedBy");
 
   try {
-    return updateTask({
+    const record = updateTask({
       taskId: args.taskId,
       status: args.status as TaskStatus | undefined,
       subject: args.subject,
@@ -82,6 +85,7 @@ export async function task_update(args: TaskUpdateArgs): Promise<TaskRecord> {
       addBlockedBy,
       metadata: args.metadata,
     });
+    return { ...record, ...getTaskSnapshot() };
   } catch (err) {
     if (err instanceof TaskNotFoundError) {
       throw new Error(`TaskUpdate: ${err.message}`);

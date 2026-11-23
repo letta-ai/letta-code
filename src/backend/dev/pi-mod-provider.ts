@@ -19,12 +19,6 @@ import {
   resolveRegisteredPiProviderRuntimeConnection,
 } from "./registered-pi-provider-runtime";
 
-/**
- * Maps a mod's model registration to the complete pi-ai Model the provider
- * publishes. Connection-derived auth headers are intentionally not baked in:
- * they are per-request state resolved by pi-model-factory and passed as
- * stream options, which pi-ai merges over provider defaults.
- */
 export function registrationModelToPiModel(input: {
   providerName: string;
   config: PiProviderRegistration;
@@ -66,15 +60,6 @@ export interface ModPiProviderOptions {
   storageDir?: string;
 }
 
-/**
- * Real pi-ai Provider for a mod-registered provider (LET-10130). The
- * declarative mod registration stays the mod-facing vocabulary; this adapter
- * turns it into the concrete runtime unit: statically declared models are
- * published as complete pi-ai Models, a mod `listModels` hook becomes the
- * provider's dynamic `refreshModels` (with last-known retention on failure,
- * seeded from the static declaration), and stream dispatch runs through the
- * provider's per-API implementations.
- */
 export function createModPiProvider(options: ModPiProviderOptions): Provider {
   const { registered, storageDir } = options;
   const config = registered.config;
@@ -97,11 +82,6 @@ export function createModPiProvider(options: ModPiProviderOptions): Provider {
 
   const staticModels = (config.models ?? []).map(toModel);
 
-  // Only providers with a listModels hook are dynamic; static registrations
-  // publish their declared models and never refresh. Refresh auth comes
-  // solely from the RefreshModelsContext credential the Models runtime
-  // resolved (OAuth already refreshed under the store lock) — no parallel
-  // auth read here.
   const fetchModels = config.listModels
     ? async (context: RefreshModelsContext): Promise<readonly Model<Api>[]> => {
         const record = getRegisteredPiProviderLocalRecord(
@@ -138,8 +118,6 @@ export function createModPiProvider(options: ModPiProviderOptions): Provider {
             return {
               auth: {
                 apiKey,
-                // authHeader mods carry their key as an explicit header;
-                // this is provider-owned auth, not factory-side shaping.
                 ...(config.authHeader
                   ? { headers: { Authorization: `Bearer ${apiKey}` } }
                   : {}),
@@ -147,9 +125,6 @@ export function createModPiProvider(options: ModPiProviderOptions): Provider {
               source: "local provider record",
             };
           }
-          // connect:false mods are explicitly keyless — report configured so
-          // the Models runtime refreshes them (mirrors
-          // isRegisteredPiProviderConfigured).
           return config.connect === false ? { auth: {} } : undefined;
         },
       },

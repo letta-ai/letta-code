@@ -10,7 +10,6 @@ describe("DebugLogFile", () => {
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "letta-debug-log-"));
-    // The test preload sets LETTA_CODE_TELEM=0, which disables file logging.
     previousTelem = process.env.LETTA_CODE_TELEM;
     process.env.LETTA_CODE_TELEM = "1";
   });
@@ -39,9 +38,7 @@ describe("DebugLogFile", () => {
     const path = join(dir, "agent-1", "session-2.log");
     const content = readFileSync(path, "utf8");
     expect(content).toContain("log truncated after 128 bytes");
-    // Exactly one notice, no matter how many writes arrive past the cap.
     expect(content.match(/log truncated/g)?.length).toBe(1);
-    // Size stays bounded: cap plus at most one in-flight line and the notice.
     expect(statSync(path).size).toBeLessThan(128 + 128 + 128);
   });
 

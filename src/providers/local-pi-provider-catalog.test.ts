@@ -99,8 +99,6 @@ describe("local pi provider catalog", () => {
       expect(spec.defaultModel).toBeDefined();
       if (!spec.defaultModel) continue;
       const modelId = spec.defaultModel.split("/").slice(1).join("/");
-      // Providers with purely dynamic catalogs (e.g. "radius") have no
-      // generated models; their TUI default cannot be catalog-checked.
       if (getModels(spec.piProvider as never)?.length) {
         expect(
           getModels(spec.piProvider as never).some(
@@ -118,8 +116,6 @@ describe("local pi provider catalog", () => {
       const spec = PI_PROVIDER_SPECS.find((entry) => entry.id === provider);
       expect(spec).toBeDefined();
       expect(spec?.defaultModel).toBe(`${spec?.handlePrefixes[0]}${modelId}`);
-      // Purely dynamic providers (e.g. "radius") have no generated catalog;
-      // their TUI default cannot be catalog-checked.
       const catalog =
         getModels(provider as Parameters<typeof getModels>[0]) ?? [];
       if (catalog.length > 0) {

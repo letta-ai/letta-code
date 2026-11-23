@@ -24,10 +24,6 @@ function startedGroups(client: FakeClient): Group[][] {
   );
 }
 
-// runtime_start replaces every tool the gateway connection registered for the
-// runtime. A routed delivery must therefore re-send the host's tools, or later
-// turns (API-enqueued, proactive, continuations) lose MessageChannel until the
-// runtime goes idle.
 test("a routed delivery keeps the runtime's MessageChannel registered", async () => {
   const client = new FakeClient();
   const gateway = new ChannelGateway(
@@ -56,8 +52,6 @@ test("a routed delivery keeps the runtime's MessageChannel registered", async ()
   gateway.close();
 });
 
-// Default channel behavior (0.34.1): the listener can coalesce queued channel
-// messages into one turn instead of splitting them per delivery.
 test("queued deliveries request no turn split", async () => {
   const client = new FakeClient();
   const gateway = new ChannelGateway(

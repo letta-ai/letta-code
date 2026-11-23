@@ -1,28 +1,11 @@
-/**
- * Agent memory block management
- * Loads memory blocks from .mdx files in src/agent/prompts
- */
-
 import type { CreateBlock } from "@letta-ai/letta-client/resources/blocks/blocks";
 import { READ_ONLY_BLOCK_LABELS } from "./memory-constants";
 import { MEMORY_PROMPTS } from "./prompt-assets";
 
-/**
- * The memory block labels every standard (non-MemFS) agent is created with.
- * Each maps to a `<label>.mdx` file in src/agent/prompts. Per-project blocks
- * (skills/loaded_skills) were removed in LET-7353 — skills are now injected
- * via system reminders, leaving only these defaults.
- */
 export const MEMORY_BLOCK_LABELS = ["persona", "human"] as const;
 
-/**
- * Block labels that should be read-only (agent cannot modify via memory tools).
- */
 export { READ_ONLY_BLOCK_LABELS };
 
-/**
- * Parse frontmatter and content from an .mdx file
- */
 export function parseMdxFrontmatter(content: string): {
   frontmatter: Record<string, string>;
   body: string;
@@ -38,7 +21,6 @@ export function parseMdxFrontmatter(content: string): {
   const body = match[2];
   const frontmatter: Record<string, string> = {};
 
-  // Parse YAML-like frontmatter (simple key: value pairs)
   for (const line of frontmatterText.split("\n")) {
     const colonIndex = line.indexOf(":");
     if (colonIndex > 0) {
@@ -51,9 +33,6 @@ export function parseMdxFrontmatter(content: string): {
   return { frontmatter, body: body.trim() };
 }
 
-/**
- * Load memory blocks from .mdx files in src/agent/prompts
- */
 async function loadMemoryBlocksFromMdx(): Promise<CreateBlock[]> {
   const memoryBlocks: CreateBlock[] = [];
 
@@ -78,7 +57,6 @@ async function loadMemoryBlocksFromMdx(): Promise<CreateBlock[]> {
         block.description = frontmatter.description;
       }
 
-      // Set read-only for blocks managed by specific tools (not memory tools)
       if ((READ_ONLY_BLOCK_LABELS as readonly string[]).includes(label)) {
         block.read_only = true;
       }
@@ -92,12 +70,8 @@ async function loadMemoryBlocksFromMdx(): Promise<CreateBlock[]> {
   return memoryBlocks;
 }
 
-// Cache for loaded memory blocks
 let cachedMemoryBlocks: CreateBlock[] | null = null;
 
-/**
- * Get default starter memory blocks for new agents
- */
 export async function getDefaultMemoryBlocks(): Promise<CreateBlock[]> {
   if (!cachedMemoryBlocks) {
     cachedMemoryBlocks = await loadMemoryBlocksFromMdx();

@@ -90,10 +90,7 @@ async function capture(
     exitOnCtrlC: false,
   };
   const originalColumns = process.stdout.columns;
-  // The production hook observes process.stdout, not Ink's injected output.
   process.stdout.columns = columns;
-  // Keep a separate probe alive through teardown so restoring the shared width
-  // cannot repaint the tool at the original width before Ink flushes it.
   const probe = render(<WidthProbe />, {
     ...options,
     stdout: new CaptureStream(columns) as CaptureStream & NodeJS.WriteStream,
@@ -123,7 +120,6 @@ async function capture(
   try {
     await tick();
   } finally {
-    // CI buffers live output until unmount. Flush at the requested width first.
     instance.unmount();
     instance.cleanup();
     process.stdout.columns = originalColumns;

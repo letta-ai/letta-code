@@ -3,7 +3,7 @@
   "properties": {
     "description": {
       "type": "string",
-      "description": "Clear, concise user-facing description of the update you are waiting for. This may be shown directly in chat, so make it grammatical by itself. Describe the expected event, not the polling command or monitor implementation. Prefer `CI results and review comments for the auth fix`, `Deployment completion or failure`, or `New errors in the API logs` over internal labels like `PR checks and state transitions`."
+      "description": "Clear, concise user-facing description of the update you are waiting for. This may be shown directly in chat, so make it grammatical by itself. Describe the expected event, not the polling command or monitor implementation. Prefer `CI results and review comments for the auth fix`, `Deployment completion or failure`, or `New errors in the API logs` over internal labels like `PR checks and state transitions`. Required unless `resume` is set."
     },
     "timeout_ms": {
       "type": "number",
@@ -55,9 +55,13 @@
     },
     "args": {
       "description": "Optional input exposed to script as args."
+    },
+    "resume": {
+      "type": "string",
+      "description": "Resume a paused monitor by its saved monitor id. Omit the other arguments."
     }
   },
-  "required": ["description"],
   "additionalProperties": false,
-  "$schema": "http://json-schema.org/draft-07/schema#"
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "required": []
 }

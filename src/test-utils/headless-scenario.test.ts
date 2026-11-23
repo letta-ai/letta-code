@@ -15,7 +15,6 @@ function git(...args: string[]) {
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "headless-scenario-storage-"));
   mkdirSync(join(root, "agents"));
-  // The worker sorts before its parent and deliberately has no own checkout.
   writeFileSync(
     join(root, "agents", "a-worker.json"),
     JSON.stringify({

@@ -58,7 +58,6 @@ function flagValue(args: string[], flag: string): string | undefined {
   return index === -1 ? undefined : args[index + 1];
 }
 
-/** Detached conversations as Cloud returns them, keyed by ID. */
 function conversationBackend(
   conversations: Record<string, Record<string, unknown>>,
 ): Backend {
@@ -68,7 +67,6 @@ function conversationBackend(
       if (!conversation) throw new Error(`Conversation ${id} not found`);
       return { id, ...conversation };
     },
-    // The walk continues at the parent, an ordinary (top-level) agent.
     retrieveAgent: async (id: string) => ({ id, tags: [] }),
   } as unknown as Backend;
 }
@@ -81,7 +79,6 @@ describe("launch decision", () => {
     expect(
       shouldRunSubagentEphemerally({ backendMode: "local", env: {} }),
     ).toBe(false);
-    // agent_id, conversation_id and fork_context deploy an existing owner.
     expect(
       shouldRunSubagentEphemerally({
         backendMode: "api",
@@ -137,7 +134,6 @@ describe("child arguments", () => {
     expect(args).not.toContain("--tags");
     expect(flagValue(args, "--system")).toBe("explore");
     expect(flagValue(args, "--model")).toBe("openai/gpt-5.6-luna");
-    // The toolset is client-side, so the preset allowlist narrows it.
     expect(flagValue(args, "--tools")).toBe("Read,Bash,Task");
     expect(flagValue(args, "--max-turns")).toBe("5");
   });
@@ -218,7 +214,6 @@ describe("child arguments", () => {
     expect(values.backend).toBe("api");
     const parentEnv = { AGENT_ID: PARENT, LETTA_AGENT_ID: PARENT };
     const routed = { routed: true, explicitTarget: false };
-    // The non-ephemeral route still infers the ambient agent.
     expect(
       resolveAmbientAgentId({ ...routed, ephemeral: false }, parentEnv),
     ).toBe(PARENT);
@@ -363,7 +358,6 @@ describe("MCP scope", () => {
     expect(await getMcpScopeAgentId("conv-plain", subagentEnv)).toBe(
       "conv-plain",
     );
-    // Outside a subagent process the parent linkage is never followed.
     expect(await getMcpScopeAgentId(EPHEMERAL, {})).toBe(EPHEMERAL);
   });
 });
@@ -438,7 +432,6 @@ describe("secrets", () => {
       "agent-own": { OWN: "own-secret-value" },
     });
     await initHeadlessSecrets("agent-own", false, null, subagentEnv);
-    // A detached session that is not a subagent gets no vault.
     await initHeadlessSecrets("conv-plain", true, PARENT, {});
     expect(requested).toEqual(["agent-own"]);
     expect(loadSecrets("conv-plain")).toEqual({});
@@ -471,11 +464,9 @@ describe("nested launches from a detached subagent", () => {
   });
 
   test("a grandchild links to the real parent agent, not the conversation", () => {
-    // Inside an ephemeral child, the session's own ID is its conversation.
     setAgentContext(EPHEMERAL);
     const nestedParent = getEffectiveAgentId(subagentEnv);
     expect(nestedParent).toBe(PARENT);
-    // Task passes its notification scope (the conversation ID) explicitly.
     expect(resolveEffectiveAgentId(EPHEMERAL, subagentEnv)).toBe(PARENT);
 
     const grandchildEnv = composeSubagentChildEnv({

@@ -1,23 +1,10 @@
-// src/tools/filter.ts
-// Tool filtering - controls which tools are loaded and registered with the agent
-
-/**
- * Tool filter manager to control which tools are enabled for the session.
- * Set via CLI --tools flag.
- */
 class ToolFilterManager {
-  private enabledTools: string[] | null = null; // null = all tools enabled
+  private enabledTools: string[] | null = null;
 
-  /**
-   * Set which tools are enabled for this session
-   * @param toolsString - Comma-separated list of tool names, or empty string for no tools
-   */
   setEnabledTools(toolsString: string): void {
     if (toolsString === "") {
-      // Empty string means no tools
       this.enabledTools = [];
     } else {
-      // Parse comma-separated tool names
       this.enabledTools = toolsString
         .split(",")
         .map((t) => t.trim())
@@ -25,23 +12,15 @@ class ToolFilterManager {
     }
   }
 
-  /**
-   * Get list of enabled tools (null means all tools)
-   */
   getEnabledTools(): string[] | null {
     return this.enabledTools === null ? null : [...this.enabledTools];
   }
 
-  /**
-   * Reset to default (all tools enabled)
-   */
   reset(): void {
     this.enabledTools = null;
   }
 }
 
-// Use globalThis to ensure singleton across bundle
-// This prevents Bun's bundler from creating duplicate instances
 const FILTER_KEY = Symbol.for("@letta/toolFilter");
 
 type GlobalWithFilter = typeof globalThis & {

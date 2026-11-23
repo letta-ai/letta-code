@@ -54,8 +54,6 @@ test("streams a remote Letta subagent's progress into the output file while it r
   const outputFile = join(dir, "task.log");
   writeFileSync(outputFile, "");
   openTaskProgressLog(SUBAGENT, outputFile);
-  // run-1 asks to run Bash (client-side tools arrive as approval requests);
-  // run-2 says it is waiting, then finishes with the reply.
   const run1 = [
     say("m1", 1, "Listing the checkout first."),
     {
@@ -75,7 +73,6 @@ test("streams a remote Letta subagent's progress into the output file while it r
       tool_return: "a.txt",
     } as Message,
     say("m2", 3, "Build is running."),
-    // A background command's output arrives only as a notification turn.
     {
       id: "m2n",
       date: "2026-11-01T10:00:04.000Z",
@@ -112,7 +109,6 @@ test("streams a remote Letta subagent's progress into the output file while it r
         },
         run: async (id) => ({ id, status: "completed" }) as Run,
         listMessages: async (runId) => {
-          // A failed progress read is skipped, not fatal.
           if (reads++ === 0) throw new Error("socket hang up");
           if (runId === "run-1") return run1;
           if (++run2Reads < 3) return run2;
@@ -125,7 +121,6 @@ test("streams a remote Letta subagent's progress into the output file while it r
     );
 
     expect(result).toMatchObject({ success: true, report: "Build passed." });
-    // Before the Super Run completed, both runs' progress was in the file.
     expect(midRun[3]).toBe(
       "[2026-11-01T10:00:01.000Z] text: Listing the checkout first.\n" +
         '[2026-11-01T10:00:01.000Z] tool: Bash {"cmd":1}\n' +
@@ -133,7 +128,6 @@ test("streams a remote Letta subagent's progress into the output file while it r
         "[2026-11-01T10:00:03.000Z] text: Build is running.\n" +
         "[2026-11-01T10:00:04.000Z] notification: Build failed\n",
     );
-    // Each entry is written once, however often its run is re-read.
     expect(readFileSync(outputFile, "utf8")).toBe(
       `${midRun[3]}[2026-11-01T10:00:08.000Z] text: Build passed.\n`,
     );
@@ -145,7 +139,6 @@ test("streams a remote Letta subagent's progress into the output file while it r
 
 test("notifies once while a completed child waits on background work and continues to the terminal result", async () => {
   const queued: QueuedMessage[] = [];
-  // Attaching a consumer delivers whatever earlier suites left queued.
   clearPendingMessages();
   setMessageQueueAdder((message) => queued.push(message));
   registerSubagent(SUBAGENT, "general-purpose", "test", undefined, true);
@@ -214,7 +207,6 @@ test("notifies once while a completed child waits on background work and continu
 
 test("does not notify a foreground Task's parent, which is blocked in this wait", async () => {
   const queued: QueuedMessage[] = [];
-  // Attaching a consumer delivers whatever earlier suites left queued.
   clearPendingMessages();
   setMessageQueueAdder((message) => queued.push(message));
   registerSubagent(SUBAGENT, "general-purpose", "test", undefined, false);

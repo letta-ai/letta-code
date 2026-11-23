@@ -14,14 +14,10 @@ afterEach(() => {
   sessionPermissions.clear();
 });
 
-// ============================================================================
-// Allowed Directory Boundary Tests
-// ============================================================================
-
 const WORKING_DIRECTORY_REASON = "Within working directory";
 
 test("Sibling directories sharing the working directory prefix are not auto-allowed", () => {
-  if (process.platform === "win32") return; // Skip on Windows - Unix paths
+  if (process.platform === "win32") return;
   const permissions: PermissionRules = { allow: [], deny: [], ask: [] };
 
   for (const filePath of [
@@ -41,7 +37,7 @@ test("Sibling directories sharing the working directory prefix are not auto-allo
 });
 
 test("Nested paths and the working directory itself are auto-allowed", () => {
-  if (process.platform === "win32") return; // Skip on Windows - Unix paths
+  if (process.platform === "win32") return;
   const permissions: PermissionRules = { allow: [], deny: [], ask: [] };
 
   for (const filePath of [
@@ -60,7 +56,7 @@ test("Nested paths and the working directory itself are auto-allowed", () => {
 });
 
 test("Working directory with a trailing separator still matches on boundaries", () => {
-  if (process.platform === "win32") return; // Skip on Windows - Unix paths
+  if (process.platform === "win32") return;
   const permissions: PermissionRules = { allow: [], deny: [], ask: [] };
 
   const inside = checkPermission(
@@ -82,7 +78,7 @@ test("Working directory with a trailing separator still matches on boundaries", 
 });
 
 test("Additional directory siblings sharing a prefix are not auto-allowed", () => {
-  if (process.platform === "win32") return; // Skip on Windows - Unix paths
+  if (process.platform === "win32") return;
   const permissions: PermissionRules = {
     allow: [],
     deny: [],

@@ -136,9 +136,7 @@ export async function pinAgentForCurrentUser(
         ? "already-pinned"
         : "pinned";
     }
-  } catch {
-    // Fall back to legacy settings pins below.
-  }
+  } catch {}
 
   if (wasPinnedInSettings) return "already-pinned";
   settingsManager.pinAgent(agentId);
@@ -163,7 +161,6 @@ export async function unpinAgentForCurrentUser(
     }
   } catch (error) {
     if (!wasPinnedInSettings) throw error;
-    // Fall back to legacy settings pins below.
   }
 
   if (!wasPinnedInSettings) return "not-pinned";

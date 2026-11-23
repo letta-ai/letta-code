@@ -27,9 +27,7 @@ export interface RecoveryLineageSidecar {
   runId: string | null;
   toolCallIds: string[];
   unstartedToolCallIds?: string[];
-  /** Authoritative checkpoint snapshot; rollback may replace this wholesale. */
   results: ApprovalResult[];
-  /** Exact post-effect settlements that must survive later rollback snapshots. */
   exactResults?: ApprovalResult[];
   requestOtid: string;
   workingDirectory: string;
@@ -313,9 +311,6 @@ export function createRecoveryLineageSidecarAccess(params: {
         authorityRevision: sidecar.retiredAuthorityRevision,
       };
     }
-    // Pre-tombstone retired sidecars retained the interrupted revision but not
-    // the final authority token. Replay deterministically selects their newest
-    // matching persisted terminal and removes older candidates.
     return { interruptedRevision: sidecar.sourceMainRevision };
   };
 
@@ -546,7 +541,6 @@ export function createRecoveryLineageSidecarAccess(params: {
             ownerPid === process.pid &&
             ownerInstanceId !== sidecarWriterInstanceId
           ) {
-            // The operating system reused this PID after the writer died.
             ownerIsAlive = false;
           } else {
             try {

@@ -1,11 +1,3 @@
-/**
- * ChannelGateway's local MessageChannel execution binding.
- *
- * The canonical contract lives in channels/message-channel-executor. This file
- * only resolves local persisted routes, running adapters, and proactive Slack
- * accounts for the injected agent/conversation scope.
- */
-
 import {
   createMessageChannelExternalToolResult,
   type ExecuteMessageChannelOptions,

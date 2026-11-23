@@ -95,11 +95,6 @@ describe("pi model factory", () => {
   });
 
   test("pi-ai 0.84.4+ generates thinkingLevelMap for OpenRouter mandatory-reasoning models", () => {
-    // pi-ai 0.84.4 fixed https://github.com/earendil-works/pi/issues/8454:
-    // the generated OpenRouter catalog now derives thinkingLevelMap from
-    // OpenRouter's reasoning metadata, so the temporary local patch is no
-    // longer needed. Verify the catalog includes the map for a model that
-    // previously required the workaround.
     const model = getModels("openrouter").find(
       (entry) => entry.id === "google/gemini-3.7-flash",
     );
@@ -793,8 +788,6 @@ describe("pi model factory", () => {
         provider: "kilo",
         baseUrl: "https://refreshed-token.kilo.dev/v1",
       });
-      // Connection auth is per-request state carried in stream options, not
-      // baked into the provider-published Model.
       expect(resolved.headers).toMatchObject({
         Authorization: "Bearer oauth:refreshed-token",
       });

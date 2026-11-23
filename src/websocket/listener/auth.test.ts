@@ -318,7 +318,6 @@ describe("listener auth", () => {
       tokenExpiresAt: expect.any(Number),
     });
     expect(updateSettingsMock).not.toHaveBeenCalled();
-    // Turn-side readers in this process now see the organization sign-in.
     expect(peekOrgAccessToken()).toBe("org-access-token");
     expect(await getOrgAccessToken()).toBe("org-access-token");
   });
@@ -525,8 +524,6 @@ describe("listener auth", () => {
       "listener-name",
       { allowInteractiveOAuth: false, surface: "server" },
     );
-    // Consumption is synchronous—before authentication reaches its first
-    // await—so no concurrent hook/descendant can inherit the transport env.
     expect(process.env[LISTENER_INSTANCE_ID_ENV]).toBeUndefined();
     const first = await firstRegistration;
     expect(first.listenerInstanceId).toBe("desktop-primary:install-42");
@@ -536,8 +533,6 @@ describe("listener auth", () => {
       "different-display-name",
       { allowInteractiveOAuth: false, surface: "server" },
     );
-    // Re-registration retains the owner identity from process-local cache;
-    // it does not fall back to the new display-name-derived identity.
     expect(second.listenerInstanceId).toBe("desktop-primary:install-42");
     expect(process.env[LISTENER_INSTANCE_ID_ENV]).toBeUndefined();
   });

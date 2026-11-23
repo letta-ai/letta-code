@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { clearAvailableModelsCache } from "@/agent/available-models";
-import { models, resolveModel } from "@/agent/model-catalog";
+import { getDefaultModel, models, resolveModel } from "@/agent/model-catalog";
 import {
   __testResetRemoteModelCatalog,
   applyCatalogModels,
@@ -20,13 +20,6 @@ import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
 import { settingsManager } from "@/settings-manager";
 
 await settingsManager.initialize();
-
-/**
- * Remote catalog refresh semantics (LET-9792).
- *
- * Cloud mode accepts only a valid endpoint/cache payload. Local mode projects
- * pi-ai inventory into the same live array, preserving array identity.
- */
 
 const originalFetch = globalThis.fetch;
 const originalBaseUrl = process.env.LETTA_BASE_URL;
@@ -192,7 +185,7 @@ describe("applyCatalogModels", () => {
   });
 
   test("replaces catalog contents in place", () => {
-    const reference = models; // simulate an existing import-time capture
+    const reference = models;
     const applied = applyCatalogModels([
       {
         id: "auto",
@@ -369,11 +362,42 @@ describe("refreshModelCatalog", () => {
     });
     expect(await refreshModelCatalog({ force: true })).toBe(true);
 
-    restoreSnapshot(); // simulate a fresh process before cache hydration
+    restoreSnapshot();
     expect(models.find((m) => m.id === "persisted-model")).toBeUndefined();
 
     expect(loadPersistedModelCatalog("https://api.letta.com")).toBe(true);
     expect(models.find((m) => m.id === "persisted-model")?.label).toBe("GPT-9");
+  });
+
+  test("refreshes and reloads catalogs with defaults for multiple brands", async () => {
+    mockCatalogResponse({
+      models: [
+        remoteEntry(),
+        remoteEntry({
+          id: "provider-a-default",
+          handle: "provider-a/model-a",
+          label: "Model A",
+          brand: "provider-a",
+          isDefault: true,
+        }),
+        remoteEntry({
+          id: "provider-b-default",
+          handle: "provider-b/model-b",
+          label: "Model B",
+          brand: "provider-b",
+          isDefault: true,
+        }),
+      ],
+    });
+
+    expect(await refreshModelCatalog({ force: true })).toBe(true);
+    expect(models.filter((model) => model.isDefault)).toHaveLength(3);
+    expect(getDefaultModel()).toBe("provider-a/model-a");
+
+    restoreSnapshot();
+    expect(loadPersistedModelCatalog("https://api.letta.com")).toBe(true);
+    expect(models.filter((model) => model.isDefault)).toHaveLength(3);
+    expect(getDefaultModel()).toBe("provider-a/model-a");
   });
 
   test("does not load a cache written for another API server", async () => {

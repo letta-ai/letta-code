@@ -87,7 +87,6 @@ export async function traceCodexLaunch(
     const trace = await createTrace("codex", context, env, upstream);
     if (!trace) return undefined;
     const selected = providerId === "openai" ? "letta_trace" : providerId;
-    // Keep custom providers' auth/config in their existing file. CLI overrides contain no credentials.
     const overrides: Record<string, string | boolean> = {
       model_provider: selected,
       [`model_providers.${selected}.base_url`]: trace.url,

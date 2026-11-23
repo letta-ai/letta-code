@@ -5,11 +5,6 @@ const { existsSync, readFileSync, readdirSync, statSync } = require("node:fs");
 const path = require("node:path");
 const ts = require("typescript");
 
-// Each top-level src directory owns its tests. A pull request runs a directory's
-// tests when it changes that directory or a local file imported directly by it.
-// The scan stops there on purpose: broad registration modules make a transitive
-// import walk connect most of the repository, including unrelated channel tests
-// for shell-only changes. Unknown paths and unresolved imports run every test.
 
 const ROOT_FAMILY = "root";
 const INTEGRATION_FAMILY = "integration-tests";
@@ -49,7 +44,6 @@ const NO_UNIT_TEST_PREFIXES = [
 ];
 
 const PATH_FAMILY_ANCHORS = [
-  // These files are loaded through filesystem paths rather than imports.
   { path: "assets/tutor-profile.png", families: ["agent"] },
   { prefix: "docs/examples/mods/", families: ["cli", "mods"] },
   { prefix: "src/cli/app/", families: [ROOT_FAMILY] },
@@ -532,10 +526,6 @@ function readPullRequestShas(eventPath, rootDir = process.cwd()) {
   if (!event.pull_request) {
     throw new Error("Expected a pull request event");
   }
-  // GitHub can enqueue an event whose merge_commit_sha differs from the merge
-  // actions/checkout fetches. Compare the tested tree with its own base parent;
-  // both are present at fetch-depth: 2. Requiring HEAD^2 also rejects a checkout
-  // of a branch head, so the caller safely runs everything in that case.
   const [baseSha, , headSha] = execFileSync(
     "git",
     ["rev-parse", "HEAD^1", "HEAD^2", "HEAD"],

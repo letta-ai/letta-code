@@ -9,11 +9,6 @@ import {
 import { buildModelSettings, updateAgentLLMConfig } from "@/agent/modify";
 import type { ConversationCreateBody } from "@/backend";
 
-/**
- * Applies `--model`, or the preset refresh when no model is given, to an agent
- * that interactive or headless startup is resuming. With `createsConversation`
- * the model goes on the new conversation and the agent is left unchanged.
- */
 export async function prepareResumedAgentModel(options: {
   agent: AgentState;
   modelIdentifier?: string;
@@ -84,8 +79,6 @@ export async function prepareResumedAgentModel(options: {
   );
   if (!needsUpdate) return { agent };
 
-  // A current value that looks like the server's legacy 128k clamp is not
-  // preserved, so the preset can heal it on resume (LET-9786).
   const preservedContextWindow = preservableContextWindow(
     agent.llm_config?.context_window,
     presetRefresh.modelHandle,

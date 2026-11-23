@@ -208,8 +208,6 @@ export function createRecoveryEvidenceCheckpoint(
         {
           durableInputIdentities: [...ownership.durableInputIdentities],
           terminalConsumerIds: [...ownership.terminalConsumerIds],
-          // An unattributed queued user is authoritative too: explicitly clear
-          // any actor inherited from the earlier input in this recovery chain.
           actingUserId,
         },
         "run_observed",

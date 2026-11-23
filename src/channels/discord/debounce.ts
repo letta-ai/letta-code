@@ -3,12 +3,6 @@ import type { DiscordChannelAccount } from "@/channels/types";
 const DISCORD_DEBOUNCE_DEFAULT_MS = 0;
 const DISCORD_DEBOUNCE_MAX_MS = 10000;
 
-/**
- * Resolve the inbound debounce window for Discord.
- *
- * Priority: env var > account config > default (disabled).
- * Returns `0` to disable. Clamped to `0..10000`.
- */
 export function resolveDiscordInboundDebounceMs(
   config: Pick<DiscordChannelAccount, "inboundDebounceMs">,
 ): number {
@@ -35,12 +29,6 @@ export type DiscordDebounceRawInput = {
   threadId: string | null;
 };
 
-/**
- * Build the key used to group inbound Discord messages for debounced
- * stacking. Keyed by (accountId, effective chat/thread) so that messages
- * from different senders in the same channel merge together (with sender
- * labels on flush). Different channels and threads never merge.
- */
 export function buildDiscordDebounceKey(
   rawMessage: DiscordDebounceRawInput,
   accountId: string,

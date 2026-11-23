@@ -118,7 +118,6 @@ export interface ReflectionMemoryWorktree {
 export interface CreateReflectionMemoryWorktreeOptions {
   parentMemoryDir: string;
   now?: Date;
-  /** Directory and branch prefix; memory workers use "memory-worker". */
   label?: string;
 }
 
@@ -282,8 +281,6 @@ async function refreshParentFromOrigin(parentMemoryDir: string): Promise<void> {
     return;
   }
 
-  // Use the same authentication and transient Desktop proxy as memory sync.
-  // Other origins (including local repositories) keep their own credentials.
   const memfsPrefix = `${getMemfsServerUrl().trim().replace(/\/+$/, "")}/v1/git/`;
   const token = origin.stdout.trim().startsWith(memfsPrefix)
     ? await getAuthToken()
@@ -359,7 +356,6 @@ async function cleanupWorktreeAndBranch(
   ]);
 }
 
-/** Finalize without taking the checkout lease; the caller must already hold it. */
 export async function finalizeReflectionMemoryWorktreeUnlocked(
   worktree: ReflectionMemoryWorktree,
   options: ReflectionMemoryWorktreeFinalizeOptions,

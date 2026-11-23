@@ -1,10 +1,3 @@
-/**
- * Shared frontmatter parsing utility for Markdown files with YAML frontmatter
- */
-
-/**
- * Parse a comma-separated string into an array of trimmed, non-empty strings
- */
 export function parseCommaSeparatedList(str: string | undefined): string[] {
   if (!str || str.trim() === "") return [];
   return str
@@ -13,9 +6,6 @@ export function parseCommaSeparatedList(str: string | undefined): string[] {
     .filter((s) => s.length > 0);
 }
 
-/**
- * Get a string field from a frontmatter object, or undefined if not a string
- */
 export function getStringField(
   obj: Record<string, string | string[]>,
   field: string,
@@ -67,17 +57,10 @@ function parseBlockScalar(
     : `${withoutTrailingNewlines}\n`;
 }
 
-/**
- * Parse frontmatter and content from a markdown file
- */
 export function parseFrontmatter(content: string): {
   frontmatter: Record<string, string | string[]>;
   body: string;
 } {
-  // Normalize common cross-platform file encodings so frontmatter parsing
-  // works for user-authored files in .letta/agents/.
-  // - Strip UTF-8 BOM when present
-  // - Normalize CRLF (and lone CR) to LF
   const normalized = content
     .replace(/^\uFEFF/, "")
     .replace(/\r\n/g, "\n")
@@ -94,7 +77,6 @@ export function parseFrontmatter(content: string): {
   const body = match[2] ?? "";
   const frontmatter: Record<string, string | string[]> = {};
 
-  // Parse YAML-like frontmatter (simple key: value pairs and arrays)
   const lines = frontmatterText.split("\n");
   let currentKey: string | null = null;
   let currentArray: string[] = [];
@@ -112,8 +94,6 @@ export function parseFrontmatter(content: string): {
     const indentation = line.length - line.trimStart().length;
 
     if (indentation > 0) {
-      // Preserve the existing top-level string-array support without flattening
-      // nested YAML objects into the frontmatter record.
       if (indentation <= 2 && trimmedLine.startsWith("-") && currentKey) {
         const value = trimmedLine.slice(1).trim();
         currentArray.push(value);
@@ -147,11 +127,8 @@ export function parseFrontmatter(content: string): {
       }
 
       if (value) {
-        // Simple key: value pair
         frontmatter[key] = value;
       } else {
-        // Might be starting an array. If no array items follow, this is an
-        // explicit empty scalar field.
         currentKey = key;
         currentArray = [];
       }
@@ -163,9 +140,6 @@ export function parseFrontmatter(content: string): {
   return { frontmatter, body: body.trim() };
 }
 
-/**
- * Generate frontmatter string from an object
- */
 export function generateFrontmatter(
   data: Record<string, string | string[] | undefined>,
 ): string {

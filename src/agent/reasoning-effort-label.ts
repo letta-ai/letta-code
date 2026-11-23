@@ -1,10 +1,5 @@
 import { models } from "@/agent/model-catalog";
 
-/**
- * LCD and the TUI show `xhigh` as Extra High only when the model also has a
- * distinct `max` tier. Older catalogs that only expose `xhigh` still label it
- * Max (Opus 4.6).
- */
 export function catalogHasDistinctMaxTier(params: {
   modelLabel?: string;
   modelHandle?: string;

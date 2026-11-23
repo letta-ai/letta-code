@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AssistantMessage, Context } from "@earendil-works/pi-ai";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
-import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
+import type {
+  LettaStreamingResponse,
+  SummaryMessage,
+} from "@letta-ai/letta-client/resources/agents/messages";
 import type { ConversationMessageCreateBody } from "@/backend";
 import type { HeadlessTurnExecutor } from "@/backend/dev/headless-turn-executor";
 import { LocalBackend } from "@/backend/local/local-backend";
@@ -13,7 +16,6 @@ import type { LocalStore } from "@/backend/local/local-store";
 
 async function drain(stream: AsyncIterable<unknown>): Promise<void> {
   for await (const _chunk of stream) {
-    // drain
   }
 }
 
@@ -102,9 +104,6 @@ describe("local compaction fallback keeps custom prompt", () => {
       } as ConversationMessageCreateBody),
     );
 
-    // Fewer than 4 messages: sliding-window planning fails and compaction
-    // falls back to full summarization. The user's custom prompt must
-    // survive the automatic mode fallback.
     await backend.compactConversationMessages(conversation.id, {
       agent_id: agent.id,
     } as never);
@@ -126,8 +125,6 @@ describe("local compaction fallback keeps custom prompt", () => {
       context: Context,
     ): Promise<AssistantMessage> => {
       systemPromptsSeen.push(context.systemPrompt);
-      // A long summary keeps the post-compaction estimate above the tiny
-      // configured context window, forcing the full-summarization fallback.
       return assistantMessage({
         responseId: `summary-${systemPromptsSeen.length}`,
         stopReason: "stop",
@@ -159,9 +156,6 @@ describe("local compaction fallback keeps custom prompt", () => {
       );
     }
 
-    // Sliding-window compaction runs with the custom prompt, but the result
-    // still exceeds the context window, so compaction falls back to full
-    // summarization. That fallback must keep the user's custom prompt too.
     const result = await backend.compactConversationMessages(conversation.id, {
       agent_id: agent.id,
     } as never);
@@ -172,6 +166,84 @@ describe("local compaction fallback keeps custom prompt", () => {
     expect(result).toMatchObject({
       num_messages_before: 4,
       num_messages_after: 1,
+    });
+
+    await rm(storageDir, { recursive: true, force: true });
+  });
+
+  test("reports the full pass's summary source when a self sliding window falls back", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-compaction-fallback-source-"),
+    );
+    const replies: AssistantMessage[] = [
+      assistantMessage({
+        responseId: "self-sliding",
+        stopReason: "stop",
+        content: [{ type: "text", text: "x".repeat(8000) }],
+      }),
+      assistantMessage({
+        responseId: "self-all",
+        stopReason: "toolUse",
+        content: [
+          { type: "toolCall", id: "call-1", name: "Shell", arguments: {} },
+        ],
+      }),
+      assistantMessage({
+        responseId: "transcript-all",
+        stopReason: "stop",
+        content: [{ type: "text", text: "Transcript summary." }],
+      }),
+    ];
+    const backend = new LocalBackend({
+      storageDir,
+      executor: turnExecutor(),
+      memfsEnabled: false,
+      complete: async () => {
+        const reply = replies.shift();
+        if (!reply) throw new Error("unexpected summary request");
+        return reply;
+      },
+    });
+    const agent = await backend.createAgent({
+      name: "Local",
+      model_settings: { context_window_limit: 1000 },
+    } as never);
+    await backend.updateAgent(agent.id, {
+      compaction_settings: { mode: "self_compact_sliding_window" },
+    } as never);
+    const conversation = await backend.createConversation({
+      agent_id: agent.id,
+    } as never);
+    for (const content of ["first", "second"]) {
+      await drain(
+        await backend.createConversationMessageStream(conversation.id, {
+          agent_id: agent.id,
+          messages: [{ role: "user", content }],
+        } as ConversationMessageCreateBody),
+      );
+    }
+
+    await backend.compactConversationMessages(conversation.id, {
+      agent_id: agent.id,
+    } as never);
+
+    expect(replies).toHaveLength(0);
+    const messages = await backend.listConversationMessages(conversation.id, {
+      agent_id: agent.id,
+      order: "asc",
+    } as never);
+    const summaries = messages
+      .getPaginatedItems()
+      .filter(
+        (message): message is SummaryMessage =>
+          message.message_type === "summary_message",
+      );
+    expect(summaries.at(-1)).toMatchObject({
+      summary: "Transcript summary.",
+      compaction_stats: {
+        trigger: "manual",
+        summary_source: "transcript_after_no_text",
+      },
     });
 
     await rm(storageDir, { recursive: true, force: true });
@@ -234,8 +306,6 @@ describe("local compaction fallback keeps custom prompt", () => {
       agent_id: agent.id,
     } as never);
 
-    // Pressure compaction runs after a completed response; an irreducible
-    // context must not turn that successful turn into a failure.
     const compaction = await (
       backend as unknown as {
         compactForContextPressure: (
@@ -467,6 +537,7 @@ describe("local compaction fallback keeps custom prompt", () => {
         result.uiMessages.filter((message) => message.metadata?.compaction),
       ).toHaveLength(1);
       expect(result.stats.context_tokens_after).toBeLessThan(1000);
+      expect(result.stats).not.toHaveProperty("summary_source");
       const notice = result.uiMessages[0];
       expect(notice?.role).toBe("user");
       expect(JSON.stringify(notice?.content)).toContain(

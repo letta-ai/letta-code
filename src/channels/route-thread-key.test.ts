@@ -25,9 +25,6 @@ describe("resolveChannelRouteThreadKey", () => {
   });
 
   test("keys every unthreaded message in one chat identically", () => {
-    // The bug this rule prevents: substituting each message's own ts for a
-    // missing thread id gives every top-level DM a distinct route key, which
-    // creates a new conversation per message.
     const first = resolveChannelRouteThreadKey(null);
     const second = resolveChannelRouteThreadKey(null);
     expect(first).toBe(second);

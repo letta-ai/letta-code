@@ -81,9 +81,7 @@ export function parseListenerReadyMessage(
     ) {
       return parsed as ListenerReadyMessage;
     }
-  } catch {
-    // Other frames belong to the normal listener message parser.
-  }
+  } catch {}
   return null;
 }
 
@@ -122,7 +120,6 @@ export function shouldHandleControlSocketClose(
   );
 }
 
-// Reconnect chains still awaiting auth or backoff, before a socket is assigned.
 const reconnectsInFlight = new WeakSet<ListenerRuntime>();
 
 export function trackReconnectInFlight(
@@ -133,7 +130,6 @@ export function trackReconnectInFlight(
   return reconnect.finally(() => reconnectsInFlight.delete(runtime));
 }
 
-/** An orphaned control close must still reconnect when nothing else will. */
 export function shouldRecoverOrphanedControlClose(
   runtime: ListenerRuntime,
 ): boolean {
@@ -176,12 +172,6 @@ export function terminateControlAfterStreamClose(
   }
   runtime.streamTransport = null;
 
-  // The stream channel has no independent replay or reconnect path. Closing
-  // control tears down the paired session so its normal reconnect/bootstrap
-  // flow restores one coherent connection instead of silently losing frames.
-  // Keep the exact stream identity installed until control's close handler
-  // revokes this pair's generation; clearing it here would make that handler
-  // misclassify the ordinary recycle as stale and leave recovery claims live.
   terminateSocketIfOpenOrConnecting(runtime.socket);
 }
 
@@ -382,7 +372,6 @@ export async function preparePairedListenerTransport(params: {
 
 export type ListenerLifecycleLog = (message: string) => void;
 
-/** Lifecycle lines go to the session log even when debug output is off. */
 export function createListenerLifecycleLog(
   opts: Pick<StartListenerOptions, "onLog">,
 ): ListenerLifecycleLog {
@@ -397,7 +386,6 @@ export function createListenerLifecycleLog(
 
 const MAX_CLOSE_REASON_LENGTH = 120;
 
-/** Close code and (truncated) reason only; frame payloads are never logged. */
 export function formatListenerSocketClose(
   channel: "control" | "stream",
   code: number,

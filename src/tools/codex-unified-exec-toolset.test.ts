@@ -33,7 +33,6 @@ describe("Codex unified exec toolset", () => {
     ].join("\n");
     const description = TOOL_DEFINITIONS.exec_command.description;
 
-    // The Codex intro is pinned verbatim; the LC commit guidance follows it.
     expect(description.startsWith(execCommandDescription)).toBe(true);
     expect(description).not.toContain("# Creating pull requests");
 

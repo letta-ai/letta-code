@@ -38,7 +38,7 @@ describe("local compaction summarizer options", () => {
         let capturedOptions:
           | (SimpleStreamOptions & Record<string, unknown>)
           | undefined;
-        const summary = await summarizeLocalMessagesAll({
+        const { summary } = await summarizeLocalMessagesAll({
           conversationId: "conv-sampling-compaction",
           agent: {
             id: "agent-local-1",
@@ -146,7 +146,7 @@ describe("local compaction summarizer options", () => {
         | (SimpleStreamOptions & Record<string, unknown>)
         | undefined;
       let capturedModelId: string | undefined;
-      const summary = await summarizeLocalMessagesAll({
+      const { summary } = await summarizeLocalMessagesAll({
         conversationId: "conv-fable-compaction",
         agent: {
           id: "agent-local-1",
@@ -171,15 +171,7 @@ describe("local compaction summarizer options", () => {
       });
 
       expect(summary).toBe("summary of prior work");
-      // Fable 5 can refuse compaction-summarizer prompts and pi-ai currently
-      // masks that refusal as "An unknown error occurred". Use Opus for the
-      // auxiliary summary call while preserving the session reasoning level.
       expect(capturedModelId).toBe("claude-opus-4-8");
-      // Pi parity (createSummarizationOptions): summarization requests carry
-      // the session thinking level. Without options.reasoning, pi-ai sends
-      // `thinking: {type: "disabled"}`, which adaptive-thinking Anthropic
-      // models (claude-fable-5) reject with a 400 invalid_request_error.
-      // The Opus summary model supports max, so preserve the session effort.
       expect(capturedOptions?.reasoning).toBe("max");
     } finally {
       await rm(storageDir, { recursive: true, force: true });

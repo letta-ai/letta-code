@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import WebSocket from "ws";
 import type { TaskNotificationQueueItem } from "@/queue/queue-runtime";
+import { buildExternalToolNotificationContent } from "@/queue/turn-queue-runtime";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
 import { createRuntime } from "./lifecycle";
@@ -39,7 +40,7 @@ describe("queued notification identity", () => {
       kind: "task_notification",
       source: "task_notification",
       text,
-      content,
+      content: buildExternalToolNotificationContent({ text, content }),
       agentId: "agent-image",
       conversationId: "conv-image",
       actingUserId: "human-image",

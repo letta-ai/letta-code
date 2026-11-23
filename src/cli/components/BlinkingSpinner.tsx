@@ -18,9 +18,6 @@ export const BRAILLE_SPINNER_FRAMES = [
   "⠏",
 ] as const;
 
-/**
- * Frame-based spinner for lightweight status indicators in the TUI.
- */
 export const BlinkingSpinner = memo(
   ({
     color = colors.tool.pending,

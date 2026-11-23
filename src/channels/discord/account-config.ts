@@ -42,9 +42,6 @@ function isDiscordChannelMode(value: unknown): value is DiscordChannelMode {
   return value === "open" || value === "mention-only";
 }
 
-/**
- * Validate a mode map: must be a flat record of channelId → "open"|"mention-only".
- */
 function isModeMap(
   value: unknown,
 ): value is Record<string, DiscordChannelMode> {
@@ -55,9 +52,6 @@ function isModeMap(
   return Object.values(record).every(isDiscordChannelMode);
 }
 
-/**
- * Accept both legacy `string[]` and new `Record<string, DiscordChannelMode>`.
- */
 function isAllowedChannels(
   value: unknown,
 ): value is string[] | Record<string, DiscordChannelMode> {
@@ -71,9 +65,9 @@ function isDefaultPermissionMode(
     value === "standard" ||
     value === "acceptEdits" ||
     value === "unrestricted" ||
-    value === "default" || // legacy → "standard"
-    value === "bypassPermissions" || // legacy → "unrestricted"
-    value === "fullAccess" // legacy → "unrestricted"
+    value === "default" ||
+    value === "bypassPermissions" ||
+    value === "fullAccess"
   );
 }
 
@@ -81,10 +75,6 @@ function isBoolean(value: unknown): value is boolean {
   return value === true || value === false;
 }
 
-/**
- * Serialize allowedChannels back to protocol form.
- * Preserves the original shape: arrays stay arrays, maps stay maps.
- */
 function serializeAllowedChannels(
   allowedChannels: DiscordChannelAccount["allowedChannels"],
 ): string[] | Record<string, DiscordChannelMode> {

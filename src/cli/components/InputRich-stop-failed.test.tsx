@@ -9,11 +9,6 @@ import { buildModInvocationContext } from "@/mods/context";
 import { settingsManager } from "@/settings-manager";
 import { Input } from "./InputRich";
 
-/**
- * Idle Esc must reach the interrupt handler when a background task's remote
- * stop failed (the handler retries the stop through the restored row), and
- * must keep its current fallthrough behavior when no stop failed.
- */
 const ESC = "\u001b";
 
 class NullOutput extends Writable {

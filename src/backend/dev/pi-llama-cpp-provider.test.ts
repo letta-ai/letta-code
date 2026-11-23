@@ -14,17 +14,12 @@ interface FakeLlamaCppModelEntry {
 
 interface FakeLlamaCppState {
   models: FakeLlamaCppModelEntry[];
-  /** Native /models returns a plain OpenAI id list (no router metadata). */
   plainNativeList?: boolean;
   failModels?: boolean;
   failProps?: boolean;
   requests: string[];
 }
 
-/**
- * Routes by exact path like a real llama-server: native `/models` carries
- * router metadata; `/v1/models` is the plain OpenAI-compatible id list.
- */
 function fakeLlamaCppFetch(state: FakeLlamaCppState): typeof fetch {
   return (async (input: string | URL | Request) => {
     const url = new URL(String(input));
@@ -74,7 +69,6 @@ function fakeLlamaCppFetch(state: FakeLlamaCppState): typeof fetch {
     if (url.pathname === "/props") {
       if (state.failProps) throw new Error("props unavailable");
       const modelId = url.searchParams.get("model");
-      // Single-model servers ignore ?model=; router servers address by id.
       const model = modelId
         ? state.models.find((entry) => entry.id === modelId)
         : state.models[0];
@@ -122,7 +116,6 @@ describe("createLlamaCppPiProvider", () => {
     const refreshContext = testRefreshContext();
     await provider.refreshModels?.(refreshContext);
 
-    // Discovery reads the native catalog, not the OpenAI-compatible list.
     expect(state.requests).toContain("/models");
     expect(state.requests).not.toContain("/v1/models");
 
@@ -131,8 +124,6 @@ describe("createLlamaCppPiProvider", () => {
     expect(multimodal?.provider).toBe("llama-cpp");
     expect(multimodal?.input).toEqual(["text", "image"]);
     expect(multimodal?.contextWindow).toBe(32768);
-    // Upstream contract: maxTokens = contextWindow plus the literal compat
-    // flag set upstream disables for llama.cpp.
     expect(multimodal?.maxTokens).toBe(32768);
     expect(multimodal?.compat).toMatchObject({
       maxTokensField: "max_tokens",
@@ -141,9 +132,6 @@ describe("createLlamaCppPiProvider", () => {
       supportsStrictMode: false,
     });
 
-    // The other model must not inherit the first model's capabilities —
-    // a "vision" filename grants nothing — and n_ctx_train is the
-    // context fallback.
     const textOnly = models.find((m) => m.id === "some-vision-model.gguf");
     expect(textOnly?.input).toEqual(["text"]);
     expect(textOnly?.contextWindow).toBe(8192);
@@ -167,7 +155,6 @@ describe("createLlamaCppPiProvider", () => {
     const refreshContext = testRefreshContext();
     await provider.refreshModels?.(refreshContext);
 
-    // Upstream computes the fallback context first, then maxTokens equals it.
     const model = provider.getModels()[0];
     expect(model?.contextWindow).toBe(128000);
     expect(model?.maxTokens).toBe(128000);

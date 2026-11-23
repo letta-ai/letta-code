@@ -83,14 +83,12 @@ describe("local context estimate", () => {
         api: "anthropic-messages",
         provider: "anthropic",
         model: "claude-fable-5",
-        // Stale: responded before compaction, usage reflects the old context.
         usage: usage(407_000),
         stopReason: "stop",
         timestamp: compactionTime - 5_000,
       },
     ];
 
-    // No trustworthy usage anchor -> falls back to semantic estimate.
     expect(estimateLocalContextTokens(messages)).toMatchObject({
       tokens: 200,
       usageTokens: 0,

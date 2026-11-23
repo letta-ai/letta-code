@@ -17,12 +17,9 @@ import type { spawnSubagent } from "@/agent/subagents/manager";
 import { __testSetBackend, type Backend } from "@/backend";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
+import { FORK_PROMPT_CHARACTER_LIMIT } from "./fork-prompt";
 import { backgroundTasks } from "./process_manager";
 
-// External coding workers with fork_context. Replace discovery and the
-// child-process boundary only; task(), the selection logic, and the transcript
-// rendering run for real. Runs isolated via
-// isolated-unit-tests.json because of the module mocks.
 const base: SubagentConfig = {
   name: "general-purpose",
   description: "Fixture",
@@ -39,6 +36,7 @@ mock.module("@/agent/subagents", () => ({
     fork: { ...base, name: "fork", fork: true },
     recall: { ...base, name: "recall", fork: true },
     reviewer: { ...base, name: "reviewer" },
+    "forked-reviewer": { ...base, name: "forked-reviewer", fork: true },
   }),
   clearSubagentConfigCache: () => {},
   discoverSubagents: async () => ({ subagents: [], errors: [] }),
@@ -74,35 +72,52 @@ const spawn = mock(
 );
 mock.module("@/agent/subagents/manager", () => ({ spawnSubagent: spawn }));
 
-// External workers: keep the real module, replace only the process launch and
-// the remote hand-off so the prompt each would receive can be observed.
 const workerPrompts: string[] = [];
+const workerReminders: Array<string | undefined> = [];
+let inventoryError: Error | undefined;
+const realReminders = await import("@/reminders/engine");
+mock.module("@/reminders/engine", () => ({
+  ...realReminders,
+  listMcpServersForAgent: async () => {
+    if (inventoryError) throw inventoryError;
+    return { entries: [], serverSideAvailable: true };
+  },
+}));
 const realExternal = await import("./external-coding-agent");
 mock.module("./external-coding-agent", () => ({
   ...realExternal,
   runExternalCodingAgent: async (options: {
     prompt: string;
+    mcpReminder?: string;
     onStarted?: (agentId: string) => void;
   }) => {
     workerPrompts.push(options.prompt);
+    workerReminders.push(options.mcpReminder);
     options.onStarted?.("codex_00000000-0000-0000-0000-000000000000");
     return new Promise<SubagentResult>(() => {});
   },
 }));
-const remoteLaunches: Array<{ prompt: string; forkContext?: boolean }> = [];
+const remoteLaunches: Array<{
+  prompt: string;
+  forkContext?: boolean;
+  computer: string;
+  parentScope: { agentId: string; conversationId: string };
+}> = [];
 const realRemote = await import("./remote-external-coding-agent");
 mock.module("./remote-external-coding-agent", () => ({
   ...realRemote,
   launchRemoteExternalCodingAgent: async (launch: {
     prompt: string;
     forkContext?: boolean;
+    computer: string;
+    parentScope: { agentId: string; conversationId: string };
   }) => {
     remoteLaunches.push(launch);
     return { success: true, task_id: "t", output_file: "o", agent_id: null };
   },
 }));
 
-const { task } = await import("./task");
+const { task, launchSubagent } = await import("./task");
 const forkConversation = mock(async () => ({ id: "conv-forked-child" }));
 const retrieveAgent = mock(async () => ({ model: "anthropic/test-model" }));
 const olderMessage = `OLDER ${"x".repeat(50_000)}`;
@@ -134,6 +149,8 @@ beforeEach(async () => {
   forkConversation.mockClear();
   listConversationMessages.mockClear();
   workerPrompts.length = 0;
+  workerReminders.length = 0;
+  inventoryError = undefined;
   remoteLaunches.length = 0;
   __testSetBackend({
     capabilities: { environmentRouting: true },
@@ -147,7 +164,6 @@ beforeEach(async () => {
   previousScratchpad = process.env.LETTA_SCRATCHPAD;
   process.env.HOME = scratchpad;
   process.env.LETTA_SCRATCHPAD = scratchpad;
-  // The fork helper copies the parent's toolset preference.
   await settingsManager.reset();
   await settingsManager.initialize();
 });
@@ -196,10 +212,12 @@ describe("fork_context for external coding workers", () => {
     expect(metadata.shown).toBe(3);
     expect(metadata).not.toHaveProperty("full_history_path");
     expect(prompt).toContain("Use Postgres.");
-    expect(prompt).toEndWith("Task:\nDo the work");
+    expect(prompt).toContain(
+      "Task:\nDo the work\n\nWhen you open a pull request",
+    );
   });
 
-  test("an unforked codex worker gets the prompt verbatim", async () => {
+  test("an unforked codex worker gets the prompt and the report-back line", async () => {
     await task({
       ...brief,
       harness: "codex",
@@ -208,7 +226,13 @@ describe("fork_context for external coding workers", () => {
     });
 
     expect(listConversationMessages).not.toHaveBeenCalled();
-    expect(workerPrompts).toEqual(["Do the work"]);
+    expect(workerPrompts).toHaveLength(1);
+    expect(workerPrompts[0]).toStartWith(
+      "Do the work\n\nWhen you open a pull request",
+    );
+    expect(workerPrompts[0]).toContain(
+      "letta -p --agent agent-parent --conversation default --no-wait",
+    );
   });
 
   test("a remote worker forks by default and prepares history at the destination, not the caller", async () => {
@@ -224,7 +248,38 @@ describe("fork_context for external coding workers", () => {
     expect(listConversationMessages).not.toHaveBeenCalled();
   });
 
-  test("a forked external worker ignores the default computer", async () => {
+  test("a detached subagent launches a remote worker with the parent agent identity", async () => {
+    const previousRole = process.env.LETTA_CODE_AGENT_ROLE;
+    const previousParent = process.env.LETTA_PARENT_AGENT_ID;
+    process.env.LETTA_CODE_AGENT_ROLE = "subagent";
+    process.env.LETTA_PARENT_AGENT_ID = "agent-parent";
+    try {
+      const result = await launchSubagent({
+        ...brief,
+        harness: "codex",
+        computer: "cloud",
+        parentScope: {
+          agentId: "conv-detached-child",
+          conversationId: "conv-detached-child",
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(remoteLaunches).toHaveLength(1);
+      expect(remoteLaunches[0]?.parentScope).toMatchObject({
+        agentId: "agent-parent",
+        conversationId: "conv-detached-child",
+      });
+    } finally {
+      if (previousRole === undefined) delete process.env.LETTA_CODE_AGENT_ROLE;
+      else process.env.LETTA_CODE_AGENT_ROLE = previousRole;
+      if (previousParent === undefined)
+        delete process.env.LETTA_PARENT_AGENT_ID;
+      else process.env.LETTA_PARENT_AGENT_ID = previousParent;
+    }
+  });
+
+  test("a forked external worker uses the default computer", async () => {
     process.env.LETTA_DEFAULT_SUBAGENT_COMPUTER = "cloud";
     try {
       await task({
@@ -237,7 +292,141 @@ describe("fork_context for external coding workers", () => {
       delete process.env.LETTA_DEFAULT_SUBAGENT_COMPUTER;
     }
 
-    expect(remoteLaunches).toHaveLength(0);
+    expect(remoteLaunches).toHaveLength(1);
+    expect(remoteLaunches[0]).toMatchObject({
+      computer: "cloud",
+      prompt: brief.prompt,
+      forkContext: true,
+    });
+    expect(workerPrompts).toHaveLength(0);
+    expect(listConversationMessages).not.toHaveBeenCalled();
+  });
+});
+
+describe("fork prompt limit", () => {
+  const oversized = "x".repeat(FORK_PROMPT_CHARACTER_LIMIT + 1);
+  for (const harness of [
+    "letta",
+    "codex",
+    "claude-code",
+    "cursor",
+    "opencode",
+  ] as const) {
+    for (const computer of [undefined, "office-mac"]) {
+      test(`${harness} on ${computer ?? "local"} rejects oversized default and explicit forks`, async () => {
+        for (const fork_context of [undefined, true]) {
+          const result = await launchSubagent({
+            ...brief,
+            harness,
+            computer,
+            fork_context,
+            prompt: oversized,
+          });
+          expect(result).toMatchObject({ success: false });
+          if (result.success) throw new Error("Expected rejection");
+          expect(result.error).toContain(
+            "The agent already has the conversation",
+          );
+          expect(result.error).toContain("what done looks like");
+          expect(result.error).not.toContain("launch unforked");
+        }
+        expect(spawn).not.toHaveBeenCalled();
+        expect(forkConversation).not.toHaveBeenCalled();
+        expect(listConversationMessages).not.toHaveBeenCalled();
+        expect(workerPrompts).toHaveLength(0);
+        expect(remoteLaunches).toHaveLength(0);
+        expect(backgroundTasks.size).toBe(0);
+      });
+    }
+    test(`${harness} accepts a prompt at the limit`, async () => {
+      const result = await launchSubagent({
+        ...brief,
+        harness,
+        prompt: "x".repeat(FORK_PROMPT_CHARACTER_LIMIT),
+        mcp:
+          harness === "codex" || harness === "claude-code"
+            ? { inherit: false }
+            : undefined,
+      });
+      expect(result.success).toBe(true);
+    });
+    test(`${harness} allows long unforked prompts`, async () => {
+      const result = await launchSubagent({
+        ...brief,
+        harness,
+        fork_context: false,
+        prompt: oversized,
+        mcp:
+          harness === "codex" || harness === "claude-code"
+            ? { inherit: false }
+            : undefined,
+      });
+      expect(result.success).toBe(true);
+      expect(forkConversation).not.toHaveBeenCalled();
+      expect(listConversationMessages).not.toHaveBeenCalled();
+    });
+  }
+  test("a forked preset cannot bypass the cap with fork_context: false", async () => {
+    const result = await task({
+      ...brief,
+      subagent_type: "forked-reviewer",
+      fork_context: false,
+      prompt: oversized,
+    });
+    expect(result).toMatchObject({ status: "error" });
+    if (typeof result === "string") throw new Error("Expected tool error");
+    expect(result.content).toContain("The agent already has the conversation");
+    expect(spawn).not.toHaveBeenCalled();
+    expect(forkConversation).not.toHaveBeenCalled();
+  });
+  test("an unforked preset allows long prompts", async () => {
+    const result = await launchSubagent({
+      ...brief,
+      subagent_type: "reviewer",
+      prompt: oversized,
+    });
+    expect(result.success).toBe(true);
+    expect(forkConversation).not.toHaveBeenCalled();
+  });
+});
+
+describe("external worker MCP discovery", () => {
+  test("a timed-out inventory read still launches with discovery instructions", async () => {
+    inventoryError = new Error(
+      "Listing agent MCP servers timed out after 5000ms",
+    );
+    const result = await launchSubagent({ ...brief, harness: "codex" });
+    expect(result.success).toBe(true);
     expect(workerPrompts).toHaveLength(1);
+    expect(workerReminders[0]).toContain("MCP server list could not be loaded");
+    expect(workerReminders[0]).toContain("letta mcp search");
+    expect(workerReminders[0]).toContain("Do not automatically store results");
+  });
+
+  test("unknown requested servers reject the launch", async () => {
+    const result = await launchSubagent({
+      ...brief,
+      harness: "codex",
+      mcp: { inherit: true, servers: ["missing"] },
+    });
+    expect(result).toMatchObject({
+      success: false,
+      error:
+        "Requested MCP server is not available to the parent agent: missing",
+    });
+    expect(workerPrompts).toHaveLength(0);
+  });
+
+  test("invalid MCP options still reject the launch", async () => {
+    const result = await launchSubagent({
+      ...brief,
+      harness: "codex",
+      mcp: { inherit: false, servers: ["example"] },
+    });
+    expect(result).toMatchObject({
+      success: false,
+      error: "mcp.servers requires mcp.inherit to be true",
+    });
+    expect(workerPrompts).toHaveLength(0);
   });
 });

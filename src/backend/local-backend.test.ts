@@ -85,7 +85,6 @@ function localConversationDir(
 
 async function drain(stream: AsyncIterable<unknown>): Promise<void> {
   for await (const _chunk of stream) {
-    // drain
   }
 }
 
@@ -612,9 +611,6 @@ describe("local backend pi transcript", () => {
     const sourceId = "conv-source";
     const existingId = "conv-existing";
 
-    // Store A creates a source conversation and an existing conversation that
-    // occupies the next seq slot, simulating a second LocalStore process that
-    // wrote a conversation to the shared storage directory.
     const storeA = new LocalStore(agentId, { storageDir });
     storeA.appendTurnInput(sourceId, {
       agent_id: agentId,
@@ -625,18 +621,12 @@ describe("local backend pi transcript", () => {
       messages: [{ role: "user", content: "existing" }],
     });
 
-    // Store B loads from the same storage dir — it sees both conversations and
-    // sets conversationSeq to the max existing value.  A fork from Store B
-    // must not clobber the existing conversation even if its raw seq would
-    // land on that slot.
     const storeB = new LocalStore(agentId, { storageDir });
     const { id: forkedId } = storeB.forkConversation(sourceId);
 
-    // The fork must not reuse any id that already exists on disk.
     expect(forkedId).not.toBe(sourceId);
     expect(forkedId).not.toBe(existingId);
 
-    // The existing conversation must still be intact.
     const existing = storeB.retrieveConversation(existingId);
     expect(existing.id).toBe(existingId);
   });
@@ -840,7 +830,7 @@ describe("local backend pi transcript", () => {
       } as ConversationMessageCreateBody),
     );
 
-    expect(systemPrompts[1]).toContain("- 1 previous messages");
+    expect(systemPrompts[1]).toContain("- 2 previous messages");
     expect(systemPrompts[1]).not.toBe(systemPrompts[0]);
   });
 
@@ -923,7 +913,6 @@ describe("local backend pi transcript", () => {
     ]);
     expect(ends).toHaveLength(1);
     expect(ends[0]?.trigger).toBe("manual");
-    // Compaction never increases the message count.
     expect(ends[0]?.messagesBefore).toBeGreaterThanOrEqual(
       ends[0]?.messagesAfter ?? 0,
     );
@@ -1058,9 +1047,6 @@ describe("local backend pi transcript", () => {
         agent_id: agent.id,
       } as never);
 
-      // Agent base model is Fable; the conversation override is Sonnet 4.6.
-      // Compaction (and its summarizer) must follow the conversation, not the
-      // agent base model.
       expect(summarizerModelId).toBe("claude-sonnet-4-6");
     } finally {
       await rm(storageDir, { recursive: true, force: true });

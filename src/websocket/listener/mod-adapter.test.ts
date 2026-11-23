@@ -455,7 +455,6 @@ describe("listener mod adapter", () => {
 
     await adapter.events.emit("turn_start", event, context);
 
-    // Handler should have prepended the reminder
     expect(event.input).toHaveLength(1);
     const firstMsg = event.input[0];
     if (!firstMsg || !("content" in firstMsg)) {
@@ -511,13 +510,11 @@ describe("listener mod adapter", () => {
       input: originalInput,
     };
 
-    // Should not throw, emission continues despite handler error
     const result = await adapter.events.emit("turn_start", event, context);
     expect(result.diagnostics).toHaveLength(1);
     expect(result.diagnostics[0]?.error).toBeInstanceOf(Error);
     expect(result.diagnostics[0]?.error.message).toBe("handler error");
 
-    // Input should be unchanged since handler threw
     expect(event.input).toEqual(originalInput);
 
     adapter.dispose();
@@ -641,8 +638,6 @@ describe("listener mod adapter", () => {
       status: "success",
       output: "secret",
     });
-    // events.tools is enabled for the listener, so the handler runs and its
-    // result override is written back onto the event (first handler wins).
     expect(event.result).toEqual({ status: "success", output: "redacted" });
 
     delete (globalThis as { __lettaToolEndSeen?: unknown }).__lettaToolEndSeen;
@@ -681,7 +676,6 @@ describe("listener mod adapter", () => {
       run: () => "ok",
     });
 
-    // Scope matching: agent-iso + workspace-a should see the tool
     const preparedA = await prepareToolExecutionContextForScope({
       agentId: "agent-iso",
       conversationId: "conv-a",
@@ -693,7 +687,6 @@ describe("listener mod adapter", () => {
       "scoped_only",
     ]);
 
-    // Scope mismatch: agent-iso + workspace-b should NOT see the tool
     const preparedB = await prepareToolExecutionContextForScope({
       agentId: "agent-iso",
       conversationId: "conv-b",

@@ -59,6 +59,13 @@ export function buildTaskNotificationContent(item: {
   text: string;
   content?: MessageCreate["content"];
 }): MessageCreate["content"] {
+  return item.content ?? item.text;
+}
+
+export function buildExternalToolNotificationContent(item: {
+  text: string;
+  content?: MessageCreate["content"];
+}): MessageCreate["content"] {
   if (item.content === undefined) return item.text;
   const parts: MessageContentParts = [
     { type: "text", text: item.text },
