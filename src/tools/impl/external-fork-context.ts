@@ -1,11 +1,3 @@
-/**
- * `fork_context: true` for external coding workers.
- *
- * Letta subagents fork the parent conversation server-side; claude-code,
- * codex, cursor and opencode cannot, so they get a rendered transcript
- * instead: the latest compaction summary and a bounded recent message preview.
- */
-
 import { getConversationId } from "@/agent/context";
 import {
   fetchParentConversationMessages,
@@ -17,11 +9,7 @@ import {
 import { type Backend, getBackend } from "@/backend";
 import { buildAgentSendCliTarget } from "@/backend/api/agent-message";
 
-/** Maximum rendered history in the prompt, independent of message count. */
 export const INLINE_CHARACTER_LIMIT = 50_000;
-/**
- * Prefix `prompt` with the parent conversation on the worker's execution host.
- */
 export async function prependParentContext(params: {
   prompt: string;
   parentAgentId: string;
@@ -49,9 +37,7 @@ export async function prependParentContext(params: {
             )
           ).in_context_message_ids;
     inContextIds = ids?.slice(1);
-  } catch {
-    // If state is unavailable, retain the one-page recent-history fallback.
-  }
+  } catch {}
   let summary:
     | Awaited<ReturnType<Backend["retrieveMessage"]>>[number]
     | undefined;
@@ -60,9 +46,7 @@ export async function prependParentContext(params: {
       summary = (await backend.retrieveMessage(inContextIds[0], options)).find(
         (message) => message.message_type === "summary_message",
       );
-    } catch {
-      // A missing compaction summary must not prevent launch.
-    }
+    } catch {}
   }
   const summaryRecord = summary
     ? renderParentTranscript([summary]).messages[0]
@@ -118,11 +102,6 @@ export async function prependParentContext(params: {
   };
 }
 
-/**
- * Attach the report-back instruction to an external worker's task. The parent
- * only hears from a background worker when it finishes, so a PR opened or a
- * blocker hit mid-run would otherwise wait for the final report.
- */
 export function withReportBackInstruction(
   prompt: string,
   parentAgentId: string,
@@ -136,7 +115,6 @@ export function withReportBackInstruction(
   ].join("\n");
 }
 
-/** The external worker's initial prompt, with the parent context when forked. */
 export async function prepareExternalWorkerPrompt(params: {
   prompt: string;
   forkContext: boolean;

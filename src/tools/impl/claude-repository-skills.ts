@@ -23,7 +23,6 @@ export async function stageClaudeRepositorySkills(
         // usable as soon as the checkout creates the skills directory.
         if (info && !info.isDirectory()) continue;
         stagingRoot ??= await mkdtemp(join(tmpdir(), "letta-claude-skills-"));
-        // Load only the skill directories and keep the checkout untouched.
         const directory = join(stagingRoot, source, basename(repo));
         const claudeDir = join(directory, ".claude");
         await mkdir(claudeDir, { recursive: true });

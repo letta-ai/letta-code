@@ -130,7 +130,6 @@ describe("backend compaction events", () => {
           messages: [{ role: "user", content: "hello" }],
         } as ConversationMessageCreateBody,
       )) {
-        /* drain */
       }
       await backend.compactConversationMessages(conversation.id, {
         agent_id: agent.id,

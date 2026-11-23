@@ -36,11 +36,6 @@ function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
-/**
- * Per-account ChatGPT usage and banked reset-credit state for the provider
- * manager. Usage and credits load independently so one failing does not hide
- * the other.
- */
 export function useChatGPTRateLimitState(target: ProviderStorageTarget) {
   const [usageByProvider, setUsageByProvider] = useState<
     Record<string, ChatGPTUsageStatus>
@@ -48,9 +43,6 @@ export function useChatGPTRateLimitState(target: ProviderStorageTarget) {
   const [creditsByProvider, setCreditsByProvider] = useState<
     Record<string, ChatGPTResetCreditsStatus>
   >({});
-  // Accounts with a spend in flight. A ref, not state: several keypresses
-  // can arrive in one input chunk before React re-renders, and each would
-  // otherwise start its own consume with a fresh idempotency key.
   const consumingRef = useRef(new Set<string>());
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -128,7 +120,6 @@ export function useChatGPTRateLimitState(target: ProviderStorageTarget) {
     [target],
   );
 
-  /** Applies the fresh state returned alongside a successful reset. */
   const applyRefreshed = useCallback(
     (
       providerName: string,
@@ -157,14 +148,6 @@ export function useChatGPTRateLimitState(target: ProviderStorageTarget) {
     [],
   );
 
-  /**
-   * Spends one reset credit and applies the refreshed usage/credit state.
-   * Only lifts the ChatGPT limit: the user stays in charge of resending any
-   * rate-limited turn. A fresh idempotency key per confirmation means a
-   * retried request is deduplicated upstream while a later deliberate reset
-   * is a new redemption. Returns null when a spend for this account is
-   * already in flight, so repeated confirmations spend at most one credit.
-   */
   const consume = useCallback(
     async (
       providerName: string,
@@ -213,7 +196,6 @@ export function useChatGPTRateLimitState(target: ProviderStorageTarget) {
     [applyRefreshed, target],
   );
 
-  /** Credits this account can still spend; empty until inventory loads. */
   const spendableCreditsFor = useCallback(
     (providerName: string): ChatGPTRateLimitResetCredit[] => {
       const status = creditsByProvider[providerName];
@@ -224,7 +206,6 @@ export function useChatGPTRateLimitState(target: ProviderStorageTarget) {
     [creditsByProvider],
   );
 
-  /** Names of the given accounts that have a spendable reset credit. */
   const resettable = useCallback(
     (records: readonly { name: string }[]): string[] =>
       records
@@ -243,12 +224,6 @@ export function useChatGPTRateLimitState(target: ProviderStorageTarget) {
   };
 }
 
-/**
- * After a reset, moves the manage-menu cursor off Disconnect (row 0), where a
- * repeated Enter from the confirm screen would run it. Returns the function
- * to call once a reset completes; the cursor is placed on the next render, so
- * the index matches the rows actually shown.
- */
 export function usePostResetCursor(
   actions: readonly ProviderManageAction[] | null,
   setOptionIndex: (index: number) => void,

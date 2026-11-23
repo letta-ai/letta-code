@@ -238,11 +238,9 @@ describe("personality helpers", () => {
     expect(onboardingBlock?.value).toContain(
       "Explain each of these concepts to the user",
     );
-    // Declines are generalized, not hard-coded to "skip".
     expect(onboardingBlock?.value).toMatch(
       /"skip", "pass", "next", "no thanks", "rather not"/,
     );
-    // Checklist completion syntax is unambiguous.
     expect(onboardingBlock?.value).toContain("Mark an item `[x]`");
     expect(onboardingBlock?.value).toContain("Connect to a channel");
   });

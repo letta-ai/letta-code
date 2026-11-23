@@ -611,8 +611,6 @@ test("slack adapter sendMessage renders a View on web context footnote when iden
   const withIdentity = postCalls[0]?.[0];
   expect(withIdentity?.text).toBe("Reply with a footnote.");
   const blocks = withIdentity?.blocks ?? [];
-  // Body rides a markdown block: section blocks clamp long text with
-  // per-block "Show more" accordions; markdown blocks render in full.
   expect(blocks[0]).toMatchObject({
     type: "markdown",
     text: "Reply with a footnote.",
@@ -622,6 +620,5 @@ test("slack adapter sendMessage renders a View on web context footnote when iden
   expect(footnoteBlock?.elements?.[0]?.text).toBe(
     "<https://chat.letta.com/chat/agent-1?conversation=conv-1|View on web>",
   );
-  // Without identity: plain text, no blocks.
   expect(postCalls[1]?.[0]?.blocks).toBeUndefined();
 });

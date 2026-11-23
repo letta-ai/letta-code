@@ -80,9 +80,7 @@ test("flush batches retain native session/task IDs and acting-user attribution",
   const previous = process.env.LETTA_CODE_TELEM;
   process.env.LETTA_CODE_TELEM = "1";
   const upstream = createServer(async (req, res) => {
-    // Drain the POST body before replying so the connection can be reused.
     for await (const _chunk of req) {
-      /* consume the request */
     }
     res.writeHead(200, { "content-type": "application/json" });
     res.end('{"model":"test","usage":{"input_tokens":1,"output_tokens":2}}');
@@ -136,13 +134,11 @@ test("flush batches retain native session/task IDs and acting-user attribution",
   }
 });
 
-test("a 503 upload logs a single metadata-only warning per interval", async () => {
+test("failed uploads warn once and later traces compact when their delta base is missing", async () => {
   const previous = process.env.LETTA_CODE_TELEM;
   process.env.LETTA_CODE_TELEM = "1";
   const upstream = createServer(async (req, res) => {
-    // Drain the POST body before replying so the connection can be reused.
     for await (const _chunk of req) {
-      /* consume the request */
     }
     res.writeHead(200, { "content-type": "application/json" });
     res.end('{"model":"test"}');
@@ -153,9 +149,12 @@ test("a 503 upload logs a single metadata-only warning per interval", async () =
     throw new Error("Missing address");
   const warnings: string[] = [];
   let uploads = 0;
+  let capturedFallback: ExternalTraceRow | undefined;
+  const base = { role: "user", content: "x".repeat(190000) };
+  const appended = { role: "assistant", content: "b".repeat(300000) };
   const trace = await createTraceSession(
     "claude_code",
-    context,
+    { ...context, secretValues: [...context.secretValues, "x"] },
     {},
     `http://127.0.0.1:${address.port}`,
     "session-503",
@@ -164,8 +163,11 @@ test("a 503 upload logs a single metadata-only warning per interval", async () =
         baseUrl: "https://api.letta.com",
         apiKey: "upload-credential",
       }),
-      upload: async () => {
+      upload: async (rows) => {
         uploads++;
+        capturedFallback ??= rows.find(
+          (row) => row.capture_status === "size_limit",
+        );
         throw new ApiRequestError(
           "API error (503)",
           503,
@@ -176,12 +178,17 @@ test("a 503 upload logs a single metadata-only warning per interval", async () =
     },
   );
   try {
-    // Two size-triggered batches (10 rows each), each failing all retries.
     for (let batch = 0; batch < 2; batch++) {
       for (let i = 0; i < 10; i++) {
-        const response = await fetch(`${trace?.url}/responses`, {
+        const messages =
+          batch === 0 && i === 9
+            ? [base]
+            : batch === 1 && i === 0
+              ? [base, appended]
+              : "secret prompt text";
+        const response = await fetch(`${trace?.url}/messages`, {
           method: "POST",
-          body: '{"model":"test","input":"secret prompt text"}',
+          body: JSON.stringify({ model: "test", messages }),
         });
         await response.text();
       }
@@ -189,6 +196,14 @@ test("a 503 upload logs a single metadata-only warning per interval", async () =
     }
     await trace?.close();
     expect(uploads).toBeGreaterThanOrEqual(6);
+    expect(JSON.parse(capturedFallback?.request_json ?? "{}")).toEqual({
+      model: "test",
+      messages: [{ truncated: "size_limit" }, appended],
+      truncated: "size_limit",
+    });
+    expect(JSON.parse(capturedFallback?.response_json ?? "{}")).toEqual({
+      model: "test",
+    });
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain("status=503");
     expect(warnings[0]).toContain("service unavailable");
@@ -203,3 +218,72 @@ test("a 503 upload logs a single metadata-only warning per interval", async () =
     upstream.close();
   }
 }, 15000);
+
+test("splits batches when the encoded upload would exceed 8 MiB", async () => {
+  const previous = process.env.LETTA_CODE_TELEM;
+  process.env.LETTA_CODE_TELEM = "1";
+  const payload = JSON.stringify({ text: '"'.repeat(700000) });
+  const upstream = createServer(async (req, res) => {
+    for await (const _chunk of req) {
+    }
+    res.end(payload);
+  }).listen(0, "127.0.0.1");
+  await once(upstream, "listening");
+  const address = upstream.address();
+  if (!address || typeof address === "string")
+    throw new Error("Missing address");
+  const batches: ExternalTraceRow[][] = [];
+  const trace = await createTraceSession(
+    "codex",
+    context,
+    {},
+    `http://127.0.0.1:${address.port}`,
+    "session-test",
+    {
+      getConfig: async () => ({
+        baseUrl: "https://api.letta.com",
+        apiKey: "upload-credential",
+      }),
+      upload: async (rows) => {
+        batches.push(rows);
+      },
+    },
+  );
+  if (!trace) throw new Error("Missing trace session");
+  try {
+    for (let i = 0; i < 2; i++) {
+      const response = await fetch(`${trace.url}/responses`, {
+        method: "POST",
+        body: payload,
+      });
+      await response.text();
+    }
+    await trace.close();
+    const batchLimit = 8 * 1024 * 1024;
+    const payloadLimit = 2 * 1024 * 1024;
+    expect(batches.map((rows) => rows.length)).toEqual([1, 1]);
+    expect(
+      Buffer.byteLength(JSON.stringify({ rows: batches.flat() })),
+    ).toBeGreaterThan(batchLimit);
+    for (const rows of batches) {
+      expect(Buffer.byteLength(JSON.stringify({ rows }))).toBeLessThanOrEqual(
+        batchLimit,
+      );
+      const row = rows[0];
+      expect(row?.capture_status).toBe("complete");
+      expect(row?.request_json.length).toBe(payload.length);
+      expect(row?.response_json.length).toBe(payload.length);
+      expect(Buffer.byteLength(row?.request_json ?? "")).toBeLessThanOrEqual(
+        payloadLimit,
+      );
+      expect(Buffer.byteLength(row?.response_json ?? "")).toBeLessThanOrEqual(
+        payloadLimit,
+      );
+    }
+  } finally {
+    await trace.close();
+    if (previous === undefined) delete process.env.LETTA_CODE_TELEM;
+    else process.env.LETTA_CODE_TELEM = previous;
+    upstream.close();
+  }
+});

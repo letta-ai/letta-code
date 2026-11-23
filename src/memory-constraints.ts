@@ -14,14 +14,12 @@ export interface MemoryConstraintsConfig {
   maxFileCharacters?: number;
   maxCoreMemoryCharacters?: number;
   fileCharacterLimits?: MemoryFileCharacterLimit[];
-  /** Repo-relative globs. Matching paths cannot be created, changed or removed. */
   readOnlyFiles?: string[];
 }
 
 export interface MemoryTreeReader {
   listFiles(): Promise<Array<{ path: string; mode: string }>>;
   readFile(path: string): Promise<Uint8Array | null>;
-  /** Optional streaming count in Unicode code points, avoiding buffering large blobs. */
   countCharacters?(path: string): Promise<number>;
 }
 
@@ -29,28 +27,17 @@ export interface MemoryTreeConstraintsOptions {
   config: MemoryConstraintsConfig;
   layout: "root-marker" | "legacy-only" | "shared-memory";
   requireRootMarker: boolean;
-  /** Trusted tree before this change; required when readOnlyFiles is non-empty. */
   acceptedTree?: MemoryTreeReader;
-  /** Paths this change adds, modifies or removes. When set, problems confined
-   * to other paths predate the change: they go to `warnings` instead of the
-   * returned errors. Omit to validate the complete tree.
-   */
   changedPaths?: Iterable<string>;
-  /** Receives problems outside `changedPaths`; ignored without it. */
   warnings?: string[];
 }
 
-/** Shared budget/index checks. Caller supplies trusted policy and layout.
- * Self-contained so the local hook can embed the same implementation.
- */
 export async function validateMemoryTreeConstraints(
   reader: MemoryTreeReader,
   options: MemoryTreeConstraintsOptions,
 ): Promise<string[]> {
   const errors: string[] = [];
   const changed = options.changedPaths ? new Set(options.changedPaths) : null;
-  // A problem blocks the change when it involves a changed path. Otherwise it
-  // already existed, so blocking would only stop unrelated edits.
   function report(message: string, involvedPaths: string[]): void {
     if (!changed || involvedPaths.some((path) => changed.has(path)))
       errors.push(message);
@@ -199,7 +186,6 @@ export async function validateMemoryTreeConstraints(
     options.config.maxCoreMemoryCharacters !== undefined &&
     coreCharacters > options.config.maxCoreMemoryCharacters
   ) {
-    // Only an added or changed root file can push the combined budget over.
     report(
       `core memory: ${coreCharacters} characters exceeds ${options.config.maxCoreMemoryCharacters} from maxCoreMemoryCharacters`,
       corePaths,
@@ -211,9 +197,6 @@ export async function validateMemoryTreeConstraints(
 export const MEMORY_CONSTRAINTS_CONFIG_PATH = ".memfs.config.json";
 export const MEMORY_CONSTRAINTS_CONFIG_VERSION = 1;
 
-/** Parse the tracked policy without filling defaults or changing override order.
- * Keep this function self-contained: the installed Git hook embeds its source.
- */
 export function parseMemoryConstraintsConfig(
   content: string,
 ): MemoryConstraintsConfig {

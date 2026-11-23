@@ -156,9 +156,7 @@ describe("defaultProductStatusPanel", () => {
     );
 
     expect(lines).toHaveLength(1);
-    // OSC-8 escape sequence should be present (clickable link)
     expect(lines[0]).toContain(agentUrl);
-    // Should not render the URL as visible text
     expect(stripAnsi(lines[0] ?? "").trim()).toBe("⠋ dreaming (65s)");
   });
 
@@ -184,7 +182,6 @@ describe("defaultProductStatusPanel", () => {
       );
 
       expect(lines).toHaveLength(1);
-      // No URL in the output at all (not even in escape sequences)
       expect(lines[0]).not.toContain(agentUrl);
       expect(stripAnsi(lines[0] ?? "").trim()).toBe("⠋ dreaming (65s)");
     } finally {

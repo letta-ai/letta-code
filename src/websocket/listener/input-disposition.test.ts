@@ -138,8 +138,6 @@ test("completed input replay survives idle runtime eviction", async () => {
   expect(processQueuedTurn).toHaveBeenCalledTimes(1);
   expect(acknowledgements).toEqual([
     { accepted: true, disposition: "queued" },
-    // The duplicate re-ack carries the live-owner proof the originator
-    // token store needs before recreating a lost entry.
     {
       accepted: true,
       disposition: "started",
@@ -151,8 +149,6 @@ test("completed input replay survives idle runtime eviction", async () => {
 
 test("accepted tombstone transfers only through explicit listener replacement", () => {
   const original = createRuntime();
-  // The retry-exhausted path re-registers while its predecessor is still the
-  // active runtime, so that is the authoritative issuer here.
   setActiveRuntime(original);
   const originalRuntime = getOrCreateScopedRuntime(
     original,
@@ -681,8 +677,6 @@ test("dead lock recovery quarantines only the observed owner", () => {
       }),
       { mode: 0o600 },
     );
-    // Successful recovery performs multiple real fsyncs, which can exceed the
-    // tiny contention budget on hosted macOS runners.
     const release = __inputDispositionTestUtils.acquireLock(path, 500);
     const ownerFile = readdirSync(lockPath)[0];
     expect(
@@ -952,8 +946,6 @@ test("durability failure rejects admission without an in-memory tombstone", () =
   try {
     const directoryAsStore = join(root, "not-a-file");
     const runtime = persistentRuntime(directoryAsStore);
-    // Make the configured store path itself a directory, forcing reads/writes to
-    // fail closed rather than allowing accepted work without restart durability.
     mkdirSync(directoryAsStore);
     expect(
       reserveInputDisposition(runtime, ordinaryInputIdentity("cm-failure")),

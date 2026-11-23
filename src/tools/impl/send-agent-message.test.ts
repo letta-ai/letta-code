@@ -887,7 +887,6 @@ test("a subagent that omits the destination messages the conversation that launc
     conversationId: "conv-parent",
   });
 
-  // A root agent still has to choose a destination.
   const rootSettings = {
     allowed_tools: [],
     disallowed_tools: [],

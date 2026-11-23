@@ -1,13 +1,3 @@
-/**
- * PTY terminal handler for listen mode.
- * Manages interactive terminal sessions spawned by the web UI.
- *
- * Runtime strategy:
- * - Bun  → Bun.spawn with terminal option (native PTY, no node-pty needed)
- * - Node.js / Electron → node-pty (Bun.spawn unavailable; node-pty's libuv
- *   poll handles integrate correctly with Node.js but NOT with Bun's event loop)
- */
-
 import { existsSync } from "node:fs";
 import * as os from "node:os";
 import WebSocket from "ws";
@@ -15,8 +5,6 @@ import { debugLog, debugWarn } from "@/utils/debug";
 
 const IS_BUN = typeof Bun !== "undefined";
 
-// 16ms debounce window for output batching; flush immediately at 64 KB
-// to prevent unbounded string growth on high-throughput commands.
 const FLUSH_INTERVAL_MS = 16;
 const MAX_BUFFER_BYTES = 64 * 1024;
 
@@ -65,10 +53,6 @@ function getDefaultShell(): string {
   if (os.platform() === "win32") {
     return process.env.COMSPEC || "cmd.exe";
   }
-  // $SHELL is absent in non-login contexts (e.g. cloud sandbox listeners
-  // launched via session exec), and the shell it names may not exist in
-  // minimal images — execvp would fail the PTY with ENOENT. Probe candidates
-  // in order and fall back to /bin/sh, which every POSIX system provides.
   const candidates = [
     process.env.SHELL,
     os.platform() === "darwin" ? "/bin/zsh" : "/bin/bash",
@@ -91,7 +75,6 @@ function sendTerminalMessage(
   }
 }
 
-/** Create a flush-on-size-or-timer output batcher. */
 function makeOutputBatcher(
   onFlush: (data: string) => void,
 ): (chunk: string) => void {
@@ -118,8 +101,6 @@ function makeOutputBatcher(
     }
   };
 }
-
-// ── Bun spawn ──────────────────────────────────────────────────────────────
 
 function spawnBun(
   shell: string,
@@ -198,8 +179,6 @@ function spawnBun(
   };
 }
 
-// ── node-pty spawn (Node.js / Electron) ───────────────────────────────────
-
 function spawnNodePty(
   shell: string,
   cwd: string,
@@ -266,8 +245,6 @@ function spawnNodePty(
   };
 }
 
-// ── Public API ─────────────────────────────────────────────────────────────
-
 export function handleTerminalSpawn(
   msg: { terminal_id: string; cols: number; rows: number },
   socket: WebSocket,
@@ -277,10 +254,6 @@ export function handleTerminalSpawn(
   const { terminal_id, cols, rows } = msg;
   const terminalKey = getTerminalKey(connectionId, terminal_id);
 
-  // React Strict Mode fires mount→unmount→mount which produces spawn→kill→spawn
-  // in rapid succession. The kill is already ignored (< 2s guard below), but the
-  // second spawn would normally kill and restart. If the session is < 2s old and
-  // still alive, reuse it and resend terminal_spawned instead.
   const existing = terminals.get(terminalKey);
   if (existing && Date.now() - existing.spawnedAt < 2000) {
     let alive = true;
@@ -303,7 +276,6 @@ export function handleTerminalSpawn(
       return;
     }
 
-    // Session dead — fall through to spawn a fresh one
     terminals.delete(terminalKey);
   }
 

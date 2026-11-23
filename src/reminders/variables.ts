@@ -21,9 +21,7 @@ export async function buildVariablesInfoReminder(context: {
         values = { ...loadVariables(parent), ...values };
         secrets = { ...loadSecrets(parent), ...secrets };
       }
-    } catch {
-      /* Parent lookup failures keep the own-agent view. */
-    }
+    } catch {}
     const entries = Object.entries(values)
       .filter(([key]) => !(key in secrets))
       .sort(([a], [b]) => a.localeCompare(b));

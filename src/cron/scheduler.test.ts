@@ -537,8 +537,6 @@ test("jitter fire logs lock errors without terminating the listener", () => {
   }
 });
 
-// ── Helper ──────────────────────────────────────────────────────────
-
 function makeInput(overrides: Partial<AddTaskInput> = {}): AddTaskInput {
   return {
     agent_id: "agent-test-001",
@@ -574,13 +572,10 @@ function formatExpectedLocalIso(date: Date): string {
   return `${pad(date.getFullYear(), 4)}-${pad(date.getMonth() + 1, 2)}-${pad(date.getDate(), 2)}T${pad(date.getHours(), 2)}:${pad(date.getMinutes(), 2)}:${pad(date.getSeconds(), 2)}.${pad(date.getMilliseconds(), 3)}${sign}${pad(Math.floor(absOffset / 60), 2)}:${pad(absOffset % 60, 2)}[${expectedLocalTimezoneSuffix()}]`;
 }
 
-// ── shouldFireTask logic tests ──────────────────────────────────────
-
 describe("shouldFireTask (cron matching logic)", () => {
   test("recurring task matches at correct minute", () => {
     const { task } = addTask(makeInput({ cron: "30 14 * * *" }));
 
-    // Simulate fire check at 14:30
     const match = cronMatchesTime(task.cron, new Date("2026-03-26T14:30:00"));
     expect(match).toBe(true);
   });
@@ -620,12 +615,9 @@ describe("shouldFireTask (cron matching logic)", () => {
 
     expect(task.recurring).toBe(false);
     expect(task.scheduled_for).toBeTruthy();
-    // The stored cron should be a valid 5-field expression
     expect(task.cron.split(" ")).toHaveLength(5);
   });
 });
-
-// ── Deduplication logic tests ───────────────────────────────────────
 
 describe("per-minute deduplication", () => {
   test("minute key format is consistent", () => {
@@ -731,8 +723,6 @@ describe("scheduler backend scope", () => {
     });
   });
 });
-
-// ── Task lifecycle tests ────────────────────────────────────────────
 
 describe("task lifecycle", () => {
   test("delayed recurring prompt keeps Scheduled for at matched minute and Current time later", () => {
@@ -904,15 +894,14 @@ describe("task lifecycle", () => {
 
   test("one-shot task has jitter_offset_ms field", () => {
     const scheduledFor = new Date();
-    scheduledFor.setMinutes(0, 0, 0); // :00 triggers jitter
-    scheduledFor.setTime(scheduledFor.getTime() + 60 * 60 * 1000); // 1 hour in future
+    scheduledFor.setMinutes(0, 0, 0);
+    scheduledFor.setTime(scheduledFor.getTime() + 60 * 60 * 1000);
     const { task } = addTask(
       makeInput({
         recurring: false,
         scheduled_for: scheduledFor,
       }),
     );
-    // jitter_offset_ms should be a number (may be 0 or negative for :00/:30)
     expect(typeof task.jitter_offset_ms).toBe("number");
   });
 
@@ -945,14 +934,11 @@ describe("task lifecycle", () => {
   });
 });
 
-// ── Delayed-fire revalidation tests ─────────────────────────────────
-
 describe("jitter revalidation guards", () => {
   test("deleted task is not found by getTask (revalidation would skip fire)", () => {
     const { task } = addTask(makeInput());
     expect(getTask(task.id)).not.toBeNull();
 
-    // Simulate deletion during jitter window
     deleteTask(task.id);
     expect(getTask(task.id)).toBeNull();
   });
@@ -988,7 +974,6 @@ describe("jitter revalidation guards", () => {
     );
     expect(task.status).toBe("active");
 
-    // Simulate one-shot being marked as fired during jitter window
     updateTask(task.id, (t) => {
       t.status = "fired";
       t.fired_at = new Date().toISOString();

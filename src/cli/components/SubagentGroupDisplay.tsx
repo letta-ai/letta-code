@@ -1,20 +1,3 @@
-/**
- * SubagentGroupDisplay - Live/interactive subagent status display
- *
- * Used in the ACTIVE render area for subagents that may still be running.
- * Subscribes to external store and handles keyboard input - these hooks
- * require the component to stay "alive" and re-rendering.
- *
- * Features:
- * - Real-time updates via useSyncExternalStore
- * - Single blinking dot in header while running
- * - Expand/collapse tool calls (ctrl+o)
- * - Shows "Running N subagents..." while active
- *
- * When agents complete, they get committed to Ink's <Static> area using
- * SubagentGroupStatic instead (a pure props-based snapshot with no hooks).
- */
-
 import { Box, useInput } from "ink";
 import { memo, useSyncExternalStore } from "react";
 import {
@@ -59,10 +42,6 @@ function formatToolArgs(argsStr: string): string {
   }
 }
 
-// ============================================================================
-// Subcomponents
-// ============================================================================
-
 interface AgentRowProps {
   agent: SubagentState;
   isLast: boolean;
@@ -92,15 +71,11 @@ const AgentRow = memo(
     const modelDisplay = getSubagentModelDisplay(agent.model);
     const lastTool = agent.toolCalls[agent.toolCalls.length - 1];
 
-    // Condensed mode: simplified view to reduce re-renders when overflowing
-    // Shows: "Description · type · model" + "Running..." or "Done"
-    // Full details are shown in SubagentGroupStatic when flushed to static area
     if (condensed) {
       const isComplete =
         agent.status === "completed" || agent.status === "error";
       return (
         <Box flexDirection="column">
-          {/* Main row: tree char + description + type + model (no stats) */}
           <Box flexDirection="row">
             <Text wrap="truncate-end">
               <Text color={colors.subagent.treeChar}>
@@ -132,7 +107,7 @@ const AgentRow = memo(
               )}
             </Text>
           </Box>
-          {/* Simple status line */}
+
           {!hideBackgroundStatusLine && (
             <Box flexDirection="row">
               {!agent.agentURL &&
@@ -173,10 +148,8 @@ const AgentRow = memo(
       );
     }
 
-    // Full mode: all details including live tool calls
     return (
       <Box flexDirection="column">
-        {/* Main row: tree char + description + type + model + stats */}
         <Box flexDirection="row">
           <Text wrap="truncate-end">
             <Text color={colors.subagent.treeChar}>
@@ -213,7 +186,6 @@ const AgentRow = memo(
           </Text>
         </Box>
 
-        {/* Subagent URL */}
         {agent.agentURL && (
           <Box flexDirection="row">
             <Text color={colors.subagent.treeChar}>
@@ -225,7 +197,6 @@ const AgentRow = memo(
           </Box>
         )}
 
-        {/* Expanded: show all tool calls */}
         {expanded &&
           agent.toolCalls.map((tc) => {
             const formattedArgs = formatToolArgs(tc.args);
@@ -243,7 +214,6 @@ const AgentRow = memo(
             );
           })}
 
-        {/* Status line */}
         {!hideBackgroundStatusLine && (
           <Box flexDirection="row">
             {agent.status === "error" ? (
@@ -325,7 +295,6 @@ const GroupHeader = memo(
         {allCompleted ? (
           <Text color={dotColor}>{CLI_GLYPHS.bullet}</Text>
         ) : (
-          // BlinkDot now gets shouldAnimate from AnimationContext
           <BlinkDot color={runningDotColor} />
         )}
         <Text>
@@ -340,32 +309,22 @@ const GroupHeader = memo(
 
 GroupHeader.displayName = "GroupHeader";
 
-// ============================================================================
-// Main Component
-// ============================================================================
-
 export const SubagentGroupDisplay = memo(() => {
   const { agents, expanded } = useSyncExternalStore(subscribe, getSnapshot);
   const { shouldAnimate } = useAnimation();
 
-  // Handle ctrl+o for expand/collapse
   useInput((input, key) => {
     if (key.ctrl && input === "o") {
       toggleExpanded();
     }
   });
 
-  // Hide silent subagents (e.g. init) — they handle user notifications
-  // via their own mechanisms (e.g. EventMessage).
   const visible = agents.filter((a) => !a.silent);
 
-  // Don't render if no agents
   if (visible.length === 0) {
     return null;
   }
 
-  // Use condensed mode when animation is disabled (overflow detected by AnimationContext)
-  // This ensures consistent behavior - when we disable animation, we also simplify the view
   const condensed = !shouldAnimate;
 
   const allCompleted = visible.every(

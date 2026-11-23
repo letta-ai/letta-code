@@ -361,12 +361,6 @@ export function mergeAccountPatch(
   }
 
   if (!isSlackChannelAccount(existing)) {
-    // Custom channels (and user-installed plugins) hold all plugin-specific
-    // state in the generic `config` bag. Snapshots returned to clients redact
-    // secrets (e.g. `bot_token` is replaced with `has_bot_token: boolean`), so
-    // the client cannot send the secret back on every save. Merge the patch
-    // into the existing config so omitted keys are preserved; pass `null`
-    // explicitly to clear a key.
     return {
       ...existing,
       displayName:

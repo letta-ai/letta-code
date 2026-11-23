@@ -19,7 +19,6 @@ export async function resolveExternalWorkerComputer(
     scope.conversationId && scope.conversationId !== "default"
       ? scope.conversationId
       : undefined;
-  // The SDK forwards extra request fields until its types include ancestry.
   const createParams = {
     agent_id: scope.agentId,
     hidden: true,

@@ -211,7 +211,6 @@ describe("listener model catalog", () => {
       "gpt-6.1-sol · chatgpt-personal",
     );
     expect(byHandle.get(solo.handle)?.label).toBe("gpt-6.1-terra");
-    // Hosted preset rows keep their labels even when variants repeat them.
     expect(entries.slice(0, models.length).map((entry) => entry.label)).toEqual(
       models.map((model) => model.label),
     );

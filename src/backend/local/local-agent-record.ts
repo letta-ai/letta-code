@@ -207,8 +207,6 @@ export function projectLocalAgentState(
     message_ids: messageIds,
     in_context_message_ids: inContextMessageIds,
     ...(lastRunCompletion ? { last_run_completion: lastRunCompletion } : {}),
-    // Temporary compatibility shim for older runtime call sites. Local storage
-    // keeps only `model` + `model_settings`.
     llm_config: {
       ...llmConfigModelPatch,
       model_endpoint: "https://example.invalid/v1",

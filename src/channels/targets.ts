@@ -39,9 +39,7 @@ export function loadTargetStore(channelId: string): void {
     stores.set(channelId, {
       targets: parsed.targets ?? [],
     });
-  } catch {
-    // Corrupted target caches should not block startup.
-  }
+  } catch {}
 }
 
 function saveTargetStore(channelId: string): void {
@@ -174,14 +172,12 @@ export function clearTargetStores(): void {
   stores.clear();
 }
 
-/** @internal Test-only: override loadTargetStore behavior. Pass null to restore. */
 export function __testOverrideLoadTargetStore(
   fn: ((channelId: string) => void) | null,
 ): void {
   loadTargetStoreOverride = fn;
 }
 
-/** @internal Test-only: override saveTargetStore behavior. Pass null to restore. */
 export function __testOverrideSaveTargetStore(
   fn: ((channelId: string, store: ChannelTargetStore) => void) | null,
 ): void {

@@ -6,22 +6,16 @@ import { MarkdownDisplay } from "./MarkdownDisplay";
 import { Text } from "./Text";
 
 const DEFAULT_COLLAPSED_LINES = 3;
-const PREFIX_WIDTH = 5; // `  └  ` or `     `
+const PREFIX_WIDTH = 5;
 
 interface CollapsedOutputDisplayProps {
-  output: string; // Full output from completion
-  maxLines?: number; // Max lines to show before collapsing (Infinity = show all)
-  maxChars?: number; // Max chars to show before clipping
-  expanded?: boolean; // Whether to show full output
-  isLast?: boolean; // Whether this is the last shell tool call (shows ctrl+o hint)
+  output: string;
+  maxLines?: number;
+  maxChars?: number;
+  expanded?: boolean;
+  isLast?: boolean;
 }
 
-/**
- * Display component for bash output after completion.
- * Shows first 3 lines with count of hidden lines.
- * Uses proper two-column layout with width constraints for correct wrapping.
- * Toggle expand/collapse with ctrl+o (handled by AppCoordinator).
- */
 export const CollapsedOutputDisplay = memo(
   ({
     output,
@@ -45,9 +39,7 @@ export const CollapsedOutputDisplay = memo(
       clippedByChars = true;
     }
 
-    // Keep empty lines for accurate display (don't filter them out)
     const lines = displayOutput.split("\n");
-    // Remove trailing empty line from final newline
     if (lines.length > 0 && lines[lines.length - 1] === "") {
       lines.pop();
     }
@@ -63,7 +55,6 @@ export const CollapsedOutputDisplay = memo(
 
     return (
       <Box flexDirection="column">
-        {/* L-bracket on first line - matches ToolCallMessageRich result prefix */}
         <Box flexDirection="row">
           <Box width={PREFIX_WIDTH} flexShrink={0}>
             <Text>{`  ${CLI_GLYPHS.result}  `}</Text>
@@ -72,7 +63,7 @@ export const CollapsedOutputDisplay = memo(
             <MarkdownDisplay text={visibleLines[0] ?? ""} />
           </Box>
         </Box>
-        {/* Remaining visible lines with indent (5 spaces to align with content after bracket) */}
+
         {visibleLines.slice(1).map((line, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: Lines are positional output, stable order within render
           <Box key={i} flexDirection="row">
@@ -84,7 +75,7 @@ export const CollapsedOutputDisplay = memo(
             </Box>
           </Box>
         ))}
-        {/* Hidden count hint with ctrl+o toggle */}
+
         {hiddenCount > 0 && (
           <Box flexDirection="row">
             <Box width={PREFIX_WIDTH} flexShrink={0}>
@@ -97,7 +88,7 @@ export const CollapsedOutputDisplay = memo(
             </Box>
           </Box>
         )}
-        {/* Collapse hint when expanded */}
+
         {expanded && lines.length > maxLines && (
           <Box flexDirection="row">
             <Box width={PREFIX_WIDTH} flexShrink={0}>
@@ -108,7 +99,7 @@ export const CollapsedOutputDisplay = memo(
             </Box>
           </Box>
         )}
-        {/* Character clipping hint with ctrl+o hint (only if not already showing line count) */}
+
         {clippedByChars && hiddenCount === 0 && (
           <Box flexDirection="row">
             <Box width={PREFIX_WIDTH} flexShrink={0}>

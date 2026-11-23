@@ -10,7 +10,6 @@ import type {
 } from "@/types/subagent-protocol";
 import { getErrorMessage } from "@/utils/error";
 
-/** The control socket is scoped to the same conversation as this stop. */
 export async function stopListenerConversation(
   command: SubagentStopCommand,
   abort: (scope: ConversationRuntimeScope) => Promise<boolean>,
@@ -39,7 +38,6 @@ export async function stopListenerConversation(
     conversationId: scope.conversation_id,
   };
   try {
-    // Stop notification producers before cancellation lets the active turn unwind.
     const results = await Promise.allSettled([
       stopConversationBackground(backgroundScope),
       abort(scope),
@@ -55,7 +53,6 @@ export async function stopListenerConversation(
         if (Object.values(results).some((value) => value !== "cancelled"))
           throw new Error("Backend did not confirm cancellation of every run");
       } catch (error) {
-        // An idle child may still own monitors and schedules.
         if (!(error instanceof ApiRequestError && error.status === 409))
           throw error;
       }

@@ -14,7 +14,6 @@ const REPOSITORIES = [
   { id: "repo-2", name: "agent-forum" },
 ];
 
-/** Agent id used by tests that touch the real mount path under ~/.letta. */
 const MOUNT_AGENT_ID = "agent-shared-memory-subcommand-test";
 
 function createMountFor(repositoryName: string): string {
@@ -247,7 +246,6 @@ describe("runSharedMemorySubcommand", () => {
 
   test("attach fails when the mount was not created", async () => {
     const { request } = makeRequest();
-    // No mount on disk: sync claims success but the checkout is not there.
     const syncRepositories = mock(async () => ({
       mounted: 0,
       skipped: 0,
@@ -269,8 +267,6 @@ describe("runSharedMemorySubcommand", () => {
       },
     );
     expect(code).toBe(1);
-    // The server attachment exists even when its local checkout failed, so the
-    // old attachment-list snapshot must still be cleared.
     expect(invalidateClientSkills).toHaveBeenCalledTimes(1);
     const output = JSON.parse(logs.join("\n"));
     expect(output.mount).toBeNull();
@@ -298,7 +294,6 @@ describe("runSharedMemorySubcommand", () => {
         },
       },
     );
-    // The attach itself succeeded, so this stays a success exit.
     expect(code).toBe(0);
     expect(JSON.parse(logs.join("\n")).recompile_failed).toBe("recompile boom");
   });
@@ -536,7 +531,6 @@ describe("runSharedMemorySubcommand", () => {
         },
       },
     );
-    // The detach itself succeeded, so this stays a success exit.
     expect(code).toBe(0);
     const output = JSON.parse(logs.join("\n"));
     expect(output.detached).toBe(true);

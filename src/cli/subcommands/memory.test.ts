@@ -25,10 +25,6 @@ describe("letta memory pull", () => {
   });
 
   test("initializes settings before pulling memory", async () => {
-    // Regression guard for `letta memory pull` exiting with
-    // "Settings not initialized. Call settingsManager.initialize() first."
-    // Subcommands run before the main CLI bootstrap initializes settings, and
-    // pullMemory resolves the backend auth token through getSettings().
     const calls: string[] = [];
     let settingsInitialized = false;
 

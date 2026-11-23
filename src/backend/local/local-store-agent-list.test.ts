@@ -23,7 +23,6 @@ describe("local agent listing", () => {
       await tick();
       await backend.createAgent({ name: "Gamma" } as never);
 
-      // Sanity check: the target is not the most recent agent.
       expect(
         listedNames(await backend.listAgents({ limit: 1 } as never)),
       ).not.toEqual(["Alpha"]);

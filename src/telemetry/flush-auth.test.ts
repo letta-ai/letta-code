@@ -201,8 +201,6 @@ describe("telemetry flush auth", () => {
   });
 
   test("self-hosted users do not send error telemetry", async () => {
-    // Avoid process.env races with unrelated test files on Windows, where env
-    // keys are case-insensitive but not isolated across the full Bun run.
     telemetryState.isCloudUser = () => false;
 
     const fetchMock = mock(async () => new Response(null, { status: 200 }));
@@ -275,7 +273,7 @@ describe("telemetry flush auth", () => {
     telemetry.trackUserInput("hello", "user", "model-1");
     await telemetry.flush();
 
-    expect(telemetryState.events).toHaveLength(0); // flushed successfully
+    expect(telemetryState.events).toHaveLength(0);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 

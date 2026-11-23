@@ -5,89 +5,72 @@ import { Text } from "./Text";
 
 const LOGO_WIDTH = 10;
 
-// Logo frames use abstract cell tokens instead of block/shade glyphs.
-// Rendering via backgroundColor makes each logo pixel a terminal cell, avoiding
-// font/terminal-specific rendering differences for Unicode block elements.
 const logoFrames = [
-  // 1. Front view (fully facing)
   `  FFFFFF
 FF      FF
 FF  FF  FF
 FF      FF
   FFFFFF  `,
-  // 2. Just starting to turn right
   `  DFFFFF
 DF      DF
 DF  DF  DF
 DF      DF
   DFFFFF  `,
-  // 3. Slight right turn
   `  DDFFFF
 DD      DD
 DD  DD  DD
 DD      DD
   DDFFFF  `,
-  // 4. More right (gradient deepening)
   `  SDDFFF
 SDD    SDD
 SDD SD SDD
 SDD    SDD
   SDDFFF  `,
-  // 5. Even more right
   `  SSDDFF
  SDD  SDD
  SDDSDSDD
  SDD  SDD
   SSDDFF  `,
-  // 6. Approaching side
   `   SDDF
   SSDSSD
   SSDDSD
   SSDSSD
    SDDF   `,
-  // 7. Almost side
   `   SDDD
    SDSD
    SDDD
    SDSD
    SDDD   `,
-  // 8. Side view
   `   DDDD
    DDDD
    DDDD
    DDDD
    DDDD   `,
-  // 9. Leaving side (mirror of 7)
   `   DDDS
    DSDS
    DDDS
    DSDS
    DDDS   `,
-  // 10. Past side (mirror of 6)
   `   FDDS
   DSSDSS
   DSDDSS
   DSSDSS
    FDDS   `,
-  // 11. More past side (mirror of 5)
   `  FFDDSS
  DDS  DDS
  DDSDSDDS
  DDS  DDS
   FFDDSS  `,
-  // 12. Returning (mirror of 4)
   `  FFFDDS
 DDS    DDS
 DDS DS DDS
 DDS    DDS
   FFFDDS  `,
-  // 13. Almost front (mirror of 3)
   `  FFFFDD
 DD      DD
 DD  DD  DD
 DD      DD
   FFFFDD  `,
-  // 14. Nearly front (mirror of 2)
   `  FFFFFD
 FD      FD
 FD  FD  FD
@@ -106,8 +89,6 @@ const normalizedLogoFrames = logoFrames.map((frame) =>
   padFrameToFixedWidth(frame, LOGO_WIDTH),
 );
 
-// Shared module-level ticker for animation sync across all AnimatedLogo instances
-// Single timer, guaranteed sync, no time-jump artifacts
 let tick = 0;
 const listeners = new Set<() => void>();
 let tickerInterval: ReturnType<typeof setInterval> | null = null;
@@ -119,7 +100,6 @@ const FRAME_INTERVAL_MS = 75;
 
 function subscribe(callback: () => void): () => void {
   listeners.add(callback);
-  // Start ticker on first subscriber
   if (!tickerInterval) {
     tickerInterval = setInterval(() => {
       tick++;
@@ -130,7 +110,6 @@ function subscribe(callback: () => void): () => void {
   }
   return () => {
     listeners.delete(callback);
-    // Stop ticker when no subscribers
     if (listeners.size === 0 && tickerInterval) {
       clearInterval(tickerInterval);
       tickerInterval = null;
@@ -165,13 +144,6 @@ function renderLogoLine(line: string, faceColor: string) {
   });
 }
 
-/**
- * Static logo (frame 1, with shadow) as plain strings for one-shot console
- * output outside Ink. Cells are painted with the given chalk instance so the
- * logo follows the same color-level detection as the rest of the CLI:
- * 24-bit where supported, 256-color on terminals like Terminal.app, and no
- * escape sequences at all when chalk reports level 0.
- */
 export function staticLogoLines(
   paint: ChalkInstance,
   faceColor: string = colors.welcome.accent,
@@ -189,7 +161,6 @@ export function staticLogoLines(
 
 interface AnimatedLogoProps {
   color?: string;
-  /** When false, show static frame 1 (logo with shadow). Defaults to true. */
   animate?: boolean;
 }
 

@@ -8,7 +8,6 @@ interface SteerDelivery<T> {
   wait: (request: Promise<unknown>, receipt: T) => Promise<unknown>;
 }
 
-/** Reply early without releasing the operation's session lock. */
 export function withCodexSteerReceipt<T>(
   operation: (delivery: SteerDelivery<T>) => Promise<T>,
 ): Promise<T> {
@@ -57,7 +56,6 @@ export async function withSessionLock<T>(
   }
 }
 
-/** Let the completion notification reach its original waiter before starting again. */
 export async function waitForRejectedCodexSteer(
   session: { activeTurnId?: string },
   turnId: string,

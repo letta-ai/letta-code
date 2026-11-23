@@ -14,12 +14,11 @@ import { Text } from "./Text";
 interface MarkdownDisplayProps {
   text: string;
   dimColor?: boolean;
-  hangingIndent?: number; // indent for wrapped lines within a paragraph
-  backgroundColor?: string; // background color for all text
-  contentWidth?: number; // available width for responsive blocks and background padding
+  hangingIndent?: number;
+  backgroundColor?: string;
+  contentWidth?: number;
 }
 
-// Regex patterns for markdown elements (defined outside component to avoid re-creation)
 const headerRegex = /^(#{1,6})\s+(.*)$/;
 const codeBlockOpenRegex = /^ *(`{3,}|~{3,}) *([^\s`~]*)?.*$/;
 const codeBlockCloseRegex = /^ *(`{3,}|~{3,}) *$/;
@@ -29,7 +28,6 @@ const hrRegex = /^[-*_]{3,}$/;
 const tableRowRegex = /^\|(.+)\|$/;
 const tableSeparatorRegex = /^\|[\s:]*[-]+[\s:]*(\|[\s:]*[-]+[\s:]*)+\|$/;
 
-// Header styles lookup
 const headerStyles: Record<
   number,
   { bold?: boolean; italic?: boolean; color?: string }
@@ -40,11 +38,6 @@ const headerStyles: Record<
 };
 const defaultHeaderStyle = { italic: true };
 
-/**
- * Renders full markdown content using pure Ink components.
- * Based on Gemini CLI's approach - NO ANSI codes, NO marked-terminal!
- */
-
 export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
   text,
   dimColor,
@@ -54,9 +47,6 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
 }) => {
   if (!text) return null;
 
-  // Build ANSI background code and line-padding helper for full-width backgrounds.
-  // Transform callbacks receive already-rendered text (with ANSI codes from child Text
-  // components), so appended spaces need their own ANSI background coloring.
   const bgAnsi = backgroundColor ? hexToBgAnsi(backgroundColor) : "";
   const padLine = (ln: string): string => {
     if (!contentWidth || !backgroundColor) return ln;
@@ -134,13 +124,11 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
     );
   };
 
-  // Use index-based loop to handle multi-line elements (tables)
   let index = 0;
   while (index < lines.length) {
-    const line = lines[index] as string; // Safe: index < lines.length
+    const line = lines[index] as string;
     const key = `line-${index}`;
 
-    // Handle code blocks
     if (inCodeBlock) {
       const codeBlockCloseMatch = line.match(codeBlockCloseRegex);
       const fence = codeBlockCloseMatch?.[1] ?? "";
@@ -174,7 +162,6 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
       continue;
     }
 
-    // Check for headers
     const headerMatch = line.match(headerRegex);
     if (headerMatch?.[1] && headerMatch[2] !== undefined) {
       const level = headerMatch[1].length;
@@ -197,7 +184,6 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
       continue;
     }
 
-    // Check for list items
     const listMatch = line.match(listItemRegex);
     if (
       listMatch &&
@@ -209,7 +195,6 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
       const marker = listMatch[2];
       const content = listMatch[3];
 
-      // Preserve original marker for copy-paste compatibility
       const bullet = `${marker} `;
       const bulletWidth = bullet.length;
 
@@ -240,7 +225,6 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
       continue;
     }
 
-    // Check for blockquotes
     const blockquoteMatch = line.match(blockquoteRegex);
     if (blockquoteMatch && blockquoteMatch[1] !== undefined) {
       contentBlocks.push(
@@ -266,7 +250,6 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
       continue;
     }
 
-    // Check for horizontal rules
     if (line.match(hrRegex)) {
       contentBlocks.push(
         <Box key={key}>
@@ -279,14 +262,12 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
       continue;
     }
 
-    // Check for tables (must have | at start and end, and next line should be separator)
     const nextLine = lines[index + 1];
     if (
       tableRowRegex.test(line) &&
       nextLine &&
       tableSeparatorRegex.test(nextLine)
     ) {
-      // Collect all table lines
       const tableLines: string[] = [line];
       let tableIdx = index + 1;
       while (tableIdx < lines.length) {
@@ -295,7 +276,6 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
         tableLines.push(tableLine);
         tableIdx++;
       }
-      // Also accept separator-only lines
       if (tableLines.length >= 2) {
         contentBlocks.push(
           <MarkdownTable
@@ -311,10 +291,8 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
       }
     }
 
-    // Empty lines
     if (line.trim() === "") {
       if (backgroundColor) {
-        // Render a visible space so outer Transform can pad this line
         contentBlocks.push(
           <Box key={key}>
             <Text backgroundColor={backgroundColor}> </Text>
@@ -327,7 +305,6 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
       continue;
     }
 
-    // Regular paragraph text with optional hanging indent and line padding
     const needsTransform =
       hangingIndent > 0 || (contentWidth && backgroundColor);
     contentBlocks.push(
@@ -372,7 +349,6 @@ export const MarkdownDisplay: React.FC<MarkdownDisplayProps> = ({
     index++;
   }
 
-  // Handle unclosed code block at end of input
   if (inCodeBlock && codeBlockContent.length > 0) {
     const code = codeBlockContent.join("\n");
     contentBlocks.push(

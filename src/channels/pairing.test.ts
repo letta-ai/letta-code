@@ -43,12 +43,10 @@ describe("pairing", () => {
     expect(result?.senderId).toBe("user-1");
     expect(result?.chatId).toBe("chat-1");
 
-    // User should now be approved
     expect(isUserApproved("telegram", "user-1")).toBe(true);
     const approved = getApprovedUsers("telegram");
     expect(approved).toHaveLength(1);
 
-    // Code should be consumed (pending cleared)
     const pending = getPendingPairings("telegram");
     expect(pending).toHaveLength(0);
   });
@@ -71,12 +69,9 @@ describe("pairing", () => {
     const code1 = createPairingCode("telegram", "user-1", "chat-1");
     const code2 = createPairingCode("telegram", "user-1", "chat-1");
 
-    // Rate limit: repeated messages do not mint new codes while the
-    // sender's existing code is still valid.
     expect(code1).toBe(code2);
     expect(consumePairingCode("telegram", code1)).not.toBeNull();
 
-    // Once consumed, a fresh request mints a new code.
     const code3 = createPairingCode("telegram", "user-1", "chat-1");
     expect(code3).not.toBe(code1);
   });
@@ -90,17 +85,14 @@ describe("pairing", () => {
     const pending = consumePairingCode("telegram", code);
     expect(pending).not.toBeNull();
 
-    // User is now approved, no pending codes
     expect(isUserApproved("telegram", "user-1")).toBe(true);
     expect(getPendingPairings("telegram")).toHaveLength(0);
 
-    // Roll back
     if (!pending) {
       throw new Error("Expected pending pairing to exist");
     }
     rollbackPairingApproval("telegram", pending);
 
-    // User should no longer be approved, pending code restored
     expect(isUserApproved("telegram", "user-1")).toBe(false);
     expect(getPendingPairings("telegram")).toHaveLength(1);
     expect(getPendingPairings("telegram")[0]?.code).toBe(code);

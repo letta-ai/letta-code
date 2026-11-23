@@ -48,12 +48,6 @@ export async function createHeadlessEphemeralConversation(params: {
     : createEphemeralConversation(options);
 }
 
-/**
- * Warm the secrets cache for a headless session. An agent-backed session uses
- * its own vault. A detached subagent conversation has no vault, so it reads
- * its parent agent's (the vault the parent's own tools would use); other
- * detached sessions get none.
- */
 export function initHeadlessSecrets(
   agentId: string,
   detached: boolean,
@@ -78,12 +72,6 @@ export function initHeadlessSecrets(
   });
 }
 
-/**
- * The ambient agent (`LETTA_AGENT_ID`/`AGENT_ID`) a routed headless launch
- * should target when no explicit target was given. An `--ephemeral` session
- * has no agent, so an inherited AGENT_ID (set in Cloud sandboxes and passed
- * down to subagents) must not become `--agent` there.
- */
 export function resolveAmbientAgentId(
   params: { routed: unknown; ephemeral: unknown; explicitTarget: unknown },
   env: NodeJS.ProcessEnv = process.env,
@@ -119,7 +107,6 @@ export function clearHeadlessClientToolRules(agent: AgentState): void {
     });
 }
 
-/** Return the existing parent without treating it as the history owner. */
 export async function retrieveHeadlessConversation(
   backend: Pick<Backend, "retrieveAgent" | "retrieveConversation">,
   conversationId: string,

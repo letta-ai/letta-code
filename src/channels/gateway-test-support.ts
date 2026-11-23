@@ -26,8 +26,6 @@ import type {
   ChannelTurnSource,
 } from "./types";
 
-// ── Fake client ──────────────────────────────────────────────────
-
 export interface FakeClientOptions {
   startResponse?: Partial<RuntimeStartResponseMessage>;
   inputResponse?: Partial<InputAcceptedResponseMessage>;
@@ -56,7 +54,6 @@ export class FakeClient implements ChannelGatewayClient {
   }> = [];
   readonly runtimeToolUpdates: Array<RuntimeExternalToolsUpdateGroup> = [];
   closeCalls = 0;
-  // Mutable input response for per-test control
   inputResponse: { accepted: boolean; disposition: "started" | "queued" };
 
   constructor(private readonly options: FakeClientOptions = {}) {
@@ -147,7 +144,6 @@ export class FakeClient implements ChannelGatewayClient {
     this.closeCalls += 1;
   }
 
-  // Test helpers
   emit(message: WsProtocolMessage): void {
     for (const listener of this.messageListeners) listener(message);
   }
@@ -162,8 +158,6 @@ export class FakeClient implements ChannelGatewayClient {
     for (const listener of this.externalToolListeners) listener(request);
   }
 }
-
-// ── Helpers ──────────────────────────────────────────────────────
 
 export const TEST_RUNTIME: RuntimeScope = {
   agent_id: "agent-1",

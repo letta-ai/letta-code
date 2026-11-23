@@ -13,10 +13,6 @@ export interface BrowserDeviceMcpOAuthRequest {
   handoffKey: string;
   service: string;
   serverUrl: string;
-  /**
-   * `client_name` shown on the provider's consent screen. Defaults to
-   * "Letta Code" when omitted.
-   */
   clientName?: string;
 }
 
@@ -24,7 +20,6 @@ interface BrowserDeviceMcpOAuthDefinition {
   authorizationOrigins: readonly string[];
   serverName: string;
   serverUrl: string;
-  /** Provider site reported by the OAuth callback `domain` param (Datadog). */
   site?: string;
 }
 
@@ -85,11 +80,6 @@ export class BrowserDeviceMcpOAuthRequestError extends Error {
   }
 }
 
-/**
- * The OAuth callback named a different allowlisted provider site than the
- * selected server URL. The code is only redeemable at that site, so the caller
- * must restart authorization against `serverUrl` with a handoff bound to it.
- */
 export class BrowserDeviceMcpOAuthSiteMismatchError extends Error {
   constructor(
     readonly site: string,
@@ -100,11 +90,6 @@ export class BrowserDeviceMcpOAuthSiteMismatchError extends Error {
   }
 }
 
-/**
- * Complete a Cloud agent's localhost-callback MCP authorization from a local
- * Letta Code runtime. Letta Daemon runs the same runtime, so it exposes this
- * bridge without a separate daemon-specific OAuth implementation.
- */
 export async function connectBrowserDeviceMcpOAuth(
   request: BrowserDeviceMcpOAuthRequest,
   dependencies: BrowserDeviceMcpOAuthDependencies = {
@@ -156,14 +141,8 @@ export async function connectBrowserDeviceMcpOAuth(
       storage: ephemeralStorage.storage,
       storageNamespace: `browser-device-mcp-oauth-${randomUUID()}`,
     });
-    // Authorization implementations are not required to cooperate with abort.
-    // Re-check synchronously before crossing into the non-cancellable commit phase.
     authorizationSignal.throwIfAborted();
     onSubmissionStarted?.();
-    // Once credential submission begins, caller cancellation is ambiguous: Cloud
-    // may have committed the handoff before its response is observed. Let the
-    // submission's own bounded, idempotent reconciliation finish so we never
-    // report `cancelled` for credentials that were durably saved.
     await dependencies.importCredentials(canonicalRequest, credentials);
   } finally {
     ephemeralStorage.clear();
@@ -275,10 +254,6 @@ function findDefinition(
   );
 }
 
-/**
- * Map an untrusted callback `domain` (e.g. `us5.datadoghq.com`) to an
- * allowlisted site definition. Anything not on the allowlist is ignored.
- */
 function definitionForCallbackDomain(
   service: string,
   domain: string | undefined,
@@ -297,7 +272,6 @@ function definitionForCallbackDomain(
   );
 }
 
-/** Allowlisted MCP server URLs per localhost-callback OAuth service. */
 export function browserDeviceMcpOAuthServerUrls(): Record<string, string[]> {
   return Object.fromEntries(
     Object.entries(BROWSER_DEVICE_MCP_OAUTH_SERVICES).map(
@@ -309,10 +283,6 @@ export function browserDeviceMcpOAuthServerUrls(): Record<string, string[]> {
   );
 }
 
-/**
- * Return the canonical allowlisted server URL matching `serverUrl` for
- * `service`, or undefined when the service or URL is not supported.
- */
 export function matchBrowserDeviceMcpOAuthServerUrl(
   service: string,
   serverUrl: string,

@@ -52,7 +52,6 @@ beforeEach(async () => {
   rejectUpdates = false;
   requests = [];
   record = undefined;
-  // HTTP protocol fixture: lifecycle sources and the API request client are real.
   server = Bun.serve({
     port: 0,
     async fetch(request) {

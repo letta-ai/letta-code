@@ -24,12 +24,10 @@ import { buildSubagentSnapshot } from "@/websocket/listener/protocol-outbound";
 import { backgroundTasks } from "./process_manager";
 import { launchSubagent, spawnBackgroundSubagentTask } from "./task";
 
-// These launches run on the computer that received `notify: "caller"`.
 const parentScope = { agentId: "agent-parent", conversationId: "conv-parent" };
 const queued: QueuedMessage[] = [];
 let bin: string;
 const originalPath = process.env.PATH;
-// Fake CLIs are shebang scripts, which Windows cannot execute from PATH.
 const isWindows = process.platform === "win32";
 
 function fakeExecutable(name: string, source: string): void {
@@ -40,7 +38,6 @@ function fakeExecutable(name: string, source: string): void {
 
 beforeEach(() => {
   bin = mkdtempSync(join(tmpdir(), "notify-caller-bin-"));
-  // Keep system tools such as systemd-run, but no real claude/codex.
   process.env.PATH = `${bin}:/usr/bin:/bin`;
   setMessageQueueAdder((message) => queued.push(message));
 });
@@ -145,8 +142,6 @@ describe("notify caller on the launching computer", () => {
       status: "error",
       error: "Claude Code exited with code 1",
     });
-    // Ordinary rows are dropped after 30 seconds; the caller is told it has
-    // 30 minutes to reconnect and read the outcome.
     jest.advanceTimersByTime(30_000 + 1);
     expect(entry()?.status).toBe("error");
     jest.advanceTimersByTime(30 * 60_000);
@@ -288,7 +283,6 @@ rl.on("close", () => process.exit(0));`,
           'tool: Bash {"command":"bun test"}',
         ]);
         expect(output).toContain("All green");
-        // The worker publishes its text so a parent on another computer can log it.
         const runtime = getOrCreateScopedRuntime(
           createRuntime(),
           parentScope.agentId,
@@ -353,7 +347,6 @@ rl.on("line", (line) => {
   );
 });
 
-/** Waits for the task's final result to land in its output file. */
 async function completedOutput(outputFile: string): Promise<string> {
   for (let i = 0; i < 400; i++) {
     const output = readFileSync(outputFile, "utf8");
@@ -364,7 +357,6 @@ async function completedOutput(outputFile: string): Promise<string> {
   throw new Error(`Task never finished: ${readFileSync(outputFile, "utf8")}`);
 }
 
-/** Each entry appears once, as a timestamped line, in order, before the result. */
 function expectProgressBeforeResult(output: string, entries: string[]): void {
   expect(output).toContain("[Task completed]");
   expect(output.startsWith("[Task started: Fix the bug]")).toBe(true);

@@ -50,8 +50,6 @@ describe("OpenAI bridge durable admission", () => {
     const active = getActiveRuntime();
     if (!active) throw new Error("Expected the app server runtime");
     listener = active;
-    // NODE_ENV=test normally disables persistence, which hides the missing
-    // client_message_id regression. Use the real on-disk admission ledger.
     ledgerPath = join(directory, "input-dispositions-v2.json");
     listener.acceptedInputDispositionLedger =
       createAcceptedInputDispositionLedger({ persistentPath: ledgerPath });
@@ -85,7 +83,6 @@ describe("OpenAI bridge durable admission", () => {
         "x-letta-chat-key": "admission-test-chat",
       },
       body: JSON.stringify(body),
-      // Cold local turns include durable writes that can exceed 3s on Windows.
       signal: AbortSignal.timeout(10_000),
     });
   }

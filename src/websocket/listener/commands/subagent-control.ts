@@ -84,11 +84,6 @@ function findOwnedTask(runtime: ConversationRuntime, agentId: string) {
   );
 }
 
-/**
- * Completed background tasks and their subagent rows are evicted within
- * minutes, but the native session stays resumable on disk. Fall back to the
- * record of which agent launched it.
- */
 function nativeSessionOwner(agentId: string) {
   const target = parseExternalCodingAgentId(agentId);
   if (!target || target.computer) return undefined;
@@ -197,7 +192,6 @@ export async function handleSubagentMessageCommand(
         target.type === "cursor"
           ? await resolveExternalCodingAgentSecretEnv(parent.agentId)
           : {};
-      // A resumed worker process needs the same environment as a launch.
       let worker: ExternalWorkerLaunchEnv | undefined;
       const receipt = await runOutsideRuntimeContext(() =>
         runWithRuntimeContext(runtimeContext(parent, command), async () => {
@@ -301,13 +295,6 @@ export async function handleSubagentMessageCommand(
           interrupt: receipt.interrupt,
           captureReservation,
           toolCallId: command.tool_call_id,
-          // This handler always runs on the worker, for a parent runtime that
-          // only exists here as a sideband control scope. Mirror the
-          // `notify: "caller"` launch contract: publish the result back to the
-          // caller and let its own listener raise the notice. Emitting it here
-          // would start a turn on the caller's conversation from the worker's
-          // machine, and claiming the runtime would make Cloud route the
-          // caller's deliveries to this sandbox.
           publishResult: true,
           emitCompletionNotification: false,
           claimsParentRuntime: false,
@@ -332,7 +319,6 @@ export async function handleSubagentMessageCommand(
     }
   })();
   responses.set(key, {
-    // Keep retries deduplicated, but let a stuck steer expire eventually.
     expiresAt: now + REMOTE_SUBAGENT_MESSAGE_DEDUPE_PENDING_TTL_MS,
     response,
   });
@@ -384,7 +370,6 @@ export async function handleSubagentStopCommand(
     }
   }
   if (!owned) {
-    // Its task was evicted after it finished: nothing is left to stop.
     if (ownsNativeSession(parent, command.agent_id))
       return {
         ...base,

@@ -10,7 +10,6 @@ describe("buildByokProviderAliases", () => {
   test("derives default aliases from all built-in BYOK_PROVIDERS", () => {
     const aliases = buildByokProviderAliases([], "api");
 
-    // Every built-in provider with a known providerType should have an alias
     for (const bp of BYOK_PROVIDERS) {
       expect(aliases[bp.providerName]).toBeDefined();
     }
@@ -54,9 +53,7 @@ describe("buildByokProviderAliases", () => {
       "api",
     );
 
-    // Custom provider mapped
     expect(aliases["openai-sarah"]).toBe("openai");
-    // Built-ins still present
     expect(aliases["lc-openai"]).toBe("openai");
     expect(aliases["lc-anthropic"]).toBe("anthropic");
   });
@@ -80,9 +77,7 @@ describe("buildByokProviderAliases", () => {
       "api",
     );
 
-    // Unknown type doesn't get an alias
     expect(aliases["unknown-provider"]).toBeUndefined();
-    // Built-ins still present
     expect(aliases["lc-anthropic"]).toBe("anthropic");
   });
 
@@ -92,7 +87,6 @@ describe("buildByokProviderAliases", () => {
       "api",
     );
 
-    // Still maps correctly (same value)
     expect(aliases["lc-anthropic"]).toBe("anthropic");
   });
 });

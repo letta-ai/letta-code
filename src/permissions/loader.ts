@@ -1,6 +1,3 @@
-// src/permissions/loader.ts
-// Load and merge permission settings from hierarchical sources
-
 import { createHash } from "node:crypto";
 import { type FSWatcher, readFileSync, statSync, watch } from "node:fs";
 import { homedir } from "node:os";
@@ -178,9 +175,6 @@ function invalidatePermissionSourcesInDirectory(directoryPath: string): void {
 }
 
 function shouldStartPermissionWatchers(): boolean {
-  // Unit tests still validate signatures on every load. Avoid long-lived
-  // fs.watch handles there, because Bun/macOS runners can hang the worker even
-  // with non-persistent watchers.
   return (
     process.env.NODE_ENV !== "test" &&
     process.env.LETTA_DISABLE_PERMISSION_WATCHERS !== "1"
@@ -201,10 +195,7 @@ function watchPath(path: string, onChange: () => void): void {
       onChange();
     });
     watchers.set(path, watcher);
-  } catch {
-    // fs.watch can fail on some filesystems; loadPermissions still validates
-    // file signatures on every call, so missed watchers only cost one stat.
-  }
+  } catch {}
 }
 
 function ensurePermissionWatchers(sources: string[]): void {
@@ -230,17 +221,6 @@ export function resetPermissionLoaderCacheForTests(): void {
   watchers.clear();
 }
 
-/**
- * Load permissions from all settings files and merge them hierarchically.
- *
- * Precedence (highest to lowest):
- * 1. Local project settings (.letta/settings.local.json)
- * 2. Project settings (.letta/settings.json)
- * 3. User settings (~/.letta/settings.json)
- * 4. Legacy user settings (~/.config/letta/settings.json)
- *
- * Rules are merged by concatenating arrays (more specific settings add to broader ones)
- */
 export async function loadPermissions(
   workingDirectory: string = process.cwd(),
 ): Promise<PermissionRules> {
@@ -272,10 +252,7 @@ export async function loadPermissions(
           mergePermissions(merged, settings.permissions);
         }
       }
-    } catch (_error) {
-      // Silently skip files that can't be parsed
-      // (user might have invalid JSON)
-    }
+    } catch (_error) {}
   }
 
   permissionCache.set(cacheKey, {
@@ -295,9 +272,6 @@ export async function loadPermissionMode(
   return permissions.mode ?? null;
 }
 
-/**
- * Merge permission rules by concatenating arrays
- */
 function mergePermissions(
   target: PermissionRules,
   source: SettingsPermissions,
@@ -341,9 +315,6 @@ function mergeRuleList(
   return merged;
 }
 
-/**
- * Save a permission rule to a specific scope
- */
 export async function savePermissionRule(
   rule: string,
   ruleType: PermissionRuleType,
@@ -362,7 +333,6 @@ export async function savePermissionRule(
 
   const normalizedWorkingDirectory = resolve(workingDirectory);
 
-  // Determine settings file path based on scope
   let settingsPath: string;
   switch (scope) {
     case "user":
@@ -384,18 +354,14 @@ export async function savePermissionRule(
       break;
   }
 
-  // Load existing settings
   let settings: SettingsFile = {};
   try {
     if (exists(settingsPath)) {
       const content = await readFile(settingsPath);
       settings = JSON.parse(content) as SettingsFile;
     }
-  } catch (_error) {
-    // Start with empty settings if file doesn't exist or is invalid
-  }
+  } catch (_error) {}
 
-  // Initialize permissions if needed
   if (!settings.permissions) {
     settings.permissions = {};
   }
@@ -405,7 +371,6 @@ export async function savePermissionRule(
 
   const normalizedRule = normalizePermissionRule(rule);
 
-  // Add rule if not already present (canonicalized comparison for alias/path variants)
   if (
     !settings.permissions[ruleType].some((existingRule) =>
       permissionRulesEquivalent(existingRule, normalizedRule),
@@ -414,7 +379,6 @@ export async function savePermissionRule(
     settings.permissions[ruleType].push(normalizedRule);
   }
 
-  // Save settings
   await writeFile(
     settingsPath,
     JSON.stringify(settings, null, 2),
@@ -422,15 +386,11 @@ export async function savePermissionRule(
   );
   invalidatePermissionSource(settingsPath);
 
-  // If saving to .letta/settings.local.json, ensure it's gitignored
   if (scope === "local") {
     await ensureLocalSettingsIgnored(normalizedWorkingDirectory);
   }
 }
 
-/**
- * Ensure .letta/settings.local.json is in .gitignore
- */
 async function ensureLocalSettingsIgnored(
   workingDirectory: string,
 ): Promise<void> {
@@ -443,16 +403,11 @@ async function ensureLocalSettingsIgnored(
       content = await readFile(gitignorePath);
     }
 
-    // Check if pattern already exists
     if (!content.includes(pattern)) {
-      // Add pattern to gitignore
       const newContent = `${
         content + (content.endsWith("\n") ? "" : "\n") + pattern
       }\n`;
       await writeFile(gitignorePath, newContent);
     }
-  } catch (_error) {
-    // Silently fail if we can't update .gitignore
-    // (might not be a git repo)
-  }
+  } catch (_error) {}
 }

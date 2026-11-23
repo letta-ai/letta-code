@@ -11,8 +11,6 @@ export function resolveChannelGatewayTelemetryTypes(options: {
   if (!options.restoreEnabledChannels) {
     return [...options.channelNames];
   }
-  // Account commands run in the ChannelGateway child, so the listener's
-  // process-local account cache goes stale. Re-read from disk before listing.
   for (const channelId of getSupportedChannelIds()) {
     loadChannelAccounts(channelId);
   }

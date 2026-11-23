@@ -10,11 +10,6 @@ import {
 } from "./SyntaxHighlightedCommand";
 import { Text } from "./Text";
 
-/**
- * Formats a file path for display (matches Claude Code style):
- * - Files within cwd: relative path without ./ prefix
- * - Files outside cwd: full absolute path
- */
 function formatDisplayPath(filePath: string): string {
   const cwd = process.cwd();
   const relativePath = relative(cwd, filePath);
@@ -29,12 +24,8 @@ function countLines(str: string): number {
   return str.split("\n").length;
 }
 
-// A styled text chunk with optional color/dim for row-splitting.
 type StyledChunk = { text: string; color?: string; dimColor?: boolean };
 
-// Split styled chunks into rows of exactly `cols` characters, padding the last row.
-// Continuation rows start with a blank indent of `contIndent` characters
-// (matching Codex's empty-gutter + 2-space continuation, diff_render.rs:922-929).
 function buildPaddedRows(
   chunks: StyledChunk[],
   cols: number,
@@ -59,7 +50,6 @@ function buildPaddedRows(
           dimColor: chunk.dimColor,
         });
         rows.push(row);
-        // Start continuation row with blank gutter indent
         row = [{ text: " ".repeat(contIndent) }];
         len = contIndent;
         rem = rem.slice(space);
@@ -71,7 +61,6 @@ function buildPaddedRows(
   return rows;
 }
 
-// Render a single diff line split into full-width rows.
 interface DiffLineProps {
   lineNumber: number;
   type: "add" | "remove";
@@ -95,13 +84,12 @@ function DiffLine({
     type === "add" ? colors.diff.addedLineBg : colors.diff.removedLineBg;
   const prefix = type === "add" ? "+" : "-";
 
-  // Build styled chunks for the full line.
   const indent = "    ";
   const numStr = showLineNumbers ? `${lineNumber} ` : "";
   const chunks: StyledChunk[] = [{ text: indent }];
   if (showLineNumbers) chunks.push({ text: numStr, dimColor: true });
   chunks.push({ text: prefix, color: symbolColor });
-  chunks.push({ text: "  " }); // gap after sign
+  chunks.push({ text: "  " });
   if (syntaxSpans && syntaxSpans.length > 0) {
     for (const span of syntaxSpans) {
       chunks.push({ text: span.text, color: span.color });
@@ -110,7 +98,6 @@ function DiffLine({
     chunks.push({ text: content });
   }
 
-  // Continuation indent = indent + lineNum + sign + gap (blank, same width)
   const contIndent = indent.length + numStr.length + 1 + 2;
   const rows = buildPaddedRows(chunks, columns, contIndent);
 
@@ -142,7 +129,7 @@ export function WriteRenderer({ filePath, content }: WriteRendererProps) {
   const lines = content.split("\n");
   const lineCount = lines.length;
 
-  const gutterWidth = 4; // "    " indent to align with tool return prefix
+  const gutterWidth = 4;
   const contentWidth = Math.max(0, columns - gutterWidth);
 
   return (
@@ -179,7 +166,7 @@ interface EditRendererProps {
   filePath: string;
   oldString: string;
   newString: string;
-  showLineNumbers?: boolean; // Whether to show line numbers (default true)
+  showLineNumbers?: boolean;
 }
 
 export function EditRenderer({
@@ -196,7 +183,6 @@ export function EditRenderer({
   const additions = newLines.length;
   const removals = oldLines.length;
 
-  // Highlight old and new blocks separately for syntax coloring.
   const lang = languageFromPath(filePath);
   const oldHighlighted = lang ? highlightCode(oldString, lang) : undefined;
   const newHighlighted = lang ? highlightCode(newString, lang) : undefined;
@@ -257,7 +243,7 @@ interface MultiEditRendererProps {
     old_string: string;
     new_string: string;
   }>;
-  showLineNumbers?: boolean; // Whether to show line numbers (default true)
+  showLineNumbers?: boolean;
 }
 
 export function MultiEditRenderer({

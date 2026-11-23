@@ -36,8 +36,6 @@ describe("conversation runtime eviction and worktree watcher idle stop", () => {
 
     expect(evictConversationRuntimeIfIdle(runtime)).toBe(true);
 
-    // Watchers track worktree changes between turns for attached clients, so
-    // routine post-turn eviction must not stop them immediately.
     expect(wasAborted()).toBe(false);
     expect(listener.worktreeWatcherByConversation.has(scopeKey)).toBe(true);
     expect(__watcherIdleStopTestUtils.hasPending(listener, scopeKey)).toBe(
@@ -63,7 +61,6 @@ describe("conversation runtime eviction and worktree watcher idle stop", () => {
       true,
     );
 
-    // Conversation becomes active again before the TTL elapses.
     createConversationRuntime(listener, AGENT_ID, CONVERSATION_ID);
     expect(__watcherIdleStopTestUtils.hasPending(listener, scopeKey)).toBe(
       false,
@@ -84,7 +81,6 @@ describe("conversation runtime eviction and worktree watcher idle stop", () => {
     );
     expect(evictConversationRuntimeIfIdle(runtime)).toBe(true);
 
-    // A CWD change replaces the watcher after eviction was scheduled.
     const replacementAbort = new AbortController();
     listener.worktreeWatcherByConversation.set(scopeKey, {
       abort: replacementAbort,

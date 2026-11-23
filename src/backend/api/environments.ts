@@ -9,11 +9,8 @@ export interface EnvironmentMetadata {
   workingDirectory?: string;
   gitBranch?: string;
   supported_commands?: string[];
-  /** Accepts `launch_subagent` with `notify: "caller"`. */
   launch_subagent_notify_caller?: boolean;
-  /** Prepares external-worker fork history on the destination filesystem. */
   external_fork_context?: boolean;
-  /** Supports steering and stopping remote external subagents. */
   subagent_message?: boolean;
   [key: string]: unknown;
 }
@@ -175,7 +172,6 @@ export async function resolveDesktopEnvironmentConnectionId(
   return { connectionId: environment.connectionId, environment };
 }
 
-/** Whether a computer selector names this environment by connection id, id, device id, or name. */
 export function environmentMatchesSelector(
   environment: EnvironmentConnection,
   selector: string,
@@ -243,8 +239,6 @@ export async function resolveEnvironmentConnectionId(
     );
   }
 
-  // Multiple listeners for one device are not multiple computers. Match the
-  // picker by preferring the online listener with the most recent activity.
   onlineMatches.sort(
     (a, b) =>
       Math.max(b.lastHeartbeat ?? 0, b.lastSeenAt) -
@@ -338,10 +332,6 @@ export function getTeleportStatus(
   );
 }
 
-/**
- * Submit a teleport request to Cloud. Returns immediately after the 202
- * acceptance — the harness owns polling/yield after this returns.
- */
 export async function teleportToEnvironment(
   agentId: string,
   conversationId: string,

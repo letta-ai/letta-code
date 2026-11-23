@@ -594,7 +594,6 @@ describe("discord channel registry", () => {
     expect(deliveries).toHaveLength(1);
   });
 
-  // Open DMs auto-route; paired DMs resolve their route in the generic fallthrough.
   test.each([
     ["open", []],
     ["pairing", ["user-1"]],
@@ -833,18 +832,12 @@ describe("discord channel registry", () => {
     );
   });
 
-  // ── Delivery-time gate (allowed_channels re-check) ─────────────
-
   test("delivery-time gate passes thread-on-mention with correct parentChannelId", async () => {
-    // Simulates a mention in guild-channel "alpha" where the adapter
-    // creates a thread and sets parentChannelId to the guild channel.
-    // The delivery-time gate should resolve alpha → allowed.
     const { ChannelRegistry } = await import("@/channels/registry");
     const registry = new ChannelRegistry();
     const adapter = createAdapter();
     registry.registerAdapter(adapter);
 
-    // Override account with allowedChannels that includes the guild channel
     __testOverrideLoadChannelAccounts(() => [
       {
         channel: "discord",
@@ -867,12 +860,6 @@ describe("discord channel registry", () => {
     });
     registry.setReady();
 
-    // This is what the adapter sends after creating a thread for
-    // a mention in guild channel "alpha":
-    //   chatId = thread ID
-    //   threadId = thread ID (both same — "thread-1")
-    //   parentChannelId = "alpha" (the original guild channel)
-    //   isMention = true
     await adapter.onMessage?.(
       createInboundMessage({
         chatId: "thread-1",
@@ -884,7 +871,6 @@ describe("discord channel registry", () => {
       }),
     );
 
-    // Route should be created and message delivered
     expect(createConversation).toHaveBeenCalledTimes(1);
     expect(
       getRoute("discord", "thread-1", "discord-bot", "thread-1"),
@@ -893,7 +879,6 @@ describe("discord channel registry", () => {
   });
 
   test("delivery-time gate blocks thread-on-mention when parent channel is not allowed", async () => {
-    // Same as above but the guild channel is NOT in allowedChannels.
     const { ChannelRegistry } = await import("@/channels/registry");
     const registry = new ChannelRegistry();
     const adapter = createAdapter();
@@ -921,7 +906,6 @@ describe("discord channel registry", () => {
     });
     registry.setReady();
 
-    // Guild channel "blocked-channel" is not in allowedChannels
     await adapter.onMessage?.(
       createInboundMessage({
         chatId: "thread-2",
@@ -933,8 +917,6 @@ describe("discord channel registry", () => {
       }),
     );
 
-    // Route should still be created (ensureDiscordRoute happens before
-    // the gate check), but the message should NOT be delivered
     expect(createConversation).toHaveBeenCalledTimes(1);
     expect(
       getRoute("discord", "thread-2", "discord-bot", "thread-2"),
@@ -943,13 +925,11 @@ describe("discord channel registry", () => {
   });
 
   test("delivery-time gate passes thread-on-mention when allowedChannels is not configured", async () => {
-    // When allowedChannels is not configured, the gate is skipped.
     const { ChannelRegistry } = await import("@/channels/registry");
     const registry = new ChannelRegistry();
     const adapter = createAdapter();
     registry.registerAdapter(adapter);
 
-    // Restore default account (no allowedChannels)
     __testOverrideLoadChannelAccounts(() => [
       {
         channel: "discord",

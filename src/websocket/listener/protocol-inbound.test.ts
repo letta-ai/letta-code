@@ -548,7 +548,6 @@ describe("agent/conversation management protocol-inbound validators", () => {
       },
       external_tools: [
         {
-          // Deprecated and ignored; still accepted from older controllers.
           scope_id: "scope-1",
           tools: [
             {

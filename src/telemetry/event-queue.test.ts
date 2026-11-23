@@ -33,7 +33,6 @@ describe("TelemetryEventQueueCap", () => {
     );
     expect(cap.enforce(queue)).toBe(overflow);
     expect(queue).toHaveLength(MAX_QUEUED_EVENTS);
-    // Oldest events (lowest indices) are dropped; order of the rest is kept.
     expect(queue[0]).toBe(overflow);
     expect(queue[queue.length - 1]).toBe(MAX_QUEUED_EVENTS + overflow - 1);
   });
@@ -47,16 +46,13 @@ describe("TelemetryEventQueueCap", () => {
       const overflowing = () =>
         new Array<number>(MAX_QUEUED_EVENTS + 1).fill(0);
 
-      // First overflow logs immediately.
       cap.enforce(overflowing(), t0);
       expect(errorSpy).toHaveBeenCalledTimes(1);
 
-      // Further overflows within the interval stay silent.
       cap.enforce(overflowing(), t0 + 1);
       cap.enforce(overflowing(), t0 + 30_000);
       expect(errorSpy).toHaveBeenCalledTimes(1);
 
-      // After the interval the next overflow logs again.
       cap.enforce(overflowing(), t0 + 120_000);
       expect(errorSpy).toHaveBeenCalledTimes(2);
     } finally {
