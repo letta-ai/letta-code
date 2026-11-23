@@ -157,6 +157,7 @@ function collectAmbientSecretValues(): AmbientSecretValue[] {
   };
 
   add("LETTA_API_KEY", process.env.LETTA_API_KEY);
+  add("LETTA_TRANSCRIBE_API_KEY", process.env.LETTA_TRANSCRIBE_API_KEY);
   try {
     add("LETTA_API_KEY", settingsManager.getSettings().env?.LETTA_API_KEY);
   } catch {}

@@ -86,7 +86,7 @@ export async function runSlackSetup(): Promise<boolean> {
     }
 
     const transcriptionInput = await rl.question(
-      "Auto-transcribe inbound Slack audio attachments when OPENAI_API_KEY is set? [y/N]: ",
+      "Auto-transcribe inbound Slack audio attachments when transcription is configured? [y/N]: ",
     );
     const transcribeVoice = /^(y|yes)$/i.test(transcriptionInput.trim());
 

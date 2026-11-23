@@ -697,10 +697,10 @@ export async function runSignalSetup(): Promise<boolean> {
     }
 
     console.log(
-      "\nVoice transcription requires OPENAI_API_KEY. Some Signal voice notes arrive as raw .aac and require ffmpeg on the listener machine.",
+      "\nVoice transcription is configured with LETTA_TRANSCRIBE_* variables. Some Signal voice notes arrive as raw .aac and require ffmpeg on the listener machine.",
     );
     const transcriptionInput = await rl.question(
-      "Auto-transcribe Signal audio when OPENAI_API_KEY is set? [y/N]: ",
+      "Auto-transcribe Signal audio when transcription is configured? [y/N]: ",
     );
     const transcribeVoice = parseYesNo(transcriptionInput, false);
 

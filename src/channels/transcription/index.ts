@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
+import { resolveTranscriptionConfig } from "./config";
 
 export interface TranscriptionResult {
   success: boolean;
@@ -9,9 +10,6 @@ export interface TranscriptionResult {
   error?: string;
 }
 
-const OPENAI_TRANSCRIPTION_API_URL =
-  "https://api.openai.com/v1/audio/transcriptions";
-const OPENAI_TRANSCRIPTION_MODEL = "gpt-4o-transcribe";
 const TRANSCRIPTION_TIMEOUT_MS = 30_000;
 
 const OPENAI_SUPPORTED_AUDIO_EXTENSIONS = new Set([
@@ -90,20 +88,19 @@ function prepareOpenAiTranscriptionFile(localPath: string): {
   };
 }
 
+export function getTranscriptionConfigError(): string | undefined {
+  return resolveTranscriptionConfig().error;
+}
+
 export function isTranscriptionConfigured(): boolean {
-  return !!process.env.OPENAI_API_KEY;
+  return getTranscriptionConfigError() === undefined;
 }
 
 export async function transcribeAudioFile(
   localPath: string,
 ): Promise<TranscriptionResult> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    return {
-      success: false,
-      error: "OPENAI_API_KEY not set; transcription skipped.",
-    };
-  }
+  const { config, error } = resolveTranscriptionConfig();
+  if (!config) return { success: false, error };
 
   try {
     const prepared = prepareOpenAiTranscriptionFile(localPath);
@@ -116,7 +113,7 @@ export async function transcribeAudioFile(
         type: audioMimeTypeForPath(prepared.localPath),
       });
       formData.append("file", blob, filename);
-      formData.append("model", OPENAI_TRANSCRIPTION_MODEL);
+      formData.append("model", config.model);
 
       const controller = new AbortController();
       const timeout = setTimeout(
@@ -125,23 +122,49 @@ export async function transcribeAudioFile(
       );
 
       try {
-        const response = await fetch(OPENAI_TRANSCRIPTION_API_URL, {
+        const response = await fetch(config.endpoint, {
           method: "POST",
-          headers: { Authorization: `Bearer ${apiKey}` },
+          headers: config.apiKey
+            ? { Authorization: `Bearer ${config.apiKey}` }
+            : {},
           body: formData,
+          redirect: "manual",
           signal: controller.signal,
         });
 
-        if (!response.ok) {
-          const errorText = await response.text();
+        if (
+          response.redirected ||
+          (response.status >= 300 && response.status < 400)
+        ) {
+          void response.body?.cancel().catch(() => {});
           return {
             success: false,
-            error: `OpenAI transcription API error (${response.status}): ${errorText}`,
+            error: `Transcription API returned a redirect (${response.status}). Configure the final API base URL.`,
+          };
+        }
+        if (!response.ok) {
+          void response.body?.cancel().catch(() => {});
+          return {
+            success: false,
+            error: `Transcription API error (${response.status}).`,
           };
         }
 
-        const data = (await response.json()) as { text: string };
+        const data = (await response.json()) as { text?: unknown } | null;
+        if (typeof data?.text !== "string") {
+          return {
+            success: false,
+            error: "Transcription response did not contain transcript text.",
+          };
+        }
         return { success: true, text: data.text };
+      } catch {
+        return {
+          success: false,
+          error: controller.signal.aborted
+            ? "Transcription request timed out after 30 seconds."
+            : "Transcription request failed. Check the API endpoint and response.",
+        };
       } finally {
         clearTimeout(timeout);
       }

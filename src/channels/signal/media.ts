@@ -504,12 +504,12 @@ export async function transcribeSignalInboundAttachments(
       }
 
       const next = { ...attachment };
-      const { isTranscriptionConfigured, transcribeAudioFile } = await import(
+      const { getTranscriptionConfigError, transcribeAudioFile } = await import(
         "@/channels/transcription/index"
       );
-      if (!isTranscriptionConfigured()) {
-        next.transcriptionError =
-          "OPENAI_API_KEY not set; transcription skipped.";
+      const configError = getTranscriptionConfigError();
+      if (configError) {
+        next.transcriptionError = configError;
         changed = true;
         return next;
       }

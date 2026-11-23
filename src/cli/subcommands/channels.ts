@@ -89,8 +89,13 @@ Signal notes:
   - self_chat_mode is the safe personal-number mode: only Note to Self/self
     messages route, and outbound sends to non-self Signal targets are rejected.
   - Signal account config supports download_media, media_max_bytes, and
-    transcribe_voice. Voice transcription requires OPENAI_API_KEY; unsupported
-    audio formats such as raw .aac are converted with ffmpeg when available.
+    transcribe_voice. Some audio formats such as raw .aac may need ffmpeg.
+
+Voice transcription:
+  Enable transcribe_voice on the channel account and set LETTA_TRANSCRIBE_PROVIDER,
+  LETTA_TRANSCRIBE_API_KEY, LETTA_TRANSCRIBE_BASE_URL, or LETTA_TRANSCRIBE_MODEL as
+  needed in the listener environment. The default is OpenAI, which also accepts
+  OPENAI_API_KEY. For a local server, choose openai-compatible and set its base URL.
 
 Headless deploy flow:
   letta server --channels telegram --install-channel-runtimes

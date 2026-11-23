@@ -308,6 +308,7 @@ export function getShellEnv(): NodeJS.ProcessEnv {
     getRuntimeContext()?.executionSettings,
   );
   const env = { ...executionEnv };
+  delete env.LETTA_TRANSCRIBE_API_KEY;
   const sessionAccessToken = peekOrgAccessToken() ?? getDesktopAccessToken();
   if (sessionAccessToken) env.LETTA_API_KEY = sessionAccessToken;
   const pathKey =

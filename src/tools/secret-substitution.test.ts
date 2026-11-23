@@ -325,6 +325,31 @@ describe("ambient runtime credential redaction", () => {
     expect(Object.values(ambient)).toContain(AMBIENT_SENTINEL);
   });
 
+  test("ambient redaction also covers the listener transcription key", () => {
+    const transcribeSentinel =
+      "sk-lettatest-TRANSCRIBE-SENTINEL-credential-0123456789abcdef";
+    const originalTranscribeKey = process.env.LETTA_TRANSCRIBE_API_KEY;
+    process.env.LETTA_TRANSCRIBE_API_KEY = transcribeSentinel;
+
+    try {
+      const ambient = getAmbientRedactionSecrets();
+      expect(ambient.LETTA_TRANSCRIBE_API_KEY).toBe(transcribeSentinel);
+
+      const scrubbed = scrubSecretsFromString(
+        `prefix ${transcribeSentinel} suffix`,
+        {},
+      );
+      expect(scrubbed).not.toContain(transcribeSentinel);
+      expect(scrubbed).toContain("LETTA_TRANSCRIBE_API_KEY=<REDACTED>");
+    } finally {
+      if (originalTranscribeKey === undefined) {
+        delete process.env.LETTA_TRANSCRIBE_API_KEY;
+      } else {
+        process.env.LETTA_TRANSCRIBE_API_KEY = originalTranscribeKey;
+      }
+    }
+  });
+
   test("scrubs the ambient runtime key with no invocation secrets", () => {
     const scrubbed = scrubSecretsFromString(
       `prefix ${AMBIENT_SENTINEL} suffix`,

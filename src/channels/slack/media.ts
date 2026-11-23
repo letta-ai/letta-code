@@ -284,10 +284,13 @@ export async function materializeSlackAttachment(params: {
   };
 
   if (kind === "audio" && params.transcribeVoice) {
-    const { isTranscriptionConfigured, transcribeAudioFile } = await import(
+    const { getTranscriptionConfigError, transcribeAudioFile } = await import(
       "@/channels/transcription/index"
     );
-    if (isTranscriptionConfigured()) {
+    const configError = getTranscriptionConfigError();
+    if (configError) {
+      attachment.transcriptionError = configError;
+    } else {
       const result = await transcribeAudioFile(saved.localPath);
       if (result.success && result.text) {
         attachment.transcription = result.text;
@@ -298,9 +301,6 @@ export async function materializeSlackAttachment(params: {
           result.error,
         );
       }
-    } else {
-      attachment.transcriptionError =
-        "OPENAI_API_KEY not set; transcription skipped.";
     }
   }
 

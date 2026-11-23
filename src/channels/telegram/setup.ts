@@ -74,7 +74,7 @@ export async function runTelegramSetup(): Promise<boolean> {
     }
 
     const transcriptionInput = await rl.question(
-      "Auto-transcribe voice memos when OPENAI_API_KEY is set? [y/N]: ",
+      "Auto-transcribe voice memos when transcription is configured? [y/N]: ",
     );
     const transcribeVoice = /^(y|yes)$/i.test(transcriptionInput.trim());
 
