@@ -23,7 +23,6 @@ function creditsRow(status: ChatGPTResetCreditsStatus | undefined): string {
   return formatResetCreditsSummary(status.credits);
 }
 
-/** Usage windows plus banked reset inventory under one ChatGPT account row. */
 export function ChatGPTAccountUsage({
   usage,
   credits,

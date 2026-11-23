@@ -22,8 +22,6 @@ import {
   getRoute,
 } from "@/channels/routing";
 
-// Helper to add a Discord guild channel route to the in-memory store,
-// mimicking routes created by the Discord adapter.
 function addDiscordRoute(overrides: {
   chatId: string;
   threadId?: string | null;
@@ -66,7 +64,6 @@ describe("Discord route reconciliation", () => {
   beforeEach(() => {
     resetState();
 
-    // Default: Discord bot with allowed_channels configured
     __testOverrideLoadChannelAccounts(() => [
       {
         channel: "discord",
@@ -88,7 +85,6 @@ describe("Discord route reconciliation", () => {
   });
 
   afterEach(async () => {
-    // Clean up the ChannelRegistry singleton if one was created
     const { getChannelRegistry } = await import("@/channels/registry");
     const registry = getChannelRegistry();
     if (registry) {
@@ -101,11 +97,9 @@ describe("Discord route reconciliation", () => {
     mock.restore();
   });
 
-  // ── Dry-run tests ─────────────────────────────────────────────
-
   test("dry-run: detects stale route not in allowed_channels", async () => {
-    addDiscordRoute({ chatId: "channel-alpha" }); // allowed
-    addDiscordRoute({ chatId: "channel-gamma" }); // NOT allowed
+    addDiscordRoute({ chatId: "channel-alpha" });
+    addDiscordRoute({ chatId: "channel-gamma" });
 
     const { reconcileRoutesForChannel } = await import("@/channels/reconcile");
     const result = reconcileRoutesForChannel("discord", "discord-bot");
@@ -135,7 +129,6 @@ describe("Discord route reconciliation", () => {
   });
 
   test("dry-run: no stale routes when allowed_channels is empty (all channels allowed)", async () => {
-    // Override account to have empty allowedChannels
     clearChannelAccountStores();
     __testOverrideLoadChannelAccounts(() => [
       {
@@ -164,7 +157,6 @@ describe("Discord route reconciliation", () => {
   });
 
   test("dry-run: ignores DM routes", async () => {
-    // Add a direct DM route (chatType: "direct") — should be skipped
     addRoute("discord", {
       accountId: "discord-bot",
       chatId: "dm-user-1",
@@ -175,19 +167,16 @@ describe("Discord route reconciliation", () => {
       enabled: true,
       createdAt: "2026-05-01T00:00:00.000Z",
     });
-    // Add a guild channel route that IS allowed — should not be stale
     addDiscordRoute({ chatId: "channel-alpha" });
 
     const { reconcileRoutesForChannel } = await import("@/channels/reconcile");
     const result = reconcileRoutesForChannel("discord", "discord-bot");
 
     expect(result.totalRoutesChecked).toBe(2);
-    // DM route is skipped; channel-alpha is allowed → no stale routes
     expect(result.staleRoutes).toHaveLength(0);
   });
 
   test("dry-run: reports thread routes as indeterminate", async () => {
-    // A thread route: chatId = thread ID, threadId = same ID
     addDiscordRoute({
       chatId: "thread-1",
       threadId: "thread-1",
@@ -209,7 +198,6 @@ describe("Discord route reconciliation", () => {
     addDiscordRoute({ chatId: "channel-alpha" });
     addDiscordRoute({ chatId: "channel-gamma" });
 
-    // Reset save spy after route setup
     const saveCalled: string[] = [];
     __testOverrideSaveRoutes((channelId) => {
       saveCalled.push(channelId);
@@ -218,11 +206,8 @@ describe("Discord route reconciliation", () => {
     const { reconcileRoutesForChannel } = await import("@/channels/reconcile");
     reconcileRoutesForChannel("discord", "discord-bot");
 
-    // Dry-run should NOT call saveRoutes
     expect(saveCalled).toHaveLength(0);
   });
-
-  // ── Removal gating tests ──────────────────────────────────────
 
   test("--apply with remove_stale_routes=false: stale route remains, policy gate logged", async () => {
     addDiscordRoute({ chatId: "channel-alpha" });
@@ -240,14 +225,12 @@ describe("Discord route reconciliation", () => {
     expect(result.skippedByPolicy[0]?.route.chatId).toBe("channel-gamma");
     expect(result.policyGateReason).toContain("remove_stale_routes is false");
 
-    // Route should still exist
     expect(
       getRoute("discord", "channel-gamma", "discord-bot", null),
     ).not.toBeNull();
   });
 
   test("--apply with remove_stale_routes=true: stale route removed", async () => {
-    // Override account to have removeStaleRoutes=true
     clearChannelAccountStores();
     __testOverrideLoadChannelAccounts(() => [
       {
@@ -281,12 +264,10 @@ describe("Discord route reconciliation", () => {
     expect(result.removedRoutes[0]?.chatId).toBe("channel-gamma");
     expect(result.skippedByPolicy).toHaveLength(0);
 
-    // Allowed route should remain
     expect(
       getRoute("discord", "channel-alpha", "discord-bot", null),
     ).not.toBeNull();
 
-    // Stale route should be removed
     expect(
       getRoute("discord", "channel-gamma", "discord-bot", null),
     ).toBeNull();
@@ -312,19 +293,17 @@ describe("Discord route reconciliation", () => {
     ]);
 
     addDiscordRoute({ chatId: "channel-alpha" });
-    addDiscordRoute({ chatId: "channel-beta" }); // NOT in allowed_channels -> stale
+    addDiscordRoute({ chatId: "channel-beta" });
 
     const { reconcileRoutesForChannel } = await import("@/channels/reconcile");
     const result = reconcileRoutesForChannel("discord", "discord-bot", {
       apply: true,
     });
 
-    // channel-alpha should be preserved
     expect(
       getRoute("discord", "channel-alpha", "discord-bot", null),
     ).not.toBeNull();
 
-    // channel-beta should be removed
     expect(getRoute("discord", "channel-beta", "discord-bot", null)).toBeNull();
 
     expect(result.removedRoutes).toHaveLength(1);
@@ -347,8 +326,6 @@ describe("Discord route reconciliation", () => {
     expect(result.policyGateReason).toBeNull();
   });
 
-  // ── Mode map tests ───────────────────────────────────────────
-
   test("works with mode map (Record) format for allowed_channels", async () => {
     clearChannelAccountStores();
     __testOverrideLoadChannelAccounts(() => [
@@ -370,8 +347,8 @@ describe("Discord route reconciliation", () => {
       },
     ]);
 
-    addDiscordRoute({ chatId: "channel-alpha" }); // in mode map
-    addDiscordRoute({ chatId: "channel-gamma" }); // NOT in mode map
+    addDiscordRoute({ chatId: "channel-alpha" });
+    addDiscordRoute({ chatId: "channel-gamma" });
 
     const { reconcileRoutesForChannel } = await import("@/channels/reconcile");
     const result = reconcileRoutesForChannel("discord", "discord-bot");
@@ -409,16 +386,12 @@ describe("Discord route reconciliation", () => {
     expect(result.staleRoutes).toHaveLength(0);
   });
 
-  // ── Thread parent resolution test ────────────────────────────
-
   test("thread stale detection: thread routes flagged as indeterminate, parent channel route checked directly", async () => {
-    // Non-thread route in a channel that IS in allowed_channels
     addDiscordRoute({
       chatId: "channel-alpha",
       threadId: null,
     });
 
-    // Thread route — parent channel is unknown
     addDiscordRoute({
       chatId: "thread-of-gamma",
       threadId: "thread-of-gamma",
@@ -429,13 +402,11 @@ describe("Discord route reconciliation", () => {
 
     expect(result.totalRoutesChecked).toBe(2);
 
-    // channel-alpha IS in allowedChannels — not stale
     const nonThreadStale = result.staleRoutes.find(
       (r) => r.route.chatId === "channel-alpha",
     );
     expect(nonThreadStale).toBeUndefined();
 
-    // Thread route is indeterminate
     const threadStale = result.staleRoutes.find(
       (r) => r.route.chatId === "thread-of-gamma",
     );
@@ -443,8 +414,6 @@ describe("Discord route reconciliation", () => {
     expect(threadStale?.canResolve).toBe(false);
     expect(threadStale?.reason).toContain("parent channel ID is not stored");
   });
-
-  // ── Log assertions ───────────────────────────────────────────
 
   test("blocked-delivery debug diagnostics contain key identifiers and reason", async () => {
     const debug = process.env.LETTA_DEBUG;
@@ -457,11 +426,9 @@ describe("Discord route reconciliation", () => {
     try {
       const { ChannelRegistry } = await import("@/channels/registry");
 
-      // Import inline to reset state
       clearChannelAccountStores();
       clearAllRoutes();
 
-      // Set up account with allowed_channels that excludes the test channel
       __testOverrideLoadChannelAccounts(() => [
         {
           channel: "discord",
@@ -478,10 +445,6 @@ describe("Discord route reconciliation", () => {
         },
       ]);
 
-      // Pre-add a route for the disallowed channel to simulate the case
-      // where a route was created when the channel was allowed, then the
-      // allowed_channels config changed. ensureDiscordRoute finds the
-      // existing route, then the delivery-time gate fires.
       addRoute("discord", {
         accountId: "discord-bot",
         chatId: "channel-gamma",
@@ -509,7 +472,6 @@ describe("Discord route reconciliation", () => {
       registry.registerAdapter(adapter);
       registry.setReady();
 
-      // Send a message from a disallowed guild channel (non-thread)
       await adapter.onMessage?.({
         channel: "discord",
         accountId: "discord-bot",
@@ -524,7 +486,6 @@ describe("Discord route reconciliation", () => {
         isMention: false,
       });
 
-      // The existing route reaches the delivery-time gate, which logs to stderr.
       expect(stdoutSpy).not.toHaveBeenCalled();
       const logCall = logSpy.mock.calls.find(
         (call: unknown[]) =>

@@ -61,7 +61,6 @@ describe("workflow execution registry", () => {
       durationMs: 1500,
       totalTokens: 12_000,
     });
-    // An agent outside any phase() gets its own group.
     recordWorkflowProgress("workflow_1", {
       kind: "agent",
       callIndex: 2,
@@ -110,7 +109,6 @@ describe("workflow execution registry", () => {
     running(0, 1_000);
     running(1, 400);
     expect(getWorkflowExecution("workflow_1")?.totalTokens).toBe(1_400);
-    // Cumulative per agent: the newer figure replaces, never adds to, the old.
     running(0, 2_500);
     expect(getWorkflowExecution("workflow_1")?.totalTokens).toBe(2_900);
     recordWorkflowProgress("workflow_1", {
@@ -121,7 +119,6 @@ describe("workflow execution registry", () => {
       status: "done",
       totalTokens: 3_000,
     });
-    // A terminal event without a figure keeps the last one seen.
     recordWorkflowProgress("workflow_1", {
       kind: "agent",
       callIndex: 1,
@@ -211,7 +208,6 @@ describe("workflow execution registry", () => {
       });
     }
     finishWorkflowExecution("workflow_1", { status: "completed" });
-    // Synchronous burst: nothing has been published yet, but reads are live.
     expect(calls).toBe(0);
     expect(getWorkflowExecution("workflow_1")?.agentsTotal).toBe(40);
     await Bun.sleep(5);

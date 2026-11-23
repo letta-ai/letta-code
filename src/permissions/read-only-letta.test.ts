@@ -24,7 +24,6 @@ describe("letta CLI commands", () => {
   });
 
   test("blocks unknown letta memory action", () => {
-    // restore/backup/pull/diff mutate state — not in read-only allowlist
     expect(isReadOnlyShellCommand("letta memory restore")).toBe(false);
     expect(isReadOnlyShellCommand("letta memory pull")).toBe(false);
     expect(isReadOnlyShellCommand("letta memory delete")).toBe(false);

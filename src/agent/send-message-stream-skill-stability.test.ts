@@ -33,7 +33,6 @@ async function setup() {
   await mkdir(skillsDirectory);
   const bodies: MessageCreateParams[] = [];
   let nextChunks: Array<Record<string, unknown>> = [];
-  // Capture the backend boundary; skill discovery and file parsing are real.
   const backend = {
     createConversationMessageStream: async (
       _conversationId: string,
@@ -65,7 +64,6 @@ async function setup() {
   const send = async (conversationId = "conv-stable") => {
     const stream = await open(conversationId);
     for await (const _chunk of stream) {
-      /* drain */
     }
     const body = bodies.at(-1);
     if (!body) throw new Error("No request recorded");
@@ -148,7 +146,6 @@ describe("client_skills prefix stability", () => {
       const next = await send();
       expect(next.clientSkills).toBe(first.clientSkills);
       expect(next.reminder).toBeNull();
-      // Another conversation starts from the current full catalog.
       const other = await send("conv-other");
       expect(other.names).toEqual(["alpha", "charlie"]);
       expect(other.reminder).toBeNull();
@@ -198,8 +195,6 @@ describe("client_skills prefix stability", () => {
         current: ["alpha", "bravo", "charlie"],
       });
       expect(changed.reminder).toContain("Sharper alpha");
-      // The next delta is diffed against what was announced, not the frozen
-      // list, so earlier changes are not repeated.
       await rm(join(skillsDirectory, "bravo"), { recursive: true });
       const removed = await send();
       expect(parseSkillDeltaReminder(removed.reminder)).toEqual({
@@ -220,7 +215,6 @@ describe("client_skills prefix stability", () => {
       await send("conv-compacted");
       await send("conv-untouched");
       await writeSkill(skillsDirectory, "charlie");
-      // What a backend reports after a manual compact request succeeds.
       notifyConversationCompacted({
         backend,
         conversationId: "conv-compacted",
@@ -269,13 +263,10 @@ describe("client_skills prefix stability", () => {
       await send();
       await writeSkill(skillsDirectory, "charlie");
       streamNext([{ message_type: "summary_message", summary: "late" }]);
-      // Accept the request but drain its stream only after a newer send.
       const stale = await open();
       const newer = await send();
       for await (const _chunk of stale) {
-        /* late summary arrives here */
       }
-      // The stale request already delivered the charlie delta.
       expect(newer.reminder).toBeNull();
       const after = await send();
       expect(after.names).toEqual(["alpha"]);

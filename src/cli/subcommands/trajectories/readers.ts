@@ -2,21 +2,6 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { TrajectoryListing } from "@letta-ai/trajectory";
 
-/**
- * Turn a `listTrajectories()` item into the transcript string that
- * `normalizeTranscript()` expects. Discovery itself lives in the trajectory
- * package; this is the one remaining per-store-shape step, keyed by what the
- * item's `path` points at rather than by source name so future sources with a
- * familiar shape work without changes here:
- *
- * - a transcript file (claude-code, codex, letta-code, openclaw): read it
- * - a session event directory (openhands): assemble the JSON event array
- * - a SQLite store (hermes): export the session's rows as the documented
- *   `{session, messages}` envelope
- *
- * The checkpoint-backed `deepagents` source never comes through here — its
- * sessions normalize via `normalizeCheckpoint` directly.
- */
 export async function loadSessionTranscript(
   item: TrajectoryListing,
 ): Promise<string> {
@@ -30,10 +15,6 @@ export async function loadSessionTranscript(
   return readFile(item.path, "utf-8");
 }
 
-/**
- * OpenHands-style store: one JSON file per event, ordered by numeric filename,
- * either directly in the session directory or in an `events/` subdirectory.
- */
 async function assembleEventDirectory(sessionDir: string): Promise<string> {
   const eventsSubdir = join(sessionDir, "events");
   const eventsDir = (await stat(eventsSubdir).catch(() => null))?.isDirectory()
@@ -62,12 +43,6 @@ interface ReadOnlyDatabase {
   close(): void;
 }
 
-/**
- * Open a SQLite database read-only on whichever runtime is available:
- * `node:sqlite` (Node 22.5+) or `bun:sqlite`. The specifier is passed through
- * a variable so bundlers keep the import dynamic instead of resolving it at
- * build time.
- */
 async function openReadOnlyDatabase(path: string): Promise<ReadOnlyDatabase> {
   const dynamicImport = (specifier: string) => import(specifier);
   try {
@@ -93,11 +68,6 @@ async function openReadOnlyDatabase(path: string): Promise<ReadOnlyDatabase> {
   };
 }
 
-/**
- * Export one Hermes session from its SQLite store as the envelope the hermes
- * adapter documents: `{"session": <sessions row>, "messages": [<message rows
- * for the session, ordered by id>]}`.
- */
 async function exportHermesSession(
   storePath: string,
   sessionId: string,

@@ -23,8 +23,6 @@ test("removing the installation link after a reader lists it retries the live ow
         if (!stableName) throw new Error("Missing published lock owner");
         let clock = 0;
         try {
-          // Pause publication with both real hard links present, then remove
-          // the temporary link after the contender has listed both names.
           expect(() =>
             acquireDurableFileLock(path, {
               waitMs: 50,

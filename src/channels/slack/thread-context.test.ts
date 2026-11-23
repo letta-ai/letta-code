@@ -136,8 +136,6 @@ test("slack adapter rehydrates bot-authored Slack thread context on existing rou
 
   await adapter.start();
 
-  // Incremental bot filtering happens inside resolveSlackThreadHistory, so the
-  // mock models the already-filtered result.
   resolveSlackThreadHistoryMock.mockResolvedValueOnce([
     {
       text: "Automated deployment note since the last human turn",

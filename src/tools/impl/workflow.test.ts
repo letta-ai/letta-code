@@ -42,7 +42,6 @@ import {
   workflow,
 } from "./workflow";
 
-/** Progress lines written to a workflow's output file so far. */
 function progressLineCount(outputFile: string | undefined): number {
   if (!outputFile) return 0;
   return readFileSync(outputFile, "utf8").split("\n").filter(Boolean).length;
@@ -122,7 +121,6 @@ describe("Workflow tool (background launch)", () => {
     }));
   }
 
-  /** Agents that finish only once the test calls releaseAgents(). */
   function gatedSpawner(): SubagentSpawner {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
@@ -157,7 +155,6 @@ describe("Workflow tool (background launch)", () => {
     previousHome = process.env.HOME;
     scratchpad = mkdtempSync(join(tmpdir(), "workflow-tool-test-"));
     process.env.LETTA_SCRATCHPAD = scratchpad;
-    // Executions journal under ~/.letta; keep the test's out of the real home.
     process.env.HOME = scratchpad;
     queuedMessages = [];
     releaseAgents = null;
@@ -172,9 +169,7 @@ describe("Workflow tool (background launch)", () => {
       processState.completionNotificationSuppressed = true;
       try {
         processState.process.kill("SIGKILL");
-      } catch {
-        // Already finished.
-      }
+      } catch {}
     }
     backgroundProcesses.clear();
     __resetWorkflowExecutionsForTests();
@@ -214,7 +209,6 @@ describe("Workflow tool (background launch)", () => {
         await runWithRuntimeContext(
           { agentId, conversationId: "conv-ambient" },
           async () => {
-            // Construction is lazy: the real SDK client starts no query.
             const handle = await createSdkSpawnerHandle({
               parentScope: {
                 agentId: "agent-parent",
@@ -271,8 +265,6 @@ describe("Workflow tool (background launch)", () => {
     });
     try {
       expect(handle.backgroundStopController).toBeDefined();
-      // TaskStop aborts this controller; the script's tools.*() calls must
-      // unwind with it instead of hanging past the engine cut points.
       handle.backgroundStopController?.abort(
         new Error("Workflow stopped via TaskStop"),
       );
@@ -464,8 +456,6 @@ describe("Workflow tool (background launch)", () => {
           cleanupCallsForHandle++;
         },
       };
-      // The factory has fulfilled; abort in the microtask before workflow's
-      // await continuation can cross the registration boundary.
       queueMicrotask(() =>
         queueMicrotask(() => queueMicrotask(() => controller.abort())),
       );
@@ -500,7 +490,6 @@ describe("Workflow tool (background launch)", () => {
       "Quick demo workflow with parallel agents",
     );
 
-    // The progress log is what Read inspects while the run is live.
     await waitFor(() => progressLineCount(processState?.outputFile) >= 3);
     const live = getWorkflowExecution(taskId);
     expect(live).toMatchObject({

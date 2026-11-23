@@ -1,109 +1,56 @@
-/**
- * Core types for the workflow engine.
- *
- * A workflow is a plain-JavaScript orchestration script that begins with an
- * `export const meta = {...}` pure literal and then drives subagents through
- * the injected hooks: agent(), decide(), parallel(), pipeline(), phase(), log().
- *
- * The Letta Agent SDK surface used here is described structurally; the real
- * SDK is loaded lazily at runtime by sdk-loader.ts (see its header for why
- * the import is dynamic).
- */
-
-/** One phase entry in the workflow meta block. */
 export interface WorkflowPhaseMeta {
   title: string;
   detail?: string;
 }
 
-/** The `export const meta = {...}` literal at the top of every script. */
 export interface WorkflowMeta {
   name: string;
   description: string;
   phases?: WorkflowPhaseMeta[];
 }
 
-/** Options accepted by the in-script agent() hook. */
 export interface AgentCallOptions {
-  /** Continue this existing agent-free worker conversation instead of creating one. */
   conversationId?: string;
-  /** Display label for progress output (defaults to a prompt excerpt). */
   label?: string;
-  /** Progress group; overrides the current phase() for this call. */
   phase?: string;
-  /**
-   * Ask the subagent for a JSON value and resolve to the parsed result. No
-   * schema is enforced; a reply that is not valid JSON fails the call.
-   */
   json?: boolean;
-  /** JSON Schema for a validated result; takes precedence over json. */
   schema?: Record<string, unknown>;
-  /** Model handle or alias for this subagent (defaults to the workflow default). */
   model?: string;
-  /** Reasoning effort override ("low" | "medium" | "high" | ...). */
   effort?: string;
-  /** Tool allowlist override for this subagent session. */
   allowedTools?: string[];
-  /** Extra system prompt appended for this subagent. */
   systemPrompt?: string;
-  /** Skill names whose full content is loaded into this subagent's prompt. */
   skills?: string[];
-  /** Per-call timeout in milliseconds. */
   timeoutMs?: number;
-  /** Maximum unique tool calls for this subagent. Default 1000. */
   maxToolCalls?: number;
 }
 
-/** A single request to run one subagent, produced by the agent() hook. */
 export interface SubagentRequest {
   prompt: string;
   options: AgentCallOptions;
-  /** Sequential id assigned in call order. */
   callIndex: number;
 }
 
-/** Outcome of one subagent run. */
 export interface SubagentOutcome {
-  /** Persisted ephemeral conversation, when one was created. */
   conversationId?: string;
-  /** Final text, or the parsed value when `json` was requested. */
   value: unknown;
-  /** True when the subagent failed terminally (value is null). */
   failed: boolean;
-  /** Optional failure detail for the journal / progress display. */
   error?: string;
   durationMs?: number;
-  /** Total tokens consumed by the subagent session (prompt + completion). */
   totalTokens?: number;
-  /**
-   * Client-estimated list-price USD for the session: the sum of each step's
-   * `api_cost_usd`. Null once any step reported usage without one.
-   */
   costUsd?: number | null;
 }
 
-/** Live signals a spawner may report while a subagent runs. */
 export interface SubagentSpawnHooks {
-  /** Worker ID once the SDK initializes, before the turn completes. */
   onStarted?: (conversationId: string) => void;
-  /**
-   * Usage so far by this subagent (cumulative, per model step). `costUsd` is
-   * null once a step reported usage without a cost estimate.
-   */
   onUsage?: (totalTokens: number, costUsd?: number | null) => void;
 }
 
-/**
- * Runs one subagent. The SDK-backed implementation lives in sdk-spawner.ts;
- * tests inject fakes.
- */
 export type SubagentSpawner = (
   request: SubagentRequest,
   signal: AbortSignal,
   hooks?: SubagentSpawnHooks,
 ) => Promise<SubagentOutcome>;
 
-/** Progress events emitted while a workflow runs. */
 export type WorkflowProgressEvent =
   | { kind: "phase"; title: string }
   | { kind: "log"; message: string }
@@ -120,36 +67,19 @@ export type WorkflowProgressEvent =
     };
 
 export interface RunWorkflowOptions {
-  /** The workflow script source (plain JS, starting with the meta literal). */
   script: string;
-  /** Value exposed to the script as the `args` global. */
   args?: unknown;
-  /** Max concurrently running subagents and decisions. Default 16. */
   maxConcurrent?: number;
-  /** Lifetime subagent cap (runaway-loop backstop). Default 1000. */
   maxTotalAgents?: number;
-  /** Lifetime decision cap (runaway-loop backstop). Default 1000. */
   maxTotalDecisions?: number;
-  /**
-   * Cost budget in USD. Reaching it, or a subagent step that reports no cost
-   * estimate, stops the run. Omit for no budget.
-   */
   maxCostUsd?: number;
-  /** JSONL file that receives one line per completed subagent call. */
   journalPath?: string;
-  /** Abort signal for the whole run. */
   signal?: AbortSignal;
-  /** Progress callback. */
   onProgress?: (event: WorkflowProgressEvent) => void;
-  /** Calls a built-in or MCP tool by its model-facing name; backs the `tools` global. */
   callTool?: WorkflowToolCaller;
-  /** Built-in tool names exposed on `tools` (MCP tools match `mcp__*`). */
   builtinToolNames?: readonly string[];
-  /** Lists callable tools; backs `listTools()` and `describeTool()`. */
   listTools?: () => Promise<WorkflowToolInfo[]>;
-  /** Variables exposed as `process.env`: the shell environment plus the agent's secrets. */
   env?: Readonly<Record<string, string>>;
-  /** Lifetime tool call cap (runaway-loop backstop). Default 1000. */
   maxTotalToolCalls?: number;
 }
 
@@ -159,7 +89,6 @@ export interface WorkflowToolInfo {
   inputSchema: Record<string, unknown>;
 }
 
-/** Tool result shape (`content`, `structuredContent`, `isError`); built-ins return text content. */
 export interface WorkflowToolResult {
   content: unknown[];
   isError?: boolean;
@@ -173,17 +102,11 @@ export type WorkflowToolCaller = (
 
 export interface WorkflowExecutionResult {
   meta: WorkflowMeta;
-  /** The script's return value. */
   result: unknown;
   agentsSpawned: number;
-  /** Sum of subagent and decision API token usage across the run. */
   totalTokens: number;
-  /** Sum of subagent and decision USD cost; null when any usage was unpriced. */
   totalCostUsd: number | null;
 }
-
-// ── Structural view of the Letta Agent SDK surface the engine touches ──────
-// (loaded lazily; see sdk-loader.ts)
 
 export interface SdkStreamMessage {
   type: string;
@@ -196,19 +119,11 @@ export interface SdkStreamMessage {
   errorDetail?: string;
   structuredOutput?: unknown;
   durationMs?: number;
-  /** Agent loop state for `type: "loop_status"` messages. */
   status?: string;
-  /** Raw Letta stream payload for `type: "stream_event"` messages. */
   event?: Record<string, unknown>;
-  /** Tool call details for `type: "tool_call"` / `"tool_result"` messages. */
   toolCallId?: string;
   toolName?: string;
   toolInput?: Record<string, unknown>;
-  /**
-   * Raw, possibly-partial argument fragment from the wire. The SDK emits one
-   * `tool_call` message per argument delta; concatenating the fragments for a
-   * `toolCallId` yields the complete argument JSON.
-   */
   rawArguments?: string;
 }
 

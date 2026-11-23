@@ -21,11 +21,6 @@ const openAICompatibleDiscover: LocalEndpointDiscover = async (context) => {
   );
 };
 
-/**
- * Dynamic provider for an arbitrary OpenAI-compatible Chat Completions API.
- * The endpoint's /v1/models response owns model identity; capabilities remain
- * conservative because the OpenAI model-list schema does not report them.
- */
 export function createOpenAICompatiblePiProvider(
   options: OpenAICompatiblePiProviderOptions,
 ): Provider<"openai-completions"> {

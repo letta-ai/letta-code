@@ -18,7 +18,6 @@ function belongsToRuntime(
   );
 }
 
-/** Keep runtimes held only for running processes reported as Bash. */
 export function hasRunningBackgroundWork(
   agentId: string,
   conversationId: string,

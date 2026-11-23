@@ -7,8 +7,6 @@ import {
   parseEvery,
 } from "@/cron/parse-interval";
 
-// ── parseEvery ──────────────────────────────────────────────────────
-
 describe("parseEvery", () => {
   test("minutes — clean divisor of 60", () => {
     const result = parseEvery("5m");
@@ -24,7 +22,6 @@ describe("parseEvery", () => {
   test("minutes — non-divisor rounds to nearest", () => {
     const result = parseEvery("7m");
     expect(result).not.toBeNull();
-    // 7 rounds to nearest divisor of 60 (5 or 6)
     expect(result?.note).toBeDefined();
   });
 
@@ -37,7 +34,7 @@ describe("parseEvery", () => {
   test("hours — non-divisor rounds", () => {
     const result = parseEvery("5h");
     expect(result).not.toBeNull();
-    expect(result?.note).toBeDefined(); // should mention rounding
+    expect(result?.note).toBeDefined();
   });
 
   test("hours — ≥24h clamps to daily", () => {
@@ -86,14 +83,12 @@ describe("parseEvery", () => {
     expect(parseEvery("abc")).toBeNull();
     expect(parseEvery("0m")).toBeNull();
     expect(parseEvery("-5m")).toBeNull();
-    expect(parseEvery("5w")).toBeNull(); // weeks not supported
+    expect(parseEvery("5w")).toBeNull();
   });
 });
 
-// ── parseAt ─────────────────────────────────────────────────────────
-
 describe("parseAt", () => {
-  const baseTime = new Date("2026-03-26T10:00:00"); // 10:00 AM local
+  const baseTime = new Date("2026-03-26T10:00:00");
 
   test("RFC 3339 timestamp preserves its explicit timezone", () => {
     const result = parseAt(
@@ -128,7 +123,6 @@ describe("parseAt", () => {
   test("absolute time — past today → schedules tomorrow", () => {
     const result = parseAt("9:00am", baseTime);
     expect(result).not.toBeNull();
-    // Should be tomorrow since 9 AM is before 10 AM
     expect(result?.scheduledFor.getDate()).toBe(baseTime.getDate() + 1);
   });
 
@@ -167,11 +161,9 @@ describe("parseAt", () => {
   test("invalid inputs return null", () => {
     expect(parseAt("", baseTime)).toBeNull();
     expect(parseAt("foo", baseTime)).toBeNull();
-    expect(parseAt("13:00pm", baseTime)).toBeNull(); // 13 > 12
+    expect(parseAt("13:00pm", baseTime)).toBeNull();
   });
 });
-
-// ── isValidCron ─────────────────────────────────────────────────────
 
 describe("isValidCron", () => {
   test("valid expressions", () => {
@@ -203,11 +195,8 @@ describe("isValidCron", () => {
   });
 
   test("valid comma-separated with ranges and steps", () => {
-    // Comma-separated items that include ranges
     expect(isValidCron("1-5,10-15 * * * *")).toBe(true);
-    // Comma-separated items that include steps
     expect(isValidCron("*/5,*/15 * * * *")).toBe(true);
-    // Mixed: exact, range, step
     expect(isValidCron("0,10-20,30-59/5 * * * *")).toBe(true);
   });
 
@@ -239,8 +228,6 @@ describe("isValidCron", () => {
   });
 });
 
-// ── cronMatchesTime ─────────────────────────────────────────────────
-
 describe("cronMatchesTime", () => {
   test("wildcard matches everything", () => {
     const date = new Date("2026-03-26T14:30:00");
@@ -255,8 +242,8 @@ describe("cronMatchesTime", () => {
 
   test("step match", () => {
     const date = new Date("2026-03-26T14:30:00");
-    expect(cronMatchesTime("*/5 * * * *", date)).toBe(true); // 30 % 5 === 0
-    expect(cronMatchesTime("*/7 * * * *", date)).toBe(false); // 30 % 7 !== 0
+    expect(cronMatchesTime("*/5 * * * *", date)).toBe(true);
+    expect(cronMatchesTime("*/7 * * * *", date)).toBe(false);
   });
 
   test.each([
@@ -288,7 +275,6 @@ describe("cronMatchesTime", () => {
   });
 
   test("day of week match", () => {
-    // 2026-03-26 is a Thursday (day 4)
     const date = new Date("2026-03-26T14:30:00");
     expect(cronMatchesTime("30 14 * * 4", date)).toBe(true);
     expect(cronMatchesTime("30 14 * * 5", date)).toBe(false);
@@ -310,36 +296,27 @@ describe("cronMatchesTime", () => {
   });
 
   test("day-of-month and day-of-week OR semantics", () => {
-    // 2026-03-26 is a Thursday (day 4), day-of-month 26
     const date = new Date("2026-03-26T09:00:00");
 
-    // Both constrained: "0 9 15 * 4" = 15th OR Thursday → should fire (it's Thursday)
     expect(cronMatchesTime("0 9 15 * 4", date)).toBe(true);
 
-    // Both constrained: "0 9 26 * 1" = 26th OR Monday → should fire (it's the 26th)
     expect(cronMatchesTime("0 9 26 * 1", date)).toBe(true);
 
-    // Both constrained: "0 9 15 * 1" = 15th OR Monday → neither matches
     expect(cronMatchesTime("0 9 15 * 1", date)).toBe(false);
 
-    // Only day-of-month constrained (dow is *): AND logic
     expect(cronMatchesTime("0 9 26 * *", date)).toBe(true);
     expect(cronMatchesTime("0 9 15 * *", date)).toBe(false);
 
-    // Only day-of-week constrained (dom is *): AND logic
     expect(cronMatchesTime("0 9 * * 4", date)).toBe(true);
     expect(cronMatchesTime("0 9 * * 1", date)).toBe(false);
   });
 
   test("timezone-aware matching", () => {
-    // Create a UTC date: 2026-03-26 at 22:30 UTC
     const utcDate = new Date("2026-03-26T22:30:00Z");
 
-    // In UTC, this is hour 22, minute 30
     expect(cronMatchesTime("30 22 * * *", utcDate, "UTC")).toBe(true);
     expect(cronMatchesTime("30 15 * * *", utcDate, "UTC")).toBe(false);
 
-    // In America/Los_Angeles (PDT, UTC-7), 22:30 UTC = 15:30 local
     expect(cronMatchesTime("30 15 * * *", utcDate, "America/Los_Angeles")).toBe(
       true,
     );
@@ -347,7 +324,6 @@ describe("cronMatchesTime", () => {
       false,
     );
 
-    // In Asia/Tokyo (JST, UTC+9), 22:30 UTC = 07:30 next day (March 27)
     expect(cronMatchesTime("30 7 27 3 *", utcDate, "Asia/Tokyo")).toBe(true);
     expect(cronMatchesTime("30 22 26 3 *", utcDate, "Asia/Tokyo")).toBe(false);
   });
@@ -375,7 +351,7 @@ describe("cronMatchesTime", () => {
 
   test("preserves wall-clock semantics across target-timezone DST", () => {
     const timezone = "America/Los_Angeles";
-    const springForward = new Date("2026-03-08T10:00:00Z"); // 03:00 PDT
+    const springForward = new Date("2026-03-08T10:00:00Z");
     expect(cronMatchesTime("0 2 * * *", springForward, timezone)).toBe(false);
     expect(cronMatchesTime("0 3 * * *", springForward, timezone)).toBe(true);
 
@@ -387,7 +363,6 @@ describe("cronMatchesTime", () => {
 
   test("invalid timezone falls back to local time", () => {
     const date = new Date("2026-03-26T14:30:00");
-    // Invalid timezone should not throw, should match same as no timezone
     expect(cronMatchesTime("30 14 * * *", date, "Invalid/Timezone")).toBe(
       cronMatchesTime("30 14 * * *", date),
     );
@@ -401,35 +376,25 @@ describe("cronMatchesTime", () => {
 
   test("comma-separated values match", () => {
     const date = new Date("2026-03-26T14:30:00");
-    // minute 30 is in the list 0,15,30,45
     expect(cronMatchesTime("0,15,30,45 * * * *", date)).toBe(true);
-    // minute 30 is NOT in the list 1,5,9
     expect(cronMatchesTime("1,5,9 * * * *", date)).toBe(false);
-    // comma-separated day-of-week: Thursday is 4
-    expect(cronMatchesTime("30 14 * * 1,3,5", date)).toBe(false); // not Mon/Wed/Fri
-    expect(cronMatchesTime("30 14 * * 1,4,5", date)).toBe(true); // Thu is in list
+    expect(cronMatchesTime("30 14 * * 1,3,5", date)).toBe(false);
+    expect(cronMatchesTime("30 14 * * 1,4,5", date)).toBe(true);
   });
 
   test("range with step matches", () => {
     const date = new Date("2026-03-26T14:30:00");
-    // 1-21/4 → 1,5,9,13,17,21 → 30 is NOT in this set
     expect(cronMatchesTime("1-21/4 * * * *", date)).toBe(false);
-    // 0-59/15 → 0,15,30,45 → 30 IS in this set
     expect(cronMatchesTime("0-59/15 * * * *", date)).toBe(true);
-    // Range with step for hour: 14 is in 0-23/2 → 0,2,4,...,14,...,22
     expect(cronMatchesTime("* 0-23/2 * * *", date)).toBe(true);
   });
 
   test("comma-separated with ranges", () => {
     const date = new Date("2026-03-26T14:30:00");
-    // 10-20,30-40 → minute 30 is in 30-40 range
     expect(cronMatchesTime("10-20,30-40 * * * *", date)).toBe(true);
-    // 1-5,10-15 → minute 30 is NOT in either range
     expect(cronMatchesTime("1-5,10-15 * * * *", date)).toBe(false);
   });
 });
-
-// ── estimatePeriodMs ────────────────────────────────────────────────
 
 describe("estimatePeriodMs", () => {
   test("every N minutes", () => {

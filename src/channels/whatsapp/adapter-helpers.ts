@@ -137,9 +137,7 @@ export function shouldProcessWhatsAppGroup(params: {
     if (pattern.length > MAX_MENTION_PATTERN_LENGTH) continue;
     try {
       if (new RegExp(pattern, "i").test(matchText)) return true;
-    } catch {
-      // Ignore invalid user-provided patterns.
-    }
+    } catch {}
   }
   return false;
 }

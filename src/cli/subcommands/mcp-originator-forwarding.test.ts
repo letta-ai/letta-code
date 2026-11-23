@@ -13,12 +13,6 @@ import { getMcpScopeAgentId } from "@/mcp-scope";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { callAgentMcpTool, type McpSubcommandDependencies } from "./mcp";
 
-/**
- * USER_SCOPED_MCP_CONNECTIONS: an MCP tool-run made inside a listener turn
- * attributed to a cloud super run forwards that run's originator token as the
- * `x-letta-mcp-originator-token` header with the isolation compatibility marker.
- * Unattributed calls omit both headers.
- */
 describe("MCP originator token forwarding", () => {
   afterEach(() => {
     clearMcpOriginatorTokens();
@@ -103,9 +97,6 @@ describe("MCP originator token forwarding", () => {
 
   test("omits the header when no token is held for the active super run", async () => {
     const { deps, requests, runPath } = originatorHarness();
-    // A token held for a DIFFERENT run must neither be attached nor leak
-    // into the miss warning (e.g. after a listener restart replays an
-    // acknowledged input with an empty store).
     setMcpOriginatorToken("sr-other", "mst_other.secret-do-not-leak");
     const warnings: string[] = [];
     const originalWarn = console.warn;

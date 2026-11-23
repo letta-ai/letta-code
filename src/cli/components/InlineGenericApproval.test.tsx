@@ -20,7 +20,6 @@ class CaptureStream extends Writable {
   }
 }
 
-// useTerminalRows/useTerminalWidth follow process.stdout resize events.
 function resizeProcessStdout(rows: number, columns: number): () => void {
   const saved = {
     rows: Object.getOwnPropertyDescriptor(process.stdout, "rows"),
@@ -76,14 +75,11 @@ test("a 40-line Workflow script in a short terminal keeps the approval header on
     />,
     { stdout, debug: false, patchConsole: false, exitOnCtrlC: false },
   );
-  // The resize listener is registered by a passive effect after mount.
   await waitForRender();
   const restore = resizeProcessStdout(stdout.rows, stdout.columns);
   try {
     await waitForRender();
     const frame = lastFrameLines(stdout.chunks);
-    // Taller live frames are clipped to their bottom rows, so the whole
-    // approval must fit for its header and script start to be visible.
     expect(frame.length).toBeLessThan(stdout.rows);
     expect(frame.join("\n")).toContain("Run Workflow?");
     expect(frame.join("\n")).toContain("await step1();");

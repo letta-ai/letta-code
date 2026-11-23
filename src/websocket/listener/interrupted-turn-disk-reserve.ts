@@ -14,7 +14,6 @@ const writes = [
 
 type WriteMethod = (typeof writes)[number];
 
-/** Retry whole store writes so lock acquisition is covered too. */
 export function withInterruptedTurnDiskReserve<
   T extends Record<WriteMethod, (...args: never[]) => unknown>,
 >(directory: string, store: T): T {

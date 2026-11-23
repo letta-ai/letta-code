@@ -113,7 +113,6 @@ describe("reconcileExistingAgentState", () => {
     expect(list).toHaveBeenCalledTimes(1);
     expect(list).toHaveBeenCalledWith({ name: "fetch_webpage", limit: 10 });
 
-    // Must preserve existing tools and only append the missing base tool
     expect(update).toHaveBeenCalledTimes(1);
     expect(update).toHaveBeenCalledWith("agent-test", {
       compaction_settings: {

@@ -74,10 +74,8 @@ describe("ChannelRegistry lifecycle", () => {
 
     registry.pause();
     expect(registry.isReady()).toBe(false);
-    // Singleton survives pause (unlike stopAll)
     expect(getChannelRegistry()).toBe(registry);
 
-    // Re-register and setReady (simulates WS reconnect)
     registry.setMessageHandler(() => {});
     registry.setReady();
     expect(registry.isReady()).toBe(true);

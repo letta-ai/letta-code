@@ -2,13 +2,6 @@ import { readdirSync, renameSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { readJsonFile } from "./local-transcript";
 
-/**
- * Read every agent record in `agentsDir` for LocalStore. A single unreadable
- * record (e.g. a 0-byte file left by an interrupted write) must not take down
- * the whole store, so it is moved aside to `<file>.corrupt` (still
- * recoverable) and a warning goes to stderr, since a backend spawned as a
- * child process may have no other visible log at this point.
- */
 export function readAgentRecordFiles(
   agentsDir: string,
 ): Array<{ mtimeMs: number; raw: unknown }> {

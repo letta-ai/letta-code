@@ -4,7 +4,6 @@ import { BlinkDot } from "./BlinkDot";
 import { colors } from "./colors";
 import { Text } from "./Text";
 
-/** Colorize ordinary argument summaries using the existing shell palette. */
 export function colorizeArgs(argsStr: string): ReactNode {
   if (!argsStr) return null;
 
@@ -12,7 +11,6 @@ export function colorizeArgs(argsStr: string): ReactNode {
   const parts: ReactNode[] = [];
   let lastIndex = 0;
   let key = 0;
-  // Paths, filenames, labels, then standalone numbers.
   const re =
     /([\w.*?\-@~/]+\/[\w.*?\-@~/]*)|((?<=[(\s,])[\w.-]+\.\w{1,5}(?=[)\s,]|$))|(\w+)(?=\s*:)|(\b\d+\b)/g;
 
@@ -42,7 +40,6 @@ export function colorizeArgs(argsStr: string): ReactNode {
   return <>{parts}</>;
 }
 
-/** The ordinary tool row's dot, name, and argument wrapping, shared by sends. */
 export function ToolCallHeader({
   name,
   args,

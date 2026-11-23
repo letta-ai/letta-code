@@ -34,9 +34,6 @@ import { clipToolReturn } from "@/tools/manager.js";
 import { isRecord } from "@/utils/type-guards";
 import { Text } from "./Text";
 
-/**
- * Check if tool is AskUserQuestion
- */
 function isQuestionTool(name: string): boolean {
   return name === "AskUserQuestion";
 }
@@ -73,7 +70,6 @@ import {
 
 const LIVE_SHELL_ARGS_MAX_LINES = 2;
 
-/** Render an array of StyledSpans as inline <Text> elements */
 function renderSpans(spans: StyledSpan[]): ReactNode {
   return spans.map((span, i) => (
     <Text key={`${i}:${span.color}`} color={span.color}>
@@ -95,16 +91,6 @@ type ToolCallLine = {
   streaming?: StreamingState;
 };
 
-/**
- * ToolCallMessageRich - Rich formatting version with old layout logic
- * This preserves the exact wrapping and spacing logic from the old codebase
- *
- * Features:
- * - Two-column layout for tool calls (2 chars for dot)
- * - Smart wrapping that keeps function name and args together when possible
- * - Blinking dots for pending/running states
- * - Result shown with └ prefix underneath
- */
 export const ToolCallMessage = memo(
   ({
     line,
@@ -121,7 +107,6 @@ export const ToolCallMessage = memo(
   }) => {
     const columns = useTerminalWidth();
     try {
-      // Parse and format the tool call
       const rawName = line.name ?? "?";
       const argsText =
         typeof line.argsText === "string"
@@ -130,25 +115,17 @@ export const ToolCallMessage = memo(
             ? ""
             : JSON.stringify(line.argsText);
 
-      // Task tool rendering decision:
-      // - Cancelled/rejected: render as error tool call (won't appear in SubagentGroupDisplay)
-      // - Finished with success: render as normal tool call (for backfilled tools without subagent data)
-      // - In progress: don't render here (SubagentGroupDisplay handles running subagents,
-      //   and liveItems handles pending approvals via InlineGenericApproval)
       if (isTaskTool(rawName)) {
         const isFinished = line.phase === "finished";
         const subagent = line.toolCallId
           ? getSubagentByToolCallId(line.toolCallId)
           : undefined;
         if (subagent) {
-          // Task tool calls with subagent data are handled by SubagentGroupDisplay/Static
           return null;
         }
         if (!isFinished) {
-          // Not finished - SubagentGroupDisplay or approval UI handles this
           return null;
         }
-        // Finished Task tools render here (both success and error)
       }
 
       if (rawName === "SendAgentMessage") {
@@ -164,11 +141,8 @@ export const ToolCallMessage = memo(
         }
       }
 
-      // Apply tool name remapping
       let displayName = getDisplayToolName(rawName);
 
-      // For Patch tools, override display name based on patch content
-      // (Add → Write, Update → Update, Delete → Delete)
       if (isPatchTool(rawName)) {
         try {
           const parsedArgs = JSON.parse(argsText);
@@ -180,12 +154,9 @@ export const ToolCallMessage = memo(
               else if (patchInfo.kind === "delete") displayName = "Delete";
             }
           }
-        } catch {
-          // Keep default "Patch" name if parsing fails
-        }
+        } catch {}
       }
 
-      // For AskUserQuestion, show friendly header only after completion
       if (isQuestionTool(rawName)) {
         if (line.phase === "finished" && line.resultOk !== false) {
           displayName = parseAskUserQuestionReceipt(line.resultText)
@@ -196,12 +167,8 @@ export const ToolCallMessage = memo(
         }
       }
 
-      const rightWidth = Math.max(0, columns - 2); // gutter is 2 cols
+      const rightWidth = Math.max(0, columns - 2);
 
-      // Determine args display:
-      // - Question tool: hide args (shown in result instead)
-      // - Still streaming + phase "ready": args may be incomplete, show ellipsis
-      // - Phase "running"/"finished" or stream done: args complete, show formatted
       let args: ReactNode = null;
       let shellCommand: string | null = null;
       let shellSemanticKind: "read" | "list" | "search" | "run" | null = null;
@@ -228,7 +195,6 @@ export const ToolCallMessage = memo(
           }
         };
 
-        // Args are complete once running/finished, stream done, or JSON is parseable.
         const { formatted, parseable } = parseArgs();
         const argsComplete =
           parseable ||
@@ -263,9 +229,7 @@ export const ToolCallMessage = memo(
           } else if (formattedArgs.displayName) {
             displayName = formattedArgs.displayName;
           }
-          // Normalize newlines to spaces to prevent forced line breaks
           const normalizedDisplay = formattedArgs.display.replace(/\n/g, " ");
-          // For max 2 lines: boxWidth * 2, minus parens (2) and margin (2)
           const argsBoxWidth = rightWidth - displayName.length;
           const maxArgsChars = Math.max(0, argsBoxWidth * 2 - 4);
 
@@ -293,19 +257,15 @@ export const ToolCallMessage = memo(
           } else if (Array.isArray(parsedArgs.command)) {
             shellCommand = parsedArgs.command.join(" ");
           }
-        } catch {
-          // Keep shellCommand null and fall back to plain args rendering.
-        }
+        } catch {}
       }
 
-      // Pre-compute shell command highlighting for first-line + continuation rendering
       let shellFirstLineSpans: StyledSpan[] | null = null;
       let shellContinuationLines: StyledSpan[][] = [];
       if (shellCommand) {
         const highlightedLines = highlightCommand(shellCommand);
-        const nameWidth = displayName.length + 1; // +1 for space separator
+        const nameWidth = displayName.length + 1;
         const commandMaxColumns = Math.max(10, rightWidth - nameWidth);
-        // Filter out empty lines (e.g. trailing newline from shiki tokenizer)
         const nonEmptyLines = highlightedLines.filter((spans) =>
           spans.some((s) => s.text.length > 0),
         );
@@ -318,11 +278,9 @@ export const ToolCallMessage = memo(
         shellContinuationLines = visibleLines.slice(1);
       }
 
-      // Extract display text from tool result (handles JSON responses)
       const extractMessageFromResult = (text: string): string => {
         try {
           const parsed = JSON.parse(text);
-          // If it's a JSON object with a message field, extract that
           if (
             parsed &&
             typeof parsed === "object" &&
@@ -330,9 +288,7 @@ export const ToolCallMessage = memo(
           ) {
             return parsed.message;
           }
-        } catch {
-          // Not JSON or parsing failed, use as-is
-        }
+        } catch {}
         return text;
       };
 
@@ -340,8 +296,8 @@ export const ToolCallMessage = memo(
         if (!line.resultText) return null;
 
         const extractedText = extractMessageFromResult(line.resultText);
-        const prefix = `  ${CLI_GLYPHS.result}  `; // 2 spaces, glyph, 2 spaces
-        const prefixWidth = 5; // Total width of prefix
+        const prefix = `  ${CLI_GLYPHS.result}  `;
+        const prefixWidth = 5;
         const contentWidth = Math.max(0, columns - prefixWidth);
 
         if (line.resultText === "Running...") {
@@ -372,14 +328,11 @@ export const ToolCallMessage = memo(
           );
         }
 
-        // Clip for display only (the API gets the full text). Workflow launches
-        // show a one-line summary instead of the model-facing task notes.
         const displayResultText =
           (isWorkflowTool(rawName) &&
             formatWorkflowLaunchLine(extractedText)) ||
           clipToolReturn(extractedText).replace(/\n+$/, "");
 
-        // Check if this is a todo_write tool with successful result
         if (
           isTodoTool(rawName, displayName) &&
           line.resultOk !== false &&
@@ -388,8 +341,6 @@ export const ToolCallMessage = memo(
           try {
             const parsedArgs = JSON.parse(line.argsText);
             if (parsedArgs.todos && Array.isArray(parsedArgs.todos)) {
-              // Convert todos to safe format for TodoRenderer
-              // Note: Anthropic/Codex use "content", Gemini uses "description"
               const safeTodos = parsedArgs.todos.map(
                 (t: unknown, i: number) => {
                   const rec = isRecord(t) ? t : {};
@@ -400,7 +351,6 @@ export const ToolCallMessage = memo(
                         ? "in_progress"
                         : "pending";
                   const id = typeof rec.id === "string" ? rec.id : String(i);
-                  // Handle both "content" (Anthropic/Codex) and "description" (Gemini) fields
                   const content =
                     typeof rec.content === "string"
                       ? rec.content
@@ -419,17 +369,11 @@ export const ToolCallMessage = memo(
                 },
               );
 
-              // Return TodoRenderer directly - it has its own prefix
               return <TodoRenderer todos={safeTodos} />;
             }
-          } catch {
-            // If parsing fails, fall through to regular handling
-          }
+          } catch {}
         }
 
-        // Task CRUD family: after any TaskCreate/TaskUpdate/TaskList call,
-        // snapshot the current task store and render as a todo list so users
-        // see the live task state instead of raw JSON.
         if (isTaskCrudTool(rawName) && line.resultOk !== false) {
           try {
             const tasks = listTasks();
@@ -444,12 +388,9 @@ export const ToolCallMessage = memo(
               }));
               return <TodoRenderer todos={safeTodos} />;
             }
-          } catch {
-            // Fall through to regular rendering if store access fails
-          }
+          } catch {}
         }
 
-        // Check if this is an UpdatePlan tool with successful result
         if (
           isPlanTool(rawName, displayName) &&
           line.resultOk !== false &&
@@ -458,7 +399,6 @@ export const ToolCallMessage = memo(
           try {
             const parsedArgs = JSON.parse(line.argsText);
             if (parsedArgs.plan && Array.isArray(parsedArgs.plan)) {
-              // Convert plan items to safe format for PlanRenderer
               const safePlan = parsedArgs.plan.map((item: unknown) => {
                 const rec = isRecord(item) ? item : {};
                 const status: "pending" | "in_progress" | "completed" =
@@ -479,15 +419,11 @@ export const ToolCallMessage = memo(
                   ? parsedArgs.explanation
                   : undefined;
 
-              // Return PlanRenderer directly - it has its own prefix
               return <PlanRenderer plan={safePlan} explanation={explanation} />;
             }
-          } catch {
-            // If parsing fails, fall through to regular handling
-          }
+          } catch {}
         }
 
-        // Check if this is a memory tool - show diff instead of raw result
         if (isMemoryTool(rawName) && line.resultOk !== false && line.argsText) {
           const memoryDiff = (
             <MemoryDiffRenderer argsText={line.argsText} toolName={rawName} />
@@ -495,13 +431,9 @@ export const ToolCallMessage = memo(
           if (memoryDiff) {
             return memoryDiff;
           }
-          // If MemoryDiffRenderer returns null, fall through to regular handling
         }
 
-        // Check if this is AskUserQuestion - show pretty Q&A format
         if (isQuestionTool(rawName) && line.resultOk !== false) {
-          // Parse the result to extract questions and answers
-          // Format: "Question"="Answer", "Question2"="Answer2"
           const qaPairs: Array<{ question: string; answer: string }> = [];
           const qaRegex = /"([^"]+)"="([^"]*)"/g;
           const resultText = line.resultText || "";
@@ -531,18 +463,14 @@ export const ToolCallMessage = memo(
               </Box>
             );
           }
-          // Fall through to regular handling if parsing fails
         }
 
-        // Worktree tools show a compact structured summary instead of the
-        // full instructional tool return.
         if (hasWorktreeResultRenderer(rawName, extractedText, line.resultOk)) {
           return (
             <WorktreeToolResult toolName={rawName} resultText={extractedText} />
           );
         }
 
-        // Check if this is a file edit tool - show diff instead of success message
         if (
           isFileEditTool(rawName) &&
           line.resultOk !== false &&
@@ -556,7 +484,6 @@ export const ToolCallMessage = memo(
             const parsedArgs = JSON.parse(line.argsText);
             const filePath = parsedArgs.file_path || "";
 
-            // MultiEdit (removed tool) calls in older transcripts: edits array
             if (parsedArgs.edits && Array.isArray(parsedArgs.edits)) {
               const edits = parsedArgs.edits.map(
                 (e: { old_string?: string; new_string?: string }) => ({
@@ -573,7 +500,6 @@ export const ToolCallMessage = memo(
               );
             }
 
-            // Use AdvancedDiffRenderer if we have a precomputed diff
             if (diff) {
               return (
                 <AdvancedDiffRenderer
@@ -587,8 +513,6 @@ export const ToolCallMessage = memo(
               );
             }
 
-            // Fallback to simple renderers when no precomputed diff
-            // Single edit: has old_string/new_string
             if (parsedArgs.old_string !== undefined) {
               return (
                 <EditRenderer
@@ -599,12 +523,9 @@ export const ToolCallMessage = memo(
                 />
               );
             }
-          } catch {
-            // If parsing fails, fall through to regular handling
-          }
+          } catch {}
         }
 
-        // Check if this is a file write tool - show written content
         if (
           isFileWriteTool(rawName) &&
           line.resultOk !== false &&
@@ -632,12 +553,9 @@ export const ToolCallMessage = memo(
               }
               return <WriteRenderer filePath={filePath} content={content} />;
             }
-          } catch {
-            // If parsing fails, fall through to regular handling
-          }
+          } catch {}
         }
 
-        // Check if this is a patch tool - show diff/content based on operation type
         if (isPatchTool(rawName) && line.resultOk !== false && line.argsText) {
           try {
             const parsedArgs = JSON.parse(line.argsText);
@@ -648,7 +566,6 @@ export const ToolCallMessage = memo(
                 return (
                   <Box flexDirection="column">
                     {operations.map((op) => {
-                      // Look up precomputed diff using compound key
                       const key = `${line.toolCallId}:${op.path}`;
                       const diff = precomputedDiffs?.get(key);
 
@@ -716,18 +633,14 @@ export const ToolCallMessage = memo(
                 );
               }
             }
-          } catch {
-            // If parsing fails, fall through to regular handling
-          }
+          } catch {}
         }
 
-        // Check if this is a file read tool - show line count or image summary
         if (
           isFileReadTool(rawName) &&
           line.resultOk !== false &&
           line.resultText
         ) {
-          // Check if this is an image result (starts with "[Image: filename]")
           const isImageResult = line.resultText.startsWith("[Image: ");
 
           if (isImageResult) {
@@ -745,7 +658,6 @@ export const ToolCallMessage = memo(
             );
           }
 
-          // Count lines in the result (the content returned by Read tool)
           const lineCount = line.resultText.split("\n").length;
           return (
             <Box flexDirection="row">
@@ -762,14 +674,12 @@ export const ToolCallMessage = memo(
           );
         }
 
-        // Check if this is a search/grep tool - show line/file count summary
         if (
           isSearchTool(rawName) &&
           line.resultOk !== false &&
           line.resultText
         ) {
           const text = line.resultText;
-          // Match "Found N file(s)" at start of output (files_with_matches mode)
           const filesMatch = text.match(/^Found (\d+) files?/);
           const noFilesMatch = text === "No files found";
           const noMatchesMatch = text === "No matches found";
@@ -803,7 +713,6 @@ export const ToolCallMessage = memo(
               </Box>
             );
           } else {
-            // Content mode - count lines in the output
             const lineCount = text.split("\n").length;
             return (
               <Box flexDirection="row">
@@ -821,7 +730,6 @@ export const ToolCallMessage = memo(
           }
         }
 
-        // Check if this is a glob tool - show file count summary
         if (isGlobTool(rawName) && line.resultOk !== false && line.resultText) {
           const text = line.resultText;
           const filesMatch = text.match(/^Found (\d+) files?/);
@@ -855,26 +763,19 @@ export const ToolCallMessage = memo(
               </Box>
             );
           }
-          // Fall through to default if no match pattern found
         }
 
-        // Regular result handling
         const isError = line.resultOk === false;
 
-        // Try to parse JSON for cleaner error display
         let displayText = displayResultText;
         try {
           const parsed = JSON.parse(displayResultText);
           if (parsed.error && typeof parsed.error === "string") {
             displayText = parsed.error;
           }
-        } catch {
-          // Not JSON, use raw text
-        }
+        } catch {}
 
-        // Format tool denial errors more user-friendly
         if (isError && displayText.includes("request to call tool denied")) {
-          // Use [\s\S]+ to match multiline reasons
           const match = displayText.match(/User reason: ([\s\S]+)$/);
           const reason = match?.[1]?.trim() || "(empty)";
           displayText = `User rejected the tool call with reason: ${reason}`;
@@ -911,7 +812,6 @@ export const ToolCallMessage = memo(
             isMemory={isMemoryTool(rawName)}
           />
 
-          {/* Shell command continuation lines with │ prefix */}
           {shellContinuationLines.map((spans) => {
             const clipped = clipStyledSpans(spans, columns - 5);
             const lineKey = spans.map((s) => s.text).join("");
@@ -933,14 +833,12 @@ export const ToolCallMessage = memo(
             );
           })}
 
-          {/* Streaming output for shell tools during execution */}
           {isShellOutputTool(rawName) &&
             line.phase === "running" &&
             line.streaming && (
               <StreamingOutputDisplay streaming={line.streaming} />
             )}
 
-          {/* Collapsed output for shell tools after completion */}
           {isShellOutputTool(rawName) &&
             line.phase === "finished" &&
             line.resultText &&
@@ -962,12 +860,7 @@ export const ToolCallMessage = memo(
               ) : null;
             })()}
 
-          {/* Tool result for non-shell tools or shell tool errors */}
           {(() => {
-            // Show default result element when:
-            // - Not a shell tool (always show result)
-            // - Shell tool with error (show error message)
-            // - Shell tool in streaming/ready phase (show default "Running..." etc)
             const showDefaultResult =
               !isShellOutputTool(rawName) ||
               (line.phase === "finished" && line.resultOk === false) ||

@@ -1,5 +1,3 @@
-// Additional system prompts for /system command
-
 import approvalRecoveryAlert from "./prompts/approval_recovery_alert.txt";
 import humanPrompt from "./prompts/human.mdx";
 import humanKawaiiPrompt from "./prompts/human_kawaii.mdx";
@@ -54,7 +52,6 @@ export const MEMORY_PROMPTS: Record<string, string> = {
   "style.mdx": stylePrompt,
 };
 
-// System prompt options for /system command
 export interface SystemPromptOption {
   id: string;
   label: string;
@@ -126,17 +123,10 @@ export function getSystemPromptVariantContents(
   ].filter((content): content is string => typeof content === "string");
 }
 
-/**
- * Check if a preset ID exists in SYSTEM_PROMPTS.
- */
 export function isKnownPreset(id: string): boolean {
   return SYSTEM_PROMPTS.some((p) => p.id === id);
 }
 
-/**
- * Deterministic rebuild of a system prompt from a known preset + memory mode.
- * Throws on unknown preset (prevents stale/renamed presets from silently rewriting prompts).
- */
 export function buildSystemPrompt(
   presetId: string,
   memoryMode: MemoryPromptMode,
@@ -168,10 +158,6 @@ export function buildSystemPrompt(
   return preset.content.trim();
 }
 
-/**
- * Returns true if the agent is not on the current default preset
- * and would benefit from switching to `/system default`.
- */
 export function shouldRecommendDefaultPrompt(
   currentPrompt: string,
   memoryMode: MemoryPromptMode,

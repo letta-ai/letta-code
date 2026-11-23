@@ -24,13 +24,7 @@ export interface SuperRunWaitDeps {
   ) => Promise<ExactSuperRun>;
   run: (runId: string, signal: AbortSignal) => Promise<Run>;
   messages: (runId: string, signal: AbortSignal) => Promise<Message[]>;
-  /**
-   * Called with the Super Run's child runs (newest first) while it executes,
-   * at most every `progressMs`, and once more when it completes. Failures are
-   * ignored: progress is best effort and never ends the wait.
-   */
   onProgress?: (runIds: string[], signal: AbortSignal) => Promise<void>;
-  /** Optional, best-effort observation of an idle child with background work. */
   runtimeStatus?: (
     agentId: string,
     conversationId: string,
@@ -39,17 +33,14 @@ export interface SuperRunWaitDeps {
   onIdle?: (text: string, backgroundCount: number) => void;
   progressMs?: number;
   pollMs?: number;
-  /** How long a completed Super Run may report no linked child run. */
   runLinkGraceMs?: number;
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
 
 class RemoteExecutionFailed extends Error {}
 
-/** The server can link a child run to its Super Run after marking it complete. */
 const DEFAULT_RUN_LINK_GRACE_MS = 60_000;
 
-/** Read only the accepted send's conversation from the runtime snapshot. */
 export async function readConversationRuntimeStatus(
   agentId: string,
   conversationId: string,
@@ -138,7 +129,6 @@ function noReplyMessage(receipt: EnqueueReceipt): string {
   return `Remote task finished. Its reply was not collected. Read the conversation with: letta messages list --agent ${getEnqueueAgentId(receipt)} --conversation ${receipt.conversation_id}. Do not launch the task again to retrieve its result.`;
 }
 
-/** Follow the exact accepted send. Reads may retry; the task is never resubmitted. */
 export async function waitForAcceptedSuperRun(
   receipt: EnqueueReceipt,
   signal: AbortSignal,
@@ -211,7 +201,6 @@ export async function waitForAcceptedSuperRun(
       deps.onIdle(text, count);
       idleNotified = true;
     } catch {
-      // Older servers and transient observation failures must not end the wait.
       signal.throwIfAborted();
     }
   };
@@ -243,7 +232,6 @@ export async function waitForAcceptedSuperRun(
       continue;
     }
 
-    // run_ids is newest first, so this is the run that ended the send.
     const runId = exact.run_ids[0];
     if (!runId) {
       completedWithoutRunSince ??= Date.now();
@@ -267,10 +255,6 @@ export async function waitForAcceptedSuperRun(
         `Remote child run ${runId} ${run.status}${run.stop_reason ? ` (${run.stop_reason})` : ""}.`,
       );
     }
-    // The Super Run is already terminal here. A requires_approval child is the
-    // normal mid-turn boundary; it can be the newest linked run when the
-    // listener's later loop frames were lost (e.g. a socket drop), so it must
-    // not hold the wait open after Cloud has closed the send.
     if (run.status !== "completed") {
       await sleep(pollMs, signal);
       continue;

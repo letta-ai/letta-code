@@ -82,7 +82,6 @@ describe("transcribeAudioFile", () => {
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    // Write a temp file so readFileSync succeeds.
     const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");

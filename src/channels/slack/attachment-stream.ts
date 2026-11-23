@@ -23,11 +23,6 @@ function sanitizeFileName(name: string): string {
   return normalized.length > 0 ? normalized : "attachment";
 }
 
-/**
- * Slack file downloads must never wedge a turn on a dead TCP stream: a read
- * that produces no data within this window fails the download instead of
- * waiting forever. Mirrors OpenClaw's Slack media read-idle timeout.
- */
 export const SLACK_ATTACHMENT_READ_IDLE_TIMEOUT_MS = 60_000;
 
 async function readWithIdleTimeout(

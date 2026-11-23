@@ -9,23 +9,15 @@ describe("stale turn catch ownership guard", () => {
       "utf-8",
     );
 
-    // The outer catch of processConversation.
     const catchAnchor = source.indexOf('"Unhandled conversation error: %s"');
     expect(catchAnchor).toBeGreaterThanOrEqual(0);
 
-    // Turn-ownership witness (the same one finishTuiTurn uses): a
-    // replacement turn overwrites abortControllerRef with its own
-    // controller, so a stale turn sees a mismatch and must not touch the
-    // replacement's state.
     const guardIndex = source.indexOf(
       "abortControllerRef.current !== turnAbortController",
       catchAnchor,
     );
     expect(guardIndex).toBeGreaterThan(catchAnchor);
 
-    // The guard must precede every shared-state mutation in the catch:
-    // cancelled-tool marking, the EAGER_CANCEL partial overlay, and the
-    // generic error UI.
     const markIndex = source.indexOf(
       "markIncompleteToolsAsCancelled(",
       catchAnchor,

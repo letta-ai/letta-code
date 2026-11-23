@@ -1,6 +1,5 @@
 import { ApiRequestError, apiRequest } from "./request";
 
-// The monitor resource is not yet included in the generated client.
 export interface MonitorState {
   monitor_id: string;
   agent_id: string | null;
@@ -54,7 +53,6 @@ export async function createMonitorState(
     });
   } catch (error) {
     if (!isLegacyMonitorValidation(error, "create")) throw error;
-    // Older servers validate strict request bodies and reject lifecycle fields.
     const { args: _args, expires_at: _expires, ...legacy } = input;
     return apiRequest("POST", "/v1/monitors", legacy, {
       actingUserId,

@@ -43,8 +43,6 @@ function isProcessStillRunning(pid: number): boolean {
       const endCommand = stat.lastIndexOf(")");
       const state =
         endCommand === -1 ? "" : stat.slice(endCommand + 2, endCommand + 3);
-      // kill(pid, 0) succeeds for a zombie until it is reaped, but the
-      // process has exited and can no longer keep inherited stdio open.
       return state !== "Z" && state !== "X";
     } catch {
       return false;
@@ -95,8 +93,6 @@ describe("shared shell process", () => {
   });
 
   test("hides the Windows console window for pipe-mode processes", async () => {
-    // A detached listener has no console on Windows, so a child spawned
-    // without windowsHide opens a visible console window that steals focus.
     const spawnSpy = spyOn(childProcess, "spawn");
     try {
       const running = startShellProcess(
@@ -109,7 +105,6 @@ describe("shared shell process", () => {
       );
       await running.completion;
 
-      // The launcher may be wrapped (e.g. systemd-run), so check every spawn.
       expect(spawnSpy).toHaveBeenCalled();
       for (const [, , options] of spawnSpy.mock.calls) {
         expect(options).toMatchObject({ windowsHide: true });
@@ -282,7 +277,6 @@ describe("shared shell process", () => {
     let completionTimer: ReturnType<typeof setTimeout> | undefined;
     try {
       await inheritedPipes;
-      // Let the launcher exit while its detached descendant retains both pipes.
       await new Promise((resolve) => setTimeout(resolve, 100));
       expect(isProcessStillRunning(descendantPid)).toBe(true);
       running.process.kill("SIGKILL");
@@ -300,13 +294,10 @@ describe("shared shell process", () => {
       ]);
     } finally {
       clearTimeout(completionTimer);
-      // This deliberately detached fixture is outside the launcher's kill tree.
       if (descendantPid) {
         try {
           process.kill(descendantPid, "SIGKILL");
-        } catch {
-          // Already exited.
-        }
+        } catch {}
       }
     }
   }, 3000);

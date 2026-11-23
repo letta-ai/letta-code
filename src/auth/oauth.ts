@@ -1,8 +1,3 @@
-/**
- * OAuth 2.0 utilities for Letta Cloud authentication
- * Uses Device Code Flow for CLI authentication
- */
-
 import Letta from "@letta-ai/letta-client";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
@@ -13,12 +8,6 @@ const DEFAULT_AUTH_BASE_URL = "https://app.letta.com";
 
 let hasWarnedAboutInvalidAuthBaseUrl = false;
 
-/**
- * Resolves the base URL for OAuth device-flow endpoints (device code,
- * token, revoke). Defaults to app.letta.com; branded surfaces (e.g. Dream)
- * provision LETTA_AUTH_BASE_URL so device login stays on that brand's auth
- * host. The issued credential is the same Letta Cloud token either way.
- */
 export function resolveAuthBaseUrl(): string {
   const override = process.env.LETTA_AUTH_BASE_URL?.trim();
   if (!override) {
@@ -34,8 +23,6 @@ export function resolveAuthBaseUrl(): string {
       url.protocol === "https:" ||
       (url.protocol === "http:" && isLocalhost)
     ) {
-      // Normalize to the origin so paths/query in the override cannot
-      // corrupt endpoint construction.
       return url.origin;
     }
     warning = "must be an https origin (http is allowed for localhost)";
@@ -54,7 +41,7 @@ export function resolveAuthBaseUrl(): string {
 
 export const OAUTH_CONFIG = {
   clientId: "ci-let-724dea7e98f4af6f8f370f4b1466200c",
-  clientSecret: "", // Not needed for device code flow
+  clientSecret: "",
   get authBaseUrl() {
     return resolveAuthBaseUrl();
   },
@@ -76,7 +63,6 @@ export interface TokenResponse {
   token_type: string;
   expires_in: number;
   scope?: string;
-  /** The organization every request with this token acts in. */
   organization_id?: string;
 }
 
@@ -278,9 +264,7 @@ function isTransientOAuthResponseStatus(status: number): boolean {
 async function cancelOAuthResponseBody(response: Response): Promise<void> {
   try {
     await response.body?.cancel();
-  } catch {
-    // Best-effort only: never read or surface the body in OAuth errors.
-  }
+  } catch {}
 }
 
 async function parseOAuthJsonResponse(
@@ -332,9 +316,6 @@ function toOAuthActionError(
   return new Error(`Failed to ${action}: ${String(error)}`);
 }
 
-/**
- * Device Code Flow - Step 1: Request device code
- */
 export async function requestDeviceCode(
   organizationId?: string,
 ): Promise<DeviceCodeResponse> {
@@ -395,9 +376,6 @@ export async function requestDeviceCode(
   throw new Error("Failed to request device code from unreachable OAuth path");
 }
 
-/**
- * Device Code Flow - Step 2: Poll for token
- */
 export async function pollForToken(
   deviceCode: string,
   interval: number = 5,
@@ -473,13 +451,11 @@ export async function pollForToken(
       const error = result as OAuthError;
 
       if (error.error === "authorization_pending") {
-        // User hasn't authorized yet, keep polling
         consecutiveResponseFailures = 0;
         continue;
       }
 
       if (error.error === "slow_down") {
-        // We're polling too fast, increase interval by 5 seconds
         pollInterval += 5000;
         consecutiveResponseFailures = 0;
         continue;
@@ -527,9 +503,6 @@ export async function pollForToken(
   throw new Error("Timeout waiting for authorization (15 minutes)");
 }
 
-/**
- * Refresh an access token using a refresh token
- */
 export async function refreshAccessToken(
   refreshToken: string,
   deviceId: string,
@@ -551,11 +524,6 @@ export async function refreshAccessToken(
           device_id: deviceId,
           ...(deviceName && { device_name: deviceName }),
         }),
-        // Static ceiling even when no caller signal is supplied (evil-shub
-        // round-9 P1): an unbounded refresh fetch hangs every waiter on the
-        // single-flight promise forever (OrgCredentialSession.pending never
-        // settles). Sixty seconds is generous for one POST; the caller's
-        // budget signal tightens it when provided.
         signal: signal
           ? AbortSignal.any([signal, AbortSignal.timeout(60_000)])
           : AbortSignal.timeout(60_000),
@@ -590,9 +558,6 @@ export async function refreshAccessToken(
   }
 }
 
-/**
- * Revoke a refresh token (logout)
- */
 export async function revokeToken(refreshToken: string): Promise<void> {
   try {
     const response = await fetch(
@@ -608,7 +573,6 @@ export async function revokeToken(refreshToken: string): Promise<void> {
       },
     );
 
-    // OAuth 2.0 revoke endpoint should return 200 even if token is already invalid
     if (!response.ok) {
       const error = (await response.json()) as OAuthError;
       trackBoundaryError({
@@ -619,7 +583,6 @@ export async function revokeToken(refreshToken: string): Promise<void> {
       console.error(
         `Warning: Failed to revoke token: ${error.error_description || error.error}`,
       );
-      // Don't throw - we still want to clear local credentials
     }
   } catch (error) {
     trackBoundaryError({
@@ -628,14 +591,9 @@ export async function revokeToken(refreshToken: string): Promise<void> {
       context: "auth_oauth_revoke",
     });
     console.error("Warning: Failed to revoke token:", error);
-    // Don't throw - we still want to clear local credentials
   }
 }
 
-/**
- * Validate credentials by checking an authenticated endpoint.
- * Uses SDK's agents.list() which requires valid authentication.
- */
 export async function validateCredentials(
   baseUrl: string,
   apiKey: string,
@@ -656,14 +614,12 @@ export async function validateCredentialsWithResult(
   }
 
   try {
-    // Create a temporary client to test authentication
     const client = new Letta({
       apiKey,
       baseURL: baseUrl,
       defaultHeaders: { "X-Letta-Source": "letta-code" },
     });
 
-    // Try to list agents - this requires valid authentication
     await client.agents.list({ limit: 1 });
 
     return { ok: true };

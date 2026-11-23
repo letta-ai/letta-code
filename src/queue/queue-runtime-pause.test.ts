@@ -1,7 +1,3 @@
-/**
- * QueueRuntime pause/resume: user messages parked by an interrupt stay
- * visible but are skipped by every dequeue path; system items keep flowing.
- */
 import { describe, expect, test } from "bun:test";
 import {
   type QueueBlockedReason,
@@ -39,7 +35,6 @@ describe("QueueRuntime.pause", () => {
     expect(q.readyLength).toBe(1);
     expect(q.pausedCount).toBe(2);
     expect(q.peekReady().map(textOf)).toEqual(["<notification/>"]);
-    // Paused items remain visible for display.
     expect(q.items.map((i) => Boolean(i.paused))).toEqual([true, false, true]);
   });
 
@@ -108,8 +103,6 @@ describe("dequeue paths skip paused items", () => {
     q.enqueue(notification("n1"));
     q.enqueue(userMsg("typed after esc"));
     q.pause();
-    // Both user messages above are now parked; this one arrives afterwards
-    // and is ready, so the batch skips the parked items around it.
     q.enqueue(userMsg("typed after pause"));
 
     const batch = q.tryDequeue(null);

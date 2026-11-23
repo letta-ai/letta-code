@@ -25,10 +25,6 @@ function memoryBlockName(path: string): string {
   return path.split("/").pop() || path;
 }
 
-/**
- * Renders a diff view for memory tool operations.
- * Handles both `memory` (command-based) and `memory_apply_patch` (unified diff) tools.
- */
 export function MemoryDiffRenderer({
   argsText,
   toolName,
@@ -38,7 +34,6 @@ export function MemoryDiffRenderer({
   try {
     const args = JSON.parse(argsText) as Record<string, unknown>;
 
-    // Handle memory_apply_patch tool (codex-style apply_patch input)
     if (toolName === "memory_apply_patch") {
       const patch = typeof args.input === "string" ? args.input : "";
       return (
@@ -46,11 +41,9 @@ export function MemoryDiffRenderer({
       );
     }
 
-    // Handle memory tool (command-based)
     const command = args.command as string;
     const path = stringArg(args, "file_path", "path", "old_path") ?? "unknown";
 
-    // Extract just the block name from the path (e.g., "/memories/project" -> "project")
     const blockName = memoryBlockName(path);
 
     switch (command) {
@@ -70,7 +63,7 @@ export function MemoryDiffRenderer({
       case "insert": {
         const insertText = stringArg(args, "insert_text") ?? "";
         const insertLine = args.insert_line;
-        const prefixWidth = 4; // "    " indent
+        const prefixWidth = 4;
         const contentWidth = Math.max(0, columns - prefixWidth);
         return (
           <Box flexDirection="column">
@@ -117,7 +110,7 @@ export function MemoryDiffRenderer({
       case "create": {
         const description = stringArg(args, "description") ?? "";
         const fileText = stringArg(args, "file_text") ?? "";
-        const prefixWidth = 4; // "    " indent
+        const prefixWidth = 4;
         const contentWidth = Math.max(0, columns - prefixWidth);
         return (
           <Box flexDirection="column">
@@ -268,16 +261,10 @@ export function MemoryDiffRenderer({
       }
     }
   } catch {
-    // If parsing fails, return null to fall through to regular handling
     return null;
   }
 }
 
-/**
- * Renders a str_replace diff with line-level diffing and word-level highlighting.
- * Uses Diff.diffLines() to only show lines that actually changed,
- * instead of showing all old lines then all new lines.
- */
 function MemoryStrReplaceDiff({
   blockName,
   oldStr,
@@ -289,15 +276,12 @@ function MemoryStrReplaceDiff({
   newStr: string;
   columns: number;
 }) {
-  // Use line-level diff to find what actually changed
   const lineDiffs = Diff.diffLines(oldStr, newStr);
 
-  // Build display rows: only show added/removed lines, not unchanged
-  // For adjacent remove/add pairs, enable word-level highlighting
   type DiffRow = {
     type: "add" | "remove";
     content: string;
-    pairContent?: string; // For word-level diff when remove is followed by add
+    pairContent?: string;
   };
   const rows: DiffRow[] = [];
 
@@ -305,14 +289,11 @@ function MemoryStrReplaceDiff({
     const part = lineDiffs[i];
     if (!part) continue;
 
-    // Skip unchanged lines (context)
     if (!part.added && !part.removed) continue;
 
-    // Split the value into individual lines (remove trailing newline)
     const lines = part.value.replace(/\n$/, "").split("\n");
 
     if (part.removed) {
-      // Check if next part is an addition (for word-level diff pairing)
       const nextPart = lineDiffs[i + 1];
       const nextIsAdd = nextPart?.added;
       const nextLines = nextIsAdd
@@ -323,7 +304,6 @@ function MemoryStrReplaceDiff({
         rows.push({
           type: "remove",
           content: line,
-          // Pair with corresponding add line for word-level diff (if same count)
           pairContent:
             nextIsAdd && lines.length === nextLines.length
               ? nextLines[lineIdx]
@@ -331,7 +311,6 @@ function MemoryStrReplaceDiff({
         });
       });
     } else if (part.added) {
-      // Check if previous part was a removal (already handled pairing above)
       const prevPart = lineDiffs[i - 1];
       const prevIsRemove = prevPart?.removed;
       const prevLines = prevIsRemove
@@ -342,7 +321,6 @@ function MemoryStrReplaceDiff({
         rows.push({
           type: "add",
           content: line,
-          // Pair with corresponding remove line for word-level diff (if same count)
           pairContent:
             prevIsRemove && lines.length === prevLines.length
               ? prevLines[lineIdx]
@@ -352,7 +330,6 @@ function MemoryStrReplaceDiff({
     }
   }
 
-  // Limit display to avoid huge diffs
   const maxRows = 10;
   const displayRows = rows.slice(0, maxRows);
   const hasMore = rows.length > maxRows;
@@ -398,9 +375,6 @@ function MemoryStrReplaceDiff({
   );
 }
 
-/**
- * Single diff line with word-level highlighting
- */
 function DiffLine({
   type,
   content,
@@ -418,10 +392,9 @@ function DiffLine({
   const wordBg =
     type === "add" ? colors.diff.addedWordBg : colors.diff.removedWordBg;
 
-  const prefixWidth = 4; // "    " indent
+  const prefixWidth = 4;
   const contentWidth = Math.max(0, columns - prefixWidth);
 
-  // Word-level diff if we have something to compare
   if (compareContent !== undefined && content.trim() && compareContent.trim()) {
     const wordDiffs =
       type === "add"
@@ -478,7 +451,6 @@ function DiffLine({
     );
   }
 
-  // Simple line without word diff
   return (
     <Box flexDirection="row">
       <Box width={prefixWidth} flexShrink={0}>
@@ -502,9 +474,6 @@ function truncate(str: string, maxLen: number): string {
   return `${str.slice(0, maxLen - 1)}…`;
 }
 
-/**
- * Renders a unified-diff patch from memory_apply_patch tool
- */
 function PatchDiffRenderer({
   label,
   patch,
@@ -519,7 +488,7 @@ function PatchDiffRenderer({
   const displayLines = lines.slice(0, maxLines);
   const hasMore = lines.length > maxLines;
 
-  const prefixWidth = 4; // "    " indent
+  const prefixWidth = 4;
   const contentWidth = Math.max(0, columns - prefixWidth);
 
   return (
@@ -541,13 +510,12 @@ function PatchDiffRenderer({
         </Box>
       </Box>
       {displayLines.map((line, i) => {
-        // Skip @@ hunk headers
         if (line.startsWith("@@")) {
           return null;
         }
 
         const firstChar = line[0];
-        const content = line.slice(1); // Remove the prefix character
+        const content = line.slice(1);
 
         if (firstChar === "+") {
           return (
@@ -590,7 +558,6 @@ function PatchDiffRenderer({
             </Box>
           );
         } else if (firstChar === " ") {
-          // Context line - show dimmed
           return (
             <Box
               key={`patch-${i}-${line.substring(0, 20)}`}
@@ -607,7 +574,6 @@ function PatchDiffRenderer({
             </Box>
           );
         }
-        // Unknown format, show as-is
         return (
           <Box key={`patch-${i}-${line.substring(0, 20)}`} flexDirection="row">
             <Box width={prefixWidth} flexShrink={0}>

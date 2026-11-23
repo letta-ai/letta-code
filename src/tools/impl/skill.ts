@@ -30,9 +30,7 @@ import { validateRequiredParams } from "./validation.js";
 
 interface SkillArgs {
   skill: string;
-  /** Injected by executeTool - the tool_call_id for this invocation */
   toolCallId?: string;
-  /** Injected by executeTool in listener mode for scoped agent resolution. */
   parentScope?: { agentId: string; conversationId: string };
 }
 
@@ -91,9 +89,6 @@ function getMemorySkillsDirs(agentId?: string): string[] {
   return Array.from(dirs);
 }
 
-/**
- * List bundled resources without eagerly reading their contents.
- */
 const MAX_LISTED_SKILL_RESOURCES = 200;
 
 interface SkillResources {
@@ -142,25 +137,12 @@ function listSkillResources(skillMdPath: string): SkillResources {
   return { paths, truncated };
 }
 
-/**
- * Read skill content from file or bundled source
- * Returns both content and the path to the SKILL.md file
- *
- * Search order (highest priority first):
- * 1. Project skills (.agents/skills/, then legacy .skills/ fallback)
- * 2. Agent memory skills (~/.letta/agents/{id}/memory/skills/)
- * 3. Agent memory skills fallback ($MEMORY_DIR/skills/)
- * 4. Attached shared-memory skills
- * 5. Global skills (~/.letta/skills/)
- * 6. Bundled skills
- */
 export async function readSkillContent(
   skillId: string,
   skillsDir: string,
   agentId?: string,
   options: ReadSkillContentOptions = {},
 ): Promise<{ content: string; path: string }> {
-  // 1. Try project skills directory (highest priority)
   const projectSkillsDirs = new Set<string>([
     join(getCurrentWorkingDirectory(), PROJECT_SKILLS_DIR),
     skillsDir,
@@ -175,7 +157,6 @@ export async function readSkillContent(
     }
   }
 
-  // 2. Try agent memory skills directory (if agentId provided)
   if (agentId) {
     const result = await readSkillFromRoot(getAgentSkillsDir(agentId), skillId);
     if (result) {
@@ -183,7 +164,6 @@ export async function readSkillContent(
     }
   }
 
-  // 3. Try agent memory skills fallback directories
   for (const memorySkillsDir of getMemorySkillsDirs(agentId)) {
     const result = await readSkillFromRoot(memorySkillsDir, skillId);
     if (result) {
@@ -191,7 +171,6 @@ export async function readSkillContent(
     }
   }
 
-  // 4. Try attached shared-memory repositories
   const sharedMemoryContext = await resolveSharedMemorySkillsContext({
     agentId,
     skillSources: getSkillSources(),
@@ -207,18 +186,14 @@ export async function readSkillContent(
     try {
       const content = await readFile(sharedSkill.path, "utf-8");
       return { content, path: sharedSkill.path };
-    } catch {
-      // Shared skill disappeared after discovery, continue
-    }
+    } catch {}
   }
 
-  // 5. Try global skills directory
   const globalResult = await readSkillFromRoot(getGlobalSkillsDir(), skillId);
   if (globalResult) {
     return globalResult;
   }
 
-  // 6. Try bundled skills (lowest priority)
   const bundledSkills = await getBundledSkills();
   const bundledSkill = bundledSkills.find((s) => s.id === skillId);
   if (bundledSkill?.path && isSkillAvailableForAgent(bundledSkill, agentId)) {
@@ -226,12 +201,9 @@ export async function readSkillContent(
       const path = bundledSkill.path;
       const content = await readFile(path, "utf-8");
       return { content, path };
-    } catch {
-      // Bundled skill path not found, continue to legacy fallback
-    }
+    } catch {}
   }
 
-  // Legacy fallback: check for bundled skills in a repo-level skills directory
   try {
     const bundledSkillsDir = join(process.cwd(), "skills", "skills");
     const bundledSkillPath = join(bundledSkillsDir, skillId, "SKILL.md");
@@ -244,9 +216,6 @@ export async function readSkillContent(
   }
 }
 
-/**
- * Get skills directory, trying multiple sources
- */
 export async function getResolvedSkillsDir(): Promise<string> {
   const skillsDir = getSkillsDirectory();
 
@@ -254,7 +223,6 @@ export async function getResolvedSkillsDir(): Promise<string> {
     return skillsDir;
   }
 
-  // Fall back to the execution working directory when available.
   return join(getCurrentWorkingDirectory(), SKILLS_DIR);
 }
 
@@ -374,8 +342,6 @@ export async function skill(
       skillsDir,
     });
 
-    // Queue the skill content for harness-level injection as a user message part
-    // Wrap in <skill-name> XML tags so the agent can detect already-loaded skills
     if (toolCallId) {
       queueSkillContent(toolCallId, wrapSkillContent(skillName, fullContent));
     }

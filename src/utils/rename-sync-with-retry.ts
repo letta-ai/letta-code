@@ -20,7 +20,6 @@ export function renameSyncWithRetry(
       ) {
         throw error;
       }
-      // Antivirus/indexers can briefly hold the freshly written temp file.
       Atomics.wait(sleeper, 0, 0, 10 * (attempt + 1));
     }
   }

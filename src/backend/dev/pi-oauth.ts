@@ -10,14 +10,6 @@ import {
   type PiProviderOAuthConfig,
 } from "./pi-provider-mod-registry";
 
-/**
- * pi-ai 0.81 removed the standalone OAuth registry: OAuth flows live on
- * `Provider.auth.oauth`. This module is the lookup seam for Letta's local
- * OAuth glue (login flows, token refresh in the auth store): built-in
- * providers expose their `OAuthAuth` directly, and mod-registered providers
- * get their legacy `PiProviderOAuthConfig` adapted onto the same interface.
- */
-
 let builtinOAuth: Map<string, OAuthAuth> | undefined;
 
 function builtinOAuthAuths(): Map<string, OAuthAuth> {
@@ -29,7 +21,6 @@ function builtinOAuthAuths(): Map<string, OAuthAuth> {
   return builtinOAuth;
 }
 
-/** Legacy extension-callback surface driven from a pi-ai AuthInteraction. */
 function legacyCallbacksFromInteraction(
   interaction: AuthInteraction,
 ): OAuthLoginCallbacks {
@@ -62,7 +53,6 @@ function legacyCallbacksFromInteraction(
   };
 }
 
-/** Adapts a mod's declarative OAuth config onto pi-ai's OAuthAuth. */
 export function modOAuthAuth(
   providerName: string,
   config: PiProviderOAuthConfig,
@@ -90,10 +80,6 @@ export function modOAuthAuth(
   };
 }
 
-/**
- * OAuth implementation for a provider id: mod registration first (matching
- * the resolution order everywhere else), then built-in pi-ai providers.
- */
 export function getProviderOAuthAuth(
   providerId: string,
 ): OAuthAuth | undefined {
@@ -108,7 +94,6 @@ export function getProviderOAuthAuth(
   return builtinOAuthAuths().get(providerId);
 }
 
-/** Built-in providers that support subscription (OAuth) login. */
 export function listBuiltinOAuthProviders(): Array<{
   id: string;
   name: string;

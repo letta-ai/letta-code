@@ -20,10 +20,6 @@ import { settingsManager } from "@/settings-manager";
 import { FORK_PROMPT_CHARACTER_LIMIT } from "./fork-prompt";
 import { backgroundTasks } from "./process_manager";
 
-// External coding workers with fork_context. Replace discovery and the
-// child-process boundary only; task(), the selection logic, and the transcript
-// rendering run for real. Runs isolated via
-// isolated-unit-tests.json because of the module mocks.
 const base: SubagentConfig = {
   name: "general-purpose",
   description: "Fixture",
@@ -76,8 +72,6 @@ const spawn = mock(
 );
 mock.module("@/agent/subagents/manager", () => ({ spawnSubagent: spawn }));
 
-// External workers: keep the real module, replace only the process launch and
-// the remote hand-off so the prompt each would receive can be observed.
 const workerPrompts: string[] = [];
 const workerReminders: Array<string | undefined> = [];
 let inventoryError: Error | undefined;
@@ -170,7 +164,6 @@ beforeEach(async () => {
   previousScratchpad = process.env.LETTA_SCRATCHPAD;
   process.env.HOME = scratchpad;
   process.env.LETTA_SCRATCHPAD = scratchpad;
-  // The fork helper copies the parent's toolset preference.
   await settingsManager.reset();
   await settingsManager.initialize();
 });
@@ -310,8 +303,6 @@ describe("fork_context for external coding workers", () => {
   });
 });
 
-// Exercise the shared launch entrypoint and the model-facing Agent/Task adapter.
-// Rejection must happen before history reads, forks, or local/remote processes.
 describe("fork prompt limit", () => {
   const oversized = "x".repeat(FORK_PROMPT_CHARACTER_LIMIT + 1);
   for (const harness of [

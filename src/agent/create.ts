@@ -1,7 +1,3 @@
-/**
- * Utilities for creating an agent on the Letta API backend
- **/
-
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { type BackendCapabilities, getBackend } from "@/backend";
 import { apiRequest, getApiRequestConfig } from "@/backend/api/request";
@@ -22,25 +18,16 @@ import { resolveCreatedAgentName } from "./subagents/names";
 import { resolveAndBuildSystemPrompt } from "./system-prompt-resolution";
 import { recordManagedSystemPrompt } from "./system-prompt-versioning";
 
-/**
- * Describes where a memory block came from
- */
 export interface BlockProvenance {
   label: string;
   source: "global" | "project" | "new" | "shared";
 }
 
-/**
- * Provenance info for an agent creation
- */
 export interface AgentProvenance {
   isNew: true;
   blocks: BlockProvenance[];
 }
 
-/**
- * Result from createAgent including provenance info
- */
 export interface CreateAgentResult {
   agent: AgentState;
   provenance: AgentProvenance;
@@ -124,11 +111,6 @@ export interface CreatedAgentMemfsConfigOptions {
   capabilities: MemfsCreateCapabilities;
   requestedMemoryPromptMode?: MemoryPromptMode;
   isLettaCloud: boolean;
-  /**
-   * Subagents are ephemeral and deliberately stateless — they never get
-   * memfs. This is the ONLY supported way to create a non-memfs agent on a
-   * memfs-capable backend; there is no user-facing opt-out.
-   */
   isSubagent?: boolean;
 }
 
@@ -165,8 +147,6 @@ export async function resolveCreatedAgentSystemPrompt(
 export function resolveCreatedAgentMemfsConfig(
   options: CreatedAgentMemfsConfigOptions,
 ): CreatedAgentMemfsConfig {
-  // MemFS is unavailable only when the backend can't support it:
-  // self-hosted servers have no memfs git endpoint.
   const supported =
     options.capabilities.localMemfs ||
     (options.capabilities.remoteMemfs && options.isLettaCloud) ||
@@ -178,10 +158,6 @@ export function resolveCreatedAgentMemfsConfig(
     options.requestedMemoryPromptMode !== "standard"
       ? options.requestedMemoryPromptMode
       : undefined;
-  // New Letta Cloud and embedded-local agents are born on the MemFS v2 root
-  // layout. An explicit legacy memory mode still means "use git-backed
-  // memory" at creation, not "create another legacy-layout agent".
-  // Self-hosted API servers keep the caller's explicit mode.
   const memoryPromptMode = !enableMemfs
     ? "standard"
     : options.capabilities.localMemfs
@@ -197,28 +173,20 @@ export function resolveCreatedAgentMemfsConfig(
 
 export interface CreateAgentOptions {
   name?: string;
-  /** Agent description shown in /agents selector */
   description?: string;
   model?: string;
   embeddingModel?: string;
   updateArgs?: Record<string, unknown>;
   skillsDirectory?: string;
   parallelToolCalls?: boolean;
-  /** System prompt preset (e.g., 'default', 'letta', 'source-claude') */
   systemPromptPreset?: string;
-  /** Raw system prompt string (mutually exclusive with systemPromptPreset) */
   systemPromptCustom?: string;
-  /** Which managed memory prompt mode to apply */
   memoryPromptMode?: MemoryPromptMode;
-  /** Base tools to include */
   baseTools?: string[];
-  /** Custom memory blocks (overrides default blocks) */
   memoryBlocks?: Array<
     { label: string; value: string; description?: string } | { blockId: string }
   >;
-  /** Override values for preset blocks (label → value) */
   blockValues?: Record<string, string>;
-  /** Tags to organize and categorize the agent */
   tags?: string[];
 }
 
@@ -232,7 +200,6 @@ export async function createAgent(
   systemPromptPreset?: string,
   baseTools?: string[],
 ) {
-  // Support both old positional args and new options object
   let options: CreateAgentOptions;
   if (typeof nameOrOptions === "object") {
     options = nameOrOptions;
@@ -251,7 +218,6 @@ export async function createAgent(
 
   const embeddingModelVal = options.embeddingModel;
   const parallelToolCallsVal = options.parallelToolCalls ?? true;
-  // Subagents are ephemeral and don't carry memory blocks of their own.
   const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
   const name = resolveCreatedAgentName(
     options.name,
@@ -260,7 +226,6 @@ export async function createAgent(
   );
   delete process.env[SUBAGENT_NAME_ENV];
 
-  // Resolve model identifier to handle
   let modelHandle: string;
   if (options.model) {
     const resolved = resolveModel(options.model);
@@ -273,7 +238,6 @@ export async function createAgent(
     }
     modelHandle = resolved;
   } else {
-    // Use the default model from the runtime catalog
     modelHandle = getDefaultModel();
   }
 
@@ -291,17 +255,8 @@ export async function createAgent(
     isSubagent,
   });
 
-  // Only attach server-side tools to the agent.
-  // Client-side tools (Read, Write, Bash, etc.) are passed via client_tools at runtime,
-  // NOT attached to the agent. This is the new pattern - no more stub tool registration.
   const toolNames = options.baseTools;
 
-  // Determine which memory blocks to use:
-  // 1. If options.memoryBlocks is provided, use those (custom blocks and/or block references)
-  // 2. Subagents are ephemeral and get no memory blocks.
-  // 3. Otherwise, use the default blocks.
-
-  // Separate block references from blocks to create
   const referencedBlockIds: string[] = [];
   let filteredMemoryBlocks: Array<{
     label: string;
@@ -311,7 +266,6 @@ export async function createAgent(
   }>;
 
   if (options.memoryBlocks !== undefined) {
-    // Separate blockId references from CreateBlock items
     const createBlocks: typeof filteredMemoryBlocks = [];
     for (const item of options.memoryBlocks) {
       if ("blockId" in item) {
@@ -322,11 +276,9 @@ export async function createAgent(
     }
     filteredMemoryBlocks = createBlocks;
   } else {
-    // Subagents get no blocks; everyone else gets the default .mdx blocks.
     filteredMemoryBlocks = isSubagent ? [] : await getDefaultMemoryBlocks();
   }
 
-  // Apply blockValues overrides to preset blocks
   if (options.blockValues) {
     for (const [label, value] of Object.entries(options.blockValues)) {
       const block = filteredMemoryBlocks.find((b) => b.label === label);
@@ -340,24 +292,16 @@ export async function createAgent(
     }
   }
 
-  // Track provenance: which blocks were created
-  // Note: We no longer reuse shared blocks - each agent gets fresh blocks
   const blockProvenance: BlockProvenance[] = [];
 
-  // Mark new blocks for provenance tracking (actual creation happens in agents.create)
   for (const block of filteredMemoryBlocks) {
     blockProvenance.push({ label: block.label, source: "new" });
   }
 
-  // Mark referenced blocks for provenance tracking
   for (const blockId of referencedBlockIds) {
     blockProvenance.push({ label: blockId, source: "shared" });
   }
 
-  // Get the model's context window from its configuration (if known).
-  // If the caller specified a model *ID* (e.g. gpt-5.5-plus-pro-high),
-  // use that identifier to preserve tier-specific updateArgs like reasoning_effort.
-  // Otherwise, fall back to the resolved handle.
   const modelIdentifierForDefaults = options.model ?? modelHandle;
   const modelUpdateArgs = options.model
     ? getModelUpdateArgs(modelIdentifierForDefaults)
@@ -366,8 +310,6 @@ export async function createAgent(
     (modelUpdateArgs?.context_window as number | undefined) ??
     (await getModelContextWindow(modelHandle));
 
-  // Letta Cloud owns its default prompt. Local and self-hosted backends still
-  // receive the bundled default so their existing behavior remains unchanged.
   const memMode: MemoryPromptMode = memfsConfig.memoryPromptMode;
   const systemPromptContent = await resolveCreatedAgentSystemPrompt({
     isLettaCloud,
@@ -376,9 +318,6 @@ export async function createAgent(
     memoryPromptMode: memMode,
   });
 
-  // Create agent with inline memory blocks (LET-7101: single API call instead of N+1)
-  // - memory_blocks: new blocks to create inline
-  // - block_ids: references to existing blocks (for shared memory)
   const agentDescription =
     options.description ?? `Letta Code agent created in ${process.cwd()}`;
 
@@ -413,11 +352,6 @@ export async function createAgent(
     addBaseToolsToServer,
   );
 
-  // Apply updateArgs if provided (e.g., context_window, reasoning_effort, verbosity, etc.).
-  // Also apply tier defaults from the catalog entry when the caller explicitly selected a model.
-  //
-  // Note: we intentionally pass context_window through so updateAgentLLMConfig can set
-  // context_window_limit using the latest server API, avoiding any fallback.
   const mergedUpdateArgs = {
     ...(modelUpdateArgs ?? {}),
     ...(options.updateArgs ?? {}),
@@ -426,7 +360,6 @@ export async function createAgent(
     await updateAgentLLMConfig(agent.id, modelHandle, mergedUpdateArgs);
   }
 
-  // Always retrieve the agent to ensure we get the full state with populated memory blocks
   const fullAgent = await backend.retrieveAgent(agent.id, {
     include: ["agent.tags"],
   });
@@ -446,8 +379,6 @@ export async function createAgent(
     });
   }
 
-  // Persist system prompt preset — only for non-subagents and known presets or custom.
-  // Guarded by isReady since settings may not be initialized in direct/test callers.
   if (!isSubagent && settingsManager.isReady) {
     if (options.systemPromptCustom !== undefined) {
       settingsManager.setSystemPromptCustom(fullAgent.id);
@@ -462,10 +393,8 @@ export async function createAgent(
         systemPromptContent,
       );
     }
-    // Subagent names: don't persist (no stable managed prompt metadata)
   }
 
-  // Build provenance info
   const provenance: AgentProvenance = {
     isNew: true,
     blocks: blockProvenance,

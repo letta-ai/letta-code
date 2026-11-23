@@ -14,9 +14,6 @@ import {
 const CHILD = "agent-secret-refresh-child";
 const PARENT = "agent-secret-refresh-parent";
 
-// A subagent on a connected computer reads its parent's vault through the
-// shared cache. A secret added to the parent after that cache was first
-// filled must still reach the subagent once the entry goes stale.
 describe("inherited secrets refresh", () => {
   let parentVault: Record<string, string>;
   let fetches: string[];
@@ -77,13 +74,11 @@ describe("inherited secrets refresh", () => {
 
     parentVault.NEW_SECRET = "new-secret-value";
 
-    // Within the freshness window the cached parent vault is reused.
     const cached = await asSubagent(() =>
       resolveSecretEnvFromCommand(command, CHILD),
     );
     expect(cached.NEW_SECRET).toBeUndefined();
 
-    // Once the entry is stale, the next lookup re-fetches the parent vault.
     __testSetSecretsMaxAgeMs(0);
     const refreshed = await asSubagent(() =>
       resolveSecretEnvFromCommand(command, CHILD),

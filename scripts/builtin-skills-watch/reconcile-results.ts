@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-/** Reconciles pending tracker candidates against PR side effects before retries. */
 
 import {
   type BuiltinSkillWatchAnalysis,

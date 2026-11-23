@@ -13,7 +13,6 @@ import { InlineFileEditApproval } from "./InlineFileEditApproval";
 import { InlineGenericApproval } from "./InlineGenericApproval";
 import { InlineTaskApproval } from "./InlineTaskApproval";
 
-// Types for parsed tool data
 type BashInfo = {
   toolName: string;
   command: string;
@@ -42,7 +41,6 @@ type TaskInfo = {
 type Props = {
   approval: ApprovalRequest;
 
-  // Common handlers
   onApprove: (diffs?: Map<string, AdvancedDiffSuccess>) => void;
   onApproveAlways: (
     scope: "project" | "session",
@@ -56,12 +54,10 @@ type Props = {
   showPreview?: boolean;
   defaultScope?: "project" | "session";
 
-  // External data for FileEdit approvals
   precomputedDiff?: AdvancedDiffSuccess;
   allDiffs?: Map<string, AdvancedDiffSuccess>;
 };
 
-// Parse bash info from approval args
 function getBashInfo(approval: ApprovalRequest): BashInfo | null {
   try {
     const args = JSON.parse(approval.toolArgs || "{}");
@@ -86,7 +82,6 @@ function getBashInfo(approval: ApprovalRequest): BashInfo | null {
           ? "Write input to running shell session"
           : "Poll running shell session";
     } else {
-      // Bash uses command string and description
       command =
         typeof args.command === "string" ? args.command : "(no command)";
       description =
@@ -113,22 +108,19 @@ function isCommandMonitorApproval(approval: ApprovalRequest): boolean {
   }
 }
 
-// Parse file edit info from approval args
 function getFileEditInfo(approval: ApprovalRequest): FileEditInfo | null {
   try {
     const args = JSON.parse(approval.toolArgs || "{}");
 
-    // For patch tools, use the input field
     if (isPatchTool(approval.toolName)) {
       return {
         toolName: approval.toolName,
-        filePath: "", // Patch can have multiple files
+        filePath: "",
         patchInput: args.input as string | undefined,
         toolCallId: approval.toolCallId,
       };
     }
 
-    // For regular file edit/write tools
     return {
       toolName: approval.toolName,
       filePath: String(args.file_path || ""),
@@ -143,11 +135,9 @@ function getFileEditInfo(approval: ApprovalRequest): FileEditInfo | null {
   }
 }
 
-// Parse task info from approval args
 function getTaskInfo(approval: ApprovalRequest): TaskInfo | null {
   try {
     const args = JSON.parse(approval.toolArgs || "{}");
-    // A specialized Letta subagent, else the harness (default `letta`).
     const requestedType = args.subagent_type ?? args.harness ?? "letta";
     return {
       subagentType:
@@ -169,13 +159,6 @@ function getTaskInfo(approval: ApprovalRequest): TaskInfo | null {
   }
 }
 
-/**
- * ApprovalSwitch - Unified approval component that renders the appropriate
- * specialized approval UI based on tool type.
- *
- * This consolidates the approval rendering logic that was previously duplicated
- * in the transcript rendering and fallback UI paths.
- */
 export const ApprovalSwitch = memo(
   ({
     approval,
@@ -193,7 +176,6 @@ export const ApprovalSwitch = memo(
   }: Props) => {
     const toolName = approval.toolName;
 
-    // File edit/write/patch tools → InlineFileEditApproval
     if (
       isFileEditTool(toolName) ||
       isFileWriteTool(toolName) ||
@@ -220,7 +202,6 @@ export const ApprovalSwitch = memo(
       }
     }
 
-    // Shell/Bash tools → InlineBashApproval
     if (isShellTool(toolName) || isCommandMonitorApproval(approval)) {
       const bashInfo = getBashInfo(approval);
       if (bashInfo) {
@@ -241,7 +222,6 @@ export const ApprovalSwitch = memo(
       }
     }
 
-    // Task tool → InlineTaskApproval
     if (isTaskTool(toolName)) {
       const taskInfo = getTaskInfo(approval);
       if (taskInfo) {
@@ -260,7 +240,6 @@ export const ApprovalSwitch = memo(
       }
     }
 
-    // Fallback → InlineGenericApproval
     return (
       <InlineGenericApproval
         toolName={toolName}

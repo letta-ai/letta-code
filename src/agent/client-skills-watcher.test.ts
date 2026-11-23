@@ -46,9 +46,6 @@ describe("ClientSkillsWatcher", () => {
   test("real filesystem notifications refresh a late symlinked skill", async () => {
     const root = await mkdtemp(join(tmpdir(), "letta-live-skill-watch-"));
     tempRoots.push(root);
-    // Production watcher registration is intentionally disabled in bun:test.
-    // Run discovery in its own process rather than bypassing that wiring with
-    // manual cache invalidation or a test watcher.
     const script = `
       import assert from 'node:assert/strict';
       import { mkdir, writeFile, symlink } from 'node:fs/promises';

@@ -25,7 +25,6 @@ export function createHeadlessInterrupt(
   signal.addEventListener(
     "abort",
     () => {
-      // A provider may never settle the pending read after cancellation.
       if (signal.reason?.message === "SIGTERM") void exitInterrupted();
     },
     { once: true },
@@ -61,7 +60,6 @@ async function exitInterruptedHeadless(
   );
 }
 
-// SIGTERM output is best effort when the reader has stopped draining the pipe.
 export async function waitForTerminationOutput(
   write: Promise<unknown>,
 ): Promise<void> {

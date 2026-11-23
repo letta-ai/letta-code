@@ -753,9 +753,7 @@ export async function listSkillDirectories(params: {
       ) {
         description = frontmatter.description.trim();
       }
-    } catch {
-      // Keep listing valid skill directories even if their frontmatter is malformed.
-    }
+    } catch {}
 
     skills.push({ name, path: normalize(skillDir), description });
   }
@@ -904,9 +902,7 @@ async function commitSkillMemoryChange(params: {
     if (agent.name?.trim()) {
       authorName = agent.name.trim();
     }
-  } catch {
-    // Best effort only; committing should not depend on fetching display name.
-  }
+  } catch {}
 
   const result = await commitMemoryWrite({
     memoryDir: params.memoryDir,

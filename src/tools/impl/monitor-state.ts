@@ -21,7 +21,6 @@ import {
   scheduleBackgroundProcessCleanup,
 } from "./process_manager";
 
-/** Persist metadata, not process handles: execution still belongs to this host. */
 export async function withMonitorState<T>(
   input: {
     description: string;
@@ -67,7 +66,6 @@ export async function withMonitorState<T>(
         expires_at: input.timeoutMs
           ? new Date(Date.now() + input.timeoutMs).toISOString()
           : null,
-        // Credentials and execution context never belong in durable tool args.
         args: JSON.parse(
           JSON.stringify(input.args ?? {}, (_key, value) =>
             typeof value === "string"
@@ -104,7 +102,6 @@ export async function withMonitorState<T>(
     let pending = Promise.resolve();
     process.persistState = () => {
       let status = process.monitorEndStatus ?? process.status;
-      // A strict legacy create response has no saved-args capability.
       if (
         record.args === undefined &&
         ["expired", "stopped", "paused"].includes(status)

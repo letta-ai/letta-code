@@ -131,14 +131,12 @@ test("listener sync preserves MemFS guards and detects refusals at the guarded G
   );
   const listener = { memfsSyncedAgents: new Map() } as ListenerRuntime;
   try {
-    // Tagged agents still respect the backend capability guard.
     expect(await ensureMemfsSyncedForAgent(listener, "guard-no-remote")).toBe(
       true,
     );
     expect(clone).not.toHaveBeenCalled();
     capabilities.remoteMemfs = true;
     tags = [];
-    // Repair validates the endpoint, then reconciles the prompt, before Git.
     expect(await ensureMemfsSyncedForAgent(listener, "guard-endpoint")).toBe(
       false,
     );

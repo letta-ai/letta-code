@@ -84,7 +84,6 @@ describe("fork subagent toolset inheritance", () => {
     expect(child.preparedToolContext.loadedToolNames).not.toContain(
       "AskUserQuestion",
     );
-    // A subsequent parent turn omits client_toolset and still uses its defaults.
     const nextParent = await prepareToolExecutionContextForScope({
       agentId: agent.id,
       conversationId: conversation.id,

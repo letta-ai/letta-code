@@ -36,8 +36,6 @@ describe("resizeImageIfNeeded", () => {
   });
 
   test("compresses images whose base64 encoding exceeds the 5MB limit", async () => {
-    // Noise PNG under the dimension caps: ~4.3MB decoded, ~5.7MB as base64.
-    // Providers enforce the 5MB limit on the base64 data.
     const width = 1300;
     const height = 1100;
     const png = await sharp(randomBytes(width * height * 3), {

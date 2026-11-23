@@ -52,7 +52,6 @@ export interface CaptureDocsOptions {
 
 export interface CapturedDocs {
   snapshot: ClaudeDocsSnapshot;
-  /** Normalized markdown, keyed by the snapshot's deterministic source_path. */
   sources: Record<string, string>;
 }
 
@@ -63,7 +62,6 @@ export interface DiffDocsOptions {
   maxPreviewChars?: number;
 }
 
-/** llms.txt is an index, not prose: every absolute HTTP(S) URL ending in .md is authoritative. */
 export function parseLlmsTxt(text: string): string[] {
   const urls = new Set<string>();
   const pattern = /https?:\/\/[^\s<>"'`]+/gu;
@@ -75,17 +73,11 @@ export function parseLlmsTxt(text: string): string[] {
         url.hash = "";
         urls.add(url.toString());
       }
-    } catch {
-      // A malformed absolute URL cannot be fetched and is intentionally ignored.
-    }
+    } catch {}
   }
   return [...urls].sort();
 }
 
-/**
- * Normalize only transport/presentation noise. In particular, leading whitespace,
- * blank lines, headings, tables, code and identifier spelling remain untouched.
- */
 export function normalizeDocsMarkdown(input: string): string {
   const lines = input
     .replace(/^\uFEFF/u, "")
@@ -189,8 +181,6 @@ export async function captureDocsSnapshot(
     indexUrl === DEFAULT_LLMS_URL ? [OFFICIAL_CHANGELOG_URL] : [];
   const fixedAllowedUrls = new Set(fixedSourceUrls);
   if (indexUrl === DEFAULT_LLMS_URL) {
-    // The indexed claude-tag.md page redirects through these two URLs. Do not
-    // fetch them separately or trust other URLs on claude.com.
     fixedAllowedUrls.add("https://claude.com/docs/claude-tag");
     fixedAllowedUrls.add("https://claude.com/docs/claude-tag/overview");
   }
@@ -221,8 +211,6 @@ export async function captureDocsSnapshot(
         source: null,
       };
     }
-    // A newly indexed unwatched page has no truthful hash to reuse, so fetch it
-    // once. Established unwatched pages above remain network-free incrementally.
     const normalized = normalizeDocsMarkdown(
       await fetchText(url, fetcher, options, allowedOrigin, fixedAllowedUrls),
     );
@@ -246,8 +234,6 @@ export async function captureDocsSnapshot(
     index_url: indexUrl,
     index_hash: sha256(normalizedIndex),
     full_scan: fullScan,
-    // Preserve the last full-scan clock across incremental captures so the
-    // 24-hour policy remains enforceable with the persisted snapshot schema.
     scanned_at: fullScan
       ? now.toISOString()
       : (options.previous?.scanned_at ?? now.toISOString()),
@@ -288,7 +274,6 @@ function docsDigest(
   indexHash: string,
   pages: Record<string, ClaudeDocsPageSnapshot>,
 ): string {
-  // scanned_at and full_scan are operational metadata, not documentation content.
   return sha256(
     JSON.stringify({
       index_hash: indexHash,
@@ -472,7 +457,6 @@ function mergeNamedMaps(target: NamedMaps, source: NamedMaps): void {
   }
 }
 
-/** Extract only names presented in strongly-labelled documentation contexts. */
 export function extractNamedChanges(markdown: string): NamedSets {
   const result = emptyNamedCollections();
   const lines = normalizeDocsMarkdown(markdown).split("\n");
@@ -560,8 +544,6 @@ function extractNamedEntries(markdown: string): NamedMaps {
   const lines = normalizeDocsMarkdown(markdown).split("\n");
   for (const key of Object.keys(names) as Array<keyof NamedSets>) {
     for (const name of names[key]) {
-      // Tie a name to only the strongly-labelled line that exposed it. This
-      // reports table-row/flag-description edits without interpreting prose.
       const evidence = lines.filter((line) => line.includes(name)).join("\n");
       result[key].set(name, sha256(evidence));
     }
