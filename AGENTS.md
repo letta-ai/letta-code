@@ -193,6 +193,15 @@ utils/         ← bottom: no domain deps
 
 ---
 
+### Unit test design
+
+**Rule:** Isolated unit tests must guard a security boundary, money math, untrusted-input parsing, concurrency or ordering, or a lint rule's specification.
+Skip prompt, string, or constant equality checks, snapshots, flag truth tables that repeat branches, mock-call plumbing, UI render checks, and trivial helper tests.
+
+**Why:** Tests should catch regressions in behavior rather than pin implementation details.
+
+---
+
 ### Test mock isolation
 
 **Rule:** `mock.module()` calls must follow isolation patterns checked by `scripts/check-test-mock-isolation.js`.
