@@ -132,8 +132,8 @@ export function buildTaskSchema(env: NodeJS.ProcessEnv = process.env) {
 
   const destination =
     computer.toLowerCase() === "cloud"
-      ? "a fresh Cloud sandbox"
-      : `the connected computer ${JSON.stringify(computer)}`;
+      ? "a fresh Cloud sandbox, where this machine's files are unavailable"
+      : `the connected computer ${JSON.stringify(computer)}; unless that is this machine, this machine's files are unavailable there`;
 
   return {
     ...TaskSchema,
@@ -141,7 +141,7 @@ export function buildTaskSchema(env: NodeJS.ProcessEnv = process.env) {
       ...TaskSchema.properties,
       computer: {
         ...TaskSchema.properties.computer,
-        description: `Omitting computer sends eligible workers to ${destination}, where this machine's files are unavailable. Pass "local" to stay on this machine, "cloud" for a fresh Cloud sandbox, or a connected computer ID or name.`,
+        description: `Omitting computer sends subagents to ${destination}. memory and recall subagents always stay on this machine. Pass "local" to stay on this machine, "cloud" for a fresh Cloud sandbox, or a connected computer ID or name. Prefer a stable device ID or computer name; ephemeral connection IDs are also supported to pin a specific listener. Fails fast if the device is offline or does not support routing.`,
       },
     },
   };
