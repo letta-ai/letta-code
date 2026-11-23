@@ -190,7 +190,7 @@ If you clear your server-managed configuration in the admin console with the int
 
 ### Per-key exceptions across managed sources
 
-These keys are exceptions to the no-merge rule:
+By default, Claude Code reads most keys from [one managed source](#settings-precedence). Exceptions include:
 
 * **Cross-source lock keys**: a small set of keys, such as the sandbox allowlist locks, [listed on the managed settings page](https://code.claude.com/docs/en/managed-settings.md#precedence-within-the-managed-tier). Claude Code honors them when any admin-controlled managed source sets them; the user-writable HKCU registry tier is excluded.
 

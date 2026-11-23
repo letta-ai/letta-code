@@ -624,7 +624,7 @@ The main conversation's permission mode decides whether Claude Code uses the val
 
   If a subagent asks for permission while the main conversation is in `bypassPermissions`, check whether its tool call is one of the [actions no mode auto-approves](https://code.claude.com/docs/en/permission-modes.md#actions-no-mode-auto-approves).
 * When the main conversation is in `plan` mode, the subagent stays in plan mode whichever `permissionMode` you set, unless it runs as an [agent team teammate](#subagent-names) under the [agent teams rules](https://code.claude.com/docs/en/agent-teams.md#have-teammates-plan-before-implementing). If you set `dontAsk`, the subagent also doesn't prompt you: an action that plan mode would ask you to approve is denied instead.
-* When the main conversation is in `default` or `dontAsk` mode, the subagent runs in the permission mode you set. It keeps the main conversation's permission mode instead in these cases:
+* When the main conversation is in `default` or `dontAsk` mode, the subagent runs in the permission mode you set. It keeps the main conversation's permission mode instead in cases such as these:
   * You set `bypassPermissions`. The `bypassPermissions` exception requires Claude Code v2.1.267 or later.
   * You set `auto` and [auto mode isn't available](https://code.claude.com/docs/en/permission-modes.md#eliminate-prompts-with-auto-mode) to the subagent, such as when a settings file sets [`disableAutoMode`](https://code.claude.com/docs/en/settings-reference#disableautomode) or the subagent's model doesn't support auto mode.
 
@@ -1158,7 +1158,7 @@ Resumed subagents retain their full conversation history, including all previous
 * For work you'll continue later, use `general-purpose` or a custom subagent. The built-in Explore and Plan agents can finish without giving Claude an ID to resume them with.
 * When a subagent stops at its [`maxTurns`](#supported-frontmatter-fields) limit, Claude Code marks the returned output as partial, and Claude can resume the subagent to continue its work.
 
-Claude uses the `SendMessage` tool with the agent's ID or name as the `to` field to resume it. `SendMessage` doesn't require [agent teams](https://code.claude.com/docs/en/agent-teams.md) to be enabled; only structured team-protocol messages such as `shutdown_request` and `plan_approval_response` do. Beyond subagents and teammates, in sessions where cross-session messaging is enabled, Claude can use the same tool to message [your other Claude Code sessions](https://code.claude.com/docs/en/cross-session-messaging.md), on this machine or [beyond it](https://code.claude.com/docs/en/cross-session-messaging.md#message-sessions-on-other-machines).
+Claude uses the `SendMessage` tool with the agent's ID or name as the `to` field to resume it. `SendMessage` doesn't require [agent teams](https://code.claude.com/docs/en/agent-teams.md) to be enabled. Only structured team-protocol messages such as `shutdown_request` and `plan_approval_response` require them.
 
 To resume a subagent, ask Claude to continue the previous work:
 
@@ -1170,7 +1170,7 @@ Continue that code review and now analyze the authorization logic
 [Claude resumes the subagent with full context from previous conversation]
 ```
 
-When Claude sends a completed subagent a message with the `SendMessage` tool, the subagent resumes in the background without a new `Agent` invocation. The same applies to a subagent that Claude stopped with the `TaskStop` tool, once its stopped run has exited. The resumed run keeps the [tool set from where the subagent first ran](#run-subagents-in-foreground-or-background) and can keep reading the [prompt cache the original run warmed](https://code.claude.com/docs/en/prompt-caching.md#subagents-and-the-cache).
+When Claude sends a completed subagent a message with the `SendMessage` tool, the subagent can resume in the background without a new `Agent` invocation. The same applies to a subagent that Claude stopped with the `TaskStop` tool, once its stopped run has exited. The resumed run keeps the [tool set from where the subagent first ran](#run-subagents-in-foreground-or-background) and can keep reading the [prompt cache the original run warmed](https://code.claude.com/docs/en/prompt-caching.md#subagents-and-the-cache).
 
 A subagent that has the `SendMessage` tool can send that message too. In an interactive session, the resumed agent then reports back to the subagent that resumed it, not to your main conversation. That subagent waits for the result before finishing its own work. When a subagent messages an agent it reports to, such as its own launcher, Claude Code resumes that agent without redirecting its results.
 
