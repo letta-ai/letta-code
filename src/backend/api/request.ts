@@ -64,7 +64,7 @@ function maybeMapKnownApiError(
       typeof errorData.error === "string" &&
       errorData.error.includes("only available for pro or enterprise")
     ) {
-      return new Error("PLAN_UPGRADE_REQUIRED");
+      return Object.assign(new Error("PLAN_UPGRADE_REQUIRED"), { status });
     }
   } catch {}
 

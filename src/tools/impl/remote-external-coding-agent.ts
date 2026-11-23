@@ -435,6 +435,7 @@ export async function launchRemoteExternalCodingAgent(
     stage: ExternalWorkerFailureStage,
     error: string,
     errorCode?: string,
+    httpStatus?: number | null,
   ): SubagentLaunchResult => {
     reportExternalWorkerLaunchFailure({
       stage,
@@ -442,6 +443,7 @@ export async function launchRemoteExternalCodingAgent(
       computer: stage === "resolve_computer" ? undefined : computer,
       error,
       errorCode,
+      httpStatus,
       agentId: parentScope.agentId,
       conversationId: parentScope.conversationId,
       toolCallId: params.toolCallId,
@@ -479,10 +481,13 @@ export async function launchRemoteExternalCodingAgent(
     );
     if (outdated) return fail("outdated_computer", outdated);
   } catch (error) {
+    const resolutionError =
+      error instanceof ComputerResolutionError ? error : undefined;
     return fail(
       "resolve_computer",
       errorMessage(error),
-      error instanceof ComputerResolutionError ? error.code : undefined,
+      resolutionError?.code,
+      resolutionError ? (resolutionError.httpStatus ?? null) : undefined,
     );
   }
   params.signal?.throwIfAborted();
