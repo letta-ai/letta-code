@@ -9,6 +9,10 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { __testSetBackend, type Backend } from "@/backend";
+import {
+  resolveBackendMode,
+  setConfiguredBackendMode,
+} from "@/backend/backend-mode";
 import { truncateHookFeedback } from "@/hooks/executor";
 import type { ModToolEndEvent } from "@/mods/types";
 import { settingsManager } from "@/settings-manager";
@@ -166,7 +170,6 @@ describe("subagent secret inheritance", () => {
         runtimeContext: {
           agentId: AGENT_A,
           workingDirectory: process.cwd(),
-          // Always scoped so the test ignores any ambient subagent env.
           executionSettings: {
             allowed_tools: [],
             disallowed_tools: [],
@@ -279,22 +282,9 @@ describe("scoped shell secret execution", () => {
   }
 });
 
-/**
- * Ambient runtime credential containment (LET-10106). A Cloud sandbox child
- * printed the full runtime key to stderr after an env-file parse failure even
- * though the command never referenced $LETTA_API_KEY; the redaction set only
- * covered command-referenced agent secrets. These tests use a deterministic
- * fake env-file parser and a sentinel credential — never a real key.
- */
 const AMBIENT_SENTINEL = "sk-lettatest-SENTINEL-credential-0123456789abcdef";
 const AMBIENT_PLACEHOLDER = "LETTA_API_KEY=<REDACTED>";
 
-/**
- * Deterministic stand-in for the incident's env-file parser: reads an env
- * file, fails to parse it, and echoes its environment (including the ambient
- * runtime key) to stderr before exiting nonzero. The command line never
- * references $LETTA_API_KEY.
- */
 const FAKE_ENV_PARSER_SCRIPT = `
 const fs = require("node:fs");
 const file = process.argv[2];
@@ -387,9 +377,6 @@ describe("ambient runtime credential redaction", () => {
   });
 
   test("truncateHookFeedback scrubs the ambient key from excerpt and overflow file", () => {
-    // Directly covers the scrub point every hook-feedback caller shares,
-    // including paths that never pass through the tool manager (e.g.
-    // session-start feedback).
     const oversized = `start ${AMBIENT_SENTINEL} ${"p".repeat(12000)} ${AMBIENT_SENTINEL}`;
     const excerpt = truncateHookFeedback(oversized, process.cwd());
     expect(excerpt).not.toContain(AMBIENT_SENTINEL);
@@ -434,9 +421,6 @@ describe("ambient runtime credential redaction", () => {
     try {
       const result = await executeTool(
         "Bash",
-        // The command never references $LETTA_API_KEY; the child prints it.
-        // The env file is deliberately missing so the parse failure is
-        // deterministic regardless of the checkout's contents.
         { command: `${parser.command} .env-letta-test-missing`, timeout: 5000 },
         {
           toolContextId: prepared.contextId,
@@ -474,9 +458,6 @@ describe("ambient runtime credential redaction", () => {
     );
 
     try {
-      // Read throws for a missing file and echoes the attempted path, so a
-      // path named after the sentinel yields a thrown execution error whose
-      // message embeds the credential. The manager catch path must scrub it.
       const result = await executeTool(
         "Read",
         { file_path: join(process.cwd(), `${AMBIENT_SENTINEL}-no-such-file`) },
@@ -530,7 +511,6 @@ describe("ambient runtime credential redaction", () => {
         if (backgroundProcesses.get(bashId)?.status !== "running") break;
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
-      // The completion notification is queued from the settled callback.
       for (
         let attempt = 0;
         attempt < 100 && queued.length === 0;
@@ -597,7 +577,6 @@ describe("ambient runtime credential redaction", () => {
   }, 15_000);
 
   test("tool_end mod overrides retain the credential after rotation", async () => {
-    // tool_end overrides only fire for string results, so use Read.
     const rotatedCredential = "sk-lettatest-ROTATED-credential-9876543210";
     const prepared = await prepareToolExecutionContextForSpecificTools(
       ["Read"],
@@ -613,9 +592,6 @@ describe("ambient runtime credential redaction", () => {
               process.env.LETTA_API_KEY = rotatedCredential;
             }
             if (name === "tool_end") {
-              // A mod handler replaces what the model sees wholesale; its
-              // replacement can carry the credential it inherited even if
-              // Desktop auth rotates again before the handler returns.
               process.env.LETTA_API_KEY =
                 "sk-lettatest-THIRD-credential-abcdef9876543210";
               (
@@ -650,20 +626,17 @@ describe("ambient runtime credential redaction", () => {
     }
   });
 
-  // printf without a trailing newline exercises the held-back tail; the
-  // monitor command path uses the system shell.
   test.skipIf(process.platform === "win32")(
     "monitor events include a final unterminated tail held back as a secret prefix",
     async () => {
+      const previousBackendMode = resolveBackendMode();
+      setConfiguredBackendMode("local");
       const queued: QueuedMessage[] = [];
       setMessageQueueAdder((message) => {
         queued.push(message);
       });
 
       try {
-        // The sentinel starts with "sk-"; a final no-newline "sk" tail is
-        // held back by the stream scrubber until the process exits, and must
-        // still reach the emitted monitor event (not just the output file).
         const result = await monitor({
           description: "tail test",
           timeout_ms: 30_000,
@@ -686,13 +659,13 @@ describe("ambient runtime credential redaction", () => {
           expect(text).not.toContain(AMBIENT_SENTINEL);
         }
       } finally {
+        setConfiguredBackendMode(previousBackendMode);
         setMessageQueueAdder(null);
       }
     },
     15_000,
   );
 
-  // Hook commands run via the system shell; this test uses bash syntax.
   test.skipIf(process.platform === "win32")(
     "PostToolUse hook feedback never reintroduces the ambient key",
     async () => {
@@ -701,9 +674,6 @@ describe("ambient runtime credential redaction", () => {
       const projectDir = join(baseDir, "project");
       mkdirSync(fakeHome, { recursive: true });
       mkdirSync(join(projectDir, ".letta"), { recursive: true });
-      // The hook echoes the ambient runtime key from its inherited
-      // environment to stderr and blocks (exit 2); that stderr becomes hook
-      // feedback appended to the model-facing tool result.
       writeFileSync(
         join(projectDir, ".letta", "settings.json"),
         JSON.stringify({
@@ -746,7 +716,6 @@ describe("ambient runtime credential redaction", () => {
 
         const text = asText(result.toolReturn);
         expect(result.status).toBe("success");
-        // Prove the hook actually fed back, then prove containment.
         expect(text).toContain("[Hook feedback]:");
         expect(text).not.toContain(AMBIENT_SENTINEL);
         expect(text).toContain(AMBIENT_PLACEHOLDER);
@@ -760,7 +729,6 @@ describe("ambient runtime credential redaction", () => {
     15_000,
   );
 
-  // Hook commands run via the system shell; this test uses bash syntax.
   test.skipIf(process.platform === "win32")(
     "oversized hook feedback never persists the ambient key in its overflow file",
     async () => {
@@ -771,9 +739,6 @@ describe("ambient runtime credential redaction", () => {
       const projectDir = join(baseDir, "project");
       mkdirSync(fakeHome, { recursive: true });
       mkdirSync(join(projectDir, ".letta"), { recursive: true });
-      // Over-limit (10k) hook output with the sentinel on both sides of the
-      // 2k preview boundary, so containment must hold in the returned excerpt
-      // AND the persisted overflow file the model is pointed at.
       writeFileSync(
         join(projectDir, ".letta", "settings.json"),
         JSON.stringify({
@@ -863,8 +828,6 @@ describe("always-on vault secret redaction", () => {
     );
 
     try {
-      // The command expands the seeded secret; redaction must cover the
-      // expanded value in the return.
       const result = await executeTool(
         "Bash",
         { command: `printf '%s' "$${VAULT_KEY}"`, timeout: 5000 },
@@ -897,8 +860,6 @@ describe("always-on vault secret redaction", () => {
     );
 
     try {
-      // Read never references $SECRET_NAME — the vault value reaches the
-      // tool return purely through file content and must still be redacted.
       const result = await executeTool(
         "Read",
         { file_path: filePath },
@@ -926,7 +887,6 @@ describe("always-on vault secret redaction", () => {
     expect(scrubbedA).not.toContain(VAULT_VALUE);
     expect(scrubbedA).toContain(`${VAULT_KEY}=<REDACTED>`);
 
-    // Agent B's vault does not redact agent A's value.
     const scrubbedB = scrubSecretsFromString(
       `${VAULT_VALUE} stays`,
       {},
@@ -960,7 +920,6 @@ describe("always-on vault secret redaction", () => {
     ) as Array<{ type?: string; text?: string; url?: string }>;
     expect(partsContent[0]?.text).not.toContain(VAULT_VALUE);
     expect(partsContent[0]?.text).toContain(`${VAULT_KEY}=<REDACTED>`);
-    // Non-text content passes through unchanged.
     expect(partsContent[1]?.url).toBe("https://example.com/img.png");
   });
 });

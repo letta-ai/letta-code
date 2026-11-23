@@ -115,14 +115,10 @@ describe("looksLikeTruncatedStreamJson", () => {
   });
 
   test("does not flag complete-but-unexpected JSON output", () => {
-    // Last line parses fine — this is a wrong-shape stream, not truncation,
-    // so retrying could double side effects for no reason.
     expect(looksLikeTruncatedStreamJson(`${initLine}\n`)).toBe(false);
   });
 
   test("does not flag a complete non-JSON line", () => {
-    // An invalid protocol line is not evidence of truncation when its line
-    // terminator arrived. Retrying here could duplicate subagent side effects.
     expect(looksLikeTruncatedStreamJson(`${initLine}\nplain-text-log\n`)).toBe(
       false,
     );
@@ -157,8 +153,6 @@ function freshState(): ExecutionState {
 
 describe("result envelope parsing", () => {
   test("reads the error text of a Cloud-routed failure from `error`, not `result`", () => {
-    // Cloud sends emit `{ result: null, error: "<text>" }`; reading `result`
-    // turned every such failure into "Unknown error".
     const state = freshState();
     processStreamEvent(
       JSON.stringify({
@@ -311,7 +305,6 @@ describe("task progress log", () => {
         tool_return: "a.txt\nls: b: No such file",
       });
       text("m2", "Done.");
-      // The last message is written when the child's stdout closes.
       flushPendingProgressText(state, "subagent-1");
 
       expect(readFileSync(outputFile, "utf8")).toBe(

@@ -17,10 +17,6 @@ import { extractCompactionSummary } from "./compaction-utils";
 import { trimFinishedReasoningText } from "./reasoning-text";
 import { stripSkillContentBlocks } from "./skill-content-display";
 
-/**
- * Extract displayable text from tool return content.
- * Multimodal content returns the text parts concatenated.
- */
 function getDisplayableToolReturn(
   content: string | Array<TextContent | ImageContent> | undefined,
 ): string {
@@ -28,7 +24,6 @@ function getDisplayableToolReturn(
   if (typeof content === "string") {
     return content;
   }
-  // Extract text from multimodal content
   return content
     .filter((part): part is TextContent => part.type === "text")
     .map((part) => part.text)
@@ -42,9 +37,6 @@ function clip(s: string, limit: number): string {
   return s.length > limit ? `${s.slice(0, limit)}…` : s;
 }
 
-/**
- * Normalize line endings: convert \r\n and \r to \n
- */
 function normalizeLineEndings(s: string): string {
   return s.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 }
@@ -69,7 +61,6 @@ function removeSystemContextBlocks(text: string): string {
 function renderAssistantContentParts(
   parts: string | LettaAssistantMessageContentUnion[],
 ): string {
-  // AssistantContent can be a string or an array of text parts
   if (typeof parts === "string") return parts;
   let out = "";
   for (const p of parts) {
@@ -83,9 +74,6 @@ function renderAssistantContentParts(
 function renderUserContentParts(
   parts: string | LettaUserMessageContentUnion[],
 ): string {
-  // UserContent can be a string or an array of text OR image parts.
-  // Backfill should hide system-reminder blocks entirely.
-  // Parts are joined with newlines so each appears as a separate line
   if (typeof parts === "string") {
     const normalized = normalizeLineEndings(parts);
     return clip(removeSystemContextBlocks(normalized), CLIP_CHAR_LIMIT_TEXT);
@@ -95,7 +83,6 @@ function renderUserContentParts(
   for (const p of parts) {
     if (p.type === "text") {
       const text = p.text || "";
-      // Normalize line endings (\r\n and \r -> \n) to prevent terminal garbling
       const normalized = normalizeLineEndings(text);
       const withoutSystemReminders = removeSystemContextBlocks(normalized);
       if (!withoutSystemReminders) continue;
@@ -104,12 +91,10 @@ function renderUserContentParts(
       rendered.push("[Image]");
     }
   }
-  // Join with double-newline so each part starts a new paragraph (gets "> " prefix)
   return rendered.join("\n\n");
 }
 
 export function backfillBuffers(buffers: Buffers, history: Message[]): void {
-  // Clear buffers to ensure idempotency (in case this is called multiple times)
   buffers.order = [];
   buffers.byId.clear();
   buffers.toolCallIdToLineId.clear();
@@ -120,7 +105,6 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
   buffers.assistantCanonicalByOtid.clear();
   buffers.reasoningCanonicalByMessageId.clear();
   buffers.reasoningCanonicalByOtid.clear();
-  // Note: we don't reset tokenCount here (it resets per-turn in onSubmit)
 
   const pendingToolResults = new Map<
     string,
@@ -157,14 +141,10 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
     applyToolResult(toolCallId, pending);
   };
 
-  // Iterate over the history and add the messages to the buffers
-  // Want to add user, reasoning, assistant, tool call + tool return
   for (const msg of history) {
-    // Use otid as line ID when available (like streaming does), fall back to msg.id
     const lineId = "otid" in msg && msg.otid ? msg.otid : msg.id;
 
     switch (msg.message_type) {
-      // user message - content parts may include text and image parts
       case "user_message": {
         const rawText = renderUserContentParts(msg.content);
         const { notifications, cleanedText } =
@@ -187,10 +167,8 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
           }
         }
 
-        // Check if this is a compaction summary message (old format embedded in user_message)
         const compactionSummary = extractCompactionSummary(cleanedText);
         if (compactionSummary) {
-          // Render as a finished compaction event
           const exists = buffers.byId.has(lineId);
           buffers.byId.set(lineId, {
             kind: "event",
@@ -222,7 +200,6 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
         break;
       }
 
-      // reasoning message -
       case "reasoning_message": {
         const exists = buffers.byId.has(lineId);
         buffers.byId.set(lineId, {
@@ -236,7 +213,6 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
         break;
       }
 
-      // assistant message - content parts may include text and image parts
       case "assistant_message": {
         const exists = buffers.byId.has(lineId);
         buffers.byId.set(lineId, {
@@ -250,36 +226,26 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
         break;
       }
 
-      // tool call message OR approval request (they're the same in history)
       case "tool_call_message":
       case "approval_request_message": {
-        // Use tool_calls array (new) or fallback to tool_call (deprecated)
         const toolCalls = Array.isArray(msg.tool_calls)
           ? msg.tool_calls
           : msg.tool_call
             ? [msg.tool_call]
             : [];
 
-        // Process ALL tool calls (supports parallel tool calling)
         for (let i = 0; i < toolCalls.length; i++) {
           const toolCall = toolCalls[i];
           if (!toolCall?.tool_call_id) continue;
 
           const toolCallId = toolCall.tool_call_id;
-          // Skip if any required fields are missing
           if (!toolCallId || !toolCall.name || !toolCall.arguments) continue;
 
-          // For parallel tool calls, create unique line ID for each
-          // Must match the streaming logic: first tool uses base lineId,
-          // subsequent tools append part of tool_call_id (not index!)
           let uniqueLineId = lineId;
 
-          // Check if base lineId is already used by a tool_call
           if (buffers.byId.has(lineId)) {
             const existing = buffers.byId.get(lineId);
             if (existing && existing.kind === "tool_call") {
-              // Another tool already used this line ID
-              // Create unique ID using tool_call_id suffix (match streaming logic)
               uniqueLineId = `${lineId}-${toolCallId.slice(-8)}`;
             }
           }
@@ -296,16 +262,13 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
           });
           if (!exists) buffers.order.push(uniqueLineId);
 
-          // Maintain mapping for tool return to find this line
           buffers.toolCallIdToLineId.set(toolCallId, uniqueLineId);
           applyPendingToolResult(toolCallId);
         }
         break;
       }
 
-      // tool return message - merge into the existing tool call line(s)
       case "tool_return_message": {
-        // Handle parallel tool returns: check tool_returns array first, fallback to singular fields
         const toolReturns =
           Array.isArray(msg.tool_returns) && msg.tool_returns.length > 0
             ? msg.tool_returns
@@ -325,9 +288,6 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
           const toolCallId = toolReturn.tool_call_id;
           if (!toolCallId) continue;
 
-          // Update the existing line with the result
-          // Handle both func_response (streaming) and tool_return (SDK) properties
-          // tool_return can be multimodal (string or array of content parts)
           const rawResult =
             ("func_response" in toolReturn
               ? toolReturn.func_response
@@ -344,7 +304,6 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
         break;
       }
 
-      // approval response message - merge into the existing approval/tool call line(s)
       case "approval_response_message": {
         const approvals = Array.isArray(msg.approvals) ? msg.approvals : [];
         for (const approval of approvals) {
@@ -382,12 +341,9 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
       }
 
       default: {
-        // Handle new compaction message types (when include_compaction_messages=true)
-        // These are not yet in the SDK types, so we handle them via string comparison
         const msgType = msg.message_type as string | undefined;
 
         if (msgType === "summary_message") {
-          // SummaryMessage has: summary (str), compaction_stats (optional)
           const summaryMsg = msg as Message & {
             summary?: string;
             compaction_stats?: {
@@ -403,7 +359,6 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
           const summaryText = summaryMsg.summary || "";
           const stats = summaryMsg.compaction_stats;
 
-          // Find the most recent compaction event line and update it with summary and stats
           for (let i = buffers.order.length - 1; i >= 0; i--) {
             const orderId = buffers.order[i];
             if (!orderId) continue;
@@ -428,7 +383,6 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
         }
 
         if (msgType === "event_message") {
-          // EventMessage has: event_type (str), event_data (dict)
           const eventMsg = msg as Message & {
             event_type?: string;
             event_data?: Record<string, unknown>;
@@ -440,20 +394,17 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
             id: lineId,
             eventType: eventMsg.event_type || "unknown",
             eventData: eventMsg.event_data || {},
-            phase: "finished", // In backfill, events are always finished (summary already processed)
+            phase: "finished",
           });
           if (!exists) buffers.order.push(lineId);
           break;
         }
 
-        // ignore other message types
         break;
       }
     }
   }
 
-  // Mark stray tool calls as closed
-  // Walk backwards: any pending tool_call before the first "transition" (non-pending-tool-call) is stray
   let foundTransition = false;
   for (let i = buffers.order.length - 1; i >= 0; i--) {
     const lineId = buffers.order[i];
@@ -462,7 +413,6 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
 
     if (line?.kind === "tool_call" && line.phase === "ready") {
       if (foundTransition) {
-        // This is a stray - mark it closed
         buffers.byId.set(lineId, {
           ...line,
           phase: "finished",
@@ -470,9 +420,7 @@ export function backfillBuffers(buffers: Buffers, history: Message[]): void {
           resultOk: false,
         });
       }
-      // else: legit pending, leave it
     } else {
-      // Hit something that's not a pending tool_call - transition point
       foundTransition = true;
     }
   }

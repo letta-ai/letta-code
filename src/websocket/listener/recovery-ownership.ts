@@ -48,7 +48,6 @@ const defaultRecoveryClaimRequest: RecoveryClaimRequest = (agentId, body) =>
     { signal: AbortSignal.timeout(5_000) },
   );
 
-/** A token-exact, connection-bound Cloud recovery claim. */
 export class RecoveryClaim {
   private timer: unknown;
   private renewalInFlight = false;
@@ -204,8 +203,6 @@ export class RecoveryClaim {
 
   revoke(): void {
     if (this.stopped || this.ownershipLost) return;
-    // Fence the stale process before the best-effort network release. onLost
-    // cancels the exact recovery lease and schedules durable convergence.
     this.lose();
     void this.request(this.agentId, {
       action: "release",
@@ -225,7 +222,6 @@ export class RecoveryClaim {
   }
 }
 
-/** Revoke capabilities synchronously before a listener identity can be reused. */
 export function revokeRecoveryClaims(
   listener: ConversationRuntime["listener"],
   connectionId?: string,
@@ -255,7 +251,6 @@ function recoveryRefusals(listener: ConversationRuntime["listener"]) {
   return state;
 }
 
-/** Consume refusals once per recovery pass; keep all durable records untouched. */
 export function recoveryRetryDelay(
   listener: ConversationRuntime["listener"],
   base: number,
@@ -280,7 +275,6 @@ export async function acquireRecoveryClaim(
 ): Promise<RecoveryClaim | null> {
   const connectionId = runtime.listener.connectionId;
   const connectionGeneration = runtime.listener.connectionGeneration;
-  // Embedded/local listeners do not have Cloud claim identities.
   if (!connectionId?.startsWith("conn-")) return null;
   if (!connectionGeneration) return null;
   if (!runtime.agentId) return null;
@@ -366,7 +360,6 @@ function hasRecoveryHandoff(runtime: ConversationRuntime): boolean {
   );
 }
 
-/** Recovery observes pending work; it must not take it from another listener. */
 export type RecoveryEligibility = "owned" | "conflict" | "unavailable";
 
 export async function resolveRecoveryEligibility(
@@ -382,9 +375,6 @@ export async function getRecoveryEligibility(
   readStatus = getAgentRuntimeStatus,
 ): Promise<RecoveryEligibility> {
   if (hasRecoveryHandoff(runtime)) return "conflict";
-  // Cloud relay registration assigns conn-* IDs. Embedded App Servers have
-  // only local connection IDs, with no server-side ownership record.
-  // Do not infer this from the API hostname: CI runs Cloud on a local URL.
   const connectionId = runtime.listener.connectionId;
   if (!connectionId?.startsWith("conn-")) {
     return "owned";
@@ -409,7 +399,6 @@ export async function getRecoveryEligibility(
       return status.active_harness.connection_id === connectionId
         ? "owned"
         : "conflict";
-    // A delivery or unclaimed live run is not an ownerless crashed turn.
     return status.state === "IDLE" ? "owned" : "conflict";
   } catch (error) {
     debugWarn(

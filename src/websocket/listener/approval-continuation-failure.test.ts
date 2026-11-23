@@ -33,11 +33,6 @@ function chunkStream(
   } as unknown as Stream<LettaStreamingResponse>;
 }
 
-/**
- * Runs a turn whose client-side tool executes and whose approval continuation
- * fails via `failContinuation`, then sends a fresh user input and returns the
- * messages that input carried.
- */
 async function runFailedContinuationThenNextInput(
   failContinuation: (runtime: ConversationRuntime) => never,
 ) {
@@ -188,8 +183,6 @@ test("a non-retryable continuation failure carries tool results into the next in
   expect(result.parkedAfterFailure).toEqual([
     expect.objectContaining({ tool_call_id: "call-read", status: "success" }),
   ]);
-  // Exactly tool turn, failed continuation, next input: no pending-approval
-  // conflict or stale-approval recovery request in between.
   expect(result.requestCount).toBe(3);
   expectApprovalResultsBeforeUserInput(result.nextInput);
   expect(result.finalLifecycle).toBe("idle");

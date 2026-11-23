@@ -150,8 +150,6 @@ for (const mode of [
       } finally {
         clearTimeout(deadline);
       }
-      // The deterministic executor leaves the conflict unresolved. Each mode
-      // creates exactly one fresh worker, with no recursive repair or reflection.
       const after = new LocalStore(agentId, {
         storageDir,
         seedDefaultAgent: false,
@@ -192,7 +190,6 @@ for (const mode of [
       if (isRepair) {
         expect(after.listConversationMessages(original.id)).toEqual([]);
         expect(workerMessages).toContain(prompt);
-        // Bidirectional clients supply their own content without sender attribution.
         if (mode === "one-shot") {
           expect(workerMessages).toContain(
             "Your final report stays in the background task log",

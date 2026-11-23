@@ -19,7 +19,6 @@ const CWD_FILE_PATH_TOOLS = new Set([
   "EnterWorktree",
 ]);
 
-/** Expand cwd-relative path arguments shared by in-process file tools. */
 export function expandPathArgs(
   toolName: string,
   toolArgs: ToolArgs,
@@ -32,8 +31,6 @@ export function expandPathArgs(
   for (const key of FILE_PATH_KEYS) {
     const value = toolArgs[key];
     if (typeof value !== "string" || value.length === 0) continue;
-    // Preserve Windows paths in cross-platform permission tests and remote
-    // requests evaluated by a non-Windows host.
     if (process.platform !== "win32" && /^[a-zA-Z]:[\\/]/.test(value)) {
       continue;
     }

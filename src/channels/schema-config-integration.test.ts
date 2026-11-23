@@ -5,8 +5,6 @@ import {
   validateConfigAgainstSchema,
 } from "@/channels/schema-config";
 
-// Reserved keys that redactConfigForSnapshot always emits, regardless of
-// whether the schema declares them.
 const RESERVED_BASE = {
   accounts_json: "",
   configs_json: "",
@@ -15,9 +13,6 @@ const RESERVED_BASE = {
 };
 
 describe("bluesky-shape schema (integration)", () => {
-  // Mirrors what bluesky-channel will declare in channel.json.
-  // Exercises parse → validate → redact together to catch field-type
-  // interaction bugs that single-type tests might miss.
   const BLUESKY_SCHEMA_JSON = {
     version: 1,
     fields: [
@@ -176,7 +171,6 @@ describe("bluesky-shape schema (integration)", () => {
       keywords: ["letta", "ai"],
       entity_tiers: { "did:plc:abc": 1, "did:plc:xyz": 2 },
     });
-    // Secret must not leak through.
     expect((snapshot as Record<string, unknown>).password).toBeUndefined();
   });
 });

@@ -1,6 +1,4 @@
 import type { Api, KnownProvider, Model } from "@earendil-works/pi-ai";
-// getEnvApiKey has no non-compat entrypoint yet; it is the one remaining
-// /compat import in the local backend (tracked upstream).
 import { getEnvApiKey } from "@earendil-works/pi-ai/compat";
 import {
   builtinProviders,
@@ -71,11 +69,6 @@ interface PiProviderOverride {
   catalogModelHandle?: (model: Model<Api>) => string | undefined;
 }
 
-/**
- * Static catalog models for a provider. Some pi-ai providers (e.g. "radius")
- * have purely dynamic catalogs and no generated MODELS entry; they read as
- * an empty catalog here.
- */
 export function builtinCatalogModels(
   provider: KnownProvider,
 ): readonly Model<Api>[] {
@@ -98,6 +91,7 @@ const prefixedCatalogModelHandle = (prefix: string) => (model: Model<Api>) =>
   `${prefix}${model.id}`;
 
 const PI_PROVIDER_ALIASES: Record<string, PiProvider> = {
+  "azure-openai-responses": "azure",
   "openai-responses": "openai",
   "google-ai": "google",
   bedrock: "amazon-bedrock",
@@ -106,58 +100,52 @@ const PI_PROVIDER_ALIASES: Record<string, PiProvider> = {
   "kimi-code": "kimi-coding",
 };
 
-// Keep LC's built-in provider defaults aligned with Pi TUI's
-// `defaultModelPerProvider` until Pi exposes this through a narrow runtime
-// package/API. Local endpoint providers intentionally have no default here;
-// they must resolve to explicit or discovered local models.
 export const PI_TUI_DEFAULT_MODEL_IDS: Partial<Record<KnownProvider, string>> =
   {
-    "amazon-bedrock": "us.anthropic.claude-opus-4-6-v1",
+    "amazon-bedrock": "us.anthropic.claude-opus-5-5",
     "ant-ling": "Ring-2.6-1T",
-    anthropic: "claude-opus-4-8",
-    openai: "gpt-5.5",
-    "azure-openai-responses": "gpt-5.4",
-    "openai-codex": "gpt-5.5",
+    anthropic: "claude-opus-5-5",
+    openai: "gpt-6.1-sol",
+    azure: "gpt-6.1-sol",
+    "openai-codex": "gpt-6.1-sol",
     radius: "balanced",
-    nvidia: "nvidia/nemotron-3-super-120b-a12b",
+    nvidia: "nvidia/nemotron-3.5-super-vl-120b-a12b",
     deepseek: "deepseek-v4-pro",
-    google: "gemini-3.1-pro-preview",
-    "google-vertex": "gemini-3.1-pro-preview",
-    "github-copilot": "gpt-5.4",
-    openrouter: "moonshotai/kimi-k2.6",
-    "vercel-ai-gateway": "zai/glm-5.1",
+    google: "gemini-4-argon",
+    "google-vertex": "gemini-4-argon",
+    "github-copilot": "gpt-6.1-sol",
+    openrouter: "moonshotai/kimi-k2.7-code",
+    "vercel-ai-gateway": "zai/glm-5.3",
     xai: "grok-4.7",
     groq: "openai/gpt-oss-120b",
     cerebras: "gpt-oss-120b",
     zai: "glm-5.3",
     "zai-coding-cn": "glm-5.3",
-    baseten: "zai-org/GLM-5.2",
+    baseten: "zai-org/GLM-5.3",
     mistral: "devstral-medium-latest",
-    minimax: "MiniMax-M2.7",
-    "minimax-cn": "MiniMax-M2.7",
-    moonshotai: "kimi-k2.6",
-    "moonshotai-cn": "kimi-k2.6",
-    huggingface: "moonshotai/Kimi-K2.6",
+    minimax: "MiniMax-M3",
+    "minimax-cn": "MiniMax-M3",
+    moonshotai: "kimi-k2.7-code",
+    "moonshotai-cn": "kimi-k2.7-code",
+    huggingface: "moonshotai/Kimi-K2.7-Code",
     fireworks: "accounts/fireworks/models/kimi-k3",
     together: "moonshotai/Kimi-K3",
-    opencode: "kimi-k2.6",
-    "opencode-go": "kimi-k3",
+    opencode: "kimi-k2.7-code",
+    "opencode-go": "kimi-k3.1-pro",
     "kimi-coding": "kimi-for-coding",
     meta: "muse-spark-1.3",
-    "cloudflare-workers-ai": "@cf/moonshotai/kimi-k2.6",
-    "cloudflare-ai-gateway": "workers-ai/@cf/moonshotai/kimi-k2.6",
-    "qwen-token-plan": "qwen3.7-max",
-    "qwen-token-plan-cn": "qwen3.7-max",
+    "cloudflare-workers-ai": "@cf/moonshotai/kimi-k2.7-code",
+    "cloudflare-ai-gateway": "workers-ai/@cf/moonshotai/kimi-k2.7-code",
+    "qwen-token-plan": "qwen3.8-max",
+    "qwen-token-plan-cn": "qwen3.8-max",
     "qwen-token-plan-individual": "qwen3.8-max",
-    xiaomi: "mimo-v2.5-pro",
-    "xiaomi-token-plan-cn": "mimo-v2.5-pro",
-    "xiaomi-token-plan-ams": "mimo-v2.5-pro",
-    "xiaomi-token-plan-sgp": "mimo-v2.5-pro",
+    "qwen-token-plan-individual-cn": "qwen3.8-max",
+    xiaomi: "mimo-v2.6-pro",
+    "xiaomi-token-plan-cn": "mimo-v2.6-pro",
+    "xiaomi-token-plan-ams": "mimo-v2.6-pro",
+    "xiaomi-token-plan-sgp": "mimo-v2.6-pro",
   };
 
-// These pi-ai providers are intentionally absent from Pi TUI's
-// `defaultModelPerProvider`. Keep the omission explicit so newly added pi-ai
-// providers cannot silently inherit catalog-order defaults without review.
 export const PI_TUI_DEFAULTLESS_PROVIDER_IDS: ReadonlySet<string> = new Set([
   "typesafe",
 ]);
@@ -165,6 +153,11 @@ export const PI_TUI_DEFAULTLESS_PROVIDER_IDS: ReadonlySet<string> = new Set([
 const PI_PROVIDER_OVERRIDES: Partial<
   Record<KnownProvider, PiProviderOverride>
 > = {
+  azure: {
+    providerTypes: ["azure", "azure-openai-responses"],
+    handlePrefixes: ["azure/", "azure-openai-responses/"],
+    localProviderNames: ["azure", "azure-openai-responses"],
+  },
   openai: {
     providerTypes: ["openai", "openai-responses"],
     handlePrefixes: ["openai/", "openai-responses/"],
@@ -244,8 +237,6 @@ function defaultModelForProvider(
 ): string {
   const piTuiDefault = PI_TUI_DEFAULT_MODEL_IDS[provider];
   if (piTuiDefault) return `${handlePrefix}${piTuiDefault}`;
-  // Match Pi TUI's no-explicit-default behavior for providers omitted from its
-  // default map: use catalog order as the generic fallback.
   const model = builtinCatalogModels(provider)[0];
   return model ? `${handlePrefix}${model.id}` : `${handlePrefix}model`;
 }
@@ -370,9 +361,6 @@ const LOCAL_ENDPOINT_PROVIDER_SPECS: readonly PiProviderSpec[] = [
 ];
 
 export const PI_PROVIDER_SPECS: readonly PiProviderSpec[] = [
-  // Keyed off the provider collection (builtinProviders), not the generated
-  // static catalog: purely dynamic providers (e.g. "radius") have a factory
-  // but no catalog entry.
   ...builtinProviders().map((provider) =>
     makePiProviderSpec(provider.id as KnownProvider),
   ),
@@ -444,8 +432,6 @@ export function isResolvablePiModelHandle(model: string | undefined): boolean {
   const spec = getPiProviderSpec(provider);
   if (!spec.piProvider) return spec.createCustomModel === true;
   const catalog = builtinCatalogModels(spec.piProvider);
-  // Purely dynamic providers (e.g. "radius") have no static catalog to check
-  // against; their handles resolve at runtime.
   if (catalog.length === 0) return true;
   const modelId = stripProviderHandlePrefix(model, provider);
   return catalog.some((entry) => entry.id === modelId);

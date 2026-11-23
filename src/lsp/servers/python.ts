@@ -1,15 +1,6 @@
-/**
- * Python LSP Server Definition
- * Uses Pyright language server
- */
-
 import type { LSPServerInfo } from "@/lsp/types.js";
 import { getPackageManagerProcessFactory } from "@/utils/package-manager-spawn";
 
-/**
- * Python Language Server (Pyright)
- * High-performance static type checker for Python
- */
 export const PythonServer: LSPServerInfo = {
   id: "python",
   extensions: [".py", ".pyi"],
@@ -17,7 +8,7 @@ export const PythonServer: LSPServerInfo = {
   initialization: {
     python: {
       analysis: {
-        typeCheckingMode: "basic", // basic, standard, or strict
+        typeCheckingMode: "basic",
         autoSearchPaths: true,
         useLibraryCodeForTypes: true,
       },

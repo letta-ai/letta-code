@@ -7,20 +7,6 @@ import { useState } from "react";
 import stripAnsi from "strip-ansi";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
 
-/**
- * Regression coverage for letta-code #4493: an IME (Input Method Editor)
- * commit — or any terminal write — can reach the process as several stdin
- * reads inside one `'readable'` tick. Ink emits one `input` event per read, so
- * the composer sees multiple `useInput` events before React flushes the
- * passive effects of the first render. The value-sync effect in
- * `PasteAwareTextInput` then ran with an older `value`, clamped the caret to
- * that shorter length and re-applied the older display value over the newer
- * one — caret one short, middle chunks dropped.
- *
- * The fake stdin below reproduces the read pattern deterministically without
- * an IME or a TTY: `read()` yields the queued chunks one at a time within a
- * single `'readable'` emission.
- */
 class MultiReadStdin extends EventEmitter {
   isTTY = true;
   private queue: string[] = [];
@@ -48,7 +34,6 @@ class MultiReadStdin extends EventEmitter {
     return this.queue.length > 0 ? (this.queue.shift() as string) : null;
   }
 
-  /** Deliver `chunks` so that `read()` yields them one at a time in one tick. */
   pushReads(chunks: string[]): void {
     this.queue.push(...chunks);
     this.emit("readable");
@@ -73,11 +58,6 @@ class CaptureStream extends Writable {
 
 const INVERSE_ON = "\u001b[7m";
 
-/**
- * Caret position as the user sees it: the text input renders the character
- * under the caret (or a trailing space) in inverse video. Returns the number
- * of characters before that span in the last frame that drew the input.
- */
 function renderedCaret(frames: string[]): number | null {
   const frame = [...frames].reverse().find((f) => f.includes(INVERSE_ON));
   if (!frame) return null;
@@ -90,9 +70,7 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 40));
 
 interface Observed {
   value: string;
-  /** Caret offset the input reported to the parent (`onCursorMove`). */
   caret: number | null;
-  /** Caret offset actually drawn in the last frame. */
   renderedCaret: number | null;
 }
 
@@ -114,15 +92,10 @@ function Harness({ observed }: { observed: Observed }) {
   );
 }
 
-/**
- * Renders the real composer input under Ink and feeds `groups` of stdin reads,
- * one group per tick. Returns the parent-observed value and caret.
- */
 async function typeInReads(groups: string[][]): Promise<Observed> {
   const observed: Observed = { value: "", caret: null, renderedCaret: null };
   const stdin = new MultiReadStdin();
   const stdout = new CaptureStream() as CaptureStream & NodeJS.WriteStream;
-  // Force styled output so the inverse-video caret is visible in captured frames.
   const previousLevel = chalk.level;
   chalk.level = 1;
   const instance = render(<Harness observed={observed} />, {
@@ -142,8 +115,6 @@ async function typeInReads(groups: string[][]): Promise<Observed> {
     }
     await tick();
   } finally {
-    // Under CI (`is-in-ci`) Ink buffers frames and writes the last one only at
-    // unmount, so read the drawn caret after unmounting.
     instance.unmount();
     chalk.level = previousLevel;
   }
@@ -153,7 +124,6 @@ async function typeInReads(groups: string[][]): Promise<Observed> {
 
 describe("PasteAwareTextInput multi-read input commits (#4493)", () => {
   test("keeps the caret at the end when one commit arrives as two reads in one tick", async () => {
-    // Reporter's first log: 日本語 delivered as 日本 + 語 within one tick.
     const observed = await typeInReads([["日本", "語"]]);
     expect(observed.value).toBe("日本語");
     expect(observed.caret).toBe(3);
@@ -161,7 +131,6 @@ describe("PasteAwareTextInput multi-read input commits (#4493)", () => {
   });
 
   test("preserves every chunk when one commit arrives as three reads in one tick", async () => {
-    // Reporter's second log: the middle chunk used to be dropped.
     const chunks = ["日本", "語の", "入力中に変換がおかしくなるのが問題だ"];
     const observed = await typeInReads([chunks]);
     expect(observed.value).toBe(chunks.join(""));

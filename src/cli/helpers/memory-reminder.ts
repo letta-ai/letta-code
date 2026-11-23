@@ -1,6 +1,3 @@
-// Reflection (sleep-time) settings: resolution, persistence, merge policy,
-// and step-count trigger evaluation.
-
 import type {
   ReflectionMergeMode,
   ReflectionTrigger,
@@ -186,9 +183,6 @@ export function reflectionSettingsToLegacyMode(
   return normalizeStepCount(settings.stepCount, DEFAULT_STEP_COUNT);
 }
 
-/**
- * Get effective reflection settings (local overrides global with legacy fallback).
- */
 export function getReflectionSettings(
   agentId?: string,
   workingDirectory: string = process.cwd(),

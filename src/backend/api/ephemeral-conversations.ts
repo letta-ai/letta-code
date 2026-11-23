@@ -6,6 +6,9 @@ export interface EphemeralConversationCreateBody {
   system: string;
   model_settings?: Record<string, unknown>;
   context_window_limit?: number | null;
+  parent_agent_id?: string;
+  is_subagent?: boolean;
+  name?: string;
 }
 
 export interface EphemeralConversation {

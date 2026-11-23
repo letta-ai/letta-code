@@ -23,9 +23,6 @@ afterEach(() => {
   createInterruptedTurnStore().remove("agent-1", "conv-1");
 });
 
-// Exercise admission and the real queue pump, rather than setting pump flags
-// on a manually constructed active turn. Only turn setup, tool execution and
-// the model send are replaced; both production handoff boundaries run below.
 test.each(["tool return", "end turn"] as const)(
   "an input started by the queue hands off at its next %s boundary",
   async (boundary) => {
@@ -156,8 +153,6 @@ test.each(["tool return", "end turn"] as const)(
           }),
         ]);
       } else {
-        // A pending teleport must also survive an end_turn response without
-        // declaring the Slack delivery terminal on the source.
         requestTeleport();
       }
       expect(

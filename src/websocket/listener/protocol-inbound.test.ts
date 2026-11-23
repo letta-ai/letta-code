@@ -540,6 +540,12 @@ describe("agent/conversation management protocol-inbound validators", () => {
       skill_sources: [],
       preserve_skill_sources: true,
       client_info: { name: "test", title: "Test", version: "1.0.0" },
+      tool_policy: {
+        toolset: { base: "none", include: ["AskUserQuestion"] },
+        allowlist: ["Read", "lookup_ticket"],
+        exclude_interactive: true,
+        foreground_yield_ms: 5_000,
+      },
       external_tools: [
         {
           scope_id: "scope-1",
@@ -578,6 +584,7 @@ describe("agent/conversation management protocol-inbound validators", () => {
               ],
             },
           ],
+          tool_policy: { allowlist: ["MessageChannel"] },
         },
       ],
     },
@@ -690,6 +697,24 @@ describe("agent/conversation management protocol-inbound validators", () => {
       request_id: "r0",
       agent_id: "agent-1",
       external_tools: [{ tools: [{ name: "bad" }] }],
+    },
+    {
+      type: "runtime_start",
+      request_id: "r0",
+      agent_id: "agent-1",
+      tool_policy: { toolset: { base: "bad" }, allowlist: ["Read", 42] },
+    },
+    {
+      type: "runtime_start",
+      request_id: "r0",
+      agent_id: "agent-1",
+      tool_policy: { foreground_yield_ms: "5000" },
+    },
+    {
+      type: "runtime_start",
+      request_id: "r0",
+      agent_id: "agent-1",
+      tool_policy: { foreground_yield_ms: -1 },
     },
     {
       type: "external_tool_call_response",

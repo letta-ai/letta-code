@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { removeTestDir } from "@/test-utils/test-fs";
 import {
   acquireManualListenerLock,
   getManualListenerLockRoot,
@@ -31,7 +32,7 @@ describe("manual listener instance lock", () => {
   });
 
   afterEach(async () => {
-    await rm(lockRoot, { recursive: true, force: true });
+    await removeTestDir(lockRoot);
   });
 
   test("uses the product config root for default lock ownership", () => {
@@ -207,16 +208,13 @@ describe("manual listener instance lock", () => {
     const beforeLock = Date.now() - 3_600_000;
     const afterLock = Date.now() + 3_600_000;
 
-    // Same boot: the live incumbent still blocks.
     await expect(
       acquireWith(202, beforeLock, "/usr/libexec/unrelated"),
     ).rejects.toBeInstanceOf(ManualListenerAlreadyRunningError);
-    // Looks pre-boot (e.g. clock jump) but the pid is still a letta server.
     await expect(
       acquireWith(202, afterLock, "node /usr/local/bin/letta server"),
     ).rejects.toBeInstanceOf(ManualListenerAlreadyRunningError);
 
-    // After a reboot, pid 101 belongs to an unrelated process.
     const replacement = await acquireWith(
       303,
       afterLock,

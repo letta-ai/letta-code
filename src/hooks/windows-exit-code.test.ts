@@ -10,7 +10,6 @@ function quotePowerShellLiteral(value: string): string {
 }
 
 function runtimeCommand(...args: string[]): string {
-  // The active Bun runtime is guaranteed to exist; a separate `node` shim is not.
   return `& ${quotePowerShellLiteral(process.execPath)} ${args.map(quotePowerShellLiteral).join(" ")}`;
 }
 

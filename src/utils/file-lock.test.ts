@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { removeTestDir } from "@/test-utils/test-fs";
 import { tryAcquireFileLock, withFileLock } from "@/utils/file-lock";
 import { getProcessStartTime } from "@/utils/process-liveness";
 
@@ -14,7 +15,7 @@ describe("withFileLock", () => {
   });
 
   afterEach(async () => {
-    await rm(tmpDir, { recursive: true, force: true });
+    await removeTestDir(tmpDir);
   });
 
   test("releases the lock after the critical section", async () => {
@@ -156,7 +157,6 @@ describe("withFileLock", () => {
 
   test("a reaper does not delete a lock that was re-acquired after it judged the old one dead", async () => {
     const lockPath = join(tmpDir, "reacquired.lock");
-    // Stale lock: a pid that no longer runs.
     const child = Bun.spawn(
       [process.execPath, "-e", "console.log(process.pid)"],
       { stdout: "pipe" },
@@ -167,8 +167,6 @@ describe("withFileLock", () => {
       lockPath,
       JSON.stringify({ pid: deadPid, started: "1970-01-01", acquiredAt: 0 }),
     );
-    // A live contender wins the lock between another reaper's read and unlink:
-    // simulate by holding the reap marker while the live acquisition happens.
     const reapPath = `${lockPath}.reap`;
     await writeFile(
       reapPath,
@@ -178,7 +176,6 @@ describe("withFileLock", () => {
         acquiredAt: Date.now(),
       }),
     );
-    // While the marker is held, no other reaper may remove the stale lock.
     await expect(
       withFileLock(lockPath, async () => "entered", {
         reapOnlyDeadOwner: true,
@@ -221,7 +218,6 @@ describe("withFileLock", () => {
   test("release does not remove a lock that now belongs to someone else", async () => {
     const lockPath = join(tmpDir, "foreign.lock");
     const release = await tryAcquireFileLock(lockPath);
-    // Simulate a reaper replacing our lock with another holder's record.
     const foreign = JSON.stringify({
       pid: process.pid,
       acquiredAt: Date.now(),

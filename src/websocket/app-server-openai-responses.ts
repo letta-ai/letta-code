@@ -745,7 +745,6 @@ export async function handleResponses(
     };
   }
 
-  // Test seams may return a completed outcome without invoking callbacks.
   if (builder.output.length === 0) {
     if (outcome.reasoning) builder.addReasoning(outcome.reasoning);
     if (outcome.text) builder.addText(outcome.text);
@@ -753,8 +752,6 @@ export async function handleResponses(
   builder.finish();
 
   const shouldStore = body.store === true && !outcome.error;
-  // Stateless requests replay the supplied input into a fresh conversation.
-  // Stored Responses and header-keyed chats retain their conversation state.
   if (!headerChatKey && !shouldStore) {
     void getBackend()
       .deleteConversation?.(conversationId)

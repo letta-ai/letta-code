@@ -14,26 +14,15 @@ export function truncateStatuslineText(
   return `${value.slice(0, maxChars - 3)}...`;
 }
 
-/**
- * Visible width of a string in terminal columns, ignoring ANSI escape codes
- * (colors, OSC 8 links) and accounting for wide characters (CJK, emoji) that
- * occupy two columns and zero-width/combining marks.
- */
 export function visibleWidth(value: string): number {
   return stringWidth(value);
 }
 
-/**
- * Truncate to a visible column width, appending "…" when clipped. The ellipsis
- * path strips ANSI before slicing (truncated output is not color-preserved);
- * mods that need color-preserving truncation can pre-truncate to `width`
- * themselves. Slices by column width so wide characters are not split.
- */
 export function truncateToWidth(value: string, width: number): string {
   if (width <= 0) return "";
   if (visibleWidth(value) <= width) return value;
   if (width === 1) return "…";
-  const budget = width - 1; // reserve one column for the ellipsis
+  const budget = width - 1;
   let out = "";
   let used = 0;
   for (const ch of stripAnsi(value)) {
@@ -45,10 +34,6 @@ export function truncateToWidth(value: string, width: number): string {
   return `${out}…`;
 }
 
-/**
- * Lay out a left segment and a right segment across `width`, padding the middle
- * with spaces. ANSI-aware. If the two collide, the left side is truncated.
- */
 export function row(left: string, right: string, width: number): string {
   if (width <= 0) return "";
   const rightWidth = visibleWidth(right);
@@ -60,10 +45,6 @@ export function row(left: string, right: string, width: number): string {
   return `${fittedLeft}${" ".repeat(gap)}${right}`;
 }
 
-/**
- * Distribute parts across `width`: first left-aligned, last right-aligned,
- * middles spread evenly between. ANSI-aware.
- */
 export function columns(parts: string[], width: number): string {
   const items = parts.filter((part) => part.length > 0);
   if (items.length === 0) return "";

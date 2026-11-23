@@ -2,7 +2,6 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import { actingUserRequestOptions } from "@/agent/acting-user";
 import type { Backend } from "@/backend";
 
-/** Optional routing values share the same meaning in CLI and tool sends. */
 export function normalizeAgentMessageComputer(
   value: unknown,
 ): string | undefined {
@@ -31,6 +30,15 @@ export function buildAgentSendContent(
   ];
 }
 
+export function buildAgentSendCliTarget(
+  agentId: string,
+  conversationId: string,
+): string {
+  return conversationId === "default"
+    ? `--agent ${agentId} --conversation default`
+    : `--conversation ${conversationId}`;
+}
+
 export function buildAgentSendReminder(
   sender: { agentId?: string; conversationId?: string },
   noWait: boolean,
@@ -39,11 +47,11 @@ export function buildAgentSendReminder(
   const address = sender.conversationId
     ? `, conversation ${sender.conversationId}`
     : "";
-  // `--agent` with a conv-... ID is rejected by startup validation.
   const isDefault = sender.conversationId === "default";
-  const cliTarget = isDefault
-    ? `--agent ${sender.agentId} --conversation default`
-    : `--conversation ${sender.conversationId}`;
+  const cliTarget = buildAgentSendCliTarget(
+    sender.agentId,
+    sender.conversationId ?? "",
+  );
   const toolTarget = isDefault
     ? `agent_id ${sender.agentId} and conversation_id default`
     : `conversation_id ${sender.conversationId}`;
@@ -61,14 +69,13 @@ export function validateAddress(
 ): string | undefined {
   if (!value) return undefined;
   if (kind === "conversation" && value === "default") return value;
-  const prefix = kind === "agent" ? "agent" : "conv";
+  const prefix = kind === "agent" ? "agent" : "(local-)?conv";
   if (!new RegExp(`^${prefix}-[a-zA-Z0-9-]+$`).test(value)) {
     throw new Error(`Invalid ${kind} ID: ${JSON.stringify(value)}`);
   }
   return value;
 }
 
-/** Recovery commands for a send; `--agent` is only needed for `default`. */
 export function buildAgentMessageRecoveryCommands(destination: {
   agentId?: string | null;
   conversationId: string;
@@ -80,21 +87,12 @@ export function buildAgentMessageRecoveryCommands(destination: {
   };
 }
 
-/**
- * Shared destination lookup for CLI sends and the SendAgentMessage tool.
- *
- * A non-default conversation ID is a complete address: the enqueue endpoint
- * derives the agent from it and reports it in the receipt, so the conversation
- * is not read and `agentId` is returned only when the caller supplied it. A
- * caller-supplied `agentId` is forwarded; the server owns any mismatch check.
- */
 export async function resolveAgentMessageDestination(
   input: {
     agentId?: string;
     conversationId?: string;
     senderAgentId?: string;
     actingUserId?: string | null;
-    /** Calling runtime, independent of optional sender attribution overrides. */
     currentConversation?: { agentId?: string; conversationId?: string };
   },
   backend: Pick<Backend, "createConversation">,
@@ -122,7 +120,6 @@ export async function resolveAgentMessageDestination(
     }
   }
   const current = input.currentConversation;
-  // Conversation IDs are unique except `default`, which is scoped by agent.
   const isCurrent =
     conversationId === current?.conversationId &&
     (conversationId !== "default" || agentId === current?.agentId);

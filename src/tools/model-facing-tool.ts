@@ -22,8 +22,6 @@ export type CustomToolForm = {
   type: "custom";
   description: string;
   format?: CustomToolInputFormat;
-  // Internal fallback for backends that only accept JSON-schema function tools.
-  // This is not part of OpenAI Responses custom tool payloads.
   functionFallback: FunctionToolForm;
 };
 

@@ -164,9 +164,7 @@ export function createWhatsAppAdapter(
     if (closeWebSocket) {
       try {
         currentSock?.ws?.close?.();
-      } catch {
-        // Best effort. Do not logout; logout invalidates the linked device.
-      }
+      } catch {}
     }
     releaseLease?.();
   }
@@ -375,9 +373,7 @@ export function createWhatsAppAdapter(
     if (generation !== connectionGeneration || stopping || !running) {
       try {
         (result.sock as WhatsAppSocket).ws?.close?.();
-      } catch {
-        // Best effort; release below is the important part.
-      }
+      } catch {}
       result.release();
       return;
     }
@@ -612,11 +608,6 @@ export function createWhatsAppAdapter(
     generation: number,
   ): Promise<void> {
     if (!isActiveBatch(batchSocket, generation)) return;
-    // Baileys may deliver reactions via a LID chat where it cannot equate
-    // our PN identity, producing targetFromMe:false for our own messages.
-    // isKnownOutboundMessage also checks sentMessageIds and the store's
-    // key.fromMe, but not mere store membership because inbound messages
-    // are stored there too.
     const targetIsOurs =
       parsed.targetFromMe === true ||
       outboundMessages.isKnownOutbound(parsed.targetMessageId);
@@ -859,9 +850,7 @@ export function createWhatsAppAdapter(
       if (!hadManagedTyping) {
         try {
           await sock?.sendPresenceUpdate?.("composing", targetJid);
-        } catch {
-          // Presence is best-effort.
-        }
+        } catch {}
       }
       const payload = withWhatsAppPayloadMessagePrefix(
         buildWhatsAppOutboundPayload(msg, resolvedMedia),
@@ -899,7 +888,6 @@ export function createWhatsAppAdapter(
     },
 
     async handleControlRequestEvent(event: ChannelControlRequestEvent) {
-      // Never post approval/control prompts into groups.
       if (event.source.chatType === "channel") return;
       await adapter.sendDirectReply(
         event.source.chatId,

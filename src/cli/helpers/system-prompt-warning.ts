@@ -1,7 +1,3 @@
-/**
- * Startup system prompt warning
- * Uses same heuristic as context-doctor to estimate system prompt token count on startup
- */
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { isActiveMemfsEnabled } from "@/agent/memory-runtime";
@@ -68,7 +64,6 @@ export function refreshSystemPromptDoctorState(
       estimatedSystemPromptTokens =
         estimateActiveMemorySystemPromptTokens(memoryDir);
     } else {
-      // non-memfs
       const systemPrompt = (
         agentState as { system?: string | null } | null | undefined
       )?.system;
@@ -88,7 +83,6 @@ export function refreshSystemPromptDoctorState(
   return null;
 }
 
-/** On LC CLI startup, display a warning if the system prompt is large. */
 export function buildStartupSystemPromptWarning(
   agentState: AgentState | null | undefined,
 ): string | null {

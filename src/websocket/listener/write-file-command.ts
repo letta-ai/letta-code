@@ -5,7 +5,6 @@ import { readUtf8TextStrict } from "@/utils/text-files";
 
 const BASE64_PATTERN = /^[A-Za-z0-9+/]*={0,2}$/;
 
-/** Resolves a leading `~/` against the listener's home directory. */
 export function resolveBinaryWritePath(target: string): string {
   if (target === "~" || target.startsWith("~/")) {
     return path.join(process.env.HOME || homedir(), target.slice(1));
@@ -16,12 +15,6 @@ export function resolveBinaryWritePath(target: string): string {
   return path.resolve(target);
 }
 
-/**
- * Writes base64-decoded bytes directly to disk, creating parent directories.
- * `append` adds the bytes to an existing file so large files can arrive in
- * chunks that each fit in one WebSocket message. `moveTo` then renames the
- * finished file into place, so chunks can go to a unique temporary path.
- */
 export async function writeBase64File(params: {
   path: string;
   content: string;
@@ -48,10 +41,6 @@ export async function writeBase64File(params: {
   return { path: destination, bytesWritten: bytes.length };
 }
 
-/**
- * UTF-8 write_file path: goes through the agent's Write/Edit tools so text
- * writes keep their CRLF normalisation and error behavior.
- */
 export async function writeUtf8FileViaTools(
   filePath: string,
   content: string,
@@ -59,25 +48,17 @@ export async function writeUtf8FileViaTools(
   const { edit } = await import("@/tools/impl/edit");
   const { write } = await import("@/tools/impl/write");
 
-  // Read current content so we can use edit for an atomic
-  // read-modify-write that goes through the same code path as
-  // the agent's Edit tool (CRLF normalisation, rich errors, etc.).
   let currentContent: string | null = null;
   try {
     currentContent = await readUtf8TextStrict(filePath);
   } catch (readErr) {
     const e = readErr as NodeJS.ErrnoException;
     if (e.code !== "ENOENT") throw readErr;
-    // ENOENT -- new file, fall through to write below
   }
 
   if (currentContent === null) {
-    // New file -- use write so directories are created as needed.
     await write({ file_path: filePath, content });
   } else {
-    // Existing file -- use edit for a full-content replacement.
-    // Normalise line endings before comparing to avoid a spurious
-    // "no changes" error when the only difference is CRLF vs LF.
     const normalizedCurrent = currentContent.replace(/\r\n/g, "\n");
     const normalizedNew = content.replace(/\r\n/g, "\n");
     if (normalizedCurrent !== normalizedNew) {
@@ -87,6 +68,5 @@ export async function writeUtf8FileViaTools(
         new_string: content,
       });
     }
-    // else: content unchanged -- no-op, still respond success below
   }
 }

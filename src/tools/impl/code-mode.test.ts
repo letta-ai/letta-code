@@ -364,8 +364,6 @@ test("a script still running after the foreground wait yields, and TaskStop abor
   expect(queued).toHaveLength(0);
 });
 
-// The manager, CodeMode runtime, schema discovery, and permissions are real;
-// only the hosting harness transport is replaced with an in-process executor.
 test("scripts discover and call captured harness-provided tools through the manager", async () => {
   const calls: unknown[] = [];
   registerExternalTools([
@@ -390,8 +388,6 @@ test("scripts discover and call captured harness-provided tools through the mana
       input,
       conversationId: context?.tool.runtime?.conversationId,
     });
-    // Registrations can change while a turn is running: discovery and calls
-    // must continue using the turn's captured definitions and executor.
     clearExternalTools();
     return {
       content: [{ type: "text", text: `thread:${input.thread}` }],
@@ -496,8 +492,6 @@ test.skipIf(process.platform === "win32")(
     const originalPath = process.env.PATH;
     const bin = join(home, "bin");
     mkdirSync(bin);
-    // Replace only the external model CLI. The Agent implementation, background
-    // task lifecycle, manager context, and notification queue remain real.
     writeFileSync(
       join(bin, "claude"),
       `#!${process.execPath}
@@ -518,7 +512,7 @@ rl.on("line", line => {
     try {
       const result = await run(
         `return await tools.Agent({
-      harness: 'claude-code', prompt: 'Perform a task', description: 'Script task', mcp: {inherit: false}
+      harness: 'claude-code', fork_context: false, prompt: 'Perform a task', description: 'Script task', mcp: {inherit: false}
     });`,
         "unrestricted",
         undefined,

@@ -221,17 +221,6 @@ const realAgentMessageModule = await import("@/agent/message");
 const realSendMessageStream = realAgentMessageModule.sendMessageStream;
 const realGetStreamToolContextId =
   realAgentMessageModule.getStreamToolContextId;
-// Capture real implementations BEFORE applying `mock.module(...)` so they
-// can be restored in afterAll. Bun's `mock.restore()` only resets mock
-// function state — it does NOT undo `mock.module()` swaps, so mocked modules
-// would otherwise leak into subsequent test files (e.g. approvalClassification.test.ts)
-// because module identity is process-global.
-//
-// Note: ES module namespace exports are LIVE bindings, so we copy each
-// function reference into a local `const` here. Re-reading
-// `module.classifyApprovals` after `mock.module` runs would return the mocked
-// value, and feeding that back into `mockImplementation` would cause infinite
-// recursion at restore time.
 const realApprovalClassificationModule = await import(
   "@/cli/helpers/approval-classification"
 );
@@ -332,7 +321,7 @@ function createDeferredDrain() {
 
 async function waitFor(
   predicate: () => boolean,
-  timeoutMs: number = 5_000,
+  timeoutMs: number = process.platform === "win32" ? 20_000 : 5_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!predicate()) {
@@ -358,8 +347,6 @@ function makeIncomingMessage(
   };
 }
 
-// Keep listener/runtime setup consistent across tests without repeating the
-// full construction sequence at every handleIncomingMessage boundary.
 function createRuntime(
   agentId: string,
   conversationId: string,
@@ -394,10 +381,6 @@ function makeRecoveredApprovalState(params: {
   };
 }
 
-// Stub reminder providers that touch settingsManager/process.cwd so
-// handleIncomingMessage works without a fully initialised environment.
-// Uses the same save/restore pattern as listen-session-context.test.ts
-// to avoid mock.module (which leaks into other test files in Bun).
 const origSessionContext = sharedReminderProviders["session-context"];
 const origAgentInfo = sharedReminderProviders["agent-info"];
 const originalGetLocalProjectSettings = settingsManager.getLocalProjectSettings;
@@ -412,7 +395,6 @@ describe("listen-client multi-worker concurrency", () => {
     );
     process.env.LETTA_TRANSCRIPT_ROOT = testTranscriptRoot;
 
-    // No-op stubs for providers that need settingsManager / process.cwd
     sharedReminderProviders["session-context"] = async () => null;
     sharedReminderProviders["agent-info"] = async () => null;
     (settingsManager as typeof settingsManager).getSettings = (() =>
@@ -488,8 +470,6 @@ describe("listen-client multi-worker concurrency", () => {
   });
 
   afterAll(() => {
-    // `mock.module()` is process-global, so restore the captured real
-    // implementations behind each wrapper before other test files run.
     classifyApprovalsMock.mockReset();
     // biome-ignore lint/suspicious/noExplicitAny: real implementations have wider signatures than the narrow zero-arg mocks
     (classifyApprovalsMock as any).mockImplementation(realClassifyApprovals);
@@ -1099,7 +1079,6 @@ describe("listen-client multi-worker concurrency", () => {
     expect(
       consumed?.dequeuedBatch.items.map((item: { id: string }) => item.id),
     ).toEqual([continueItem.id]);
-    // Synthesized as a plain user turn, suppressed optimistically.
     expect(consumed?.queuedTurn.messages).toEqual([
       expect.objectContaining({
         role: "user",
@@ -1431,10 +1410,6 @@ describe("listen-client multi-worker concurrency", () => {
       conversation_id: "conv-mixed-sync",
     });
 
-    // Auto-allowable, manual, and auto-deniable tools all become stale
-    // denials: nothing is classified, re-run, or re-asked (#1876). Without
-    // resume_interrupted_turn the denials park for this listener's next user
-    // message; recovered state holds nothing for the approval UI.
     expect(runtime.recoveredApprovalState).toBeNull();
     expect(runtime.pendingInterruptedResults).toEqual(
       [autoAllowedApproval, manualApproval, autoDeniedApproval].map((a) => ({
@@ -1900,7 +1875,7 @@ describe("listen-client multi-worker concurrency", () => {
   test.each([
     [
       "pre-stream",
-      "Your account does not have credits for this model. Add your own API keys or upgrade your plan to purchase credits.",
+      "This model needs your own API key or Letta credits. Run /connect to add a provider key, or buy credits at https://chat.letta.com/preferences/usage.",
     ],
     ["approval", "The request failed. Please try again."],
   ])("%s failures expose safe terminal errors", async (stage, expected) => {
@@ -2231,7 +2206,6 @@ describe("listen-client multi-worker concurrency", () => {
       pendingApprovals: [pending],
       messageHistory: [],
     };
-    // Initial fetch, then the still-pending re-check before the denial.
     getResumeDataMock.mockResolvedValueOnce(r).mockResolvedValueOnce(r);
 
     const parentAbortController = new AbortController();

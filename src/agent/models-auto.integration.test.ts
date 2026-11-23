@@ -1,12 +1,3 @@
-/**
- * Live API regression test for Cloud model availability.
- *
- * Runs only when:
- * - LETTA_RUN_API_INTEGRATION_TESTS=true
- * - LETTA_API_KEY is set
- * - LETTA_BASE_URL points to Letta Cloud (api.letta.com)
- */
-
 import { describe, expect, test } from "bun:test";
 import Letta from "@letta-ai/letta-client";
 
@@ -50,13 +41,14 @@ async function listModelHandlesWithRetry(
 }
 
 describeIntegration("cloud models list", () => {
-  test("includes letta/auto handle", async () => {
+  test("no longer lists the retired letta/auto handle", async () => {
     const client = new Letta({
       baseURL: LETTA_BASE_URL,
       apiKey: LETTA_API_KEY,
     });
 
     const handles = await listModelHandlesWithRetry(client);
-    expect(handles).toContain("letta/auto");
+    expect(handles.length).toBeGreaterThan(0);
+    expect(handles).not.toContain("letta/auto");
   });
 });

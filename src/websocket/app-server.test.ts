@@ -524,11 +524,8 @@ describe("app-server native websocket", () => {
       stream = new WebSocket(handle.controlUrl);
       await waitForOpen(stream);
 
-      // The watchdog should ping connected clients on its cadence.
       await waitForClientPing(stream);
 
-      // The `ws` client auto-pongs, so a healthy socket survives multiple
-      // intervals without being reaped.
       await new Promise((resolve) => setTimeout(resolve, 120));
       expect(stream.readyState).toBe(WebSocket.OPEN);
     } finally {
@@ -541,8 +538,6 @@ describe("app-server native websocket", () => {
     let handle: AppServerHandle | null = null;
     let stream: WebSocket | null = null;
     try {
-      // A timeout shorter than one interval allows one unanswered probe before
-      // the watchdog reaps a client whose pong is deliberately ignored.
       handle = await startAppServer({
         listen: "ws://127.0.0.1:0",
         heartbeatIntervalMs: 25,
@@ -895,7 +890,10 @@ describe("app-server native websocket", () => {
       expect(getActiveRuntime()?.connections.size).toBe(2);
       terminateClient(clientB);
       await waitForClientClose(clientB);
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      for (let i = 0; i < 500; i++) {
+        if (getActiveRuntime()?.connections.size === 1) break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
       expect(getActiveRuntime()?.connections.size).toBe(1);
 
       const afterDisconnect = waitForJsonMessage(

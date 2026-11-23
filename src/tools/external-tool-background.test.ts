@@ -1,7 +1,26 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { readFileSync, rmSync } from "node:fs";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import {
+  backgroundProcesses,
+  clearBackgroundProcessCleanup,
+} from "@/tools/impl/process_manager";
+import { task_stop } from "@/tools/impl/task-stop";
 import { autoBackgroundExternalTool } from "./external-tool-background";
 
+const existingEntries = new Set<string>();
+beforeEach(() => {
+  existingEntries.clear();
+  for (const id of backgroundProcesses.keys()) existingEntries.add(id);
+});
+afterEach(() => {
+  for (const [id, entry] of backgroundProcesses) {
+    if (existingEntries.has(id)) continue;
+    clearBackgroundProcessCleanup(id);
+    if (entry.outputFile) rmSync(entry.outputFile, { force: true });
+    backgroundProcesses.delete(id);
+  }
+});
 const scope = {
   agentId: "agent-1",
   conversationId: "conv-1",
@@ -9,7 +28,43 @@ const scope = {
 };
 const listenerTool = { autoBackground: true };
 
+function backgroundEntry(receipt: { toolReturn: unknown }) {
+  const id = String(receipt.toolReturn).match(/task ID: (\S+)/)?.[1];
+  const entry = id ? backgroundProcesses.get(id) : undefined;
+  if (!id || !entry) throw new Error("Missing returned background task");
+  return [id, entry] as const;
+}
+
 describe("external tool auto-backgrounding", () => {
+  test("stopping a remote task reports unsupported cancellation and still notifies", async () => {
+    let complete!: (result: { status: "success"; toolReturn: string }) => void;
+    const notifications: unknown[] = [];
+    const receipt = await autoBackgroundExternalTool(
+      "write",
+      listenerTool,
+      new Promise<{ status: "success"; toolReturn: string }>((resolve) => {
+        complete = resolve;
+      }),
+      {
+        yieldMs: 1,
+        runtimeScope: scope,
+        enqueue: (message) => notifications.push(message),
+      },
+    );
+    const [id, entry] = backgroundEntry(receipt);
+    const stopped = await task_stop({ task_id: id });
+    expect(stopped.killed).toBe(false);
+    expect(stopped.output).toContain("doesn't support cancelling");
+    expect(stopped.output).toContain("will still arrive as a notification");
+    complete({ status: "success", toolReturn: "remote receipt" });
+    await Bun.sleep(0);
+    expect(entry.status).toBe("completed");
+    expect(readFileSync(entry.outputFile as string, "utf8")).toContain(
+      "remote receipt",
+    );
+    expect(notifications).toHaveLength(1);
+  });
+
   test("keeps quick results inline without a notification", async () => {
     const notifications: unknown[] = [];
     const result = await autoBackgroundExternalTool(
@@ -123,7 +178,18 @@ describe("external tool auto-backgrounding", () => {
     complete({ status: "success", toolReturn: richResult });
     await Bun.sleep(0);
     expect(notifications).toHaveLength(1);
-    expect(notifications[0]?.content).toEqual(richResult);
+    expect(notifications[0]?.content).toEqual([
+      { type: "text", text: notifications[0]?.text },
+      { type: "text", text: "\n<external-tool-result>" },
+      { type: "text", text: "<text>before</text>" },
+      richResult[1],
+      { type: "text", text: "<text>after</text>" },
+      { type: "text", text: "</external-tool-result>" },
+    ]);
+    const [, entry] = backgroundEntry(receipt);
+    expect(readFileSync(entry?.outputFile as string, "utf8")).toBe(
+      "before\n[Image result; see completion notification]\nafter\n",
+    );
   });
 
   test("does not hide a long result's overflow-file path in a second clamp", async () => {
@@ -289,9 +355,6 @@ describe("external tool auto-backgrounding", () => {
 
 describe("external tool cancel racing (turn abort signal)", () => {
   test("non-backgroundable tool settles immediately when the turn aborts", async () => {
-    // Regression: a cancelled turn used to block on the remote tool result
-    // until the bridge timeout (up to 5 minutes) because nothing raced the
-    // wait against the turn's abort signal.
     const controller = new AbortController();
     let settleOperation!: () => void;
     const operation = new Promise<{ status: "success"; toolReturn: string }>(
@@ -312,8 +375,6 @@ describe("external tool cancel racing (turn abort signal)", () => {
     expect(result.status).toBe("error");
     expect(String(result.toolReturn)).toContain("interrupted by user");
     expect(String(result.toolReturn)).toContain("outcome is unknown");
-    // The underlying operation keeps running; settling it later must not
-    // produce an unhandled rejection through the raced wrapper.
     settleOperation();
     await Bun.sleep(0);
   });
@@ -360,9 +421,6 @@ describe("external tool cancel racing (turn abort signal)", () => {
   });
 
   test("backgroundable tool that already yielded ignores a later abort", async () => {
-    // Post-yield the turn is no longer blocked on the tool, so the abort must
-    // NOT race the detached operation: the real result still arrives as a
-    // task notification.
     const controller = new AbortController();
     let settleOperation!: () => void;
     const notifications: Array<{ text: string }> = [];

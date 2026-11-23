@@ -35,10 +35,6 @@ export function getConversationWorkingDirectory(
     return bootWorkingDirectory;
   }
 
-  // A persisted cwd can become stale if its directory was deleted (e.g. a
-  // worktree that was cleaned up). Serving it would throw ENOENT on realpath
-  // /process.chdir. Fall back to the boot dir and prune the dead entry so we
-  // don't repeatedly serve it.
   if (isConfirmedUnusableDirectory(stored)) {
     runtime.workingDirectoryByConversation.delete(scopeKey);
     bumpWorkingDirectoryRevision(runtime);
@@ -49,12 +45,6 @@ export function getConversationWorkingDirectory(
   return stored;
 }
 
-/**
- * Repair a boot cwd that disappeared while the listener was running. This can
- * happen when Desktop renames/deletes its default folder or when the directory
- * is changed externally. Runtime-context fallback resolution avoids returning
- * a path that would surface ENOENT/ENOTDIR to a user turn.
- */
 export function getBootWorkingDirectory(runtime: ListenerRuntime): string {
   if (!isConfirmedUnusableDirectory(runtime.bootWorkingDirectory)) {
     return runtime.bootWorkingDirectory;
@@ -99,11 +89,6 @@ export function bumpWorkingDirectoryRevision(runtime: ListenerRuntime): number {
   return revision;
 }
 
-/**
- * Change the fallback used by future turns without a conversation CWD.
- * Process globals stay unchanged because active turns may still be using the
- * directory the listener launched with.
- */
 export function setBootWorkingDirectory(
   runtime: ListenerRuntime,
   workingDirectory: string,
@@ -125,9 +110,6 @@ export function getExportedCwdMap(
   return Object.fromEntries(runtime.workingDirectoryByConversation);
 }
 
-/**
- * @deprecated - the legacy path is only read for one-time migration in remote-settings.ts
- */
 export function getCwdCachePath(): string {
   return path.join(
     process.env.HOME ?? require("node:os").homedir(),

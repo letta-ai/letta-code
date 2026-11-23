@@ -139,7 +139,6 @@ function unwrapTimeoutCommand(
     break;
   }
 
-  // timeout requires a duration before the command it runs.
   return index + 1 < tokens.length ? index + 1 : undefined;
 }
 
@@ -259,9 +258,6 @@ function splitCommandForPullRequestDetection(command: string): string[] {
     return segments;
   }
 
-  // The permission splitter rejects file redirects. PR commands commonly
-  // write a body with a heredoc first, so retry the executable lines without
-  // treating Markdown inside the heredoc as shell commands.
   return commandLinesOutsideHeredocs(command).flatMap(
     (line) => splitShellSegmentsAllowCommandSubstitution(line) ?? [line],
   );
@@ -362,7 +358,6 @@ function queueConversationTagUpdate(
   return update;
 }
 
-/** Copy PRs opened in an Agent conversation onto its launching conversation. */
 export async function copyGitHubPullRequestTags(
   sourceConversationId: string | undefined,
   targetConversationId: string | undefined,

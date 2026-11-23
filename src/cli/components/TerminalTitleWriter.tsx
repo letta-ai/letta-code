@@ -24,7 +24,6 @@ const TERMINAL_TITLE_ACTION_REQUIRED_FRAMES = [
 
 export interface TerminalTitleWriterProps {
   projectDirectory: string;
-  /** Changes when /title closes after persisting settings, so config is re-read. */
   configRefreshKey: unknown;
   titleData: WindowTitleData;
   shouldAnimate: boolean;
@@ -33,13 +32,6 @@ export interface TerminalTitleWriterProps {
   previewTitle: string | null | undefined;
 }
 
-/**
- * Side-effect-only terminal-title writer.
- *
- * Keeping animation state here prevents the 10Hz title spinner from re-rendering
- * AppCoordinator/AppView while still sharing Codex's frame cadence and title
- * rendering rules.
- */
 export const TerminalTitleWriter = memo(function TerminalTitleWriter({
   projectDirectory,
   configRefreshKey,

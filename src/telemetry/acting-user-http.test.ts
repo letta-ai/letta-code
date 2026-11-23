@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ACTING_USER_ID_HEADER } from "@/agent/acting-user";
@@ -10,6 +10,7 @@ import {
 } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { type TelemetryEvent, telemetry } from "@/telemetry";
+import { removeTestDir } from "@/test-utils/test-fs";
 import {
   captureToolExecutionContext,
   clearExternalTools,
@@ -101,7 +102,7 @@ describe("telemetry acting-user HTTP attribution", () => {
       if (savedEnv[key] === undefined) delete process.env[key];
       else process.env[key] = savedEnv[key];
     }
-    await rm(home, { recursive: true, force: true });
+    await removeTestDir(home);
   });
 
   test("snapshots concurrent turns and sends only the acting-user header, never JSON identity", async () => {
@@ -133,7 +134,6 @@ describe("telemetry acting-user HTTP attribution", () => {
       "customer-b",
       null,
     ]);
-    // Requests run concurrently: only ordering within an identity is defined.
     for (const actingUserId of ["customer-a", "customer-b", null]) {
       const request = submissions.find(
         (row) => row.actingUserId === actingUserId,
@@ -182,7 +182,6 @@ describe("telemetry acting-user HTTP attribution", () => {
     }
     const first = telemetry.flush();
     const concurrent = telemetry.flush();
-    // The server handshake makes the late-event race deterministic.
     await received.promise;
     runWithRuntimeContext({ actingUserId: "customer-c" }, () =>
       telemetry.trackToolUsage("Read", true, 1),

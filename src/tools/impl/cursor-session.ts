@@ -29,6 +29,7 @@ interface CursorTurnOptions {
   mcpReminder?: string;
   signal?: AbortSignal;
   resumeSessionId?: string;
+  sessionName?: string;
   onStarted?: (sessionId: string) => void;
   onToolCall?: ExternalToolCallListener;
 }
@@ -235,6 +236,7 @@ export async function runCursorTurn(
       model: options.model,
       reminder: options.mcpReminder,
       prompt: options.prompt,
+      name: options.sessionName,
     };
     running.process.stdin.write(`${JSON.stringify(command)}\n`);
     return await completion;
@@ -275,8 +277,6 @@ export async function sendCursorMessage(
         (await active.steer(options.prompt))
       )
         return { mode: "steered" as const };
-      // A declined steer is a new tracked turn, never a claim of in-flight delivery.
-      // Serialize follow-ups and wait for the previous process to release its store.
       const controller = new AbortController();
       followupControllers.add(controller);
       const waitingFor =
@@ -299,8 +299,6 @@ export async function sendCursorMessage(
         followupControllers.delete(controller);
         if (queued.get(sessionKey) === next) queued.delete(sessionKey);
       });
-      // Cancelling a waiting follow-up must not cancel the preceding task or wait
-      // for it. Keep the serialization tail until the preceding process exits.
       const cancelled = new Promise<SubagentResult>((resolve) => {
         controller.signal.addEventListener(
           "abort",
@@ -334,7 +332,6 @@ export async function sendCursorMessage(
   }
 }
 
-/** Cursor's curated catalog via the SDK worker; the API also accepts other model keys. */
 export async function listCursorModels(
   cwd: string,
   env: NodeJS.ProcessEnv,

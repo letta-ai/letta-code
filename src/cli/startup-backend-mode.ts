@@ -13,7 +13,6 @@ export function inferBackendModeFromAgentId(
   return isLocalAgentId(agentId) ? "local" : "api";
 }
 
-/** The startup picker lists pins from both backends, even when Cloud is active. */
 export async function switchBackendForSelectedStartupAgent(
   agentId: string,
   tryConfigureLocal: () => Promise<boolean>,

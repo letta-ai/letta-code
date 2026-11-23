@@ -1,16 +1,4 @@
 #!/usr/bin/env node
-// Turn a `letta trajectories export` directory into Workflow-ready history
-// cohorts: render every session to plain text (Workflow subagents only have
-// Read/Grep/Glob), group sessions into size-bounded cohorts per project, and
-// record a coverage ledger of everything that was excluded and why.
-//
-// Usage:
-//   node prepare-history.mjs --export <dir> --out <dir>
-//     [--max-bytes 200000] [--max-sessions 20]
-//     [--letta <executable>] [--letta-arg <argument> ...]
-//
-// Writes <out>/rendered/<source>/<session>.txt, <out>/cohorts.json
-// ({ historyCohorts }) and <out>/ledger.json, and prints a summary.
 
 import { spawnSync } from "node:child_process";
 import {
@@ -52,8 +40,6 @@ function slug(value) {
 
 function render(lettaCmd, exportDir, file, path) {
   const [bin, ...prefix] = lettaCmd;
-  // Bun can exit before flushing a large console.log to a pipe. Redirect to a
-  // regular file so a successful CLI exit cannot silently truncate history.
   const fd = openSync(path, "w");
   let result;
   try {

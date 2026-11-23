@@ -11,7 +11,6 @@ describe("overflow integration tests", () => {
 
   afterEach(() => {
     overflowDir = getOverflowDirectory(testWorkingDir);
-    // Clean up test files
     if (fs.existsSync(overflowDir)) {
       const files = fs.readdirSync(overflowDir);
       for (const file of files) {
@@ -22,21 +21,17 @@ describe("overflow integration tests", () => {
 
   describe("Bash tool with overflow", () => {
     test("creates overflow file for long output", async () => {
-      // Set USER_CWD for the test
       process.env.USER_CWD = testWorkingDir;
 
-      // Generate a large output (more than 30K characters) using node (cross-platform)
       const command =
         "node -e \"for(let i=1;i<=2000;i++) console.log('Line '+i+' with some padding text to make it longer')\"";
 
       const result = await bash({ command });
 
-      // Check that output was truncated
       expect(result.status).toBe("success");
       expect(result.content[0]?.text).toContain("Output truncated");
       expect(result.content[0]?.text).toContain("Full output written to:");
 
-      // Extract overflow path from the output
       const match = result.content[0]?.text?.match(
         /Full output written to: (.+\.txt)/,
       );
@@ -46,7 +41,6 @@ describe("overflow integration tests", () => {
         const overflowPath = match[1];
         expect(fs.existsSync(overflowPath)).toBe(true);
 
-        // Verify the overflow file contains the full output
         const fullContent = fs.readFileSync(overflowPath, "utf-8");
         expect(fullContent).toContain("Line 1 with some padding");
         expect(fullContent).toContain("Line 2000 with some padding");
@@ -70,14 +64,12 @@ describe("overflow integration tests", () => {
     test("creates overflow file for large search results", async () => {
       process.env.USER_CWD = testWorkingDir;
 
-      // Search for a common pattern that will have many results
       const result = await grep({
         pattern: "test",
         path: "src/cli",
         output_mode: "files_with_matches",
       });
 
-      // If we have enough results to trigger truncation
       if (
         result.output.includes("Output truncated") &&
         result.output.includes("Full output written to")
@@ -100,14 +92,12 @@ describe("overflow integration tests", () => {
     test("shows beginning and end of output", async () => {
       process.env.USER_CWD = testWorkingDir;
 
-      // Generate output with distinctive beginning and end using node (cross-platform)
       const command =
         "node -e \"console.log('START_MARKER'); for(let i=1;i<=1000;i++) console.log('Middle line '+i); console.log('END_MARKER')\"";
 
       const result = await bash({ command });
 
       if (result.content[0]?.text?.includes("Output truncated")) {
-        // Should contain both START and END markers due to middle truncation
         expect(result.content[0].text).toContain("START_MARKER");
         expect(result.content[0].text).toContain("END_MARKER");
         expect(result.content[0].text).toContain("characters omitted");

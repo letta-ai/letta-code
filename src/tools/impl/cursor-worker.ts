@@ -1,6 +1,3 @@
-// Runs only in a child process. Keep the SDK and its native helpers out of the
-// listener/TUI process and preserve the installed package's lazy module loads.
-
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -25,6 +22,8 @@ export interface CursorWorkerStart {
   model?: string;
   reminder?: string;
   prompt: string;
+  /** Display name for a new agent (the Agent task description). */
+  name?: string;
 }
 
 export type CursorWorkerEvent =
@@ -70,8 +69,6 @@ async function start(command: CursorWorkerStart): Promise<void> {
   const options: AgentOptions = {
     apiKey: process.env.CURSOR_API_KEY,
     model: { id: command.model ?? config.model },
-    // Noninteractive coding worker: shell and edits run without Letta approval.
-    // Do not allow untracked native subagents or interactive questions.
     tools: [
       "shell",
       "read",
@@ -90,7 +87,11 @@ async function start(command: CursorWorkerStart): Promise<void> {
   };
   await using agent = command.resume
     ? await Agent.resume(`agent-${command.sessionId}`, options)
-    : await Agent.create({ ...options, agentId: `agent-${command.sessionId}` });
+    : await Agent.create({
+        ...options,
+        agentId: `agent-${command.sessionId}`,
+        ...(command.name ? { name: command.name } : {}),
+      });
   if (cancelled) throw new Error("Cursor startup cancelled");
   const seen = new Set<string>();
   let notified = false;
@@ -124,7 +125,6 @@ async function start(command: CursorWorkerStart): Promise<void> {
     },
     () => !cancelled && seen.size === 0 && steering.size === 0,
   );
-  // Settle all steering acknowledgments before the result closes this process.
   await Promise.all(steering);
   emit({ type: "result", result });
 }
@@ -164,7 +164,6 @@ input.on("line", (line) => {
           delivered: outcome === "complete_delivered",
         });
       } catch (error) {
-        // An unknown delivery outcome must not be retried automatically.
         emit({
           type: "steer",
           id: command.id,
