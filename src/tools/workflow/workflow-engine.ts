@@ -1,20 +1,3 @@
-/**
- * The workflow engine: parses the meta block, builds the script-facing hooks
- * (agent / decide / tools / parallel / pipeline / phase / log / args), executes the script
- * body inside a node:vm context, and appends every subagent outcome to the
- * run's journal.
- *
- * The engine is deliberately small: it schedules calls to the injected
- * spawner and nothing else. Everything a subagent does happens in the
- * spawner (sdk-spawner.ts in production).
- *
- * The vm context gives the script a clean global scope with only the hooks
- * in it. It is not a security boundary: the hooks are host-realm functions,
- * so a script can reach the host through them (node:vm documents this). The
- * script runs with the CLI's own privileges, like the Bash tool; the
- * approval prompt shows its source so the user approves what actually runs.
- */
-
 import { format } from "node:util";
 import vm from "node:vm";
 import { submitWorkflowDecision } from "./decide.ts";
@@ -53,7 +36,6 @@ export async function executeWorkflow(
   return executeScript(spawner, options, meta);
 }
 
-/** The same tool bindings, decide(), and call limits, without metadata or agent orchestration. */
 export async function executeToolScript(
   options: Pick<
     RunWorkflowOptions,
@@ -68,7 +50,6 @@ export async function executeToolScript(
     | "maxTotalToolCalls"
     | "maxTotalDecisions"
   > & {
-    /** Extra script globals, e.g. Monitor's `emit` and `sleep`. */
     globals?: Record<string, unknown>;
   },
 ): Promise<unknown> {
@@ -87,8 +68,6 @@ async function executeScript(
   meta: WorkflowMeta,
   extraGlobals?: Record<string, unknown>,
 ): Promise<WorkflowExecutionResult> {
-  // The budget stops the run through its own controller so every cut point
-  // reports the budget error rather than a bare abort.
   const budgetController = new AbortController();
   const signal = options.signal
     ? AbortSignal.any([options.signal, budgetController.signal])
@@ -96,14 +75,10 @@ async function executeScript(
   const maxCostUsd = options.maxCostUsd;
   let budgetError: Error | undefined;
   const abortError = () => budgetError ?? new Error("Workflow aborted.");
-  // Progress stops once the run has settled, not at abort: an interrupted
-  // subagent still reports its outcome (and tokens) while the run drains.
   let settled = false;
   const emit = (event: WorkflowProgressEvent) => {
     if (!settled) options.onProgress?.(event);
   };
-  // Every agent() call, awaited by the script or not. The run does not
-  // settle until all of them have, so a completion never precedes a worker.
   const inFlight = new Set<Promise<unknown>>();
   const maxTotalAgents = options.maxTotalAgents ?? DEFAULT_MAX_TOTAL_AGENTS;
   const maxTotalDecisions =
@@ -138,7 +113,6 @@ async function executeScript(
     }
   }
 
-  /** A budget the run cannot measure is not enforced silently: stop instead. */
   function markCostUnavailable(source: string): void {
     costUnavailable = true;
     if (maxCostUsd !== undefined) {
@@ -149,7 +123,6 @@ async function executeScript(
     }
   }
 
-  /** Tracks one subagent's cumulative cost so live and final reports never double-count. */
   function agentCostMeter(label: string) {
     let charged = 0;
     let unavailable = false;
@@ -171,7 +144,6 @@ async function executeScript(
     get limit() {
       return maxCostUsd ?? null;
     },
-    /** Null once any usage was unpriced, matching `totalCostUsd`. */
     get spent() {
       return costUnavailable ? null : totalCostUsd;
     },
@@ -183,8 +155,6 @@ async function executeScript(
   });
 
   function trackCall<T>(pending: Promise<T>): Promise<T> {
-    // Scripts can forget to await a call; that must not surface as an
-    // unhandled rejection. Awaiting it still observes the original error.
     void pending.catch(() => {});
     inFlight.add(pending);
     void pending.finally(() => inFlight.delete(pending)).catch(() => {});
@@ -330,7 +300,6 @@ async function executeScript(
               });
             }
           },
-          // Live usage so status rows can show tokens before the agent ends.
           onUsage: (totalTokens, costUsd) => {
             meterCost(costUsd);
             emit({
@@ -344,8 +313,6 @@ async function executeScript(
           },
         },
       );
-      // Account for the outcome even when the run was aborted meanwhile: the
-      // spawner returns what the interrupted subagent had already consumed.
       totalTokens += outcome.totalTokens ?? 0;
       meterCost(outcome.costUsd);
       if (options.journalPath) {
@@ -407,7 +374,6 @@ async function executeScript(
     ...(spawner ? { agent, parallel, pipeline, phase, log, budget } : {}),
     args: options.args,
     console: { log, warn: log, error: log, info: log },
-    // Only `env`: the host process's exit, kill, and bindings stay out.
     process: Object.freeze({ env: Object.freeze({ ...options.env }) }),
     ...extraGlobals,
   });
@@ -425,8 +391,6 @@ async function executeScript(
 
   let pending: Promise<unknown>;
   try {
-    // Node reports syntax errors at construction; Bun compiles lazily, so
-    // they can surface here instead.
     pending = script.runInContext(context) as Promise<unknown>;
   } catch (error) {
     if ((error as { name?: string }).name === "SyntaxError") {
@@ -442,9 +406,6 @@ async function executeScript(
     });
   });
   void abortRun.catch(() => {});
-  // Whether the script returned, threw, or was aborted, wait for every
-  // launched subagent to report back before settling. Aborted ones return
-  // promptly because the spawner honors the signal.
   const drain = async () => {
     while (inFlight.size > 0) await Promise.allSettled([...inFlight]);
   };
@@ -461,8 +422,6 @@ async function executeScript(
     };
   } catch (error) {
     await drain();
-    // Report the final spend: the spawner holds each interrupt until a model
-    // request already in flight reports its usage, so the drain meters it.
     if (
       budgetError &&
       error === budgetError &&

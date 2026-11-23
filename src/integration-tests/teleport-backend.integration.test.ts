@@ -31,8 +31,6 @@ import {
 } from "@/test-utils/teleport-fixture-retry";
 import { createAuthenticatedCliTestEnv } from "@/test-utils/test-process-env";
 
-// Real Cloud relay, model turn, and two real CLIs; the test owns the tool reply.
-// Optional: LETTA_TEST_CLI_PATH=/absolute/path/to/built/letta.js runs Node.
 const apiKey = process.env.LETTA_API_KEY;
 const baseURL = process.env.LETTA_BASE_URL || "https://api.letta.com";
 const sourceEntry = resolve(import.meta.dir, "../../src/index.ts");
@@ -53,8 +51,6 @@ async function bounded<T>(label: string, work: Promise<T>, ms = 30_000) {
 }
 
 async function connectStatusWebSocket(url: string): Promise<AppServerClient> {
-  // Registration can become visible before the relay accepts WebSocket upgrades.
-  // connect() closes a failed socket, so retry with a fresh client.
   for (let attempt = 1; ; attempt++) {
     const client = new AppServerClient({
       url,
@@ -120,7 +116,6 @@ async function request<T>(
         error.message,
       );
     }
-    // DELETE may return 204 (or an empty 200), with no JSON document.
     if (method === "DELETE") return undefined as T;
     return (await response.json()) as T;
   } catch (error) {
@@ -206,7 +201,6 @@ testWithAPI.each([
           LETTA_BASE_URL: baseURL,
           LETTA_DEBUG: undefined,
           DEBUG: undefined,
-          // File-only frame logging preserves machine-readable lifecycle stdout.
           LETTA_LOG_WS_EVENTS: "1",
         });
         for (const key of Object.keys(env)) {
@@ -244,8 +238,6 @@ testWithAPI.each([
           role,
           "spawned; lifecycle=none; environment=unknown",
         );
-        // Registration and the status relay can be online before startup ingress
-        // is active. This is the same readiness signal process supervisors use.
         createInterface({ input: child.stdout }).on("line", (line) => {
           try {
             const event = JSON.parse(line);
@@ -254,9 +246,7 @@ testWithAPI.each([
             if (event.state === "connected") listenerReady = true;
             if (event.state === "reconnecting" || event.state === "error")
               listenerReady = false;
-          } catch {
-            // Ignore non-lifecycle startup output.
-          }
+          } catch {}
         });
         child.stdout?.on("data", (chunk: Buffer) => {
           stdoutByRole.set(
@@ -324,8 +314,6 @@ testWithAPI.each([
         clients.push(client);
         stage = `${role} API backend readiness`;
         const info = await client.info();
-        // Teleport probes report supported only on the API backend. In
-        // particular, the destination must override its saved local preference.
         expect(info.success).toBe(true);
         expect(info.backend).toBe("api");
         return { client, connectionId };
@@ -436,8 +424,6 @@ testWithAPI.each([
             ? true
             : undefined;
         }
-        // Hold the source in its tool call: a completed reply would drop active
-        // ownership between this test's status read and its teleport request.
         source.client.input({
           runtime: scope,
           payload: {
@@ -453,8 +439,6 @@ testWithAPI.each([
         await poll(stage, () => ownerIs(source.connectionId));
         stage = "teleport";
         const runtimePath = `/v1/environments/runtimes/${agent.id}/${conversation.id}`;
-        // A rejected capability preflight has not started a teleport. Keep the
-        // source held and reuse the key; never retry an ambiguous HTTP outcome.
         const idempotencyKey = randomUUID();
         const teleport = await initiateFixtureTeleport(() =>
           request<TeleportResponse>(`${runtimePath}/teleport`, {
@@ -465,11 +449,8 @@ testWithAPI.each([
         expect(teleport.sourceConnectionId).toBe(source.connectionId);
         expect(teleport.targetConnectionId).toBe(destination.connectionId);
         expect(typeof teleport.id).toBe("string");
-        // POST confirms the source has registered teleport before it returns.
-        // Let the tool finish so the listener can reach its normal boundary.
         releaseTool?.();
         const completed = await poll("teleport completion", async () => {
-          // Cloud's GET route is plural, unlike the initiation POST route.
           const result = await request<TeleportResponse>(
             `${runtimePath}/teleports/${encodeURIComponent(teleport.id)}`,
           );
@@ -479,8 +460,6 @@ testWithAPI.each([
               : undefined;
           }
           if (result.status === "failed") {
-            // On pre-fix code this produces the concrete local lookup failure,
-            // rather than merely asserting that a backend flag has the wrong value.
             const failed = await destination.client.runtimeStart(runtimeStart);
             destinationAgentNotFound ||= /Agent\b.*not found/i.test(
               failed.error ?? "",
@@ -588,7 +567,6 @@ testWithAPI.each([
           }),
         ),
       );
-      // Check after shutdown too: an asynchronous settings flush must not persist API.
       if (destinationSettingsPath) {
         try {
           const saved = JSON.parse(
@@ -603,7 +581,6 @@ testWithAPI.each([
         try {
           await deleteCloudFixture(remove);
         } catch (error) {
-          // Keep fixture failures visible without replacing the scenario result.
           const status =
             error instanceof Letta.APIError ||
             error instanceof CloudReadinessError

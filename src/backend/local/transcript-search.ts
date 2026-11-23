@@ -43,13 +43,11 @@ type TranscriptMessageRow = {
 };
 
 type SearchRecord = {
-  /** Kept only for query matches; other rows keep just ranking statistics. */
   message?: StoredMessage;
   date: string;
   conversationId?: string;
   messageType?: string;
   tokenCount: number;
-  /** Frequency of each parsed query term, in query order. */
   termFrequencies: number[];
   score: number;
   isSearchEcho: boolean;
@@ -225,8 +223,6 @@ function normalizeText(value: string): string {
 
 function termFrequency(tokens: readonly string[], term: string): number {
   if (CJK_RUN.test(term)) {
-    // These scripts commonly omit word separators. Preserve substring recall
-    // within a run without restoring Latin token-suffix matches.
     return tokens.reduce(
       (count, token) => count + token.split(term).length - 1,
       0,
@@ -318,8 +314,6 @@ function rankMatches(
         inverseDocumentFrequency *
         ((frequency * (k1 + 1)) / (frequency + k1 * lengthNormalization));
     });
-    // Quotes remain strict filters and receive a boost so exact phrasing wins
-    // when mixed with optional unquoted terms.
     score += query.phrases.length * 2;
     return { ...record, score: score * (record.isSearchEcho ? 0.1 : 1) };
   });
@@ -414,12 +408,6 @@ function echoToolCallId(message: StoredMessage): string | undefined {
   return undefined;
 }
 
-/**
- * Streams one conversation's messages.jsonl row by row. Each projected
- * message is matched against the query as it is read; only matches keep
- * their message, everything else keeps the few numbers BM25 needs. The
- * transcript is never held in memory as a whole.
- */
 function collectConversationMessages(input: {
   conversationDir: string;
   conversation: LocalConversationSearchRecord;
@@ -441,7 +429,6 @@ function collectConversationMessages(input: {
   const records: SearchRecord[] = [];
   const echoToolCallIds: (string | undefined)[] = [];
   const searchToolCallIds = new Set<string>();
-  // Rows seen before an unversioned transcript's format is known (headers).
   const undecidedRows: { row: unknown; rowIndex: number }[] = [];
   let sourceIndex = 0;
 
@@ -488,9 +475,6 @@ function collectConversationMessages(input: {
     }
   };
 
-  // Unversioned transcripts: infer the format from the first data row, as
-  // the full-file reader did (session rows wrap a message; legacy rows are
-  // bare messages).
   const handleRow = (row: unknown) => {
     const rowIndex = sourceIndex;
     sourceIndex += 1;
@@ -523,8 +507,6 @@ function collectConversationMessages(input: {
       }
     });
   } catch (error) {
-    // Unreadable or malformed transcripts are skipped; projection errors
-    // still propagate.
     if (rowError !== undefined && error === rowError) throw error;
     return [];
   }
@@ -603,10 +585,6 @@ export function searchLocalTranscriptMessages(
     },
   );
 
-  // Unscoped recall runs from inside the active conversation, whose newest user
-  // message is commonly the question being recalled. Demote that one message,
-  // plus messages-search command/result pairs, instead of deleting tool results
-  // globally. Explicit conversation targets do not demote their newest user message.
   if (!conversationId && options.currentConversationId) {
     const latestCurrentUser = records
       .filter(

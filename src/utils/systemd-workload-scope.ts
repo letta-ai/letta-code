@@ -5,13 +5,6 @@ type WorkloadScopeOptions = {
   platform?: NodeJS.Platform;
 };
 
-/**
- * Moves a managed agent workload into the systemd slice named by Cloud.
- *
- * Local, container, macOS, and Windows runtimes do not set the opt-in env var,
- * so their process launchers remain unchanged. The managed Linux VM snapshot
- * owns the slice and its aggregate memory limit.
- */
 export function wrapManagedWorkloadLauncher(
   launcher: string[],
   options: WorkloadScopeOptions = {},

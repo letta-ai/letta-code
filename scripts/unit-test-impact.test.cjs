@@ -1,6 +1,6 @@
 const { describe, expect, test } = require("bun:test");
 const { execFileSync } = require("node:child_process");
-const { mkdtempSync, rmSync, writeFileSync } = require("node:fs");
+const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join } = require("node:path");
 const { pathToFileURL } = require("node:url");
@@ -348,14 +348,29 @@ describe("current repository impact graph", () => {
   });
 
   test("literal calls through source-reader helpers are direct dependencies", () => {
-    expect(impactIndex.familyDependencies.get("cli")).toContain(
-      "src/auth/setup-ui.tsx",
-    );
-    expect(impactIndex.familyDependencies.get("tools")).toContain(
-      "src/websocket/listener/turn.ts",
-    );
-    expect(impactIndex.familyDependencies.get(ROOT_FAMILY)).toContain(
-      "src/cli/profile-selection.tsx",
-    );
+    const directory = mkdtempSync(join(tmpdir(), "unit-test-impact-"));
+    try {
+      mkdirSync(join(directory, "src", "cli"), { recursive: true });
+      mkdirSync(join(directory, "src", "auth"), { recursive: true });
+      writeFileSync(join(directory, "tsconfig.json"), "{}");
+      writeFileSync(join(directory, "src", "auth", "setup.ts"), "export {};");
+      writeFileSync(
+        join(directory, "src", "cli", "setup.test.ts"),
+        [
+          "import { readFileSync } from 'node:fs';",
+          "function readSource(path: string) {",
+          "  return readFileSync(new URL(path, import.meta.url), 'utf8');",
+          "}",
+          "readSource('../auth/setup.ts');",
+        ].join("\n"),
+      );
+
+      const fixtureIndex = buildFamilyImpactIndex(directory);
+      expect(fixtureIndex.familyDependencies.get("cli")).toContain(
+        "src/auth/setup.ts",
+      );
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 });

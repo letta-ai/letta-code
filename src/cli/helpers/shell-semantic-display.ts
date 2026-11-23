@@ -537,8 +537,6 @@ function buildReadSummary(
       ? `${options.lastLines} lines`
       : undefined;
 
-  // Show just the file path (no "path:" label), matching Glob/Search/List style
-  // formatDisplayPath returns "" when path is cwd — skip in that case
   const displayPath = formatDisplayPath(path);
   const parts: string[] = [];
   if (displayPath) {
@@ -562,8 +560,6 @@ function buildListSummary(
   path: string | undefined,
   options: { filter?: string; limit?: number } = {},
 ): ShellSemanticDisplay {
-  // Show just the directory path (no "path:" label), matching Glob/Search style
-  // formatDisplayPath returns "" when path is cwd — skip in that case
   const displayPath = path ? formatDisplayPath(path) : null;
   const parts: string[] = [];
   if (displayPath) {
@@ -588,8 +584,6 @@ function buildSearchSummary(
   path: string | undefined,
   options: { limit?: number } = {},
 ): ShellSemanticDisplay {
-  // Show "query" in path (no labels), matching Glob/Search tool display style
-  // formatDisplayPath returns "" when path is cwd — skip "in" in that case
   const displayPath = path ? formatDisplayPath(path) : null;
   const parts: string[] = [];
   if (query && displayPath) {

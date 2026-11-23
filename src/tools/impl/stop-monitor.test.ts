@@ -70,9 +70,7 @@ afterEach(() => {
     process.completionNotificationSuppressed = true;
     try {
       process.process.kill("SIGKILL");
-    } catch {
-      /* gone */
-    }
+    } catch {}
     clearBackgroundProcessCleanup(id);
   }
   backgroundProcesses.clear();

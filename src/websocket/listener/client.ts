@@ -1,8 +1,3 @@
-/**
- * WebSocket client for listen mode
- * Connects to Letta Cloud and receives messages to execute locally
- */
-
 import type WebSocket from "ws";
 import {
   clearPendingApprovalBatchIds,

@@ -67,7 +67,6 @@ test("queues a slow steer while retaining the lock and applying its late reply",
   reply(steers[0] as number, {});
   expect(await next).toMatchObject({ mode: "steered" });
   expect(steers).toHaveLength(2);
-  // A steered turn must not be replayed on capacity failure.
   send({
     method: "turn/completed",
     params: {

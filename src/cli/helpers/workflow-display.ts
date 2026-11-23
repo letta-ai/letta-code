@@ -1,10 +1,3 @@
-/**
- * Pure formatting for the Workflow tool's TUI surfaces: the status rows
- * under the input, the launch line in the transcript, and the /workflows
- * tree (one block per run, agents grouped by phase, with duration and token
- * usage per agent).
- */
-
 import type {
   WorkflowAgentRecord,
   WorkflowExecutionSnapshot,
@@ -33,22 +26,16 @@ const AGENT_STATUS_ICONS: Record<WorkflowAgentRecord["status"], string> = {
 
 const TASK_ID_PATTERN = /Task ID: (workflow_\d+)/;
 
-/** The background task id announced in a Workflow tool result, if any. */
 export function parseWorkflowTaskId(resultText: string): string | null {
   return TASK_ID_PATTERN.exec(resultText)?.[1] ?? null;
 }
 
-/**
- * One-line transcript summary for a successful launch, or null when the
- * result is not a launch message (validation errors render as-is).
- */
 export function formatWorkflowLaunchLine(resultText: string): string | null {
   const taskId = parseWorkflowTaskId(resultText);
   if (!taskId) return null;
   return `Launched in background · task ${taskId} · /workflows to watch`;
 }
 
-/** Left/right halves of the status row shown under the input. */
 export function formatWorkflowStatusRow(snapshot: WorkflowExecutionSnapshot): {
   glyph: string;
   name: string;

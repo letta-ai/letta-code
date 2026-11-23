@@ -24,7 +24,6 @@ import { openOAuthBrowser } from "./connect-oauth-core";
 export interface LocalOAuthConnectCallbacks {
   onStatus: (message: string) => void | Promise<void>;
   onPrompt?: (prompt: OAuthPrompt) => Promise<string>;
-  /** Answer a selection prompt (e.g. OpenAI Codex login method) with an option id. */
   onSelect?: (prompt: OAuthSelectPrompt) => Promise<string | undefined>;
   openBrowser?: (authorizationUrl: string) => Promise<void>;
   signal?: AbortSignal;
@@ -41,17 +40,10 @@ function localOAuthProviderId(provider: ByokProvider): string {
 }
 
 async function defaultSelect(prompt: AuthPrompt): Promise<string> {
-  // pi-ai providers list their default option first (e.g. OpenAI Codex
-  // browser login), so auto-select it when the caller has no selection UI.
   if (prompt.type !== "select") return "";
   return prompt.options[0]?.id ?? "";
 }
 
-/**
- * A prompt raced against an out-of-band resolution (e.g. an OAuth callback
- * server racing a manual-code prompt): with no UI to answer it, wait until
- * pi-ai cancels the prompt because the other path won.
- */
 function waitForPromptCancellation(prompt: AuthPrompt): Promise<string> {
   return new Promise((_resolve, reject) => {
     const abort = () => reject(new DOMException("Aborted", "AbortError"));
@@ -82,7 +74,6 @@ export async function runProviderOAuthLogin(
   const browserOpener = callbacks.openBrowser ?? openOAuthBrowser;
   await callbacks.onStatus(`Starting ${oauth.name} login...`);
 
-  // pi-ai 0.84+: ProviderAuthInteraction requires a concrete AbortSignal.
   const signal = callbacks.signal ?? new AbortController().signal;
   const interaction: ProviderAuthInteraction = {
     signal,

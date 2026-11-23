@@ -24,13 +24,6 @@ import {
   formatCapturedOutput,
 } from "./process-diagnostics";
 
-/**
- * Startup flow integration tests.
- *
- * These spawn the real CLI and require LETTA_API_KEY to be set.
- * They are executed in CI only for push to main / trusted PRs (non-forks).
- */
-
 const projectRoot = process.cwd();
 const cliCommand = process.env.LETTA_TEST_CLI_BUNDLE ? "node" : "bun";
 const cliArgs = process.env.LETTA_TEST_CLI_BUNDLE
@@ -154,7 +147,6 @@ async function runCli(
         );
       }
       attempt += 1;
-      // CI API calls can be transiently slow; retry once to reduce flakiness.
       console.warn(
         `[startup-flow] retrying after timeout (${attempt}/${retryOnTimeouts}) args=${args.join(" ")}`,
       );
@@ -217,10 +209,6 @@ async function runCliJson(
   }
 }
 
-// ============================================================================
-// Invalid Input Tests (require API calls but fail fast)
-// ============================================================================
-
 describe("Startup Flow - Invalid Inputs", () => {
   test(
     "--agent with nonexistent ID shows error",
@@ -251,10 +239,6 @@ describe("Startup Flow - Invalid Inputs", () => {
     { timeout: 70000 },
   );
 });
-
-// ============================================================================
-// Integration Tests (require API access, create real agents)
-// ============================================================================
 
 describe("Startup Flow - Integration", () => {
   let testAgentId: string | null = null;
@@ -467,8 +451,6 @@ describe("Startup Flow - Integration", () => {
           parent_agent_id: parentId ?? null,
           is_subagent: true,
         });
-        // Assert durable history, not whether a model follows competing wording
-        // instructions. The second CLI process must append to the same history.
         const history = await client.conversations.messages.list(
           conversationId,
           {
@@ -492,8 +474,6 @@ describe("Startup Flow - Integration", () => {
             originalHistory.items.map((message) => message.id),
           ),
         );
-        // The conversation response has no system field. Its persisted prompt
-        // is exposed as a system message by the conversation messages endpoint.
         expect(
           history.items.flatMap((message) =>
             message.message_type === "system_message" ? [message.content] : [],
@@ -652,7 +632,6 @@ describe("Startup Flow - Integration", () => {
         return;
       }
 
-      // First, create a real conversation with --new (since --new-agent uses "default")
       const createResult = await runCliJson(
         [
           "--agent",
@@ -692,8 +671,6 @@ describe("Startup Flow - Integration", () => {
         [
           "--conversation",
           testConversationId,
-          // The process that created the conversation has exited, so verify
-          // destination resolution and Cloud acceptance without waiting for a receiver.
           "--no-wait",
           "-p",
           "Say OK",
@@ -710,7 +687,6 @@ describe("Startup Flow - Integration", () => {
       expect(result.exitCode).toBe(0);
       const output = result.output;
       expect(output.status).toBe("queued");
-      // The conversation is not read; the server's enqueue receipt names its agent.
       expect(output.agent_id).toBe(testAgentId);
       expect(output.conversation_id).toBe(testConversationId);
     },
@@ -745,10 +721,7 @@ describe("Startup Flow - Integration", () => {
           agentIdForTest,
           "--conversation",
           "default",
-          // The process that created the agent has exited, so verify default
-          // route resolution and Cloud acceptance without waiting for a receiver.
           "--no-wait",
-          // Keep the model set during agent creation.
           "-p",
           "Say OK",
           "--output-format",

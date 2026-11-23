@@ -1,12 +1,7 @@
-// Analytics labels only: never use rendered notification text for authorization.
-// Keep custom channel IDs and arbitrary tool arguments out of analytics.
 export function telemetryChannel(value: unknown): string | undefined {
   if (typeof value !== "string" || !value) return undefined;
   return [
     "slack",
-    // 'microsoftteams' is the channel-id contract value rendered by the
-    // letta-cloud webhook; 'microsoftTeams' is kept for notifications emitted
-    // before that lowercase fix deployed.
     "microsoftteams",
     "microsoftTeams",
     "telegram",
@@ -21,8 +16,6 @@ export function telemetryChannel(value: unknown): string | undefined {
 }
 
 export function extractInputChannel(input: string): string | undefined {
-  // Match the same channel-notification source rendered in the transcript,
-  // excluding fenced/inline examples. A batch still counts as one user input.
   const text = input.replace(/(```|~~~)[\s\S]*?\1/g, "");
   const channels = new Set<string>();
   for (const match of text.matchAll(

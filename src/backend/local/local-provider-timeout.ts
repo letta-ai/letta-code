@@ -113,8 +113,6 @@ export function createLocalProviderFetch(options: {
     const nextInit = {
       ...init,
       ...(signal ? { signal } : {}),
-      // Bun has its own transport timeout. Match OpenCode by disabling it and
-      // using our provider-level AbortSignal timeout instead.
       timeout: false,
     } as RequestInit & { timeout: false };
     return baseFetch(input, nextInit);

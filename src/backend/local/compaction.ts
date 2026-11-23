@@ -55,7 +55,6 @@ export type LocalCompactionMode =
   | "self_compact_all"
   | "self_compact_sliding_window";
 
-/** Self-compaction modes summarize inside the agent's own request context. */
 export function isLocalSelfCompactionMode(mode: LocalCompactionMode): boolean {
   return mode === "self_compact_all" || mode === "self_compact_sliding_window";
 }
@@ -64,11 +63,6 @@ export function isLocalSlidingWindowMode(mode: LocalCompactionMode): boolean {
   return mode === "sliding_window" || mode === "self_compact_sliding_window";
 }
 
-/**
- * The agent's own request context for self-compaction: the summary request is
- * the turn's system prompt, history, and tools, plus the compaction prompt as
- * a final user message.
- */
 export interface LocalSelfCompactionContext {
   systemPrompt: string;
   tools?: Tool[];
@@ -134,7 +128,6 @@ export function assertLocalCompactionProgress(
   );
 }
 
-// The system prompt lives outside LocalMessage history and is never evicted.
 export function finishLocalFullCompaction(input: {
   messages: LocalMessage[];
   summary: string;
@@ -167,9 +160,7 @@ export function finishLocalFullCompaction(input: {
       stats.trigger !== "context_window_overflow"
     )
       throw error;
-    // The model's summary is dropped below, so the stats report no source.
     delete stats.summary_source;
-    // Preserve the latest user turn, including its tool calls and results.
     let latestTurn = input.messages.findLastIndex(
       (message) => message.role === "user" && !message.metadata?.compaction,
     );
@@ -188,7 +179,6 @@ export function finishLocalFullCompaction(input: {
     );
     do {
       if (cutoff >= latestTurn) break;
-      // Evict whole turns so tool results never outlive their calls.
       cutoff++;
       while (cutoff < latestTurn && input.messages[cutoff]?.role !== "user")
         cutoff++;
@@ -229,8 +219,6 @@ export async function runLocalPressureCompaction<T>(
   try {
     return await compact();
   } catch (error) {
-    // Pressure compaction is opportunistic: it must not fail a turn (or a
-    // completed response).
     if (error instanceof LocalIrreducibleContextError) return null;
     throw error;
   }
@@ -295,12 +283,10 @@ const SELF_COMPACTION_INSTRUCTIONS =
 
 export const LOCAL_SELF_ALL_COMPACTION_PROMPT = `${LOCAL_ALL_COMPACTION_PROMPT}\n\n${SELF_COMPACTION_INSTRUCTIONS}`;
 
-// In self mode the evicted messages come before the prompt, not after it.
 export const LOCAL_SELF_SLIDING_WINDOW_COMPACTION_PROMPT = `${slidingWindowCompactionPrompt(
   "The messages above",
 )}\n\n${SELF_COMPACTION_INSTRUCTIONS}`;
 
-/** A summary and the request that wrote it (unset when none ran). */
 export interface LocalCompactionSummary {
   summary: string;
   source?: LocalCompactionSummarySource;
@@ -322,7 +308,6 @@ export interface LocalAllCompactionInput {
   abortSignal?: AbortSignal;
   localProviderAuthStorageDir?: string;
   modelsRuntime?: LocalPiModelsRuntime;
-  /** Set for self-compaction modes. */
   self?: LocalSelfCompactionContext;
 }
 
@@ -344,9 +329,6 @@ function assistantMessageText(message: AssistantMessage): string {
     .join("\n");
 }
 
-// Summarization dispatches through the pi-ai Models runtime like turn
-// execution does; a compaction-only fallback runtime is created when the
-// caller (tests, direct library use) did not thread the backend's instance.
 function runtimeComplete(runtime: LocalPiModelsRuntime): LocalCompleteFunction {
   return async (model, context, options) => {
     if (model.api === "bedrock-converse-stream") {
@@ -413,11 +395,6 @@ async function runGenerateText(
     resolved.model.api === "anthropic-messages" &&
     isFableModel(resolved.model)
   ) {
-    // Fable 5 is a strong turn model, but compaction summaries can trip
-    // Anthropic's refusal path and pi-ai currently surfaces that as the opaque
-    // "An unknown error occurred". The summary model is an implementation
-    // detail of compaction, so avoid Fable for this auxiliary call while
-    // preserving the original Anthropic reasoning/settings shape.
     localModel = await resolveAvailableLocalModelForTurn({
       model: FABLE_COMPACTION_SUMMARY_FALLBACK_MODEL,
       modelSettings: fableCompactionSummaryFallbackSettings(
@@ -453,14 +430,7 @@ async function runGenerateText(
     ...(resolved.timeout !== false ? { timeoutMs: resolved.timeout } : {}),
     headers,
     ...(input.abortSignal ? { signal: input.abortSignal } : {}),
-    // Mirrors Pi's createSummarizationOptions, which passes the session
-    // thinking level into summarization requests. Required for adaptive
-    // thinking Anthropic models (for example claude-fable-5): without
-    // options.reasoning, pi-ai sends `thinking: {type: "disabled"}`, which
-    // those models reject with a 400 invalid_request_error — breaking every
-    // compaction (automatic and manual /compact).
     ...(reasoning ? { reasoning } : {}),
-    // The self request samples as the agent's own turn does.
     ...(turnSampling
       ? samplingOptionsForSettings(input.agent.model_settings)
       : {}),
@@ -490,15 +460,6 @@ function transcriptContext(transcript: string, systemPrompt: string): Context {
   };
 }
 
-/**
- * The agent's own context with the compaction prompt added, so the summary
- * request continues the conversation. Nothing is written in the model's name:
- * providers that need an assistant message between tool results and a user
- * message get one from pi-ai. A trailing user message has not reached the
- * model yet (the pre-call check compacts before the request that would carry
- * it), so the prompt joins it rather than following as a second user message,
- * which chat templates with strict role alternation reject.
- */
 function selfCompactionContext(
   self: LocalSelfCompactionContext,
   messages: LocalMessage[],
@@ -525,11 +486,6 @@ function selfCompactionContext(
   };
 }
 
-/**
- * Summarize within the agent's own context. When that request overflows or
- * yields no text (e.g. the model called a tool), returns the reason instead,
- * so the caller falls back to a transcript summary and reports why.
- */
 async function summarizeInSelfContext(
   input: LocalAllCompactionInput & { self: LocalSelfCompactionContext },
   defaultPrompt: string,

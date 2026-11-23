@@ -72,7 +72,6 @@ export type ChannelSlashCommandOptions = {
   statusContext?: ChannelStatusContext;
   handlers?: ChannelSlashCommandHandlers;
   enableBangCommands?: boolean;
-  /** Admin/user tier gate for this sender; undefined disables gating. */
   commandGate?: ChannelCommandGate;
 };
 

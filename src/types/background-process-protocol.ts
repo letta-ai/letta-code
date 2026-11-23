@@ -29,7 +29,6 @@ export interface MonitorBackgroundProcessSummary {
 }
 
 export interface WorkflowProgressCounts {
-  /** Workers scheduled so far, not a fixed planned total. */
   agents_total: number;
   agents_done: number;
   agents_failed: number;
@@ -38,7 +37,6 @@ export interface WorkflowProgressCounts {
 }
 
 export interface WorkflowProgressSummary extends WorkflowProgressCounts {
-  /** Pipeline phases may run concurrently. */
   phases: Array<WorkflowProgressCounts & { title: string }>;
 }
 

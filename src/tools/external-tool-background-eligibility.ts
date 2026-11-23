@@ -4,7 +4,6 @@ type ListenerBackgroundRegistration = {
   createNotificationGuard: () =>
     | ListenerExternalToolNotificationGuard
     | undefined;
-  /** Optional foreground wait override; listener registrations use 10 seconds. */
   yieldMs?: number;
 };
 
@@ -18,7 +17,6 @@ const listenerRegistrations = new WeakMap<
   ListenerBackgroundRegistration
 >();
 
-/** Mark an in-process listener tool as eligible for task notification delivery. */
 export function enableListenerExternalToolBackground<T extends object>(
   tool: T,
   options: ListenerBackgroundRegistration,

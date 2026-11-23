@@ -14,7 +14,6 @@ function looksLikeMojibake(value: string): boolean {
   for (let i = 0; i < value.length; i++) {
     const byte = value.charCodeAt(i);
 
-    // If any code unit is outside byte range, it's real Unicode already.
     if (byte > 0xff) return false;
 
     if (byte >= 0xc2 && byte <= 0xdf) {
@@ -37,7 +36,6 @@ function looksLikeMojibake(value: string): boolean {
       }
     }
 
-    // A lone multi-byte lead with even one valid continuation is mojibake
     if (byte >= 0xc2 && byte <= 0xf4) {
       if (i + 1 < value.length && isContinuationByte(value.charCodeAt(i + 1))) {
         sawUtf8Sequence = true;
@@ -64,7 +62,6 @@ function fixBunEncoding(value: ReactNode): ReactNode {
   if (!isBun) return value;
 
   if (typeof value === "string") {
-    // Quick check: if no non-ASCII characters, return as-is
     if (!/[\x80-\xFF]/.test(value)) return value;
 
     if (!looksLikeMojibake(value)) return value;
@@ -76,7 +73,6 @@ function fixBunEncoding(value: ReactNode): ReactNode {
     return decoder.decode(bytes);
   }
 
-  // Handle arrays of children
   if (Array.isArray(value)) {
     return value.map(fixBunEncoding);
   }

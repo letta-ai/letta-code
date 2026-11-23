@@ -1,12 +1,3 @@
-/**
- * Git hook scripts installed into agent and shared memory repositories.
- *
- * The pre-commit hook validates memory markdown frontmatter; the post-commit
- * hook mirrors commits to an optional user-configured memory-repository
- * remote. Both are (re)installed by the CLI harness on clone/pull/init —
- * see memory-git.ts.
- */
-
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -21,20 +12,6 @@ import {
 const MEMORY_LAYOUT_POLICY = "letta-memory-layout-policy";
 type MemoryLayoutPolicy = "legacy-only" | "root-marker" | "shared-memory";
 
-/**
- * Bash pre-commit hook that validates frontmatter in memory .md files.
- *
- * Rules:
- * - Frontmatter is REQUIRED (must start with ---)
- * - Must be properly closed with ---
- * - Required fields: description (non-empty string)
- * - read_only is a PROTECTED field: agent cannot add, remove, or change it.
- *   Files where HEAD has read_only: true cannot be modified at all.
- * - Only allowed agent-editable key: description
- * - Legacy key 'limit' is tolerated for backward compatibility
- * - read_only may exist (from server) but agent must not change it
- * - Optional file-size and depth constraints come from .memfs.config.json
- */
 export function buildPreCommitHookScript(
   options: {
     execPath?: string;
@@ -44,8 +21,6 @@ export function buildPreCommitHookScript(
 ): string {
   const execPath = options.execPath ?? process.execPath;
   const platform = options.platform ?? process.platform;
-  // Git for Windows executes hooks with Bash, which resolves /c/... rather
-  // than the native C:\... path returned by process.execPath.
   const bashPath =
     platform === "win32"
       ? execPath
@@ -192,9 +167,6 @@ validate_memory_constraints
 
 export const PRE_COMMIT_HOOK_SCRIPT = buildPreCommitHookScript();
 
-/**
- * Install the pre-commit hook for frontmatter validation.
- */
 function installPreCommitHookWithPolicy(
   dir: string,
   policy: MemoryLayoutPolicy,
@@ -227,7 +199,6 @@ export function installPreCommitHook(
   );
 }
 
-/** True when the repo uses the MemFS v2 root layout (root `MEMORY.md` marker). */
 export function hasRootMemoryMarker(dir: string): boolean {
   return (
     existsSync(join(dir, "MEMORY.md")) ||
@@ -238,7 +209,6 @@ export function hasRootMemoryMarker(dir: string): boolean {
   );
 }
 
-/** Refresh validation for a local-only repository without changing its layout. */
 export function installLocalMemoryPreCommitHook(dir: string): void {
   installPreCommitHookWithPolicy(
     dir,
@@ -246,23 +216,10 @@ export function installLocalMemoryPreCommitHook(dir: string): void {
   );
 }
 
-/** Install memory validation for an attached shared repository. */
 export function installSharedMemoryPreCommitHook(dir: string): void {
   installPreCommitHookWithPolicy(dir, "shared-memory");
 }
 
-/**
- * Bash post-commit hook that pushes memfs commits to an optional additional
- * git remote (the "memory repository" endpoint).
- *
- * Reads the remote URL from the repo's local git config
- * (`letta.memoryRepository.url`). No-op when the key is unset. Push runs
- * asynchronously in the background so commits stay fast, and failures are
- * logged to `.git/memory-repository-push.log` without blocking the user.
- *
- * URL is per-repo by design: each agent's memfs repo has its own `.git/config`,
- * so the endpoint is scoped to a single agent automatically.
- */
 export const POST_COMMIT_HOOK_SCRIPT = `#!/usr/bin/env bash
 # Letta Code: push memfs commits to the configured memory-repository remote.
 # Installed by Letta Code CLI. Do not edit by hand — regenerated on startup.
@@ -285,10 +242,6 @@ disown 2>/dev/null || true
 exit 0
 `;
 
-/**
- * Install the post-commit hook that pushes to `letta.memoryRepository.url`.
- * Hook is harmless when the config key is unset (no-ops on every commit).
- */
 export function installPostCommitHook(dir: string): void {
   const hooksDir = join(dir, ".git", "hooks");
   const hookPath = join(hooksDir, "post-commit");
@@ -302,7 +255,6 @@ export function installPostCommitHook(dir: string): void {
   debugLog("memfs-git", "Installed post-commit memory-repository hook");
 }
 
-/** Refresh every harness-owned Git hook for an API-backed memory checkout. */
 export function installMemoryGitHooks(dir: string): void {
   installPreCommitHook(dir, true);
   installPostCommitHook(dir);

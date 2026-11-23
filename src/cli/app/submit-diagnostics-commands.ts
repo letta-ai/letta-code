@@ -83,9 +83,7 @@ export async function handleDiagnosticsCommand(
 
         try {
           balance = await getBalanceMetadata();
-        } catch {
-          // Silently skip balance info if endpoint is not available.
-        }
+        } catch {}
 
         cmd.finish(formatUsageStats({ stats, balance }), true, true);
       } catch (error) {
@@ -119,9 +117,7 @@ export async function handleDiagnosticsCommand(
       } finally {
         clearTimeout(timeoutId);
       }
-    } catch {
-      // Timeout or network error: proceed without breakdown.
-    }
+    } catch {}
 
     cmd.finish(
       renderContextUsage({

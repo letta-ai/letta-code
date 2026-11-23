@@ -89,17 +89,12 @@ describe("acknowledgeInputFrame originator delivery gate", () => {
         undefined,
         "started",
       );
-      // Unacked: the admission could not be evaluated, so redelivery must
-      // retry the whole admission once the store heals.
       expect(sent).toEqual([]);
       expect(getMcpOriginatorToken("run-a")).toBeUndefined();
     });
   });
 
   test("a permanently denied delivery is CONSUMED (acked) without the token — no redelivery loop (round-8 verdict split)", () => {
-    // Malformed generation: this frame can never be admitted, so
-    // suppressing the ack would redeliver the same bytes forever. The
-    // listener consumes it with the normal ack and runs without the token.
     const { send, sent } = makeSend();
     acknowledgeInputFrame(
       send,
@@ -301,8 +296,6 @@ describe("acknowledgeInputFrame originator delivery gate", () => {
   });
 
   test("a redelivered well-formed frame after a suppressed ack admits and acks", () => {
-    // The retryable deny path must not poison later admission: once the
-    // durable store heals, Cloud's redelivery of the same frame succeeds.
     withDegradedFile((path) => {
       const first = makeSend();
       acknowledgeInputFrame(
@@ -321,7 +314,6 @@ describe("acknowledgeInputFrame originator delivery gate", () => {
       );
       expect(first.sent).toEqual([]);
 
-      // Operator restores a valid file: the next read heals.
       writeFileSync(path, JSON.stringify({ version: 1, records: {} }));
       const second = makeSend();
       acknowledgeInputFrame(
@@ -360,13 +352,10 @@ describe("pre-gated install and abort reason (evil-shub round 9)", () => {
         mcp_originator_token: "mst_a",
         mcp_originator_generation: 1,
       } as never;
-      // Router pre-commit gate: admits and bumps the durable floor.
       const gate = gateMcpOriginatorDeliveryAdmission(frame);
       expect(gate.verdict).toBe("admitted");
       expect(gate.delivery?.token).toBe("mst_a");
 
-      // A retirement lands in the gate→ack gap (peer marked the run
-      // terminal). A second admission here would deny the COMMITTED input.
       markMcpOriginatorTerminal("run-a", 1);
 
       const { send, sent } = makeSend();
@@ -381,13 +370,8 @@ describe("pre-gated install and abort reason (evil-shub round 9)", () => {
         undefined,
         { preGated: gate.delivery },
       );
-      // The committed input acks normally and the delivery installs; the
-      // retirement is fenced at USE time instead (permitsUse denies).
       expect(sent).toHaveLength(1);
       expect(sent[0]?.payload).toMatchObject({ accepted: true });
-      // The volatile install DID happen (the pre-gate's verdict owned the
-      // admission; a second ack-time admission would have denied and left
-      // the store empty). The use-time recheck fences the retired run.
       expect(mcpOriginatorTokenCount()).toBe(1);
       expect(getMcpOriginatorToken("run-a")).toBeUndefined();
       expect(mcpOriginatorAuthorityPermitsUse("run-a", 1)).toBe(false);
@@ -418,7 +402,6 @@ describe("pre-gated install and abort reason (evil-shub round 9)", () => {
       { preGated: null },
     );
     expect(sent).toHaveLength(1);
-    // The ack trusts the gate's "none" verdict verbatim; nothing installs.
     expect(getMcpOriginatorToken("run-a")).toBeUndefined();
   });
 

@@ -218,7 +218,6 @@ type RecoveredContinuationOptions = {
   dependencies?: RecoveredContinuationDependencies;
   onLeaseAcquired?: () => Promise<void>;
 };
-/** Resume recovered approvals immediately instead of parking them for input. */
 export async function startRecoveredApprovalContinuation(
   runtime: ConversationRuntime,
   socket: ListenerTransport,
@@ -517,7 +516,6 @@ async function executeRecoveredApprovalContinuation(params: {
   let recoveredContinuationOtid: string | null = null;
   let claimSettled = false;
   try {
-    // Claim authority can disappear at this async extension boundary.
     if (!hasRecoveryOwnership()) return;
     const approvedDecisions = decisions.filter(
       (decision): decision is Extract<ApprovalDecision, { type: "approve" }> =>
@@ -761,8 +759,6 @@ async function executeRecoveredApprovalContinuation(params: {
           conversationId: recovered.conversationId,
           turnId,
         });
-        // Delivery interruption is not a process restart. Retained evidence needs
-        // an explicit same-daemon wake once a replacement transport can consume it.
         runtime.listener.scheduleRecordedRecovery?.();
       }
       return;
@@ -839,7 +835,6 @@ async function executeRecoveredApprovalContinuation(params: {
         recoveryLineageId,
       )?.record;
       if (!completed) {
-        // Observer-only recovery has no local execution evidence to retire.
         claimSettled = await recoveryClaim.complete();
         if (!claimSettled) return;
       } else {
@@ -865,9 +860,6 @@ async function executeRecoveredApprovalContinuation(params: {
         }
         claimSettled = await recoveryClaim.complete();
         if (!claimSettled) return;
-        // Completion is the remote exactly-once boundary. An independent writer
-        // may have advanced the record while complete() was awaiting its ACK; in
-        // that case clear only this lineage's marker and preserve successor work.
         const retirement = pendingCompletionRevision
           ? retireAcknowledgedRecoveryClaim(recoveryAuthorityStore, {
               agentId: completed.agentId,
@@ -887,8 +879,6 @@ async function executeRecoveredApprovalContinuation(params: {
     if (runtime.recoveredApprovalState === recovered) {
       clearRecoveredApprovalState(runtime);
     }
-    // Recovery cannot prove the original MCP scope. Queued work starts fresh
-    // only after the recovery lease and its approval gate have been released.
     scheduleQueuePump(
       runtime,
       socket,

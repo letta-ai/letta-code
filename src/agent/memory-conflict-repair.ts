@@ -21,27 +21,16 @@ const OPERATION_HEADS = [
 ];
 export type MemoryRepairKind = "conflict" | "invalid";
 
-/**
- * The attempt recorded for a repairable memory state. It is claimed under the checkout
- * lease, inside post-turn sync or a worker's sync, and advanced or forgotten
- * by the repair worker launched for it. Every later transition names the
- * attempt's token, so a worker that fails or is cancelled late can only
- * touch its own record, never one a newer claim has written since.
- */
 interface RepairAttempt extends ProcessIdentity {
   signature: string;
   token: string;
-  /** "launching" until the repair worker has run; "done" once it has. */
   state: "launching" | "done";
   attemptedAt: string;
 }
 
 export type MemoryConflictRepairClaim =
-  /** Recorded; the caller launches a worker that carries `token`. */
   | { status: "claimed"; token: string }
-  /** A running process is still repairing this conflict. */
   | { status: "in_progress" }
-  /** A worker has run on this conflict and could not resolve it. */
   | { status: "attempted" };
 
 async function readOptional(path: string): Promise<string> {
@@ -52,7 +41,6 @@ async function readOptional(path: string): Promise<string> {
   }
 }
 
-/** Identify the unfinished Git operation: HEAD plus whatever it is merging in. */
 async function describeMemoryConflict(
   memoryDir: string,
   gitDir: string,
@@ -67,16 +55,13 @@ async function describeMemoryConflict(
       "HEAD",
     ]);
     head = stdout.trim();
-  } catch {
-    /* Unborn branch. */
-  }
+  } catch {}
   const heads = await Promise.all(
     OPERATION_HEADS.map((name) => readOptional(join(gitDir, name))),
   );
   return [head, ...heads].join("\n");
 }
 
-/** An invalid tree stays the same repair attempt while local commits are added on the same upstream. */
 async function describeInvalidMemoryHistory(
   memoryDir: string,
 ): Promise<string> {
@@ -106,16 +91,6 @@ async function readAttempt(path: string): Promise<Partial<RepairAttempt>> {
   }
 }
 
-/**
- * Every transition is a compare-and-set on the marker. They run under this
- * lock rather than the checkout lease, so a worker forgetting its attempt
- * after the lease is gone cannot race a claim made under it. The lock is
- * reaped only once its holder's process is gone, never by age, so a paused
- * holder keeps exclusivity. Sections last microseconds. A claim that still
- * cannot get in gives up, and the conflict is reported instead of repaired;
- * a worker's own transitions wait, because dropping one would leave its
- * record in place and suppress every later repair while this process lives.
- */
 const MARKER_LOCK: FileLockOptions = { reapOnlyDeadOwner: true };
 const CLAIM_TIMEOUT_MS = 5_000;
 
@@ -130,7 +105,6 @@ async function updateAttempt<T>(
   });
 }
 
-/** A worker's transition: no record outside a repository, never throws. */
 async function transition(
   memoryDir: string,
   fn: (path: string, attempt: Partial<RepairAttempt>) => Promise<void>,
@@ -144,20 +118,10 @@ async function transition(
   try {
     await updateAttempt(path, (attempt) => fn(path, attempt));
   } catch (error) {
-    // Only a filesystem failure gets here; the wait for the lock is unbounded.
     debugWarn("memory-repair", `Repair attempt not updated: ${String(error)}`);
   }
 }
 
-/**
- * Record that automatic repair is being attempted for the current conflict or
- * invalid history, unless the same state is already handled: a repair worker
- * has run and could not resolve it (reported to the agent instead of
- * relaunched every turn), or a repair is still in progress in a running
- * process. An attempt whose process is gone before the worker ran (crashed)
- * is retried. A checkout that is not a readable Git repository is left to
- * the worker, which reports the failure itself.
- */
 export async function claimMemoryConflictRepair(
   memoryDir: string,
   kind: MemoryRepairKind = "conflict",
@@ -208,7 +172,6 @@ export async function claimMemoryConflictRepair(
   );
 }
 
-/** The repair worker ran; the same state is not attempted again automatically. */
 export async function completeMemoryConflictRepair(
   memoryDir: string,
   token: string,
@@ -219,12 +182,6 @@ export async function completeMemoryConflictRepair(
   });
 }
 
-/**
- * The attempt never ran (launch failed, cancelled, nothing left to repair);
- * let the next turn retry. Only the record for `token` is removed, so a
- * worker forgetting its attempt after the lease is gone cannot drop a newer
- * claim.
- */
 export async function clearMemoryConflictRepair(
   memoryDir: string,
   token: string,

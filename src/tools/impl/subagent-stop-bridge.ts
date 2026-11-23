@@ -8,7 +8,6 @@ type Stop = (
 ) => Promise<SubagentStopResponse> | undefined;
 const owners = new Map<string, Stop>();
 
-/** An in-process listener can handle its own child's stop without a relay. */
 export function registerLocalSubagentStop(
   connectionId: string,
   stop: Stop,

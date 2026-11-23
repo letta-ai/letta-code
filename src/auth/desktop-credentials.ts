@@ -1,4 +1,3 @@
-/** Electron owns the OAuth grant. This process only holds its current token. */
 export class DesktopCredentialSession {
   private token: string | null = null;
   private closed = false;
@@ -34,7 +33,6 @@ export class DesktopCredentialSession {
 
 let session: DesktopCredentialSession | null = null;
 
-/** Undefined means an ordinary CLI process, never a Desktop fallback. */
 export function getDesktopAccessToken(): string | undefined {
   return session?.getAccessToken();
 }
@@ -68,7 +66,6 @@ export async function initializeDesktopCredentials(): Promise<void> {
   });
 }
 
-/** SDK authHeaders reads apiKey for each request, including retained clients. */
 export function bindDesktopCredentials<T extends { apiKey: string | null }>(
   client: T,
 ): T {

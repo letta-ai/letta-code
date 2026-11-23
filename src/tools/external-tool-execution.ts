@@ -8,7 +8,6 @@ import type {
 } from "@/tools/external-tool-types";
 import { clampToolReturnContent } from "@/tools/impl/tool-return-clamp";
 
-/** Execute one dispatched request; registry ownership remains with the manager. */
 export async function executeExternalToolRequest(
   toolCallId: string,
   toolName: string,

@@ -3,18 +3,6 @@ import { join } from "node:path";
 import { getChannelDir } from "@/channels/config";
 import { FIRST_PARTY_CHANNEL_IDS } from "@/channels/types";
 
-// ── Slugification ─────────────────────────────────────────────────────────────
-
-/**
- * Convert a user-supplied display name into a valid channel ID.
- *
- * Rules:
- *  - lowercase
- *  - runs of non-alphanumeric chars collapsed to a single hyphen
- *  - leading/trailing hyphens stripped
- *  - max 40 characters
- *  - must be at least 2 characters (pad with "app" if needed)
- */
 export function slugify(name: string): string {
   const slug = name
     .toLowerCase()
@@ -27,11 +15,7 @@ export function slugify(name: string): string {
   return slug;
 }
 
-// ── Stub plugin.mjs template ──────────────────────────────────────────────────
-
 function buildStubPlugin(id: string, displayName: string): string {
-  // Self-contained webhook forwarder — no imports from letta-code.
-  // Mirrors the logic in src/channels/custom/adapter.ts.
   return `/**
  * Auto-generated webhook channel plugin for Letta Code.
  * Channel: ${displayName} (${id})
@@ -135,19 +119,8 @@ export const channelPlugin = {
 `;
 }
 
-// ── Public API ────────────────────────────────────────────────────────────────
-
 const FIRST_PARTY_SET = new Set<string>(FIRST_PARTY_CHANNEL_IDS);
 
-/**
- * Creates `channel.json` and a stub `plugin.mjs` below the product config root.
- *
- * Throws if:
- *  - The slug is already taken by an existing folder (name must be unique)
- *  - The slug collides with a first-party channel ID
- *
- * Returns the generated channel ID.
- */
 export function scaffoldUserPlugin(displayName: string): string {
   const id = slugify(displayName);
 
@@ -188,16 +161,10 @@ export function scaffoldUserPlugin(displayName: string): string {
   return id;
 }
 
-/**
- * Removes the plugin folder for a user-created channel.
- * Safe to call even if the folder doesn't exist.
- * No-op for first-party channels.
- */
 export function removeUserPlugin(channelId: string): void {
   if (FIRST_PARTY_SET.has(channelId)) {
     return;
   }
-  // Reject channel IDs that could escape the channels root via path traversal.
   if (!/^[a-z0-9][a-z0-9_-]*$/.test(channelId)) {
     return;
   }

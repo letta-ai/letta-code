@@ -83,7 +83,6 @@ describe("public memory constraints contract", () => {
     ).toEqual([]);
     expect(warnings).toEqual(problems);
 
-    // Changing a root file can raise the combined budget, so it blocks.
     expect(
       await validateMemoryTreeConstraints(reader, {
         ...options,
@@ -140,8 +139,6 @@ describe("public memory constraints contract", () => {
   ])("rejects invalid policy %s", (content, message) => {
     expect(() => parseMemoryConstraintsConfig(content)).toThrow(message);
   });
-  /** Resolves the per-file limit for each path under one uncapped glob override
-   * and returns the paths that stayed on the 1-character default cap. */
   async function cappedPaths(
     pattern: string,
     paths: string[],

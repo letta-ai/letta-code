@@ -91,12 +91,6 @@ function collectSymlinkDirectoryTargets(
   }
 }
 
-/**
- * Keeps skill cache validation off the model-request path. Each configured
- * root is watched until its first mutation, which invalidates the cache and
- * closes all watchers. The next request installs fresh watchers while it
- * rebuilds the skill snapshot.
- */
 export class ClientSkillsWatcher {
   private readonly watchersByRoot = new Map<string, FSWatcher[]>();
 
@@ -173,8 +167,6 @@ export class ClientSkillsWatcher {
       for (const watcher of watchers) {
         watcher.close();
       }
-      // Match Codex's fallback: a platform without filesystem watching keeps
-      // the current snapshot until explicit invalidation or process restart.
     }
   }
 }

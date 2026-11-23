@@ -69,8 +69,6 @@ describe("subagent depth", () => {
     expect(child[SUBAGENT_DEPTH_ENV]).toBe("1");
     expect(launchChild(child)[SUBAGENT_DEPTH_ENV]).toBe("2");
 
-    // A depth-1 child whose turn runs on a listener forwards its identity in
-    // execution settings; the listener process itself has no depth.
     const settings = {
       allowed_tools: [],
       disallowed_tools: [],
@@ -98,7 +96,6 @@ describe("subagent depth", () => {
         agent_role: "subagent",
       },
     );
-    // Role without an explicit depth is an older parent's child: depth 1.
     expect(launchChild(listenerTurnEnv)[SUBAGENT_DEPTH_ENV]).toBe("2");
   });
 

@@ -129,10 +129,6 @@ describe("manual reflection ownership", () => {
   );
 
   test("a 404 ownership lookup falls through to the local reflection agent (#4849)", async () => {
-    // The server having no reflection endpoint for this agent is the
-    // "no server-side reflection" answer, not a fatal error: the automatic
-    // step-count path already treats it that way, and the manual command
-    // must not abort when the same preflight 404s.
     const { backend, requests } = fixture(202, {}, {}, 404);
     expect(
       await requestCloudReflectionRun({ agentId: "agent-404" }, "", backend),

@@ -1,4 +1,3 @@
-// Real installed CLIs; discovery sends no inference requests and needs no API keys.
 import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -36,7 +35,6 @@ for (const worker of ["claude-code", "codex", "opencode"]) {
               LETTA_AGENT_ID: undefined,
               CONVERSATION_ID: undefined,
               LETTA_API_KEY: undefined,
-              // Resolve the test runner before hiding the native worker executables.
               ...(missing ? { PATH: home } : {}),
             },
             stdout: "pipe",

@@ -16,7 +16,6 @@ interface WindowsCommandSafetyOptions {
   env?: NodeJS.ProcessEnv;
 }
 
-/** Tokenize command lists while preserving a quoted command as one token. */
 function parseCommands(input: string): string[][] {
   const commands: string[][] = [];
   let tokens: string[] = [];
@@ -110,8 +109,6 @@ function resolveRemovalTarget(
 ): string | null {
   let target = expandEnvironment(rawTarget, env)
     .replace(/[),]+$/g, "")
-    // PowerShell expands this before cmd sees it. An unset variable after a
-    // literal path component can collapse the target to a protected parent.
     .replace(/(?<=[\\/:])\$(?:env:)?[A-Za-z_][A-Za-z0-9_]*/gi, "")
     .replaceAll("/", "\\");
   if (!target || target === "*") return null;

@@ -31,7 +31,6 @@ test("an agent MCP session connects once and closes on close()", async () => {
   const call = (query: string) =>
     session.callTool("mcp__Mixed_Server__search", { query });
 
-  // Concurrent first calls must share one catalog and its connections.
   await Promise.all([call("a"), call("b")]);
   await call("c");
   expect(connects).toBe(1);

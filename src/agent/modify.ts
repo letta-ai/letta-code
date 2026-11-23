@@ -1,6 +1,3 @@
-// src/agent/modify.ts
-// Utilities for modifying agent configuration
-
 import type {
   AgentState,
   AnthropicModelSettings,
@@ -34,10 +31,6 @@ function supportsDistinctAnthropicXHighEffort(modelHandle: string): boolean {
   );
 }
 
-/**
- * Builds model_settings from updateArgs based on provider type.
- * Always ensures parallel_tool_calls is enabled.
- */
 export function buildModelSettings(
   modelHandle: string,
   updateArgs?: Record<string, unknown>,
@@ -47,8 +40,6 @@ export function buildModelSettings(
     typeof updateArgs?.provider_type === "string"
       ? updateArgs.provider_type
       : undefined;
-  // Include ChatGPT OAuth/Codex providers, including user-defined aliases whose
-  // provider_type is supplied by the server model catalog.
   const isOpenAICodex =
     explicitProviderType === "chatgpt_oauth" ||
     modelHandle.startsWith("openai-codex/");
@@ -57,7 +48,6 @@ export function buildModelSettings(
     modelHandle.startsWith("openai/") ||
     isOpenAICodex ||
     modelHandle.startsWith(`${OPENAI_CODEX_PROVIDER_NAME}/`);
-  // Include legacy custom Anthropic OAuth provider (claude-pro-max) and minimax
   const isAnthropic =
     explicitProviderType === "anthropic" ||
     modelHandle.startsWith("anthropic/") ||
@@ -118,8 +108,6 @@ export function buildModelSettings(
     }
     const verbosity = updateArgs?.verbosity;
     if (verbosity === "low" || verbosity === "medium" || verbosity === "high") {
-      // The backend supports verbosity for OpenAI-family providers; the generated
-      // client type may lag this field, so set it via a narrow record cast.
       (openaiSettings as Record<string, unknown>).verbosity = verbosity;
     }
     if (typeof updateArgs?.strict === "boolean") {
@@ -135,21 +123,17 @@ export function buildModelSettings(
       provider_type: "anthropic",
       parallel_tool_calls: true,
     };
-    // Map reasoning_effort to Anthropic's effort field (controls token spending via output_config)
     const effort = updateArgs?.reasoning_effort;
     const hasDistinctXHigh = supportsDistinctAnthropicXHighEffort(modelHandle);
     if (effort === "low" || effort === "medium" || effort === "high") {
       anthropicSettings.effort = effort;
     } else if (effort === "xhigh") {
-      // Preserve distinct xhigh on supported newer Anthropic models; legacy models map it to backend max.
       (anthropicSettings as Record<string, unknown>).effort = hasDistinctXHigh
         ? "xhigh"
         : "max";
     } else if (effort === "max") {
-      // "max" is valid on the backend but the SDK type hasn't caught up yet
       (anthropicSettings as Record<string, unknown>).effort = effort;
     }
-    // Build thinking config if either enable_reasoner or max_reasoning_tokens is specified
     if (
       updateArgs?.enable_reasoner !== undefined ||
       typeof updateArgs?.max_reasoning_tokens === "number"
@@ -166,8 +150,6 @@ export function buildModelSettings(
     }
     settings = anthropicSettings;
   } else if (isZai) {
-    // Zai uses the same model_settings structure as other providers.
-    // Ensure parallel_tool_calls is enabled.
     settings = {
       provider_type: "zai",
       parallel_tool_calls: true,
@@ -176,14 +158,10 @@ export function buildModelSettings(
       }),
     };
   } else if (isXai) {
-    // xAI is OpenAI-compatible on the wire, but direct xAI handles must route
-    // through provider_type=xai instead of the generic OpenAI fallback.
     const xaiSettings: Record<string, unknown> = {
       provider_type: "xai",
       parallel_tool_calls: true,
     };
-    // Cloud reads Grok effort from nested `reasoning`; without it the
-    // selected level is dropped and the server falls back to its default.
     if (updateArgs && "reasoning_effort" in updateArgs) {
       xaiSettings.reasoning =
         updateArgs.reasoning_effort === null
@@ -206,7 +184,6 @@ export function buildModelSettings(
     }
     settings = googleSettings;
   } else if (isGoogleVertex) {
-    // Vertex AI uses the same Google provider on the backend; only the handle differs.
     const googleVertexSettings: Record<string, unknown> = {
       provider_type: "google_vertex",
       parallel_tool_calls: true,
@@ -222,12 +199,10 @@ export function buildModelSettings(
     }
     settings = googleVertexSettings;
   } else if (isBedrock) {
-    // AWS Bedrock - supports Anthropic Claude models with thinking config
     const bedrockSettings: Record<string, unknown> = {
       provider_type: "bedrock",
       parallel_tool_calls: true,
     };
-    // Map reasoning_effort to Anthropic's effort field (Bedrock runs Claude models)
     const effort = updateArgs?.reasoning_effort;
     const hasDistinctXHigh = supportsDistinctAnthropicXHighEffort(modelHandle);
     if (effort === "low" || effort === "medium" || effort === "high") {
@@ -237,7 +212,6 @@ export function buildModelSettings(
     } else if (effort === "max") {
       bedrockSettings.effort = effort;
     }
-    // Build thinking config if either enable_reasoner or max_reasoning_tokens is specified
     if (
       updateArgs?.enable_reasoner !== undefined ||
       typeof updateArgs?.max_reasoning_tokens === "number"
@@ -251,8 +225,6 @@ export function buildModelSettings(
     }
     settings = bedrockSettings;
   } else {
-    // Preserve runtime provider identity for organization-specific BYOK names.
-    // Only untyped custom handles retain the OpenAI-compatible fallback.
     const openaiProxySettings = {
       provider_type: explicitProviderType ?? "openai",
       parallel_tool_calls:
@@ -278,10 +250,6 @@ export function buildModelSettings(
     settings = openaiProxySettings;
   }
 
-  // Apply max_output_tokens only when provider_type is present and the value
-  // is a concrete number.  Null means "unset" and should only be forwarded via
-  // the top-level max_tokens field — some providers (e.g. OpenAI) reject null
-  // inside their typed model_settings.
   if (
     typeof updateArgs?.max_output_tokens === "number" &&
     "provider_type" in settings
@@ -290,8 +258,6 @@ export function buildModelSettings(
       updateArgs.max_output_tokens;
   }
 
-  // Preserve OpenCode-style modality metadata when present so local-model
-  // transforms can decide whether file/image parts are safe to send.
   if (isRecord(updateArgs?.modalities)) {
     (settings as Record<string, unknown>).modalities = updateArgs.modalities;
   }
@@ -300,8 +266,6 @@ export function buildModelSettings(
       updateArgs.capabilities;
   }
 
-  // Local pi-ai reads a provider-neutral effort as well. Cloud-specific
-  // settings for Google/xAI/zAI do not otherwise preserve the selected level.
   if (
     localModelCatalog &&
     (typeof updateArgs?.reasoning_effort === "string" ||
@@ -310,8 +274,6 @@ export function buildModelSettings(
     (settings as Record<string, unknown>).reasoning_effort =
       updateArgs.reasoning_effort;
   }
-  // pi-ai owns provider-specific request options. Preserve explicit local
-  // overrides for its samplingParams seam; never send these to Cloud's schema.
   if (localModelCatalog && isRecord(updateArgs?.sampling_params)) {
     (settings as Record<string, unknown>).sampling_params =
       updateArgs.sampling_params;
@@ -349,44 +311,11 @@ function maxTokensForUpdatePayload(
     : undefined;
 }
 
-/**
- * Updates an agent's model and model settings.
- *
- * Uses the new model_settings field instead of deprecated llm_config.
- *
- * @param agentId - The agent ID
- * @param modelHandle - The model handle (e.g., "anthropic/claude-sonnet-4-5-20250929")
- * @param updateArgs - Additional config args (context_window, reasoning_effort, enable_reasoner, etc.)
- * @returns The updated agent state from the server (includes llm_config and model_settings)
- */
 export interface UpdateLLMConfigOptions {
   signal?: AbortSignal;
-  /**
-   * Context window to send explicitly. Wins over updateArgs.context_window
-   * and catalog derivation on EVERY backend — including local backends, where
-   * updateArgs.context_window is otherwise ignored in favor of the pi model
-   * catalog. Preserve paths (reasoning cycles, resume refresh, conversation
-   * carryover, same-variant /model changes) use this to re-send the current
-   * window (LET-9786).
-   */
   contextWindowOverride?: number;
 }
 
-/**
- * Resolve the context window to send with a model-bearing update.
- *
- * Always produces a value when one is knowable. The server treats an omitted
- * context_window_limit as "re-derive from the handle", which clamps to a
- * legacy 128k global default (LET-9786) — so omission is never a preserve
- * mechanism. Resolution order:
- *  1. options.contextWindowOverride (preserve paths; all backends)
- *  2. updateArgs.context_window (catalog presets; API backends only — local
- *     backends own token limits via the pi catalog)
- *  3. models API listing for the handle
- *  4. registry preset for the handle (API backends)
- *  5. the current server-side value, re-sent as-is (API backends; last resort
- *     for uncatalogued/custom handles so the field is still not omitted)
- */
 async function resolveContextWindowForUpdate(params: {
   modelHandle: string;
   updateArgs?: Record<string, unknown>;
@@ -409,8 +338,6 @@ async function resolveContextWindowForUpdate(params: {
     return catalogContextWindow;
   }
   if (useBackendModelCatalog) {
-    // Local backends derive token limits from the pi catalog server-side and
-    // treat an omitted value as "keep current"; no clamp exists there.
     return undefined;
   }
   const registryContextWindow = (
@@ -482,17 +409,6 @@ export async function updateAgentLLMConfig(
   return finalAgent;
 }
 
-/**
- * Updates a conversation's model and model settings.
- *
- * Uses conversation-scoped model overrides so different conversations can
- * run with different models without mutating the agent's default model.
- *
- * @param conversationId - The conversation ID (or "default")
- * @param modelHandle - The model handle (e.g., "anthropic/claude-sonnet-4-5-20250929")
- * @param updateArgs - Additional config args (reasoning_effort, enable_reasoner, etc.)
- * @returns The updated conversation from the server
- */
 export async function updateConversationLLMConfig(
   conversationId: string,
   modelHandle: string,
@@ -513,9 +429,6 @@ export async function updateConversationLLMConfig(
     options,
     useBackendModelCatalog,
     fetchCurrent: async () => {
-      // A conversation without its own override has context_window_limit
-      // null and inherits from its agent — walk up so uncatalogued handles
-      // still never omit the field (LET-9786).
       const conversation = await backend.retrieveConversation(conversationId);
       const conversationContextWindow =
         contextWindowFromEntityRecord(conversation);
@@ -553,11 +466,8 @@ export async function updateConversationLLMConfig(
 }
 
 export interface ModelConfigUpdate {
-  /** Model handle, e.g. "anthropic/claude-opus-4-8". Omit to keep the current model. */
   model?: string;
-  /** Reasoning effort tier. Omit to leave reasoning settings untouched. */
   reasoningEffort?: ModelReasoningSelection;
-  /** Context window limit. Omit to leave the current limit untouched. */
   contextWindow?: number;
 }
 
@@ -610,20 +520,6 @@ async function resolveCurrentModelHandle(
     : null;
 }
 
-/**
- * Applies a partial model-config update (model, reasoning effort, and/or context
- * window) without rebuilding settings the caller did not touch.
- *
- * - Only `contextWindow`: sends `context_window_limit` alone, preserving the
- *   current model and model_settings (including reasoning effort).
- * - `reasoningEffort` without `model`: resolves the current model handle so
- *   model_settings can be rebuilt for the right provider.
- * - `model` (with optional effort/context): rebuilds model_settings and derives
- *   a context window when one is not supplied, matching updateAgentLLMConfig.
- *
- * Routes through the supplied backend's updateAgent/updateConversation, so it
- * works for both local and cloud agents.
- */
 export async function updateModelConfig(
   backend: Backend,
   target: ModelConfigTarget,
@@ -660,8 +556,6 @@ export async function updateModelConfig(
   const hasModelSettings =
     modelSettings !== undefined && Object.keys(modelSettings).length > 0;
 
-  // Honor an explicit context window regardless of catalog mode; only derive a
-  // default (on model change) when the backend does not own the catalog.
   const contextWindow =
     update.contextWindow ??
     (update.model !== undefined && !useBackendModelCatalog
@@ -689,16 +583,6 @@ export async function updateModelConfig(
   }
 }
 
-/**
- * Recompile an agent's system prompt after memory writes so server-side prompt
- * state picks up the latest memory content.
- *
- * @param conversationId - The conversation whose prompt should be recompiled
- * @param agentId - Agent id for the parent conversation
- * @param dryRun - Optional dry-run control
- * @param clientOverride - Optional injected client for tests
- * @returns The compiled system prompt returned by the API
- */
 export async function recompileAgentSystemPrompt(
   conversationId: string,
   agentId: string,
@@ -743,13 +627,6 @@ export interface SystemPromptUpdateResult {
   message: string;
 }
 
-/**
- * Updates an agent's system prompt with raw content.
- *
- * @param agentId - The agent ID
- * @param systemPromptContent - The raw system prompt content to update
- * @returns Result with success status and message
- */
 export async function updateAgentSystemPromptRaw(
   agentId: string,
   systemPromptContent: string | null,
@@ -771,23 +648,12 @@ export async function updateAgentSystemPromptRaw(
   }
 }
 
-/**
- * Result from updating a system prompt on an agent
- */
 export interface UpdateSystemPromptResult {
   success: boolean;
   message: string;
   agent: AgentState | null;
 }
 
-/**
- * Updates an agent's system prompt by ID or subagent name.
- * Resolves the ID to content, updates the agent, and returns the refreshed agent state.
- *
- * @param agentId - The agent ID to update
- * @param systemPromptId - System prompt ID (e.g., "codex") or subagent name (e.g., "recall")
- * @returns Result with success status, message, and updated agent state
- */
 export async function updateAgentSystemPrompt(
   agentId: string,
   systemPromptId: string,
@@ -829,7 +695,6 @@ export async function updateAgentSystemPrompt(
       };
     }
 
-    // Persist preset for known presets; clear stale preset for subagent/unknown
     if (settingsManager.isReady) {
       if (useCloudDefault) {
         settingsManager.clearSystemPromptPreset(agentId);
@@ -845,8 +710,6 @@ export async function updateAgentSystemPrompt(
       }
     }
 
-    // Re-fetch agent to get updated state (include relationships so callers
-    // that rely on agent.tags/tools aren't broken). Secrets use their own API.
     const agent = await backend.retrieveAgent(agentId, {
       include: ["agent.tools", "agent.tags"],
     });
@@ -865,16 +728,6 @@ export async function updateAgentSystemPrompt(
   }
 }
 
-/**
- * Updates an agent's system prompt to the memfs full-prompt variant when
- * the stored managed prompt hash is known. Custom prompts are already complete
- * and are left unchanged.
- *
- * MemFS cannot be disabled, so there is no path back to the standard variant.
- *
- * @param agentId - The agent ID to update
- * @returns Result with success status and message
- */
 export async function updateAgentSystemPromptMemfs(
   agentId: string,
 ): Promise<SystemPromptUpdateResult> {
@@ -902,7 +755,6 @@ export async function updateAgentSystemPromptMemfs(
       : undefined;
 
     const agent = await backend.retrieveAgent(agentId);
-    // A null prompt follows the backend's current memory mode. Do not pin it.
     if (agent.system == null) {
       return {
         success: true,

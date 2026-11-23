@@ -1,17 +1,4 @@
 #!/usr/bin/env bun
-/**
- * Latency Benchmark Script for Letta Code CLI
- *
- * Runs headless mode with LETTA_DEBUG_TIMINGS=1 and parses the output
- * to measure latency breakdown at different stages.
- *
- * Usage:
- *   bun scripts/latency-benchmark.ts
- *   bun scripts/latency-benchmark.ts --scenario fresh-agent
- *   bun scripts/latency-benchmark.ts --iterations 5
- *
- * Requires: LETTA_API_KEY environment variable
- */
 
 import { spawn } from "node:child_process";
 
@@ -41,7 +28,6 @@ interface ScenarioConfig {
   args: string[];
 }
 
-// Define benchmark scenarios
 const SCENARIOS: ScenarioConfig[] = [
   {
     name: "fresh-agent",
@@ -79,9 +65,6 @@ const SCENARIOS: ScenarioConfig[] = [
   },
 ];
 
-/**
- * Parse timing logs from stderr output
- */
 function parseTimingLogs(stderr: string): {
   milestones: Milestone[];
   apiCalls: ApiCall[];
@@ -92,7 +75,6 @@ function parseTimingLogs(stderr: string): {
   const lines = stderr.split("\n");
 
   for (const line of lines) {
-    // Parse milestones: [timing] MILESTONE CLI_START at +0ms (12:34:56.789)
     const milestoneMatch = line.match(
       /\[timing\] MILESTONE (\S+) at \+(\d+(?:\.\d+)?)(ms|s)/,
     );
@@ -106,7 +88,6 @@ function parseTimingLogs(stderr: string): {
       continue;
     }
 
-    // Parse API calls: [timing] GET /v1/agents/... -> 245ms (status: 200)
     const apiMatch = line.match(
       /\[timing\] (GET|POST|PUT|DELETE|PATCH) (\S+) -> (\d+(?:\.\d+)?)(ms|s)(?: \(status: (\d+)\))?/,
     );
@@ -125,9 +106,6 @@ function parseTimingLogs(stderr: string): {
   return { milestones, apiCalls };
 }
 
-/**
- * Run a single benchmark scenario
- */
 async function runBenchmark(
   scenario: ScenarioConfig,
 ): Promise<BenchmarkResult> {
@@ -163,24 +141,17 @@ async function runBenchmark(
       });
     });
 
-    // Timeout after 2 minutes
     setTimeout(() => {
       proc.kill("SIGTERM");
     }, 120000);
   });
 }
 
-/**
- * Format duration for display
- */
 function formatMs(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)}ms`;
   return `${(ms / 1000).toFixed(2)}s`;
 }
 
-/**
- * Print benchmark results
- */
 function printResults(results: BenchmarkResult[]): void {
   console.log("\n" + "=".repeat(70));
   console.log("LATENCY BENCHMARK RESULTS");
@@ -194,7 +165,6 @@ function printResults(results: BenchmarkResult[]): void {
     console.log(`  Total wall time: ${formatMs(result.totalMs)}`);
     console.log("");
 
-    // Print milestones
     if (result.milestones.length > 0) {
       console.log("  Milestones:");
       let prevMs = 0;
@@ -209,7 +179,6 @@ function printResults(results: BenchmarkResult[]): void {
       console.log("");
     }
 
-    // Print API calls summary
     if (result.apiCalls.length > 0) {
       console.log("  API Calls:");
       const totalApiMs = result.apiCalls.reduce(
@@ -217,10 +186,8 @@ function printResults(results: BenchmarkResult[]): void {
         0,
       );
 
-      // Group by path pattern
       const grouped: Record<string, { count: number; totalMs: number }> = {};
       for (const call of result.apiCalls) {
-        // Normalize paths (remove UUIDs)
         const normalizedPath = call.path.replace(/[a-f0-9-]{36}/g, "{id}");
         const key = `${call.method} ${normalizedPath}`;
         if (!grouped[key]) {
@@ -230,7 +197,6 @@ function printResults(results: BenchmarkResult[]): void {
         grouped[key].totalMs += call.durationMs;
       }
 
-      // Sort by total time
       const sorted = Object.entries(grouped).sort(
         (a, b) => b[1].totalMs - a[1].totalMs,
       );
@@ -252,7 +218,6 @@ function printResults(results: BenchmarkResult[]): void {
     console.log("\n" + "-".repeat(70) + "\n");
   }
 
-  // Summary table
   console.log("SUMMARY");
   console.log("-".repeat(70));
   console.log(
@@ -280,7 +245,6 @@ function printResults(results: BenchmarkResult[]): void {
 }
 
 async function main(): Promise<void> {
-  // Parse args
   const args = process.argv.slice(2);
   let scenarioFilter: string | null = null;
   let iterations = 1;
@@ -293,13 +257,11 @@ async function main(): Promise<void> {
     }
   }
 
-  // Check prereqs
   if (!process.env.LETTA_API_KEY) {
     console.error("Error: LETTA_API_KEY environment variable is required");
     process.exit(1);
   }
 
-  // Filter scenarios
   const scenariosToRun = scenarioFilter
     ? SCENARIOS.filter((s) => s.name === scenarioFilter)
     : SCENARIOS;

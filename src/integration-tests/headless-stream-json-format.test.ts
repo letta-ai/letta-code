@@ -11,15 +11,10 @@ import {
   formatCapturedOutput,
 } from "./process-diagnostics";
 
-/**
- * Tests for stream-json output format.
- * These verify the message structure matches the wire format types.
- */
-
 async function runHeadlessCommandOnce(
   prompt: string,
   extraArgs: string[] = [],
-  timeoutMs = 180000, // 180s timeout - CI can be very slow
+  timeoutMs = 180000,
 ): Promise<{
   lines: string[];
   stdout: string;
@@ -60,7 +55,6 @@ async function runHeadlessCommandOnce(
       stderr += data.toString();
     });
 
-    // Safety timeout for CI
     const timeout = setTimeout(() => {
       proc.kill();
       reject(
@@ -93,7 +87,6 @@ async function runHeadlessCommandOnce(
           ),
         );
       } else {
-        // Parse line-delimited JSON
         const lines = stdout
           .split("\n")
           .filter((line) => line.trim())
@@ -160,12 +153,9 @@ async function runHeadlessCommand(
   }
 }
 
-// Prescriptive prompt to ensure single-step response without tool use
 const FAST_PROMPT =
   "This is a test. Do not call any tools. Just respond with the word OK and nothing else.";
 
-// ISO 8601 UTC with ms precision + Z suffix (e.g. "2026-04-21T23:40:15.123Z").
-// Matches the format emitted by new Date().toISOString() and by Claude Code / Codex.
 const ISO_TIMESTAMP_REGEX = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 describe("stream-json format", () => {
@@ -186,12 +176,11 @@ describe("stream-json format", () => {
       expect(init.subtype).toBe("init");
       expect(init.agent_id).toBeDefined();
       if (!init.agent_id) throw new Error("init agent_id not found");
-      expect(init.session_id).toBe(init.agent_id); // session_id should equal agent_id
+      expect(init.session_id).toBe(init.agent_id);
       expect(init.model).toBeDefined();
       expect(init.tools).toBeInstanceOf(Array);
       expect(init.cwd).toBeDefined();
       expect(init.uuid).toBe(`init-${init.agent_id}`);
-      // Every emitted wire line must carry an ISO 8601 UTC timestamp.
       expect(init.timestamp).toMatch(ISO_TIMESTAMP_REGEX);
     },
     { timeout: 200000 },
@@ -202,7 +191,6 @@ describe("stream-json format", () => {
     async () => {
       const lines = await runHeadlessCommand(FAST_PROMPT);
 
-      // Find a message line
       const messageLine = lines.find((line) => {
         const obj = JSON.parse(line);
         return obj.type === "message";
@@ -218,7 +206,6 @@ describe("stream-json format", () => {
       };
       expect(msg.session_id).toBeDefined();
       expect(msg.uuid).toBeDefined();
-      // uuid should be otid or id from the Letta SDK chunk
       expect(msg.uuid).toBeTruthy();
       expect(msg.timestamp).toMatch(ISO_TIMESTAMP_REGEX);
     },
@@ -247,8 +234,6 @@ describe("stream-json format", () => {
       expect(result.duration_ms).toBeGreaterThan(0);
       expect(result.uuid).toContain("result-");
       expect(result.result).toBeDefined();
-      // Result lines must also carry a wall-clock timestamp in addition
-      // to duration_ms (which is measured from turn start).
       expect(result.timestamp).toMatch(ISO_TIMESTAMP_REGEX);
     },
     { timeout: 200000 },
@@ -270,9 +255,6 @@ describe("stream-json format", () => {
         return obj.type === "message";
       });
 
-      // In rare fast-response cases, the stream may emit only init + result and
-      // never surface partial chunks. If any streamed chunk payloads exist, they
-      // must be wrapped as stream_event rather than plain message lines.
       if (streamEventLines.length > 0 || messageLines.length > 0) {
         expect(streamEventLines.length).toBeGreaterThan(0);
         expect(messageLines.length).toBe(0);
@@ -308,7 +290,6 @@ describe("stream-json format", () => {
     async () => {
       const lines = await runHeadlessCommand(FAST_PROMPT);
 
-      // Should have message lines, not stream_event
       const messageLines = lines.filter((line) => {
         const obj = JSON.parse(line);
         return obj.type === "message";
@@ -319,15 +300,11 @@ describe("stream-json format", () => {
         return obj.type === "stream_event";
       });
 
-      // We should have some message lines (reasoning, assistant, stop_reason, etc.)
-      // In rare cases with very fast responses, we might only get init + result
-      // So check that IF we have content, it's "message" not "stream_event"
       if (messageLines.length > 0 || streamEventLines.length > 0) {
         expect(messageLines.length).toBeGreaterThan(0);
         expect(streamEventLines.length).toBe(0);
       }
 
-      // Always should have a result
       const resultLine = lines.find((line) => {
         const obj = JSON.parse(line);
         return obj.type === "result";
@@ -340,8 +317,6 @@ describe("stream-json format", () => {
   test(
     "every emitted line carries an ISO 8601 UTC timestamp",
     async () => {
-      // Regression guard: if a new emit site is added in headless.ts that
-      // bypasses writeWireMessage, this test will catch it.
       const lines = await runHeadlessCommand(FAST_PROMPT);
       expect(lines.length).toBeGreaterThan(0);
 

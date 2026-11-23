@@ -1,6 +1,5 @@
 import { isRecord } from "@/utils/type-guards";
 
-/** Structural API surface used only by the unified `letta mcp` command. */
 export interface UnifiedMcpClient {
   get(path: string): Promise<unknown>;
   post(
@@ -12,14 +11,7 @@ export interface UnifiedMcpClient {
   };
 }
 
-/**
- * Header that carries a super run's MCP originator token on tool-run calls
- * (USER_SCOPED_MCP_CONNECTIONS). Sent only when a token is held for the run.
- */
 const MCP_ORIGINATOR_TOKEN_HEADER = "x-letta-mcp-originator-token";
-// Compatibility negotiation, not principal authority. Emitted by the same
-// process that holds the bearer and withholds it from any turn that mixes
-// inputs from different super runs (queued inputs still steer that turn).
 const MCP_ORIGINATOR_ISOLATION_HEADER = "x-letta-mcp-originator-isolation";
 
 export interface UnifiedMcpServer {
@@ -240,10 +232,7 @@ export async function listUnifiedMcpServers(
         const id = stringField(item, "id");
         if (id) registeredById.set(id, item);
       }
-    } catch {
-      // The association id/name still owns tool listing and execution. Keep it
-      // with unknown transport when optional connection metadata is unavailable.
-    }
+    } catch {}
   }
   return value
     .map((item) => {
@@ -313,11 +302,6 @@ export async function runUnifiedMcpTool(params: {
   toolId: string;
   args: Record<string, unknown>;
   timeoutMs?: number;
-  /**
-   * Originator token held for the active super run. Sent verbatim as the
-   * `x-letta-mcp-originator-token` header; when absent the call proceeds
-   * unattributed and the header is omitted entirely. Never logged here.
-   */
   originatorToken?: string;
 }): Promise<UnifiedMcpRunResult> {
   const value = await withTimeout(

@@ -14,7 +14,6 @@ const missingRuns = new WeakMap<
   }
 >();
 
-/** Resolve the run created by this exact accepted request; never reuse an older run. */
 export async function resolveRecordedRunId(
   backend: ReturnType<typeof getBackend>,
   record: InterruptedTurnRecord,
@@ -42,7 +41,6 @@ export async function resolveRecordedRunId(
     previous.revision === record.revision
       ? previous
       : undefined;
-  // Keep two retries, spaced across the mapping-write grace window.
   if (missing && Date.now() < missing.firstMissAt + missing.attempts * 15_000) {
     return { status: "deferred" };
   }
@@ -87,7 +85,6 @@ export async function resolveRecordedRunId(
   }
 }
 
-/** Only an explicit missing run may retire an unchanged ordinary record. */
 export function retireMissingRun(
   store: ReturnType<typeof createInterruptedTurnStore>,
   record: InterruptedTurnRecord,

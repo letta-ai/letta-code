@@ -227,7 +227,6 @@ async function handleIncomingMessageInner(
       turnLease,
       onStatusChange,
       connectionId,
-      // Background work started this turn reports back under these ids.
       resolveClientMessageIds: () => turnCorrelation.clientMessageIds,
     });
     if (setup.kind === "interrupted") {
@@ -905,8 +904,6 @@ async function handleIncomingMessageInner(
     const canParkUnsentResults =
       runtime.turnLifecycle.isCurrent(turnLease) &&
       !lastApprovalContinuationAccepted;
-    // Executed results the server never accepted must ride the next input,
-    // whether the turn was aborted or the continuation POST itself failed.
     if (
       canParkUnsentResults &&
       (turnAbortSignal.aborted || continuationSendFailed)

@@ -20,14 +20,6 @@ const OAUTH_CONTEXT_SENSITIVE_KEYS = new Set([
   "state",
 ]);
 
-/**
- * Return a detached, log-safe representation of a WebSocket event.
- *
- * Unambiguously secret fields are always redacted. Generic diagnostic fields
- * such as `error` and `state` are redacted only for browser-device OAuth frames,
- * so unrelated protocol diagnostics remain useful. Raw malformed payloads are
- * never copied into logs.
- */
 export function redactWsEventForLogging(event: unknown): unknown {
   const seen = new WeakSet<object>();
   const oauthContext = isBrowserDeviceMcpOAuthValue(event);

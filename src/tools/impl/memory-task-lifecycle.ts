@@ -22,34 +22,22 @@ export interface RunBackgroundMemoryTaskParams {
   conversationId: string;
   memoryDir: string;
   assignment: string;
-  /** Set for a harness-launched Git or validation repair: its attempt token. */
   repairToken: string;
   signal: AbortSignal;
   subagentId: string;
   outputFile: string;
-  /** Transcript header for a worker identity, in the task's usual format. */
   formatHeader: (
     identity: Pick<SubagentResult, "agentId" | "conversationId">,
   ) => string;
-  /**
-   * Spawn the worker with the handoff prompt, optional transcript snapshot,
-   * and the memory scope of the checkout it must repair.
-   */
   execute: (
     assignment: string,
     transcriptPath: string | undefined,
     memoryScope: SubagentMemoryScope,
   ) => Promise<SubagentResult>;
-  /** Harness repair, launched when the worker's sync leaves a repairable state. */
   repair: (result: MemoryPostTurnSyncResult) => void | Promise<unknown>;
   getSnapshot?: typeof getSubagentSnapshot;
 }
 
-/**
- * Run a fresh memory worker under its checkout lock. The worker's identity and
- * report are written to the task log as soon as they are known so the primary
- * can inspect the task even when remote sync is slow or fails afterwards.
- */
 export function runBackgroundMemoryTask(
   params: RunBackgroundMemoryTaskParams,
 ): {
@@ -93,7 +81,6 @@ export function runBackgroundMemoryTask(
             handoff.transcriptPath,
             memoryScope,
           );
-          // Preserve the worker identity/report even if remote sync is slow or fails.
           appendToOutputFile(
             params.outputFile,
             `${params.formatHeader(result)}\n\n${result.report}\n[Memory worker finished; syncing commits]\n`,
@@ -115,14 +102,6 @@ export function runBackgroundMemoryTask(
   return { execution, unsubscribe };
 }
 
-/**
- * Launch a repair-only worker for a conflict or invalid committed tree unless
- * one is already handling it. True while a worker is on the problem, launched
- * here or still running from an earlier turn, so post-turn sync stays silent.
- * False when a worker already attempted the same state or launch failed, so
- * the harness can report the blocked update without assigning foreground work.
- * Callers hold the checkout lease.
- */
 export async function ensureMemoryRepair(
   params: {
     agentId: string;
@@ -160,8 +139,6 @@ export async function ensureMemoryRepair(
     });
     return true;
   } catch (error) {
-    // Capacity or checkout errors must not become unhandled rejections, and
-    // an attempt that never launched must not block the next turn's retry.
     debugWarn("memory", `Could not launch repair: ${String(error)}`);
     if (claim?.status === "claimed") {
       await clearMemoryConflictRepair(params.result.memoryDir, claim.token);
@@ -170,7 +147,6 @@ export async function ensureMemoryRepair(
   }
 }
 
-/** Await child teardown before the process owning its checkout lock exits. */
 export async function finishBackgroundMemoryTasks(
   agentId?: string,
   conversationId?: string,
@@ -194,20 +170,13 @@ export async function finishBackgroundMemoryTasks(
         Boolean(completion && !finished.has(completion)),
       );
     if (pending.length === 0) return;
-    // One task's failure must not skip the teardown of the others.
     await Promise.allSettled(pending);
     for (const completion of pending) finished.add(completion);
   }
 }
 
-/** Most workers finish within seconds; give them that before dropping their work. */
 const INTERACTIVE_EXIT_GRACE_MS = 10_000;
 
-/**
- * Interactive exits wait briefly for running memory work, then cancel what is
- * left so the child, its snapshot and its lock are torn down before the
- * process goes. Work still in flight after the grace period is dropped.
- */
 export async function cancelBackgroundMemoryTasks(
   graceMs = INTERACTIVE_EXIT_GRACE_MS,
 ): Promise<void> {
@@ -223,7 +192,6 @@ export async function cancelBackgroundMemoryTasks(
   }
 }
 
-/** Controlled process exits must account for tasks from previously active conversations too. */
 export async function shutdownBackgroundMemoryTasks(
   exitCode: number,
 ): Promise<void> {

@@ -151,8 +151,6 @@ export async function runMemorySubcommand(
 
   const agentId = getAgentId(parsed.values.agent, parsed.values["agent-id"]);
 
-  // `tokens` has its own input resolution (--memory-dir / $MEMORY_DIR first,
-  // then falls back to agent id). Short-circuit before the agent-id hard check.
   if (action === "tokens") {
     return runMemoryTokensAction({
       memoryDir: parsed.values["memory-dir"],
@@ -221,9 +219,6 @@ export async function runMemorySubcommand(
         );
         return 0;
       }
-      // Subcommands run before the main CLI bootstrap, so settings are not yet
-      // initialized. `pullMemory` resolves the backend auth token through
-      // `getSettings()`, which throws "Settings not initialized" otherwise.
       await (deps.initializeSettings ?? (() => settingsManager.initialize()))();
       const result = await (deps.pullMemory ?? pullMemory)(agentId);
       console.log(JSON.stringify(result, null, 2));

@@ -2,7 +2,6 @@ import { setTimeout as delay } from "node:timers/promises";
 import type { AppServerClient } from "@/app-server-client";
 import { extractHttpStatus } from "@/telemetry/error-reporting";
 
-/** Retry only the initial connection, before any launch request is sent. */
 export async function connectRemoteWorkerWithRetry(
   connect: () => Promise<AppServerClient>,
   signal?: AbortSignal,
