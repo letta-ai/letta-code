@@ -1,10 +1,3 @@
-/**
- * Script-facing hooks shared by the workflow engine and the Repl tool: the
- * `tools` proxy, `listTools()`, `describeTool()`, `parallel()`, and
- * `pipeline()`. Orchestration hooks with run-specific lifecycles (agent,
- * decide) stay with their owners.
- */
-
 import { appendJournalEntry } from "./journal.ts";
 import type {
   WorkflowToolCaller,
@@ -48,7 +41,6 @@ function mcpText(content: unknown[]): string[] {
   );
 }
 
-/** Text results resolve to a string (parsed when JSON); others stay raw. */
 function mcpContentValue(content: unknown[]): unknown {
   const text = mcpText(content);
   if (text.length !== content.length || text.length === 0) return content;
@@ -64,7 +56,6 @@ function mcpErrorText(result: { content: unknown[] }): string {
   return mcpText(result.content).join("\n").slice(0, 2000) || "MCP tool error";
 }
 
-/** The invoking turn's tool bindings. Read on every call, so owners may swap them. */
 export interface ScriptToolBindings {
   callTool?: WorkflowToolCaller;
   builtinToolNames?: readonly string[];
@@ -76,10 +67,8 @@ export interface ToolHooksConfig {
   signal: () => AbortSignal;
   semaphore: Semaphore;
   maxTotalToolCalls: number;
-  /** Registers each call so its owner can drain or guard it. */
   track: <T>(pending: Promise<T>) => Promise<T>;
   journalPath?: string;
-  /** The error a call throws once `signal` has aborted. */
   abortError: () => Error;
 }
 
@@ -87,7 +76,6 @@ export interface ToolHooks {
   tools: object;
   listTools(): Promise<Array<{ name: string; description: string }>>;
   describeTool(name: unknown): Promise<WorkflowToolInfo | undefined>;
-  /** Forget cached tool metadata after the bindings change. */
   resetToolInfo(): void;
 }
 
@@ -98,9 +86,6 @@ export function createToolHooks(config: ToolHooksConfig): ToolHooks {
   const isCallable = (name: string) =>
     isBuiltin(name) || name.startsWith("mcp__");
 
-  // Codex-style `tools` global: `await tools.Read(args)` or
-  // `await tools.mcp__server__tool(args)`. Only the invoking turn's built-ins
-  // and agent MCP tools are exposed; any other name is undefined.
   const tools = new Proxy(Object.freeze({}), {
     get: (_target, name) =>
       typeof name === "string" && isCallable(name)
@@ -166,21 +151,18 @@ export function createToolHooks(config: ToolHooksConfig): ToolHooks {
       throw new Error(`${toolName} failed: ${message}`);
     }
     journal(false);
-    // Built-ins resolve to their text output verbatim; MCP results normalize.
     if (isBuiltin(toolName)) return mcpText(result.content).join("\n");
     return result.structuredContent ?? mcpContentValue(result.content);
   }
 
   return {
     tools,
-    /** `[{ name, description }]` for every tool callable through `tools`. */
     async listTools() {
       return (await loadToolInfo()).map(({ name, description }) => ({
         name,
         description,
       }));
     },
-    /** `{ name, description, inputSchema }`, or undefined for an unknown tool. */
     async describeTool(name) {
       if (typeof name !== "string" || !name) {
         throw new Error("describeTool() requires a tool name string.");
@@ -194,9 +176,6 @@ export function createToolHooks(config: ToolHooksConfig): ToolHooks {
 }
 
 async function collectResults(tasks: Promise<unknown>[]): Promise<unknown[]> {
-  // Preserve sibling completion, but never turn an unhandled failure into
-  // a successful null result. Scripts can catch inside each callback for
-  // best-effort processing.
   const outcomes = await Promise.allSettled(tasks);
   return outcomes.map((outcome) => {
     if (outcome.status === "rejected") throw outcome.reason;
@@ -239,8 +218,6 @@ export async function pipeline(
   }
   type StageFn = (prev: unknown, item: unknown, index: number) => unknown;
   const stageFns = stages.filter((s): s is StageFn => typeof s === "function");
-  // No barrier between stages: each item flows through its whole chain
-  // independently, so item A can be in stage 3 while item B is in stage 1.
   return collectResults(
     items.map(async (item, index) => {
       let value: unknown = item;

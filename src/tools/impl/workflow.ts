@@ -87,10 +87,6 @@ export interface WorkflowSpawnerHandle {
   callTool?: WorkflowToolCaller;
   builtinToolNames?: readonly string[];
   listTools?: () => Promise<WorkflowToolInfo[]>;
-  /**
-   * Re-capture the invoking turn's model, permission mode, tools, and working
-   * directory for later spawns, keeping the spawner's continuation state.
-   */
   refresh?: () => Promise<void>;
   env?: Readonly<Record<string, string>>;
   backgroundStopController?: AbortController;
@@ -106,7 +102,6 @@ const MAX_NOTIFICATION_RESULT_CHARS = 30_000;
 const DEFAULT_STARTUP_TIMEOUT_MS = 30_000;
 let startupTimeoutMs = DEFAULT_STARTUP_TIMEOUT_MS;
 
-/** The invoking turn's settings that new worker spawns inherit. */
 async function captureInvokingContext(
   args: WorkflowArgs,
   parentAgentId: string,
@@ -204,8 +199,6 @@ export async function createSdkSpawnerHandle(
   const client = sdk.createLocalClient(resolveBackendMode());
   let spawner: SubagentSpawner;
   try {
-    // The spawner reads `config` at each spawn, so refresh() applies to
-    // later spawns without discarding its continuation state.
     spawner = createSdkSpawner(client, config);
   } catch (error) {
     void client[Symbol.asyncDispose]?.().catch(() => undefined);

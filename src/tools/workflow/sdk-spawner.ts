@@ -59,7 +59,6 @@ async function retrieveWorkerConversation(
 }
 
 export const DEFAULT_SUBAGENT_TIMEOUT_MS = 10 * 60 * 1000;
-/** How long a continuation waits for this spawner's own interrupt to settle. */
 const STOP_SETTLE_TIMEOUT_MS = 15_000;
 export const DEFAULT_MAX_SUBAGENT_TOOL_CALLS = 1000;
 export const STOP_DRAIN_MS = 5_000;
@@ -391,9 +390,6 @@ export function createSdkSpawner(
 ): SubagentSpawner {
   const activeResumeIds = new Set<string>();
   const locallyCompletedIds = new Set<string>();
-  // Turns this spawner interrupted, until the interrupt is acknowledged. An
-  // acknowledged interrupt leaves the conversation idle, so this execution may
-  // continue it, exactly as if the turn had completed.
   const settlingStops = new Map<string, Promise<void>>();
   const trackStop = (id: string, interrupted: Promise<boolean>) => {
     let timer: ReturnType<typeof setTimeout> | undefined;

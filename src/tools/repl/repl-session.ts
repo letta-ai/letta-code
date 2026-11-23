@@ -1,13 +1,3 @@
-/**
- * A persistent Repl session: one vm context whose globals survive across
- * cells, one lazily created subagent spawner, and a registry of steerable
- * workers. Cells see `tools.*` (programmatic tool calling), `agent()`,
- * `agent.start()`, `parallel()`, and `pipeline()`.
- *
- * Like the workflow engine, the vm context is not a security boundary: the
- * hooks are host-realm functions and cells run with the CLI's privileges.
- */
-
 import { format } from "node:util";
 import vm from "node:vm";
 import {
@@ -31,7 +21,6 @@ const SESSION_ABORTED = "Repl session was reset.";
 
 export interface ReplSpawnerHandle {
   spawner: SubagentSpawner;
-  /** Re-capture the invoking turn's model, permissions, and tools. */
   refresh?: () => Promise<void>;
   cleanup(): Promise<void>;
 }
@@ -43,14 +32,12 @@ export interface ReplToolScope extends ScriptToolBindings {
 export interface ReplSessionDeps {
   createSpawner: () => Promise<ReplSpawnerHandle>;
   onWorkerSettled?: (worker: ReplWorker, turn: ReplTurnRecord) => void;
-  /** Test-only continuation retry tuning. */
   workerRetryDelayMs?: number;
 }
 
 export interface ReplCellOptions {
   args?: unknown;
   signal?: AbortSignal;
-  /** The invoking turn's tools; replaces the previous cell's bindings. */
   scope?: ReplToolScope;
   onLog?: (message: string) => void;
 }
@@ -66,7 +53,6 @@ interface ScopeEntry {
   replaced: boolean;
 }
 
-/** Bare names a cell can use to reach subagents; warm the spawner for them. */
 const USES_AGENT = /\bagent\s*(?:\.\s*start\b|\()/;
 
 function validateAgentOptions(callOptions: unknown): AgentCallOptions {
@@ -188,15 +174,9 @@ export class ReplSession {
     const signal = options.signal ?? new AbortController().signal;
     let abortCell = () => {};
     try {
-      // Capture inside the invoking tool call, where the parent's runtime
-      // context (model, tools, permissions) is current. Any cell can steer a
-      // live worker, so worker turns follow the latest invoking turn.
       if (USES_AGENT.test(code) || this.hasLiveWorkers()) {
         await this.captureSpawnerContext();
       }
-      // Sloppy mode on purpose: a bare assignment (`w = agent.start(...)`)
-      // creates a context global that later cells can read. `args` is a
-      // parameter so overlapping cells each keep their own.
       const wrapped = `(async (args) => {\n${code}\n})`;
       let script: vm.Script;
       try {
@@ -210,7 +190,6 @@ export class ReplSession {
       }
       let pending: Promise<unknown>;
       try {
-        // Node reports syntax errors at construction; Bun compiles lazily.
         const cell = script.runInContext(this.context) as (
           args: unknown,
         ) => Promise<unknown>;
@@ -245,7 +224,6 @@ export class ReplSession {
     }
   }
 
-  /** Stop every worker and release the spawner and tool scopes. */
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
@@ -332,7 +310,6 @@ export class ReplSession {
       sink(message);
       return;
     }
-    // Output from work that outlived its cell surfaces in the next cell.
     this.backlog.push(message);
     if (this.backlog.length > MAX_BACKLOG_LOGS) this.backlog.shift();
   }

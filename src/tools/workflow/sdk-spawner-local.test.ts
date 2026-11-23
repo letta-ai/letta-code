@@ -165,7 +165,6 @@ describe("createSdkSpawner local continuation", () => {
       failed: true,
       conversationId: "conv-worker",
     });
-    // The continuation waits for the interrupt rather than racing it.
     const second = spawner(
       request({ conversationId: "conv-worker" }),
       new AbortController().signal,

@@ -13,7 +13,6 @@ interface PendingTurn {
   finish(value: unknown): void;
 }
 
-/** A spawner whose turns finish when the test says so, or fail when aborted. */
 function scriptedSpawner() {
   const turns: PendingTurn[] = [];
   let conversations = 0;
@@ -134,7 +133,6 @@ describe("ReplSession cells", () => {
     );
     expect(second.result).toBe("two contents");
     expect(calls).toEqual(["one:Read:a", "two:Read:b"]);
-    // The replaced scope is released once no cell uses it.
     expect(cleaned).toBe(1);
   });
 
@@ -164,7 +162,6 @@ describe("ReplSession workers", () => {
     const steered = await fake.nextTurn(1);
     expect(firstTurn.signal.aborted).toBe(true);
     expect(steered.request.prompt).toBe("Focus on cookie flags.");
-    // Continuations target the same conversation and drop creation-only options.
     expect(steered.request.options).toMatchObject({
       conversationId: "conv-w1",
       label: "audit",
@@ -225,7 +222,6 @@ describe("ReplSession workers", () => {
     await repl.runCell("return 1;");
     await repl.runCell("w = agent.start('First');");
     expect([spawnerCount(), refreshCount()]).toEqual([1, 0]);
-    // No agent call in the cell, but w.send spawns under this turn's context.
     await repl.runCell("w.send('Second'); return w.id;");
     expect([spawnerCount(), refreshCount()]).toEqual([1, 1]);
     await repl.runCell("await w.stop();");

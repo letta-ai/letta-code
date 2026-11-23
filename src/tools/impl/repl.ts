@@ -35,17 +35,14 @@ interface ReplArgs {
   run_in_background?: boolean;
   signal?: AbortSignal;
   parentScope?: { agentId: string; conversationId: string };
-  /** Test-only override; not exposed in the Repl tool schema. */
   foregroundYieldMs?: number;
 }
 
-// Match Bash, exec_command, and CodeMode's foreground yield.
 const DEFAULT_FOREGROUND_YIELD_MS = 10_000;
 const MAX_NOTIFICATION_RESULT_CHARS = 30_000;
 
 type Outcome = { ok: true; text: string } | { ok: false; error: string };
 
-/** One session per invoking conversation; variables and workers persist across cells. */
 const sessions = new Map<string, ReplSession>();
 
 type SessionFactory = (
@@ -68,14 +65,12 @@ function createProductionSession(
 
 let sessionFactory: SessionFactory = createProductionSession;
 
-/** Swap the session backend (tests inject a fake spawner). */
 export function __setReplSessionFactoryForTests(
   factory: SessionFactory | null,
 ): void {
   sessionFactory = factory ?? createProductionSession;
 }
 
-/** Close every session (tests and shutdown). */
 export async function closeAllReplSessions(): Promise<void> {
   const open = [...sessions.values()];
   sessions.clear();
@@ -112,8 +107,6 @@ function getOrCreateSession(args: ReplArgs): ReplSession {
   const existing = sessions.get(key);
   if (existing && !existing.isClosed) return existing;
   const notificationScope = resolveNotificationScope(args.parentScope);
-  // Notify only when no cell is watching: a cell awaiting the worker already
-  // receives its result, and a yielded cell notifies on its own completion.
   const onWorkerSettled = (worker: ReplWorker, turn: ReplTurnRecord) => {
     if (session.activeCells > 0) return;
     const ok = turn.status === "done";
@@ -148,11 +141,6 @@ function getOrCreateSession(args: ReplArgs): ReplSession {
   return session;
 }
 
-/**
- * A persistent JavaScript session for programmatic tool calls and steerable
- * subagents. Backgrounding mirrors CodeMode: wait briefly, then yield a task
- * whose completion arrives as a task notification.
- */
 export async function repl(args: ReplArgs) {
   const {
     run_in_background = false,
@@ -181,9 +169,6 @@ export async function repl(args: ReplArgs) {
     };
   }
 
-  // The turn's signal stops the cell only while it is in the foreground;
-  // once yielded, TaskStop aborts it. Workers belong to the session and
-  // keep running either way.
   const controller = new AbortController();
   const forwardAbort = () => controller.abort(signal?.reason);
   if (!run_in_background) {
@@ -224,7 +209,6 @@ export async function repl(args: ReplArgs) {
     runtimeScope: args.parentScope,
   };
   backgroundProcesses.set(taskId, processState);
-  // Resolve now: by completion the launching turn may be gone.
   const notificationScope = resolveNotificationScope(args.parentScope);
 
   const settled: Promise<Outcome> = session
@@ -306,8 +290,6 @@ export async function repl(args: ReplArgs) {
   };
 
   if (!run_in_background) {
-    // One-shot headless runs have no queue consumer to receive a
-    // notification, so there the cell blocks until it settles.
     let timer: ReturnType<typeof setTimeout> | undefined;
     const first = isQueueBridgeConnected()
       ? await Promise.race([

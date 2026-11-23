@@ -1,10 +1,3 @@
-/**
- * A steerable Repl worker: one subagent conversation driven turn by turn
- * through the workflow spawner. Steering is interrupt-and-continue: the
- * active turn is interrupted and the conversation is resumed with the new
- * message, so the worker keeps its full history.
- */
-
 import type {
   AgentCallOptions,
   SubagentOutcome,
@@ -41,9 +34,7 @@ export interface ReplWorkerInfo {
   lastError?: string;
 }
 
-/** Per-message overrides; creation-time settings cannot change on continuation. */
 export interface ReplSendOptions {
-  /** Interrupt the active turn (default) or queue behind it. */
   interrupt?: boolean;
   json?: boolean;
   schema?: Record<string, unknown>;
@@ -55,9 +46,7 @@ export interface ReplWorkerDeps {
   id: string;
   getSpawner: () => Promise<SubagentSpawner>;
   nextCallIndex: () => number;
-  /** Called when the worker settles with nothing left to run. */
   onSettled?: (worker: ReplWorker, turn: ReplTurnRecord) => void;
-  /** Delay between continuation retries while an interrupted run finishes. */
   retryDelayMs?: number;
   retryWindowMs?: number;
 }
@@ -81,8 +70,6 @@ const DEFAULT_RETRY_DELAY_MS = 1_000;
 const DEFAULT_RETRY_WINDOW_MS = 30_000;
 
 function guarded<T>(promise: Promise<T>): Promise<T> {
-  // Callers may never await a send(); that must not become an unhandled
-  // rejection. Awaiting it still observes the original error.
   void promise.catch(() => {});
   return promise;
 }
@@ -100,7 +87,6 @@ export class ReplWorker {
 
   private readonly deps: ReplWorkerDeps;
   private readonly startOptions: AgentCallOptions;
-  /** Prompt the conversation must open with if no turn has created it yet. */
   private openingPrompt: string | null;
   private active: { controller: AbortController; done: Promise<void> } | null =
     null;
@@ -117,7 +103,6 @@ export class ReplWorker {
     void this.enqueue(prompt, {});
   }
 
-  /** Steer: interrupt the active turn (default) and continue with `message`. */
   send(message: unknown, options: ReplSendOptions = {}): Promise<unknown> {
     if (typeof message !== "string" || !message.trim()) {
       return guarded(
@@ -129,8 +114,6 @@ export class ReplWorker {
         Promise.reject(new Error(`Worker ${this.id} is stopped.`)),
       );
     }
-    // Capture before enqueueing: an idle worker starts the new turn at once,
-    // and that turn must not be interrupted.
     const running = this.active;
     const turn = this.enqueue(message, options);
     if (running && options.interrupt !== false) {
@@ -139,7 +122,6 @@ export class ReplWorker {
     return turn;
   }
 
-  /** Interrupt the active turn and hold queued messages until resume(). */
   async pause(): Promise<ReplWorkerInfo> {
     if (this.status !== "stopped") {
       this.status = "paused";
@@ -148,7 +130,6 @@ export class ReplWorker {
     return this.info();
   }
 
-  /** Continue after pause(), optionally with a new message. */
   resume(message?: unknown, options: ReplSendOptions = {}): Promise<unknown> {
     if (this.status === "stopped") {
       return guarded(
@@ -169,7 +150,6 @@ export class ReplWorker {
     if (typeof message === "string") {
       turn = this.enqueue(message, options);
     } else if (this.queue.length === 0 && last?.status === "interrupted") {
-      // Interrupted before the conversation existed: open it again instead.
       turn = this.enqueue(this.openingPrompt ?? CONTINUE_MESSAGE, options);
     } else {
       turn = this.result();
@@ -178,7 +158,6 @@ export class ReplWorker {
     return turn;
   }
 
-  /** Interrupt the active turn and drop queued messages; the worker goes idle. */
   async interrupt(): Promise<ReplWorkerInfo> {
     if (this.status === "stopped") return this.info();
     this.rejectQueue(`Worker ${this.id} was interrupted.`);
@@ -188,7 +167,6 @@ export class ReplWorker {
     return this.info();
   }
 
-  /** Interrupt and permanently close the worker. */
   async stop(): Promise<ReplWorkerInfo> {
     if (this.status === "stopped") return this.info();
     this.status = "stopped";
@@ -198,10 +176,6 @@ export class ReplWorker {
     return this.info();
   }
 
-  /**
-   * The value of the latest turn once the worker has nothing running or
-   * queued. A paused worker is not done; this waits until it is resumed.
-   */
   result(): Promise<unknown> {
     const settled = this.settledValue();
     if (settled) return guarded(settled);
@@ -335,7 +309,6 @@ export class ReplWorker {
         );
       } catch (error) {
         const text = error instanceof Error ? error.message : String(error);
-        // A run we just interrupted can take a moment to become terminal.
         if (
           text.includes(RUN_NOT_TERMINAL) &&
           !signal.aborted &&
@@ -361,7 +334,6 @@ export class ReplWorker {
     if (this.conversationId === null) {
       return { ...this.startOptions, ...perTurn };
     }
-    // Model, system prompt, effort, and skills are fixed at creation.
     const {
       model: _model,
       systemPrompt: _systemPrompt,
