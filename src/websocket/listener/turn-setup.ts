@@ -22,11 +22,17 @@ import { runWithRuntimeContext } from "@/runtime-context";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { replaceClientPreferences } from "@/tools/client-preferences";
 import { INTERACTIVE_USER_INPUT_TOOL_NAMES } from "@/tools/interactive-policy";
+import { resolveTurnToolSelection } from "@/tools/tool-policy";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import { debugWarn, isDebugEnabled } from "@/utils/debug";
 import { detectShellContext } from "@/utils/shell-context";
 import { publishChannelRuntimeToolsForTurn } from "./channel-runtime-tools";
 import { resolveTurnExecutionConnectionId } from "./connection";
+import {
+  captureNotificationWait,
+  recordRuntimeSubmittingConnection,
+  resolveRuntimeToolOwner,
+} from "./external-tools";
 import { getInboundImageFailureModes } from "./image-policy";
 import { consumeInterruptQueue } from "./interrupts";
 import { getEffectiveMcpOriginatorId } from "./mcp-originator-scope";
@@ -37,6 +43,7 @@ import {
   ensureListenerModAdaptersForAgent,
 } from "./mod-adapter";
 import type { ConversationPermissionModeState } from "./permission-mode";
+import { retryApprovalRecoveryRead } from "./recovery-read";
 import { hasInterruptedCacheForScope } from "./runtime";
 import { emitListenerTurnStart } from "./turn-events";
 import {
@@ -290,12 +297,14 @@ export async function prepareListenerTurn(params: {
   let overrideModel: string | undefined;
   if (turnStartEmission.handlerCount > 0) {
     try {
-      const conversation =
-        await getBackend().retrieveConversation(conversationId);
+      const conversation = await getBackend().retrieveConversation(
+        conversationId,
+        {
+          query: { include_context_message_ids: false },
+        },
+      );
       overrideModel = conversation.model ?? undefined;
-    } catch {
-      // Model refresh is best-effort; mod failures must not block the turn.
-    }
+    } catch {}
   }
 
   const currentInput = ensureTurnInputMessageOtids(turnStartEmission.input);
@@ -332,7 +341,39 @@ export async function prepareListenerTurn(params: {
   const environmentDeviceId = listenerOptions?.deviceId;
   if (msg.clientPreferences !== undefined)
     replaceClientPreferences(agentId, conversationId, msg.clientPreferences);
+  const toolRuntimeScope = {
+    agent_id: agentId,
+    conversation_id: conversationId,
+  };
+  if (connectionId) {
+    recordRuntimeSubmittingConnection(
+      runtime.listener,
+      toolRuntimeScope,
+      connectionId,
+    );
+  }
+  const toolOwner = resolveRuntimeToolOwner(
+    runtime.listener,
+    toolRuntimeScope,
+    connectionId,
+  );
+  const toolSelection = resolveTurnToolSelection(
+    {
+      clientToolset: msg.clientToolset,
+      clientToolAllowlist: msg.clientToolAllowlist,
+      excludeInteractiveTools: msg.excludeInteractiveTools,
+    },
+    toolOwner.toolPolicy,
+  );
   const preparedToolContext = await prepareToolExecutionContextForScope({
+    readScopeState: (read) =>
+      retryApprovalRecoveryRead(
+        read,
+        () => {
+          if (isInterrupted()) throw new Error("Cancelled by user");
+        },
+        turnLease.signal,
+      ),
     connectionId: executionConnectionId,
     environmentDeviceId,
     agentId,
@@ -341,13 +382,13 @@ export async function prepareListenerTurn(params: {
     suppressActingUserFallback: msg.suppressActingUserFallback,
     mcpOriginatorSuperRunId: getEffectiveMcpOriginatorId(msg),
     resolveClientMessageIds,
-    clientToolset: msg.clientToolset,
-    clientToolAllowlist: msg.clientToolAllowlist,
-    // Honor explicit client exclusions; headless execution does not block questions.
-    ...(msg.excludeInteractiveTools
+    turnStartedAt: msg.receivedAt,
+    externalToolOwnerConnectionId: toolOwner.connectionId,
+    clientToolset: toolSelection.clientToolset,
+    clientToolAllowlist: toolSelection.clientToolAllowlist,
+    ...(toolSelection.excludeInteractiveTools
       ? { exclude: [...INTERACTIVE_USER_INPUT_TOOL_NAMES] }
       : {}),
-    externalToolScopeIds: msg.externalToolScopeIds,
     workingDirectory,
     permissionModeState,
     skillsDirectory: listenerOptions?.skillsDirectory,
@@ -355,9 +396,14 @@ export async function prepareListenerTurn(params: {
     bundledSkills: runtime.bundledSkills,
     workspaceSandbox: runtime.workspaceSandbox,
     executionSettings: runtime.executionSettings,
+    foregroundYieldMs: toolOwner.toolPolicy?.foreground_yield_ms,
     cachedAgent,
     ...(agentId ? { modContext: createListenerAgentModContext(agentId) } : {}),
     modAdapters,
+    shouldEnqueueBackground: captureNotificationWait(
+      runtime.listener,
+      toolRuntimeScope,
+    ),
     modEvents: createListenerModEvents(modAdapters),
   });
   if (isInterrupted()) {
@@ -371,6 +417,8 @@ export async function prepareListenerTurn(params: {
       skillsDirectory: listenerOptions?.skillsDirectory,
       skillSources: runtime.skillSources,
       bundledSkills: runtime.bundledSkills,
+      cloudSkillRepositories:
+        runtime.executionSettings?.cloud_skill_repositories,
     })
   ).availableSkills;
   if (isInterrupted()) {
@@ -390,6 +438,8 @@ export async function prepareListenerTurn(params: {
       skillsDirectory: listenerOptions?.skillsDirectory,
       skillSources: runtime.skillSources,
       bundledSkills: runtime.bundledSkills,
+      cloudSkillRepositories:
+        runtime.executionSettings?.cloud_skill_repositories,
     },
   );
   if (isInterrupted()) return { kind: "interrupted" };

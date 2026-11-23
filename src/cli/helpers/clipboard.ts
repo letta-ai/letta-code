@@ -1,4 +1,3 @@
-// Clipboard utilities for detecting and importing images from system clipboard
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -10,21 +9,11 @@ import {
 } from "@/utils/image-resize";
 import { allocateImage } from "./paste-registry";
 
-/**
- * Result type for clipboard image import.
- * - placeholder: Successfully imported, contains [Image #N]
- * - error: Failed with an error message
- * - null: No image in clipboard
- */
 export type ClipboardImageResult =
   | { placeholder: string; resized: boolean; width: number; height: number }
   | { error: string }
   | null;
 
-/**
- * Copy text to system clipboard
- * Returns true if successful, false otherwise
- */
 export function copyToClipboard(text: string): boolean {
   try {
     if (process.platform === "darwin") {
@@ -34,7 +23,6 @@ export function copyToClipboard(text: string): boolean {
       execFileSync("clip", [], { input: text, encoding: "utf8" });
       return true;
     } else {
-      // Linux - try xclip first, then xsel
       try {
         execFileSync("xclip", ["-selection", "clipboard"], {
           input: text,
@@ -77,16 +65,13 @@ function countLines(text: string): number {
   return (text.match(/\r\n|\r|\n/g) || []).length + 1;
 }
 
-// Translate various image paste formats into [Image #N] placeholders
 export function translatePasteForImages(paste: string): string {
   let s = paste || "";
 
-  // 1) iTerm2 OSC 1337 inline file transfer: ESC ] 1337;File=...:BASE64 <BEL or ST>
   try {
-    // Build regex via code points to avoid control chars in literal
     const ESC = "\u001B";
     const BEL = "\u0007";
-    const ST = `${ESC}\\`; // ESC \
+    const ST = `${ESC}\\`;
     const pattern = `${ESC}]1337;File=([^${BEL}${ESC}]*):([\\s\\S]*?)(?:${BEL}|${ST})`;
     const OSC = new RegExp(pattern, "g");
     s = s.replace(OSC, (_m, paramsStr: string, base64: string) => {
@@ -103,7 +88,6 @@ export function translatePasteForImages(paste: string): string {
     });
   } catch {}
 
-  // 2) Data URL images
   try {
     const DATA_URL = /data:image\/([a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=]+)/g;
     s = s.replace(DATA_URL, (_m, subtype: string, b64: string) => {
@@ -113,30 +97,24 @@ export function translatePasteForImages(paste: string): string {
     });
   } catch {}
 
-  // 3) Single image file path paste (including drag-and-drop from Finder/screenshot)
   try {
     const trimmed = s.trim();
     const singleLine = countLines(trimmed) <= 1;
     if (singleLine) {
       let filePath = trimmed;
 
-      // Strip surrounding quotes and shell-escape characters that terminals
-      // add when drag-dropping files (e.g. '/path/to/file.png' or path\ with\ spaces)
       filePath = filePath.replace(/^['"]|['"]$/g, "");
       filePath = filePath.replace(/\\(?=[ '()&])/g, "");
 
       if (/^file:\/\//i.test(filePath)) {
         try {
-          // Decode file:// URL
           const u = new URL(filePath);
           filePath = decodeURIComponent(u.pathname);
-          // On Windows, pathname starts with /C:/
           if (process.platform === "win32" && /^\/[A-Za-z]:\//.test(filePath)) {
             filePath = filePath.slice(1);
           }
         } catch {}
       }
-      // If relative, resolve against CWD
       if (!isAbsolute(filePath)) filePath = resolve(process.cwd(), filePath);
       const ext = extname(filePath || "").toLowerCase();
       if (IMAGE_EXTS.has(ext)) {
@@ -144,13 +122,8 @@ export function translatePasteForImages(paste: string): string {
         try {
           const stat = statSync(filePath);
           if (stat.isFile()) buf = readFileSync(filePath);
-        } catch {
-          // File may not exist (e.g. macOS cleaned up temp screenshot)
-        }
+        } catch {}
 
-        // macOS screenshot temp files (TemporaryItems/NSIRD_screencaptureui_*)
-        // may be cleaned up before we can read them. Fall back to reading the
-        // image directly from the clipboard via NSPasteboard.
         let clipboardMediaType: string | null = null;
         if (
           !buf &&
@@ -208,10 +181,6 @@ export function translatePasteForImages(paste: string): string {
   return s;
 }
 
-/**
- * Read image from macOS clipboard to a temp file.
- * Returns the temp file path and UTI, or null if no image in clipboard.
- */
 function getClipboardImageToTempFile(): {
   tempPath: string;
   uti: string;
@@ -221,8 +190,6 @@ function getClipboardImageToTempFile(): {
   const tempPath = join(tmpdir(), `letta-clipboard-${Date.now()}.bin`);
 
   try {
-    // JXA script that writes clipboard image to temp file and returns UTI
-    // This avoids stdout buffer limits for large images
     const jxa = `
       ObjC.import('AppKit');
       ObjC.import('Foundation');
@@ -250,7 +217,6 @@ function getClipboardImageToTempFile(): {
 
     return { tempPath, uti };
   } catch {
-    // Clean up temp file on error
     if (existsSync(tempPath)) {
       try {
         unlinkSync(tempPath);
@@ -270,11 +236,6 @@ const UTI_TO_MEDIA_TYPE: Record<string, string> = {
   "public.gif": "image/gif",
 };
 
-/**
- * Import image from macOS clipboard, resize if needed, return placeholder.
- * Uses temp file approach to avoid stdout buffer limits.
- * Resizes large images to fit within API limits (2000x2000).
- */
 export async function tryImportClipboardImageMac(): Promise<ClipboardImageResult> {
   if (process.platform !== "darwin") return null;
 
@@ -284,20 +245,16 @@ export async function tryImportClipboardImageMac(): Promise<ClipboardImageResult
   const { tempPath, uti } = clipboardResult;
 
   try {
-    // Read the temp file
     const buffer = readFileSync(tempPath);
 
-    // Clean up temp file immediately after reading
     try {
       unlinkSync(tempPath);
     } catch {}
 
     const mediaType = UTI_TO_MEDIA_TYPE[uti] || "image/png";
 
-    // Resize if needed (handles large retina screenshots, HEIC conversion, etc.)
     const resized = await resizeImageIfNeeded(buffer, mediaType);
 
-    // Store in registry
     const id = allocateImage({
       data: resized.data,
       mediaType: resized.mediaType,
@@ -310,7 +267,6 @@ export async function tryImportClipboardImageMac(): Promise<ClipboardImageResult
       height: resized.height,
     };
   } catch (err) {
-    // Clean up temp file on error
     if (existsSync(tempPath)) {
       try {
         unlinkSync(tempPath);

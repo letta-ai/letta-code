@@ -1,5 +1,6 @@
 import { rmSync } from "node:fs";
 import { INTERRUPTED_BY_USER } from "@/constants";
+import { resolveForegroundYieldMs } from "@/tools/foreground-yield";
 import {
   createScriptToolScope,
   resolveScriptParentAgentId,
@@ -31,12 +32,9 @@ interface CodeModeArgs {
   run_in_background?: boolean;
   signal?: AbortSignal;
   parentScope?: { agentId: string; conversationId: string };
-  /** Test-only override; not exposed in the CodeMode tool schema. */
   foregroundYieldMs?: number;
 }
 
-// Match Bash and exec_command's foreground yield.
-const DEFAULT_FOREGROUND_YIELD_MS = 10_000;
 const MAX_NOTIFICATION_RESULT_CHARS = 30_000;
 
 type Outcome = { ok: true; text: string } | { ok: false; error: string };
@@ -48,16 +46,11 @@ function truncateResult(text: string): string {
   return `${text.slice(0, MAX_NOTIFICATION_RESULT_CHARS - notice.length)}${notice}`;
 }
 
-/**
- * Tool composition without Workflow metadata, model calls, or SDK setup.
- * Backgrounding mirrors Bash: wait briefly, then yield a task whose
- * completion arrives as a task notification.
- */
 export async function code_mode(args: CodeModeArgs) {
   const {
     run_in_background = false,
     signal,
-    foregroundYieldMs = DEFAULT_FOREGROUND_YIELD_MS,
+    foregroundYieldMs = resolveForegroundYieldMs(),
   } = args;
   if (typeof args.code !== "string" || !args.code.trim()) {
     return {
@@ -65,8 +58,6 @@ export async function code_mode(args: CodeModeArgs) {
       status: "error",
     };
   }
-  // The turn's signal stops the script only while the call is in the
-  // foreground; once yielded, TaskStop aborts it.
   const controller = new AbortController();
   const forwardAbort = () => controller.abort(signal?.reason);
   if (!run_in_background) {
@@ -105,7 +96,6 @@ export async function code_mode(args: CodeModeArgs) {
     runtimeScope: args.parentScope,
   };
   backgroundProcesses.set(taskId, processState);
-  // Resolve now: by completion the launching turn may be gone.
   const notificationScope = resolveNotificationScope(args.parentScope);
 
   const output: string[] = [];
@@ -179,8 +169,6 @@ export async function code_mode(args: CodeModeArgs) {
   };
 
   if (!run_in_background) {
-    // One-shot headless runs have no queue consumer to receive a
-    // notification, so there the script blocks until it settles.
     let timer: ReturnType<typeof setTimeout> | undefined;
     const first = isQueueBridgeConnected()
       ? await Promise.race([

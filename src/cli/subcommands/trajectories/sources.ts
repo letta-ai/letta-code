@@ -4,11 +4,6 @@ import {
   NormalizationError,
 } from "@letta-ai/trajectory";
 
-/**
- * Snapshot of the sources trajectory supported when this file was written.
- * Used only when the runtime probe below fails; keeps the CLI working even if
- * the package's error format changes.
- */
 const FALLBACK_SOURCES = [
   "claude-code",
   "codex",
@@ -19,13 +14,6 @@ const FALLBACK_SOURCES = [
   "openhands",
 ];
 
-/**
- * Enumerate every source supported by the *installed* `@letta-ai/trajectory`
- * package, so newly added harnesses are picked up on a dependency bump without
- * code changes here. The package exports the source list only as a TypeScript
- * union type, so at runtime we probe `listTrajectories` with an unknown source
- * and parse the authoritative list out of its error message.
- */
 export async function listSupportedSources(): Promise<string[]> {
   try {
     await listTrajectories({ source: "__probe__" as AnyTrajectorySource });
@@ -44,5 +32,4 @@ export async function listSupportedSources(): Promise<string[]> {
   return [...FALLBACK_SOURCES];
 }
 
-/** The one checkpoint-backed source; its sessions normalize via `normalizeCheckpoint`. */
 export const CHECKPOINT_SOURCE = "deepagents";

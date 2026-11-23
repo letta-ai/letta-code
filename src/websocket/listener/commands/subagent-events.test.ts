@@ -52,7 +52,6 @@ test("serves the launching conversation a page of events after a seq", () => {
     has_more: false,
     missed: 0,
   });
-  // An oversized event is cut with a marker, not dropped.
   const [event] = response.success ? response.events : [];
   expect(event?.seq).toBe(2);
   expect(String(event?.text)).toEndWith("bytes]");
@@ -61,9 +60,24 @@ test("serves the launching conversation a page of events after a seq", () => {
   expect(readSubagentEvents("subagent-1", 0, 1)?.has_more).toBe(true);
 });
 
-test("refuses another conversation's subagent", () => {
+test("serves another conversation of the same agent but refuses another agent", () => {
   register("conv-other");
+  storeSubagentEvent("subagent-1", {
+    seq: 1,
+    at: "t",
+    type: "text",
+    text: "Progress",
+  });
   expect(handleReadSubagentEventsCommand(command())).toMatchObject({
+    success: true,
+    events: [expect.objectContaining({ text: "Progress" })],
+  });
+  expect(
+    handleReadSubagentEventsCommand({
+      ...command(),
+      runtime: { ...runtime, agent_id: "agent-other" },
+    }),
+  ).toMatchObject({
     success: false,
     error: "Subagent does not belong to this conversation",
   });

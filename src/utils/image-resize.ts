@@ -1,6 +1,3 @@
-// Image resizing utilities for clipboard paste
-// Follows Codex CLI's approach (codex-rs/utils/image/src/lib.rs)
-
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -15,22 +12,11 @@ export {
   MAX_IMAGE_WIDTH,
 } from "./image-resize.shared";
 
-// Build-time constant for magick variant (set via Bun.build define when USE_MAGICK=1)
-// At dev/test time this is undefined, at build time it's true/false
 declare const __USE_MAGICK__: boolean | undefined;
 
-// Use magick implementation only when explicitly built with USE_MAGICK=1
-// typeof check handles dev/test case where __USE_MAGICK__ doesn't exist
 const useMagick =
   typeof __USE_MAGICK__ !== "undefined" && __USE_MAGICK__ === true;
 
-const magickResizeImageIfNeeded = useMagick
-  ? (await import("@/utils/image-resize.magick.js")).resizeImageIfNeeded
-  : null;
-
-// Thrown when the built worker file is absent from an installed package,
-// which means the installation is incomplete (e.g. a file was removed after
-// install). Callers surface this message to the user and report it.
 export class ImageWorkerMissingError extends Error {
   readonly workerPath: string;
 
@@ -61,8 +47,6 @@ function resolveImageWorkerPath(): string {
   return bundledWorkerPath;
 }
 
-// Keep Sharp/libvips outside the Ink process: native GLib diagnostics write
-// directly to the process stderr and cannot be intercepted at the JS layer.
 function resizeWithSharpWorker(
   buffer: Buffer,
   inputMediaType: string,
@@ -70,6 +54,7 @@ function resizeWithSharpWorker(
   return new Promise((resolve, reject) => {
     const workerPath = resolveImageWorkerPath();
     const child = spawn(process.execPath, [workerPath, inputMediaType], {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
@@ -129,7 +114,10 @@ async function resizeWithConfiguredBackend(
   buffer: Buffer,
   inputMediaType: string,
 ): Promise<ResizeResult> {
-  if (magickResizeImageIfNeeded) {
+  if (useMagick) {
+    const { resizeImageIfNeeded: magickResizeImageIfNeeded } = await import(
+      "@/utils/image-resize.magick.js"
+    );
     return await magickResizeImageIfNeeded(buffer, inputMediaType);
   }
   return await resizeWithSharpWorker(buffer, inputMediaType);
@@ -146,10 +134,7 @@ export async function resizeImageIfNeeded(
       );
       const convertedBuffer = await convertHeicToJpegWithSips(buffer);
       return await resizeWithConfiguredBackend(convertedBuffer, "image/jpeg");
-    } catch {
-      // Fall through to the configured backend so non-sips environments still
-      // get the existing behavior.
-    }
+    } catch {}
   }
 
   return await resizeWithConfiguredBackend(buffer, inputMediaType);

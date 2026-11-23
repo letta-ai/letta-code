@@ -64,6 +64,24 @@ describe("MemFS v2 pre-commit hook", () => {
     if (repo) rmSync(repo, { recursive: true, force: true });
   });
 
+  test.each(["skills/my skill.md", "skills/café.md"])(
+    "rejects flat skill path %s intact in v2 mode",
+    (path) => {
+      repo = initRepo("memfs-v2-skill-path-");
+      installPreCommitHook(repo, true);
+      writeFileSync(join(repo, "MEMORY.md"), "# Memory\n");
+      mkdirSync(join(repo, "skills"));
+      writeFileSync(join(repo, path), "# Skill\n");
+      execFileSync("git", ["add", "MEMORY.md", path], { cwd: repo });
+
+      const result = tryCommit(repo, "reject flat skill");
+      expect(result.status).not.toBe(0);
+      expect(result.stdout + result.stderr).toContain(
+        `${path}: invalid skill path`,
+      );
+    },
+  );
+
   test.each(["modify", "delete", "rename", "mode", "create"])(
     "protects config-selected files against %s, including non-Markdown",
     (operation) => {
@@ -394,7 +412,6 @@ describe("MemFS v2 pre-commit hook", () => {
     writeFileSync(join(repo, "skills", "demo", "SKILL.md"), "Skill.\n");
     execFileSync("git", ["add", "."], { cwd: repo });
     execFileSync("git", ["commit", "-qm", "seed memory"], { cwd: repo });
-    // B passes the limit through a path that skipped the hook.
     writeFileSync(join(repo, "b.md"), v2Memory("b".repeat(100), "B"));
     execFileSync("git", ["add", "b.md"], { cwd: repo });
     execFileSync("git", ["commit", "-qm", "grow b without hook"], {
@@ -757,8 +774,6 @@ describe("shared-memory pre-commit hook", () => {
       );
     }
     execFileSync("git", ["add", "."], { cwd: repo });
-    // Seed the tracked tree before installing the hook. The tested commit only
-    // stages a non-Markdown file, but v2 validation must still scan the tree.
     execFileSync("git", ["commit", "-qm", "seed many memory files"], {
       cwd: repo,
     });

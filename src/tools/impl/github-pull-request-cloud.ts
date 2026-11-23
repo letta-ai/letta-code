@@ -1,0 +1,284 @@
+import { setTimeout as delay } from "node:timers/promises";
+import { APIConnectionError, APIError } from "@letta-ai/letta-client";
+import { getClient } from "@/backend/api/client";
+import { isCloudServerUrl } from "@/backend/api/server-url";
+import { resolveBackendMode } from "@/backend/backend-mode";
+import { telemetry } from "@/telemetry";
+import type {
+  GitHubPullRequestRef,
+  GitHubPullRequestSnapshot,
+  PullRequestCheck,
+  PullRequestComment,
+  PullRequestState,
+} from "./github-pull-request-types";
+import { fetchGitHubPullRequestSnapshot } from "./github-pull-request-watch";
+
+export class GitHubPullRequestSnapshotPending extends Error {
+  constructor() {
+    super("Cloud PR snapshot is still cooling down");
+    this.name = "GitHubPullRequestSnapshotPending";
+  }
+}
+
+type SnapshotOptions = { cwd: string; signal?: AbortSignal };
+type FetchSnapshot = (
+  ref: GitHubPullRequestRef,
+  options: SnapshotOptions,
+) => Promise<GitHubPullRequestSnapshot>;
+
+interface CloudComment {
+  id: string;
+  author: string;
+  body: string;
+  url: string;
+  updated_at: string;
+}
+
+export interface CloudPullRequestSnapshot {
+  ref: GitHubPullRequestRef;
+  head_sha: string;
+  state: PullRequestState;
+  is_draft: boolean;
+  merged: boolean;
+  merged_by: string | null;
+  mergeable: string;
+  merge_state_status: string;
+  review_decision: string;
+  readiness_confirmed: boolean;
+  checks: PullRequestCheck[];
+  check_attempts: PullRequestCheck[];
+  comments: CloudComment[];
+  reviews: Array<CloudComment & { state: string; commit_sha?: string }>;
+  review_threads: Array<{
+    id: string;
+    is_resolved: boolean;
+    comments: Array<
+      CloudComment & {
+        path?: string;
+        line?: number;
+        outdated: boolean;
+        commit_sha?: string;
+      }
+    >;
+  }>;
+}
+
+interface CloudPullRequestKey {
+  owner: string;
+  repo: string;
+  number: number;
+}
+
+export interface CloudSnapshotResponse {
+  snapshots: Array<
+    CloudPullRequestKey & {
+      snapshot: CloudPullRequestSnapshot | null;
+      inaccessible: boolean;
+      stale: boolean;
+      retry_at?: string;
+    }
+  >;
+  rate_limits?: Array<CloudPullRequestKey & { retry_at: string }>;
+}
+
+type CloudSnapshotResult =
+  | { status: 200; body: CloudSnapshotResponse }
+  | { status: 404 | 429 | 501 };
+
+interface CloudSnapshotDeps {
+  allowInaccessibleFallback?: boolean;
+  isCloud?: () => boolean;
+  fetchGh?: FetchSnapshot;
+  request?: (
+    ref: GitHubPullRequestRef,
+    signal?: AbortSignal,
+  ) => Promise<CloudSnapshotResult>;
+  wait?: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
+  now?: () => number;
+  random?: () => number;
+}
+
+const DEFAULT_COOLDOWN_MS = 30_000;
+const MAX_COOLDOWN_MS = 60_000;
+
+async function requestSnapshot(
+  ref: GitHubPullRequestRef,
+  signal?: AbortSignal,
+): Promise<CloudSnapshotResult> {
+  const client = await getClient();
+  try {
+    const body = await client.post<CloudSnapshotResponse>(
+      "/v1/integrations/github/pull-request-snapshots",
+      {
+        body: {
+          pull_requests: [
+            { owner: ref.owner, repo: ref.repo, number: ref.number },
+          ],
+        },
+        signal,
+        maxRetries: 0,
+        timeout: 30_000,
+      },
+    );
+    return { status: 200, body };
+  } catch (error) {
+    if (
+      error instanceof APIError &&
+      (error.status === 404 || error.status === 501 || error.status === 429)
+    ) {
+      return { status: error.status };
+    }
+    throw error;
+  }
+}
+
+function sameRef(a: CloudPullRequestKey, b: CloudPullRequestKey): boolean {
+  return (
+    a.owner.toLowerCase() === b.owner.toLowerCase() &&
+    a.repo.toLowerCase() === b.repo.toLowerCase() &&
+    a.number === b.number
+  );
+}
+
+function toComment(comment: CloudComment): PullRequestComment {
+  return {
+    id: comment.id,
+    author: comment.author,
+    body: comment.body,
+    url: comment.url,
+    updatedAt: comment.updated_at,
+  };
+}
+
+export function toClientSnapshot(
+  ref: GitHubPullRequestRef,
+  snapshot: CloudPullRequestSnapshot,
+): GitHubPullRequestSnapshot {
+  return {
+    ref: { ...ref, url: snapshot.ref.url },
+    headSha: snapshot.head_sha,
+    state: snapshot.merged ? "MERGED" : snapshot.state,
+    isDraft: snapshot.is_draft,
+    mergeable: snapshot.mergeable,
+    mergeStateStatus: snapshot.merge_state_status,
+    reviewDecision: snapshot.review_decision,
+    readinessConfirmed: false,
+    checks: snapshot.checks,
+    checkAttempts: snapshot.check_attempts,
+    comments: snapshot.comments.map(toComment),
+    reviews: snapshot.reviews.map((review) => ({
+      ...toComment(review),
+      state: review.state,
+      commitSha: review.commit_sha,
+    })),
+    reviewThreads: snapshot.review_threads.map((thread) => ({
+      id: thread.id,
+      isResolved: thread.is_resolved,
+      comments: thread.comments.map((comment) => ({
+        ...toComment(comment),
+        path: comment.path,
+        line: comment.line,
+        outdated: comment.outdated,
+        commitSha: comment.commit_sha,
+      })),
+    })),
+  };
+}
+
+export function createGitHubPullRequestSnapshotFetcher(
+  deps: CloudSnapshotDeps = {},
+): FetchSnapshot {
+  const shouldFetchCloud =
+    deps.isCloud ??
+    (() => resolveBackendMode() === "api" && isCloudServerUrl());
+  const fetchGh = deps.fetchGh ?? fetchGitHubPullRequestSnapshot;
+  const request = deps.request ?? requestSnapshot;
+  const now = deps.now ?? Date.now;
+  const random = deps.random ?? Math.random;
+  const wait =
+    deps.wait ??
+    (async (ms, signal) => {
+      await delay(ms, undefined, { signal });
+    });
+  let hasSnapshot = false;
+  let unsupported = false;
+  let reportedRateLimit = false;
+
+  const pause = async (retryAt: string | undefined, signal?: AbortSignal) => {
+    if (!reportedRateLimit) {
+      reportedRateLimit = true;
+      telemetry.trackError(
+        "github_rate_limit",
+        "Cloud PR snapshot polling paused for GitHub quota cooldown",
+        "watch_pr",
+      );
+    }
+    const remaining = Date.parse(retryAt ?? "") - now();
+    await wait(
+      Math.min(
+        MAX_COOLDOWN_MS - 2_000,
+        remaining > 0 ? remaining : DEFAULT_COOLDOWN_MS,
+      ) +
+        random() * 2_000,
+      signal,
+    );
+  };
+
+  return async (ref, options) => {
+    if (unsupported || !shouldFetchCloud()) return fetchGh(ref, options);
+    let waited = false;
+    const cooldownError = new GitHubPullRequestSnapshotPending();
+    const cooldown = async (retryAt?: string) => {
+      if (waited) {
+        throw cooldownError;
+      }
+      waited = true;
+      await pause(retryAt, options.signal);
+    };
+    try {
+      while (true) {
+        options.signal?.throwIfAborted();
+        const result = await request(ref, options.signal);
+        if (!("body" in result)) {
+          if (result.status === 429) {
+            await cooldown();
+            continue;
+          }
+          unsupported = true;
+          return fetchGh(ref, options);
+        }
+        const entry = result.body.snapshots.find((item) => sameRef(item, ref));
+        const limit = result.body.rate_limits?.find((item) =>
+          sameRef(item, ref),
+        );
+        if (limit || entry?.stale) {
+          await cooldown(entry?.retry_at ?? limit?.retry_at);
+          continue;
+        }
+        if (entry?.inaccessible) {
+          if (!hasSnapshot && deps.allowInaccessibleFallback) {
+            unsupported = true;
+            return fetchGh(ref, options);
+          }
+          throw new Error(`Cloud could not access ${ref.url}`);
+        }
+        if (!entry?.snapshot) {
+          throw new Error("Cloud returned no PR snapshot");
+        }
+        hasSnapshot = true;
+        return toClientSnapshot(ref, entry.snapshot);
+      }
+    } catch (error) {
+      options.signal?.throwIfAborted();
+      if (
+        !hasSnapshot &&
+        (error === cooldownError || error instanceof APIConnectionError)
+      ) {
+        const snapshot = await fetchGh(ref, options);
+        hasSnapshot = true;
+        return snapshot;
+      }
+      throw error;
+    }
+  };
+}

@@ -1,4 +1,5 @@
-import type WebSocket from "ws";
+import WebSocket from "ws";
+import type { ConversationRuntimeScope } from "@/types/runtime-scope";
 import type {
   LaunchSubagentCommand,
   ReadSubagentEventsCommand,
@@ -8,6 +9,7 @@ import type {
 import type { MonitorStopCommand } from "@/types/task-control-protocol";
 import type { ListenerRuntime } from "@/websocket/listener/types";
 import { handleMonitorStopCommand } from "./monitors";
+import { stopListenerConversation } from "./stop-conversation";
 import {
   handleSubagentMessageCommand,
   handleSubagentStopCommand,
@@ -29,6 +31,7 @@ export async function handleTaskControlCommand(
     | SubagentStopCommand,
   context: {
     runtime: ListenerRuntime;
+    abortConversation?: (scope: ConversationRuntimeScope) => Promise<boolean>;
     socket: WebSocket;
     connectionId?: string;
     getOrCreateScopedRuntime: GetOrCreateScopedRuntime;
@@ -44,7 +47,29 @@ export async function handleTaskControlCommand(
     runDetachedListenerTask,
     safeSocketSend,
   } = context;
+  const arrivedOnRelay =
+    connectionId !== undefined && connectionId === runtime.connectionId;
+  const sendReply = (response: { type: string }) => {
+    const replySocket =
+      socket.readyState !== WebSocket.OPEN &&
+      arrivedOnRelay &&
+      runtime.socket?.readyState === WebSocket.OPEN
+        ? runtime.socket
+        : socket;
+    safeSocketSend(replySocket, response, response.type, command.type);
+  };
   const execute = async () => {
+    if (command.type === "subagent_stop" && command.conversation) {
+      const response = await stopListenerConversation(
+        command,
+        context.abortConversation ??
+          (async () => {
+            throw new Error("Listener cancellation is unavailable");
+          }),
+      );
+      sendReply(response);
+      return;
+    }
     if (command.type === "monitor_stop") {
       const response = await handleMonitorStopCommand(command, runtime);
       safeSocketSend(socket, response, response.type, command.type);
@@ -66,7 +91,7 @@ export async function handleTaskControlCommand(
         : command.type === "subagent_message"
           ? await handleSubagentMessageCommand(command, parent)
           : await handleSubagentStopCommand(command, parent);
-    safeSocketSend(socket, response, response.type, command.type);
+    sendReply(response);
   };
   if (
     command.type === "launch_subagent" ||

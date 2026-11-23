@@ -124,9 +124,6 @@ function startFakeOllama(models: FakeOllamaModel[]): FakeOllamaServer {
   };
 }
 
-// listLocalModels also probes the other auto-detectable local endpoints
-// (LM Studio, llama.cpp). Fail those probes instantly so tests never touch
-// real local servers; the Ollama runtime provider uses its own fetch.
 const failingDiscoveryFetch = (async () => {
   throw new Error("no local endpoint in tests");
 }) as unknown as typeof fetch;
@@ -199,9 +196,6 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
       { provider_type: "anthropic" },
       { localProviderAuthStorageDir: storageDir, modelsRuntime: runtime },
     );
-    // Auth and model resolve together in one runtime call (resolveTurn),
-    // with the API key coming from the auth.json adapter — no parallel
-    // factory lookup.
     expect(resolveTurnCalls).toBe(1);
     expect(resolved.apiKey).toBe("stored-key");
   });
@@ -215,8 +209,6 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
       apiKey: "radius-key",
       storageDir,
     });
-    // Radius's built-in provider fetches its gateway config with global
-    // fetch; stub it for the gateway URL only.
     const realFetch = globalThis.fetch;
     globalThis.fetch = (async (
       input: string | URL | Request,
@@ -253,8 +245,6 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
       });
       expect(listed.some((model) => model.handle === "radius/auto")).toBe(true);
 
-      // The default handle a user selects from /model must resolve for the
-      // turn — the canonical refresh supplies Radius's credentialed context.
       const resolved = await resolvePiModelForAgent(
         "radius/auto",
         { provider_type: "radius" },
@@ -277,9 +267,6 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
     process.env.GOOGLE_GENERATIVE_AI_API_KEY = "letta-alias-key";
     try {
       const runtime = new LocalPiModelsRuntime();
-      // Upstream google only reads GEMINI_API_KEY; the runtime's AuthContext
-      // maps Letta's documented alias so resolution stays inside pi-ai's
-      // provider auth — no factory-side ambient fallback exists.
       const auth = await runtime.getAuth("google");
       expect(auth?.auth.apiKey).toBe("letta-alias-key");
     } finally {
@@ -300,8 +287,6 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
       storageDir,
     });
     const runtime = new LocalPiModelsRuntime({ storageDir });
-    // Force the runtime's turn resolution to report no auth while still
-    // publishing the model.
     const originalResolveTurn = runtime.resolveTurn.bind(runtime);
     runtime.resolveTurn = async (providerId, modelId, fallbackModelId) => {
       const result = await originalResolveTurn(
@@ -324,10 +309,6 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
         { provider_type: "anthropic" },
         { localProviderAuthStorageDir: storageDir, modelsRuntime: runtime },
       );
-      // The runtime is the only credential source: if it cannot resolve
-      // auth, the stored key must NOT leak in through a factory-side record
-      // lookup. (Ambient env is cleared above; the named env exception only
-      // covers vars upstream providers do not read.)
       expect(resolved.apiKey).toBeUndefined();
     } finally {
       for (const [key, value] of Object.entries(savedEnv)) {
@@ -383,17 +364,12 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
       await runtime.refreshAll();
       expect(runtime.getModel("radius", "account-a-model")).toBeDefined();
 
-      // Switching accounts: the new credential fails against the gateway,
-      // and account A's catalog must not survive as "last known".
       await createOrUpdateLocalProvider({
         providerType: "radius",
         providerName: "radius",
         apiKey: "key-b",
         storageDir,
       });
-      // Lookup path, no explicit refresh: resolveTurn applies the
-      // credential-identity invalidation itself, so the new account's auth
-      // can never pair with the stale account's cached model.
       const turn = await runtime.resolveTurn("radius", "account-a-model");
       expect(turn.model).toBeUndefined();
 
@@ -590,11 +566,7 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
     });
     const runtime = new LocalPiModelsRuntime({ storageDir });
 
-    // Documented post-merge exception: pi-ai 0.81 exposes only
-    // collection-wide refresh, so refreshing one provider re-fetches every
-    // materialized configured dynamic provider. This test states that
-    // honestly; a scoped refresh is an upstream ask.
-    runtime.getModels("llama-cpp"); // materialize the provider
+    runtime.getModels("llama-cpp");
     await runtime.refresh("ollama");
     expect(llamaRequests.length).toBeGreaterThan(0);
   });
@@ -623,9 +595,7 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
       storageDir,
     });
 
-    // Stale discovery from the old endpoint is dropped immediately...
     expect(runtime.getModels("ollama")).toHaveLength(0);
-    // ...and a refresh repopulates from the new endpoint.
     await runtime.refresh("ollama");
     expect(runtime.getModel("ollama", "model-b:1b")?.input).toEqual([
       "text",
@@ -763,8 +733,6 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
 
     await runtime.refreshAll();
 
-    // Auto-detectable local daemons may be probed. Remote and user-defined
-    // endpoints must not be touched before the user configures them.
     expect(requested.some((url) => url.includes("ollama.com"))).toBe(false);
     expect(requested).not.toContain("/v1/models");
   });
@@ -780,8 +748,6 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
     await runtime.refresh("ollama");
     expect(runtime.getModel("ollama", "model-a:1b")).toBeDefined();
 
-    // Reconfigure to an endpoint that is offline: the old endpoint's catalog
-    // must not be restored from the models store by the failed refresh.
     const serverB = startFakeOllama([]);
     const deadUrl = serverB.url;
     serverB.stop();
@@ -813,7 +779,6 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
     server.stop();
 
     await expect(runtime.refresh("ollama")).rejects.toThrow();
-    // /model keeps the last-known list rather than dropping the provider.
     const listed = await listLocalModels(storageDir, {
       fetch: failingDiscoveryFetch,
       modelsRuntime: runtime,

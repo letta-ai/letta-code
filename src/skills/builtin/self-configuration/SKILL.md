@@ -22,6 +22,7 @@ The important part is choosing the right layer. Do not smear a preference into d
 | Skills | Reusable procedural knowledge or bundled scripts | Load `creating-skills` or `acquiring-skills` |
 | Channels | Slack/Discord/Telegram/WhatsApp/Signal accounts, pairing, routing, listener state | Use `letta channels` or channel commands |
 | Schedules | Reminders and recurring prompts | Load `scheduling-tasks` and use `letta cron` |
+| Agent variables | Plain, readable `$NAME` values for shell commands | Use `letta variable` (or `/variable` in a session) |
 | Agent secrets | Per-agent `$NAME` credential values for shell commands | Use `letta secret` (or `/secret` in a session) |
 
 Decision rule: if the model should remember and reason about it, use memory. If the runtime must enforce it or route it before the model decides anything, use settings, API fields, mods, channels, or schedules.
@@ -55,13 +56,15 @@ Local settings, server state, and the current process are different sources of t
 
 `letta model` reads and writes through the active backend, so it works the same on every backend. Prefer it over the REST helper scripts for anything model-related.
 
-### Account credits and model quota
+### Account credits
 
-Run `letta usage` for a Markdown overview of the current plan, credit balance, and `letta/*` model quota (`lettaTier` only). Report the server's bucket (`full`, `high`, `medium`, `low`, or `empty`) and quota/daily reset timestamps as-is; do not infer exact requests or percentages. Amounts are credits, not dollars; preserve negative balances. An omitted daily reset is shown as unavailable.
+Hosted model quota has been retired; `letta usage` shows Letta credits instead, not provider subscription quota.
 
-The command uses CLI auth and respects `LETTA_API_KEY`/`LETTA_BASE_URL`, not agent or conversation selectors. Credits belong to the organization; user-scoped quota belongs to the authenticated user, not necessarily the person chatting with the agent. In local mode, use `letta --backend cloud usage` only when the user wants Cloud account usage.
+Run `letta usage` for a Markdown overview of the current plan and remaining credit balance. Amounts are credits, not dollars; preserve negative balances.
 
-Use `letta model list` for available models; credits and quota buckets do not guarantee inference availability. `letta usage` does not include session token statistics; the interactive `/usage` command is a separate surface. If either lookup fails, the command exits nonzero without partial usage. Treat that as unavailable data, not zero credits or exhausted quota.
+The command uses CLI auth and respects `LETTA_API_KEY`/`LETTA_BASE_URL`, not agent or conversation selectors. Credits belong to the organization, not necessarily the person chatting with the agent. In local mode, use `letta --backend cloud usage` only when the user wants Cloud account usage.
+
+Use `letta model list` for available models; a credit balance does not guarantee inference availability. `letta usage` does not include session token statistics; the interactive `/usage` command is a separate surface. If the balance lookup fails, the command exits nonzero without partial usage. Treat that as unavailable data, not zero credits.
 
 ### Billing path when changing models
 
@@ -69,7 +72,7 @@ The same model can often be reached through more than one route: a connected sub
 
 Before switching models, consider how the current model is billed and keep the user on that route unless they asked to change it. Use the current handle, the labels in `letta model list`, and anything the user has said about billing as evidence. If several available handles serve the requested model and you cannot tell which one uses the user's subscription, list the candidates and ask before switching. Do not silently move a user from a subscription to per-token billing.
 
-`letta model list --byok` includes both connected subscriptions and user API keys, so it does not separate the two. `letta usage` covers only Letta credits and `letta/*` quota, not connected subscriptions.
+`letta model list --byok` includes both connected subscriptions and user API keys, so it does not separate the two. `letta usage` covers only Letta credits, not connected subscriptions.
 
 ### Harness and server settings
 
@@ -354,9 +357,21 @@ Use skills when the user wants you to become good at a repeatable workflow. Sour
 
 Load `creating-skills` to create or edit a skill. Load `acquiring-skills` when the user asks for a capability you do not already have. Project, global, bundled, and agent-owned skills have different visibility; verify the target scope before changing skills another agent may load.
 
+## Agent variables
+
+Variables are plain values the agent can read. They are never redacted. Use them for usernames, emails, URLs and other non-secret configuration. Never put a password, token or key in a variable. For a login, store the username as a variable (`X_USERNAME`) and the password as a secret (`X_PASSWORD`), and reference both in one command. Reference `$NAME` in a shell command to load a variable into the child shell's environment. A secret wins if it has the same name.
+
+```bash
+letta variable set X_USERNAME user@example.com
+letta variable list                     # names and values
+letta variable unset X_USERNAME
+```
+
+Use `--agent <agent-id>` to target another agent. `set` also supports `--env SOURCE_VAR` and `--stdin`. Cloud agents store variables server-side; local agents store them as plain JSON. Running sessions refresh variables within a minute.
+
 ## Agent secrets
 
-Agent-scoped secrets hold credential values that are referenced as `$NAME` in shell commands. Cloud agents store them server-side on the agent; local agents use OS secure storage. The harness substitutes `$NAME` at exec time and scrubs values from tool output, so values never enter agent context.
+Agent-scoped secrets hold credential values that are referenced as `$NAME` in shell commands. Cloud agents store them server-side on the agent; local agents use OS secure storage. The harness substitutes `$NAME` at exec time and scrubs values from tool output, so values never enter agent context. Because a secret's value is redacted wherever it appears, store only credentials as secrets; keep harmless identifiers like usernames in variables.
 
 ```bash
 letta secret list                                   # names only, never values

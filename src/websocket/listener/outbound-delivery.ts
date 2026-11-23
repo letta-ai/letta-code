@@ -62,7 +62,6 @@ async function waitForOwner(
   return null;
 }
 
-/** Deliver every terminal prefix to one current owner before advancing. */
 export async function awaitOrderedOutboundDeliveries(params: {
   deliveries: OutboundMessageDelivery[];
   getOwnerId(): string | null;

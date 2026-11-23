@@ -1,11 +1,3 @@
-/**
- * Agent-scoped secret storage for Letta Code.
- * Cloud agent secrets are stored on the Letta server. Local agent secrets are
- * stored in the operating system credential manager when available, with a
- * local-backend file fallback for Node production. Both paths hydrate the same
- * in-memory cache for fast $SECRET_NAME substitution.
- */
-
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { isLocalAgentId } from "@/agent/agent-id";
@@ -146,9 +138,7 @@ async function setAutoLocalSecretValue(
     try {
       await setSecretValue(name, value);
       return;
-    } catch {
-      // Fall through to file storage if keychain writes fail after probing.
-    }
+    } catch {}
   }
 
   setFileBackedLocalSecret(name, value);
@@ -173,8 +163,6 @@ function getLocalSecretStorage(): LocalSecretStorage {
   );
 }
 
-/** In-memory cache of secrets (populated on startup from server).
- *  Stored on globalThis via Symbol.for() to survive Bun bundle duplication. */
 const SECRETS_CACHE_KEY = Symbol.for("@letta/secretsCache");
 type SecretsCache = Map<string, Record<string, string>>;
 type GlobalWithSecrets = typeof globalThis & {
@@ -188,9 +176,31 @@ function getCache(): SecretsCache {
   return global[SECRETS_CACHE_KEY];
 }
 
+const SECRETS_LOADED_AT_KEY = Symbol.for("@letta/secretsLoadedAt");
+type GlobalWithLoadedAt = typeof globalThis & {
+  [key: symbol]: Map<string, number> | undefined;
+};
+function getLoadedAt(): Map<string, number> {
+  const global = globalThis as GlobalWithLoadedAt;
+  if (!global[SECRETS_LOADED_AT_KEY]) {
+    global[SECRETS_LOADED_AT_KEY] = new Map();
+  }
+  return global[SECRETS_LOADED_AT_KEY];
+}
+
 function setCache(agentId: string, secrets: Record<string, string>): void {
   getCache().set(agentId, { ...secrets });
+  getLoadedAt().set(agentId, Date.now());
 }
+
+const DEFAULT_SECRETS_MAX_AGE_MS = 60_000;
+let testSecretsMaxAgeOverride: number | null = null;
+
+export function __testSetSecretsMaxAgeMs(ms: number | null): void {
+  testSecretsMaxAgeOverride = ms;
+}
+
+const staleRefreshes = new Map<string, Promise<void>>();
 
 const LOCAL_SECRET_NAME_PATTERN = /^[A-Z_][A-Z0-9_]*$/;
 
@@ -349,9 +359,7 @@ function resolveSecretsAgentId(explicitAgentId?: string): string | null {
     if (scopedAgentId) {
       return scopedAgentId;
     }
-  } catch {
-    // Fall through to env fallback below.
-  }
+  } catch {}
 
   const envAgentId = (
     process.env.LETTA_AGENT_ID ||
@@ -361,10 +369,6 @@ function resolveSecretsAgentId(explicitAgentId?: string): string | null {
   return envAgentId || null;
 }
 
-/**
- * Initialize the agent-scoped secrets cache. Cloud agents fetch from the
- * server. Local agents read from OS secure storage through Bun.secrets.
- */
 export async function initSecretsFromServer(agentId: string): Promise<void> {
   if (isLocalAgentId(agentId)) {
     setCache(agentId, await loadLocalAgentSecrets(agentId));
@@ -390,34 +394,55 @@ export async function initSecretsFromServer(agentId: string): Promise<void> {
   setCache(agentId, secrets);
 }
 
-/**
- * Load secrets from the in-memory cache.
- * Returns an empty object if secrets have not been initialized yet.
- */
+const VAULT_LINKS_KEY = Symbol.for("@letta/secretsVaultLinks");
+
+function getVaultLinks(): Map<string, string> {
+  const global = globalThis as typeof globalThis & {
+    [VAULT_LINKS_KEY]?: Map<string, string>;
+  };
+  global[VAULT_LINKS_KEY] ??= new Map();
+  return global[VAULT_LINKS_KEY];
+}
+
+export function linkSecretsVault(sessionId: string, vaultAgentId: string) {
+  getVaultLinks().set(sessionId, vaultAgentId);
+}
+
+function readVaultId(agentId: string): string {
+  return getVaultLinks().get(agentId) ?? agentId;
+}
+
 export function loadSecrets(agentId?: string): Record<string, string> {
   const resolvedAgentId = resolveSecretsAgentId(agentId);
   if (!resolvedAgentId) {
     return {};
   }
-  return { ...(getCache().get(resolvedAgentId) ?? {}) };
+  return { ...(getCache().get(readVaultId(resolvedAgentId)) ?? {}) };
 }
 
-/** Populate an agent's cache entry from its vault only if it is not cached yet. */
 export async function ensureSecretsLoaded(agentId: string): Promise<void> {
-  if (!getCache().has(agentId)) await initSecretsFromServer(agentId);
+  const vaultId = readVaultId(agentId);
+  if (!getCache().has(vaultId)) {
+    await initSecretsFromServer(vaultId);
+    return;
+  }
+  const loadedAt = getLoadedAt().get(vaultId) ?? 0;
+  const maxAge = testSecretsMaxAgeOverride ?? DEFAULT_SECRETS_MAX_AGE_MS;
+  if (Date.now() - loadedAt < maxAge) return;
+  let refresh = staleRefreshes.get(vaultId);
+  if (!refresh) {
+    refresh = initSecretsFromServer(vaultId)
+      .catch(() => undefined)
+      .finally(() => staleRefreshes.delete(vaultId));
+    staleRefreshes.set(vaultId, refresh);
+  }
+  await refresh;
 }
 
-/**
- * List all secret names (not values).
- */
 export function listSecretNames(agentId?: string): string[] {
   return Object.keys(loadSecrets(agentId)).sort();
 }
 
-/**
- * Refresh the cache from core, then return the full entries. Used by the
- * modal's `secret_list` WS handler to pre-populate the form.
- */
 export async function refreshAndListSecrets(
   agentIdArg?: string,
 ): Promise<Array<{ key: string; value: string }>> {
@@ -432,13 +457,6 @@ export async function refreshAndListSecrets(
     .map((key) => ({ key, value: cache[key] ?? "" }));
 }
 
-/**
- * Apply a batch of secret mutations. Cloud agents use a single server PATCH;
- * local agents update OS secure storage and the local key index. Used by the
- * modal's `secret_apply` WS handler.
- *
- * @returns sorted final secret name list after the apply
- */
 export async function applySecretBatch(
   options: {
     set?: Record<string, string>;
@@ -476,9 +494,6 @@ export async function applySecretBatch(
   return Object.keys(next).sort();
 }
 
-/**
- * Set an agent-scoped secret and update the in-memory cache.
- */
 export async function setSecretOnServer(
   key: string,
   value: string,
@@ -503,20 +518,14 @@ export async function setSecretOnServer(
 
   await initSecretsFromServer(agentId);
 
-  // Update cache first
   const secrets = { ...loadSecrets(agentId) };
   secrets[normalizedKey] = value;
 
-  // PATCH replaces entire map
   await backend.updateAgent(agentId, { secrets });
 
   setCache(agentId, secrets);
 }
 
-/**
- * Delete an agent-scoped secret and update the in-memory cache.
- * @returns true if the secret existed and was deleted
- */
 export async function deleteSecretOnServer(
   key: string,
   agentIdArg?: string,
@@ -553,18 +562,18 @@ export async function deleteSecretOnServer(
   return true;
 }
 
-/**
- * Clear the in-memory cache (useful for testing).
- */
 export function clearSecretsCache(agentId?: string | null): void {
   if (agentId === null) {
     getCache().clear();
+    getLoadedAt().clear();
     return;
   }
   const resolvedAgentId = resolveSecretsAgentId(agentId);
   if (resolvedAgentId) {
     getCache().delete(resolvedAgentId);
+    getLoadedAt().delete(resolvedAgentId);
     return;
   }
   getCache().clear();
+  getLoadedAt().clear();
 }

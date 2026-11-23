@@ -58,8 +58,6 @@ function validateSendOptions(values: SendValues): void {
     );
   if (values.new && values.conversation)
     throw new Error("--new cannot be combined with --conversation.");
-  // Enqueue runs with the receiving listener's configuration. These flags
-  // cannot silently change that configuration or weaken its restrictions.
   for (const flag of [
     "tools",
     "allowedTools",
@@ -100,7 +98,6 @@ export interface CloudSendDeps {
   timeoutMs?: number;
 }
 
-/** Return undefined for execution paths this PR intentionally leaves unchanged. */
 export async function tryCloudHeadlessSend(
   values: SendValues,
   prompt: string,
@@ -115,10 +112,6 @@ export async function tryCloudHeadlessSend(
       isAgentLaunch,
     )
   ) {
-    // An Agent process launch aimed at a computer submits through the
-    // listener-launch path, which honors --no-wait by exiting with the
-    // enqueue receipt. Every other non-Cloud destination executes locally
-    // and has nothing to hand back early.
     const agentLaunchTargetsComputer =
       isAgentLaunch &&
       backend.capabilities.environmentRouting &&
@@ -178,7 +171,6 @@ export async function tryCloudHeadlessSend(
     const ambientSender = env.AGENT_ID || env.LETTA_AGENT_ID;
     const sender = {
       agentId: validateAddress(explicitSender || ambientSender, "agent"),
-      // An explicit different sender cannot inherit this process's return conversation.
       conversationId: validateAddress(
         !explicitSender || explicitSender === ambientSender
           ? env.CONVERSATION_ID || env.LETTA_CONVERSATION_ID
@@ -206,7 +198,6 @@ export async function tryCloudHeadlessSend(
       !noWait &&
       (values.computer || values.environment || values.env)
     ) {
-      // Preserve the existing `--computer` shorthand for the ambient agent.
       agentId = validateAddress(ambientSender, "agent");
     }
     if (!agentId && !conversationId)
@@ -227,8 +218,6 @@ export async function tryCloudHeadlessSend(
       controller.signal,
     ));
     if (!agentId && !noWait) {
-      // Only waiting needs the agent: its status stream is agent-scoped.
-      // A --no-wait send is addressed by the conversation alone.
       agentId =
         (
           await backend.retrieveConversation(conversationId, {
@@ -240,8 +229,6 @@ export async function tryCloudHeadlessSend(
           "Could not determine the conversation's agent to wait for a reply; pass --agent or use --no-wait.",
         );
     }
-    // Subscribe and receive the initial snapshot BEFORE submitting. A status
-    // stream opened only after 202 can miss a fast run's exact send mapping.
     const events =
       noWait || !agentId
         ? undefined
@@ -268,7 +255,6 @@ export async function tryCloudHeadlessSend(
       AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]),
     );
     clearTimeout(submissionTimeout);
-    // The receipt names the conversation's agent; older servers omit it.
     agentId = receipt.agent_id ?? agentId;
     const recovery = buildAgentMessageRecoveryCommands({
       agentId,

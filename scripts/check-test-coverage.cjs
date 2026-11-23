@@ -1,24 +1,9 @@
 #!/usr/bin/env node
 
-/**
- * Detects test files (*.test.ts, *.test.tsx) under src/ that are NOT covered
- * by the CI unit test runner (scripts/run-unit-tests.cjs).
- *
- * This catches two problems:
- *   1. A new src/ directory gets test files but nobody updates the dirs list
- *      in run-unit-tests.cjs, so those tests silently stop running in CI.
- *   2. Tests are added to forbidden directories (e.g. src/tests) instead of
- *      being collocated with their source files.
- *
- * Excluded by design:
- *   src/integration-tests — API-gated, run separately in CI
- *   src/channels — special-cased in run-unit-tests.cjs (isolation requirements)
- */
 
 const { readdirSync, existsSync } = require("node:fs");
 const path = require("node:path");
 
-// ---- Collect all test files under src/ ----
 function findTestFiles(dir) {
   const results = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -37,9 +22,6 @@ function findTestFiles(dir) {
 
 const allTestFiles = findTestFiles("src");
 
-// ---- Forbidden directories ----
-// Tests must be collocated with their source (e.g. src/cli/components/Foo.test.tsx),
-// not in a separate test directory.
 const FORBIDDEN_DIRS = ["src/tests"];
 
 const forbiddenFiles = allTestFiles.filter((f) =>
@@ -64,8 +46,6 @@ if (forbiddenFiles.length > 0) {
   process.exit(1);
 }
 
-// ---- Determine which directories/patterns CI covers ----
-// These must match scripts/run-unit-tests.cjs
 const ciDirs = [
   "src/agent",
   "src/auth",
@@ -89,18 +69,16 @@ const ciDirs = [
   "src/types",
   "src/updater",
   "src/utils",
+  "src/usage",
   "src/web",
   "src/websocket",
 ];
 
-// Special cases: channels is run separately, integration-tests is API-gated
 const specialDirs = ["src/channels", "src/integration-tests"];
 
-// Root-level: src/*.test.ts is covered by glob
 const coveredPrefixes = [...ciDirs, ...specialDirs];
 
 function isCovered(file) {
-  // Root-level src/*.test.ts files (no subdirectory)
   if (/^src\/[^/]+\.test\.tsx?$/.test(file)) return true;
 
   return coveredPrefixes.some(
@@ -108,7 +86,6 @@ function isCovered(file) {
   );
 }
 
-// ---- Report ----
 const uncovered = allTestFiles.filter((f) => !isCovered(f));
 
 if (uncovered.length === 0) {

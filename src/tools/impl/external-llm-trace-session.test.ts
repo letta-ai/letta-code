@@ -1,0 +1,289 @@
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import {
+  resolveBackendMode,
+  setConfiguredBackendMode,
+} from "@/backend/backend-mode";
+
+let previousMode = resolveBackendMode();
+beforeEach(() => {
+  previousMode = resolveBackendMode();
+  setConfiguredBackendMode("api");
+});
+afterEach(() => setConfiguredBackendMode(previousMode));
+
+import { once } from "node:events";
+import { createServer } from "node:http";
+import { ApiRequestError } from "@/backend/api/request";
+import type { ExternalTraceRow } from "./external-llm-trace-proxy";
+import { createTraceSession } from "./external-llm-trace-session";
+
+const context = {
+  parent_agent_id: "agent-test",
+  parent_conversation_id: "conv-test",
+  task_id: "task-test",
+  actingUserId: "user-test",
+  secretValues: ["vault-value-from-arbitrary-name"],
+};
+test("opt-out never resolves credentials or starts an upload", async () => {
+  let calls = 0;
+  const deps = {
+    getConfig: async () => {
+      calls++;
+      return { baseUrl: "https://api.letta.com", apiKey: "key" };
+    },
+    upload: async () => {
+      calls++;
+    },
+  };
+  expect(
+    await createTraceSession(
+      "codex",
+      context,
+      { DO_NOT_TRACK: "1" },
+      "https://api.openai.com/v1",
+      "session",
+      deps,
+    ),
+  ).toBeUndefined();
+  setConfiguredBackendMode("local");
+  expect(
+    await createTraceSession(
+      "codex",
+      context,
+      {},
+      "https://api.openai.com/v1",
+      "session",
+      deps,
+    ),
+  ).toBeUndefined();
+  setConfiguredBackendMode("api");
+  expect(calls).toBe(0);
+  expect(
+    await createTraceSession(
+      "codex",
+      context,
+      {},
+      "https://api.openai.com/v1",
+      "session",
+      {
+        ...deps,
+        getConfig: async () => ({
+          baseUrl: "http://localhost:8283",
+          apiKey: "key",
+        }),
+      },
+    ),
+  ).toBeUndefined();
+  expect(calls).toBe(0);
+});
+test("flush batches retain native session/task IDs and acting-user attribution", async () => {
+  const previous = process.env.LETTA_CODE_TELEM;
+  process.env.LETTA_CODE_TELEM = "1";
+  const upstream = createServer(async (req, res) => {
+    for await (const _chunk of req) {
+    }
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end('{"model":"test","usage":{"input_tokens":1,"output_tokens":2}}');
+  }).listen(0, "127.0.0.1");
+  await once(upstream, "listening");
+  const address = upstream.address();
+  if (!address || typeof address === "string")
+    throw new Error("Missing address");
+  const batches: ExternalTraceRow[][] = [];
+  const trace = await createTraceSession(
+    "codex",
+    context,
+    {},
+    `http://127.0.0.1:${address.port}`,
+    "session-test",
+    {
+      getConfig: async () => ({
+        baseUrl: "https://api.letta.com",
+        apiKey: "upload-credential",
+      }),
+      upload: async (rows, _config, scope) => {
+        expect(scope.actingUserId).toBe("user-test");
+        batches.push(rows);
+      },
+    },
+  );
+  expect(trace).toBeDefined();
+  try {
+    for (let i = 0; i < 2; i++) {
+      const response = await fetch(`${trace?.url}/responses`, {
+        method: "POST",
+        body: '{"model":"test","messages":[{"content":"vault-value-from-arbitrary-name upload-credential"}]}',
+      });
+      await response.text();
+    }
+    await trace?.close();
+    expect(JSON.stringify(batches)).not.toContain(
+      "vault-value-from-arbitrary-name",
+    );
+    expect(JSON.stringify(batches)).not.toContain("upload-credential");
+    expect(batches[0]?.[0]).not.toHaveProperty("secretValues");
+    expect(batches).toHaveLength(1);
+    expect(batches[0]).toHaveLength(2);
+    expect(batches[0]?.[0]?.worker_session_id).toBe("session-test");
+    expect(batches[0]?.[0]?.task_id).toBe("task-test");
+    expect(batches[0]?.[0]).not.toHaveProperty("actingUserId");
+  } finally {
+    if (previous === undefined) delete process.env.LETTA_CODE_TELEM;
+    else process.env.LETTA_CODE_TELEM = previous;
+    upstream.close();
+  }
+});
+
+test("failed uploads warn once and later traces compact when their delta base is missing", async () => {
+  const previous = process.env.LETTA_CODE_TELEM;
+  process.env.LETTA_CODE_TELEM = "1";
+  const upstream = createServer(async (req, res) => {
+    for await (const _chunk of req) {
+    }
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end('{"model":"test"}');
+  }).listen(0, "127.0.0.1");
+  await once(upstream, "listening");
+  const address = upstream.address();
+  if (!address || typeof address === "string")
+    throw new Error("Missing address");
+  const warnings: string[] = [];
+  let uploads = 0;
+  let capturedFallback: ExternalTraceRow | undefined;
+  const base = { role: "user", content: "x".repeat(190000) };
+  const appended = { role: "assistant", content: "b".repeat(300000) };
+  const trace = await createTraceSession(
+    "claude_code",
+    { ...context, secretValues: [...context.secretValues, "x"] },
+    {},
+    `http://127.0.0.1:${address.port}`,
+    "session-503",
+    {
+      getConfig: async () => ({
+        baseUrl: "https://api.letta.com",
+        apiKey: "upload-credential",
+      }),
+      upload: async (rows) => {
+        uploads++;
+        capturedFallback ??= rows.find(
+          (row) => row.capture_status === "size_limit",
+        );
+        throw new ApiRequestError(
+          "API error (503)",
+          503,
+          '{"detail":"service unavailable upload-credential"}',
+        );
+      },
+      warn: (message) => warnings.push(message),
+    },
+  );
+  try {
+    for (let batch = 0; batch < 2; batch++) {
+      for (let i = 0; i < 10; i++) {
+        const messages =
+          batch === 0 && i === 9
+            ? [base]
+            : batch === 1 && i === 0
+              ? [base, appended]
+              : "secret prompt text";
+        const response = await fetch(`${trace?.url}/messages`, {
+          method: "POST",
+          body: JSON.stringify({ model: "test", messages }),
+        });
+        await response.text();
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+    }
+    await trace?.close();
+    expect(uploads).toBeGreaterThanOrEqual(6);
+    expect(JSON.parse(capturedFallback?.request_json ?? "{}")).toEqual({
+      model: "test",
+      messages: [{ truncated: "size_limit" }, appended],
+      truncated: "size_limit",
+    });
+    expect(JSON.parse(capturedFallback?.response_json ?? "{}")).toEqual({
+      model: "test",
+    });
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("status=503");
+    expect(warnings[0]).toContain("service unavailable");
+    expect(warnings[0]).toContain("harness=claude_code");
+    expect(warnings[0]).toContain("conversation=conv-test");
+    expect(warnings[0]).toMatch(/rows=\d+/);
+    expect(warnings[0]).not.toContain("upload-credential");
+    expect(warnings[0]).not.toContain("secret prompt text");
+  } finally {
+    if (previous === undefined) delete process.env.LETTA_CODE_TELEM;
+    else process.env.LETTA_CODE_TELEM = previous;
+    upstream.close();
+  }
+}, 15000);
+
+test("splits batches when the encoded upload would exceed 8 MiB", async () => {
+  const previous = process.env.LETTA_CODE_TELEM;
+  process.env.LETTA_CODE_TELEM = "1";
+  const payload = JSON.stringify({ text: '"'.repeat(700000) });
+  const upstream = createServer(async (req, res) => {
+    for await (const _chunk of req) {
+    }
+    res.end(payload);
+  }).listen(0, "127.0.0.1");
+  await once(upstream, "listening");
+  const address = upstream.address();
+  if (!address || typeof address === "string")
+    throw new Error("Missing address");
+  const batches: ExternalTraceRow[][] = [];
+  const trace = await createTraceSession(
+    "codex",
+    context,
+    {},
+    `http://127.0.0.1:${address.port}`,
+    "session-test",
+    {
+      getConfig: async () => ({
+        baseUrl: "https://api.letta.com",
+        apiKey: "upload-credential",
+      }),
+      upload: async (rows) => {
+        batches.push(rows);
+      },
+    },
+  );
+  if (!trace) throw new Error("Missing trace session");
+  try {
+    for (let i = 0; i < 2; i++) {
+      const response = await fetch(`${trace.url}/responses`, {
+        method: "POST",
+        body: payload,
+      });
+      await response.text();
+    }
+    await trace.close();
+    const batchLimit = 8 * 1024 * 1024;
+    const payloadLimit = 2 * 1024 * 1024;
+    expect(batches.map((rows) => rows.length)).toEqual([1, 1]);
+    expect(
+      Buffer.byteLength(JSON.stringify({ rows: batches.flat() })),
+    ).toBeGreaterThan(batchLimit);
+    for (const rows of batches) {
+      expect(Buffer.byteLength(JSON.stringify({ rows }))).toBeLessThanOrEqual(
+        batchLimit,
+      );
+      const row = rows[0];
+      expect(row?.capture_status).toBe("complete");
+      expect(row?.request_json.length).toBe(payload.length);
+      expect(row?.response_json.length).toBe(payload.length);
+      expect(Buffer.byteLength(row?.request_json ?? "")).toBeLessThanOrEqual(
+        payloadLimit,
+      );
+      expect(Buffer.byteLength(row?.response_json ?? "")).toBeLessThanOrEqual(
+        payloadLimit,
+      );
+    }
+  } finally {
+    await trace.close();
+    if (previous === undefined) delete process.env.LETTA_CODE_TELEM;
+    else process.env.LETTA_CODE_TELEM = previous;
+    upstream.close();
+  }
+});

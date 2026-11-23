@@ -63,7 +63,7 @@ describe("generation floor", () => {
       mcp_originator_generation: 2,
     });
     expect(getMcpOriginatorToken("run-a")).toBe("mst_b");
-    clearMcpOriginatorTokens(); // simulate process crash: volatile Map lost
+    clearMcpOriginatorTokens();
     recordMcpOriginatorDelivery({
       super_run_id: "run-a",
       mcp_originator_token: "mst_a",
@@ -128,7 +128,6 @@ describe("authority state monotonicity", () => {
     retireMcpOriginatorTokensOnOriginSwap("run-a", "run-b");
     for (const runId of ["run-a", "run-b"]) {
       expect(getMcpOriginatorToken(runId)).toBeUndefined();
-      // The durable-live-owner escape hatch must NOT reopen a swap boundary.
       recordMcpOriginatorDelivery(
         {
           super_run_id: runId,
@@ -158,7 +157,7 @@ describe("authority state monotonicity", () => {
       mcp_originator_token: "mst_a",
       mcp_originator_generation: 2,
     });
-    clearMcpOriginatorTokens(); // crash
+    clearMcpOriginatorTokens();
     recordMcpOriginatorDelivery(
       {
         super_run_id: "run-a",
@@ -212,7 +211,6 @@ describe("durability", () => {
       resetMcpOriginatorAuthority();
       expect(mcpOriginatorAuthorityAllows("run-old", undefined)).toBe(true);
       expect(readMcpOriginatorAuthorityForTests("run-old")).toBeUndefined();
-      // A pruned file is rewritten without the stale record on next touch.
       noteMcpOriginatorDelivery("run-new", 1);
       const file = JSON.parse(readFileSync(path, "utf8")) as {
         records: Record<string, unknown>;
@@ -227,11 +225,6 @@ describe("durability", () => {
 
 describe("cross-process durability (evil-shub round 4)", () => {
   test("a denied recreation still advances the durable floor, blocking later zombies", () => {
-    // B/gen2 duplicate arrives with no volatile entry and a transiently
-    // failing live-owner proof: recreation is denied, but the delivery is
-    // still accepted/ACKed upstream, so the floor MUST advance to gen2 —
-    // otherwise a later A/gen1 zombie slips beneath it and recreates the
-    // revoked entry.
     recordMcpOriginatorDelivery(
       {
         mcp_originator_token: "token-b",
@@ -242,8 +235,6 @@ describe("cross-process durability (evil-shub round 4)", () => {
     );
     expect(getMcpOriginatorToken("run-x")).toBeUndefined();
     expect(readMcpOriginatorAuthorityForTests("run-x")?.floor).toBe(2);
-    // The gen1 zombie is now rejected by the floor even with a live-owner
-    // proof available again.
     recordMcpOriginatorDelivery(
       {
         mcp_originator_token: "token-a",
@@ -275,7 +266,6 @@ describe("cross-process durability (evil-shub round 4)", () => {
       );
       configureMcpOriginatorAuthorityPersistenceForTests(path);
       resetMcpOriginatorAuthority();
-      // A local write must read-merge: the foreign terminal record survives.
       noteMcpOriginatorDelivery("run-local", 1);
       const file = JSON.parse(readFileSync(path, "utf8")) as {
         records: Record<string, { state: string }>;
@@ -291,7 +281,6 @@ describe("cross-process durability (evil-shub round 4)", () => {
   test("an in-memory mark survives a failed durable write and keeps gating", () => {
     const root = mkdtempSync(join(tmpdir(), "letta-mcp-authority-"));
     try {
-      // Point persistence AT A DIRECTORY so every write fails.
       configureMcpOriginatorAuthorityPersistenceForTests(root);
       resetMcpOriginatorAuthority();
       recordMcpOriginatorDelivery(
@@ -303,8 +292,6 @@ describe("cross-process durability (evil-shub round 4)", () => {
         { allowCreate: true },
       );
       retireMcpOriginatorTokenOnTerminal("run-y");
-      // Volatile token is gone (fail-closed) and the terminal boundary still
-      // gates from the in-memory overlay even though nothing persisted.
       expect(getMcpOriginatorToken("run-y")).toBeUndefined();
       expect(mcpOriginatorAuthorityAllows("run-y", 4)).toBe(false);
       recordMcpOriginatorDelivery(
@@ -325,12 +312,10 @@ describe("cross-process durability (evil-shub round 4)", () => {
     const root = mkdtempSync(join(tmpdir(), "letta-mcp-authority-"));
     try {
       const broken = join(root, "blocked");
-      // 'blocked' is a directory: writes fail while it exists.
       mkdirSync(broken);
       configureMcpOriginatorAuthorityPersistenceForTests(broken);
       resetMcpOriginatorAuthority();
       markMcpOriginatorTerminal("run-z");
-      // Unbreak persistence: the overlay must flow to disk on the next write.
       const healed = join(root, "authority.json");
       configureMcpOriginatorAuthorityPersistenceForTests(healed);
       noteMcpOriginatorDelivery("run-z", 1);
@@ -373,9 +358,7 @@ describe("degraded durable file fail-closed (evil-shub round 5 P1)", () => {
   test("a terminal mark applies in-process but never clobbers the unreadable file", () => {
     withDegradedFile((path) => {
       expect(markMcpOriginatorTerminal("run-a")).toBe(false);
-      // The in-process fail-closed boundary stands for this process.
       expect(mcpOriginatorAuthorityAllows("run-a", 99)).toBe(false);
-      // The damaged file is untouched, so a later restart fails closed again.
       expect(readFileSync(path, "utf8")).toBe("{ not json !!!");
     });
   });
@@ -416,7 +399,6 @@ describe("degraded durable file fail-closed (evil-shub round 5 P1)", () => {
         admitted: false,
         permanent: false,
       });
-      // Operator restores a valid file: the next read heals.
       writeFileSync(path, JSON.stringify({ version: 1, records: {} }));
       expect(admitMcpOriginatorDelivery("run-a", 1)).toEqual({
         admitted: true,
@@ -476,7 +458,6 @@ describe("atomic admit and use-time recheck (evil-shub round 5 P2)", () => {
       mcp_originator_generation: 1,
     });
     expect(getMcpOriginatorToken("run-a")).toBe("mst_a");
-    // Another listener instance admits gen2 durably; this process merges it.
     noteMcpOriginatorDelivery("run-a", 2);
     expect(getMcpOriginatorToken("run-a")).toBeUndefined();
   });
@@ -495,7 +476,6 @@ describe("atomic admit and use-time recheck (evil-shub round 5 P2)", () => {
         }),
       ).toBe("denied_permanent");
     }
-    // No poisoned floor, no entry, and a well-formed delivery still admits.
     expect(readMcpOriginatorAuthorityForTests("run-bad")).toBeUndefined();
     expect(getMcpOriginatorToken("run-bad")).toBeUndefined();
     expect(admitMcpOriginatorDelivery("run-bad", 2)).toEqual({
@@ -533,8 +513,6 @@ describe("atomic admit and use-time recheck (evil-shub round 5 P2)", () => {
         );
         configureMcpOriginatorAuthorityPersistenceForTests(path);
         resetMcpOriginatorAuthority();
-        // Degraded durable state denies admission and use (fail-closed) and
-        // must NOT be clobbered by a fresh write.
         expect(admitMcpOriginatorDelivery("run-d", 4)).toEqual({
           admitted: false,
           permanent: false,
@@ -552,9 +530,6 @@ describe("atomic admit and use-time recheck (evil-shub round 5 P2)", () => {
 
 describe("strict durable file validation (evil-shub round-8 P1)", () => {
   test("an array-shaped records field degrades the WHOLE file instead of reading as empty", () => {
-    // `typeof [] === "object"` passed the round-7 check, so a corrupt file
-    // with an array payload read as a HEALTHY EMPTY file — silently
-    // dropping every persisted boundary (fail-open).
     const root = mkdtempSync(join(tmpdir(), "letta-mcp-authority-"));
     try {
       const path = join(root, "authority.json");
@@ -578,10 +553,6 @@ describe("strict durable file validation (evil-shub round-8 P1)", () => {
   });
 
   test("negative, fractional, and far-future updatedAtMs values degrade the WHOLE file", () => {
-    // updatedAtMs drives TTL pruning: a negative value makes every record
-    // look expired (the prune erases a terminal boundary → fail-open), and
-    // a far-future one pins a stale floor against pruning forever. Neither
-    // may be reinterpreted; the file is untrustworthy.
     const root = mkdtempSync(join(tmpdir(), "letta-mcp-authority-"));
     try {
       const path = join(root, "authority.json");
@@ -627,11 +598,6 @@ describe("state monotonicity across out-of-order retirement marks (round-8)", ()
 
 describe("durable retirement retry (evil-shub round-8 P1)", () => {
   test("a failed retirement is retried until it lands, and the boundary survives a reload", () => {
-    // The exact trap sequence: healthy admission persists a live record →
-    // persistence breaks (path becomes a directory: EISDIR on read, and the
-    // clobber guard blocks the write) → the retirement returns false but
-    // the in-memory overlay already denies → persistence heals → the
-    // registered retry lands the mark durably → a reload preserves it.
     const root = mkdtempSync(join(tmpdir(), "letta-mcp-authority-"));
     try {
       const path = join(root, "authority.json");
@@ -642,18 +608,14 @@ describe("durable retirement retry (evil-shub round-8 P1)", () => {
         admitted: true,
       });
 
-      // Break persistence: the configured path is now a DIRECTORY.
       rmSync(path);
       mkdirSync(path);
       expect(markMcpOriginatorHeaderless("run-a", 1)).toBe(false);
-      // The in-memory overlay denies use immediately…
       expect(mcpOriginatorAuthorityPermitsUse("run-a", 1)).toBe(false);
-      // …and the retirement is registered for retry.
       expect(
         readPendingMcpOriginatorRetirementsForTests().get("run-a")?.state,
       ).toBe("headerless");
 
-      // Heal persistence and drive the retry: the mark lands durably.
       rmdirSync(path);
       retryPendingMcpOriginatorRetirements();
       expect(readPendingMcpOriginatorRetirementsForTests().size).toBe(0);
@@ -663,7 +625,6 @@ describe("durable retirement retry (evil-shub round-8 P1)", () => {
       expect(disk.records["run-a"]?.state).toBe("headerless");
       expect(disk.records["run-a"]?.floor).toBe(1);
 
-      // A reload (process restart) preserves the boundary fail-closed.
       resetMcpOriginatorAuthority();
       expect(admitMcpOriginatorDelivery("run-a", 2)).toEqual({
         admitted: false,
@@ -688,9 +649,6 @@ describe("durable retirement intent (evil-shub round-9 P1)", () => {
         admitted: true,
       });
 
-      // Break persistence, then retire: the mark fails, but the INTENT
-      // write is attempted first. While persistence is broken neither
-      // lands; heal JUST enough for the intent write by re-registering.
       rmSync(path);
       mkdirSync(path);
       expect(markMcpOriginatorHeaderless("run-a", 1)).toBe(false);
@@ -698,10 +656,6 @@ describe("durable retirement intent (evil-shub round-9 P1)", () => {
         readPendingMcpOriginatorRetirementsForTests().get("run-a")?.state,
       ).toBe("headerless");
 
-      // Heal: the pending retry lands the mark — but first prove the
-      // intent path itself: re-break after healing so only the intent
-      // (not the mark) is durable, simulating a process that died between
-      // intent and mark. Do it directly: write an intent-only record.
       rmdirSync(path);
       writeFileSync(
         path,
@@ -718,9 +672,6 @@ describe("durable retirement intent (evil-shub round-9 P1)", () => {
         }),
       );
 
-      // A peer process (fresh overlay) reading the file treats the
-      // intent-carrying record as NOT live: admission and use both deny
-      // permanently, even though the durable state is still "live".
       resetMcpOriginatorAuthority();
       expect(admitMcpOriginatorDelivery("run-b", 4)).toEqual({
         admitted: false,
@@ -741,7 +692,6 @@ describe("durable retirement intent (evil-shub round-9 P1)", () => {
     const root = mkdtempSync(join(tmpdir(), "letta-mcp-authority-resume-"));
     try {
       const path = join(root, "authority.json");
-      // The dead process left ONLY the intent behind (mark never landed).
       writeFileSync(
         path,
         JSON.stringify({
@@ -759,7 +709,6 @@ describe("durable retirement intent (evil-shub round-9 P1)", () => {
       configureMcpOriginatorAuthorityPersistenceForTests(path);
       resetMcpOriginatorAuthority();
 
-      // Any transaction reloads the file and re-registers the retry.
       expect(mcpOriginatorAuthorityPermitsUse("run-a", 2)).toBe(false);
       expect(
         readPendingMcpOriginatorRetirementsForTests().get("run-a")?.state,
@@ -773,13 +722,10 @@ describe("durable retirement intent (evil-shub round-9 P1)", () => {
           { state: string; retiringTo?: string; floor?: number }
         >;
       };
-      // The mark landed and the intent is cleared (the landed state is the
-      // stronger boundary).
       expect(disk.records["run-a"]?.state).toBe("terminal");
       expect(disk.records["run-a"]?.retiringTo).toBeUndefined();
       expect(disk.records["run-a"]?.floor).toBe(2);
 
-      // And the boundary survives another reload.
       resetMcpOriginatorAuthority();
       expect(admitMcpOriginatorDelivery("run-a", 3)).toEqual({
         admitted: false,
@@ -796,24 +742,18 @@ describe("durable retirement intent (evil-shub round-9 P1)", () => {
       const path = join(root, "authority.json");
       configureMcpOriginatorAuthorityPersistenceForTests(path);
       resetMcpOriginatorAuthority();
-      // Set AFTER the reset: the reset restores the default TTL.
       configureMcpOriginatorAuthorityTtlForTests(1);
 
       expect(admitMcpOriginatorDelivery("run-a", 1)).toEqual({
         admitted: true,
       });
-      // Break persistence so the retirement stays pending.
       rmSync(path);
       mkdirSync(path);
       expect(markMcpOriginatorHeaderless("run-a", 1)).toBe(false);
       expect(readPendingMcpOriginatorRetirementsForTests().size).toBe(1);
 
-      // Let the entry outlive the (test-shortened) TTL; the retry drops it
-      // rather than storming the dead store every 30s forever.
       const deadline = Date.now() + 50;
-      while (Date.now() < deadline) {
-        // busy-wait a few ms past the 1ms TTL
-      }
+      while (Date.now() < deadline) {}
       retryPendingMcpOriginatorRetirements();
       expect(readPendingMcpOriginatorRetirementsForTests().size).toBe(0);
     } finally {

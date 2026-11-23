@@ -1,4 +1,3 @@
-// Run against the bundled Node worker, not only Bun's source execution path.
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";

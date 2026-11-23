@@ -1,14 +1,4 @@
 #!/usr/bin/env node
-/**
- * Skill Packager - Creates a distributable .skill file of a skill folder
- *
- * Usage:
- *   node package-skill.ts <path/to/skill-folder> [output-directory]
- *
- * Example:
- *   node package-skill.ts .skills/my-skill
- *   node package-skill.ts .skills/my-skill ./dist
- */
 
 import {
   existsSync,
@@ -20,8 +10,6 @@ import {
 } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-// Simple zip implementation using Node.js built-in zlib
-// For a proper zip file, we'll create the structure manually
 import { deflateRawSync } from "node:zlib";
 import { validateSkill } from "./validate-skill.ts";
 
@@ -32,9 +20,6 @@ interface ZipEntry {
 }
 
 function createZip(entries: ZipEntry[]): Buffer {
-  // Use archiver-like approach with raw buffer manipulation
-  // For simplicity, we'll use a basic ZIP format
-
   const localHeaders: Buffer[] = [];
   const centralHeaders: Buffer[] = [];
   let offset = 0;
@@ -47,49 +32,46 @@ function createZip(entries: ZipEntry[]): Buffer {
     const uncompressedSize = entry.isDirectory ? 0 : entry.data.length;
     const compressedSize = compressedData.length;
 
-    // CRC32 calculation
     const crc = entry.isDirectory ? 0 : crc32(entry.data);
 
-    // Local file header
     const localHeader = Buffer.alloc(30 + pathBuffer.length);
-    localHeader.writeUInt32LE(0x04034b50, 0); // Local file header signature
-    localHeader.writeUInt16LE(20, 4); // Version needed to extract
-    localHeader.writeUInt16LE(0x0800, 6); // General purpose bit flag (UTF-8 names)
-    localHeader.writeUInt16LE(entry.isDirectory ? 0 : 8, 8); // Compression method (8 = deflate)
-    localHeader.writeUInt16LE(0, 10); // File last modification time
-    localHeader.writeUInt16LE(0, 12); // File last modification date
-    localHeader.writeUInt32LE(crc, 14); // CRC-32
-    localHeader.writeUInt32LE(compressedSize, 18); // Compressed size
-    localHeader.writeUInt32LE(uncompressedSize, 22); // Uncompressed size
-    localHeader.writeUInt16LE(pathBuffer.length, 26); // File name length
-    localHeader.writeUInt16LE(0, 28); // Extra field length
+    localHeader.writeUInt32LE(0x04034b50, 0);
+    localHeader.writeUInt16LE(20, 4);
+    localHeader.writeUInt16LE(0x0800, 6);
+    localHeader.writeUInt16LE(entry.isDirectory ? 0 : 8, 8);
+    localHeader.writeUInt16LE(0, 10);
+    localHeader.writeUInt16LE(0, 12);
+    localHeader.writeUInt32LE(crc, 14);
+    localHeader.writeUInt32LE(compressedSize, 18);
+    localHeader.writeUInt32LE(uncompressedSize, 22);
+    localHeader.writeUInt16LE(pathBuffer.length, 26);
+    localHeader.writeUInt16LE(0, 28);
     pathBuffer.copy(localHeader, 30);
 
     localHeaders.push(localHeader);
     localHeaders.push(compressedData);
 
-    // Central directory header
     const centralHeader = Buffer.alloc(46 + pathBuffer.length);
-    centralHeader.writeUInt32LE(0x02014b50, 0); // Central directory signature
-    centralHeader.writeUInt16LE(0x0314, 4); // Version 2.0, made by Unix
-    centralHeader.writeUInt16LE(20, 6); // Version needed to extract
-    centralHeader.writeUInt16LE(0x0800, 8); // General purpose bit flag (UTF-8 names)
-    centralHeader.writeUInt16LE(entry.isDirectory ? 0 : 8, 10); // Compression method
-    centralHeader.writeUInt16LE(0, 12); // File last modification time
-    centralHeader.writeUInt16LE(0, 14); // File last modification date
-    centralHeader.writeUInt32LE(crc, 16); // CRC-32
-    centralHeader.writeUInt32LE(compressedSize, 20); // Compressed size
-    centralHeader.writeUInt32LE(uncompressedSize, 24); // Uncompressed size
-    centralHeader.writeUInt16LE(pathBuffer.length, 28); // File name length
-    centralHeader.writeUInt16LE(0, 30); // Extra field length
-    centralHeader.writeUInt16LE(0, 32); // File comment length
-    centralHeader.writeUInt16LE(0, 34); // Disk number start
-    centralHeader.writeUInt16LE(0, 36); // Internal file attributes
+    centralHeader.writeUInt32LE(0x02014b50, 0);
+    centralHeader.writeUInt16LE(0x0314, 4);
+    centralHeader.writeUInt16LE(20, 6);
+    centralHeader.writeUInt16LE(0x0800, 8);
+    centralHeader.writeUInt16LE(entry.isDirectory ? 0 : 8, 10);
+    centralHeader.writeUInt16LE(0, 12);
+    centralHeader.writeUInt16LE(0, 14);
+    centralHeader.writeUInt32LE(crc, 16);
+    centralHeader.writeUInt32LE(compressedSize, 20);
+    centralHeader.writeUInt32LE(uncompressedSize, 24);
+    centralHeader.writeUInt16LE(pathBuffer.length, 28);
+    centralHeader.writeUInt16LE(0, 30);
+    centralHeader.writeUInt16LE(0, 32);
+    centralHeader.writeUInt16LE(0, 34);
+    centralHeader.writeUInt16LE(0, 36);
     const unixMode = entry.isDirectory ? 0o40755 : 0o100644;
     const externalAttributes =
       ((unixMode << 16) | (entry.isDirectory ? 0x10 : 0)) >>> 0;
-    centralHeader.writeUInt32LE(externalAttributes, 38); // Unix mode + DOS directory bit
-    centralHeader.writeUInt32LE(offset, 42); // Relative offset of local header
+    centralHeader.writeUInt32LE(externalAttributes, 38);
+    centralHeader.writeUInt32LE(offset, 42);
     pathBuffer.copy(centralHeader, 46);
 
     centralHeaders.push(centralHeader);
@@ -100,21 +82,19 @@ function createZip(entries: ZipEntry[]): Buffer {
   const centralDirOffset = offset;
   const centralDirSize = centralHeaders.reduce((sum, h) => sum + h.length, 0);
 
-  // End of central directory record
   const endRecord = Buffer.alloc(22);
-  endRecord.writeUInt32LE(0x06054b50, 0); // End of central directory signature
-  endRecord.writeUInt16LE(0, 4); // Number of this disk
-  endRecord.writeUInt16LE(0, 6); // Disk where central directory starts
-  endRecord.writeUInt16LE(entries.length, 8); // Number of central directory records on this disk
-  endRecord.writeUInt16LE(entries.length, 10); // Total number of central directory records
-  endRecord.writeUInt32LE(centralDirSize, 12); // Size of central directory
-  endRecord.writeUInt32LE(centralDirOffset, 16); // Offset of start of central directory
-  endRecord.writeUInt16LE(0, 20); // Comment length
+  endRecord.writeUInt32LE(0x06054b50, 0);
+  endRecord.writeUInt16LE(0, 4);
+  endRecord.writeUInt16LE(0, 6);
+  endRecord.writeUInt16LE(entries.length, 8);
+  endRecord.writeUInt16LE(entries.length, 10);
+  endRecord.writeUInt32LE(centralDirSize, 12);
+  endRecord.writeUInt32LE(centralDirOffset, 16);
+  endRecord.writeUInt16LE(0, 20);
 
   return Buffer.concat([...localHeaders, ...centralHeaders, endRecord]);
 }
 
-// CRC32 implementation
 function crc32(data: Buffer): number {
   let crc = 0xffffffff;
   const table = getCrc32Table();
@@ -179,7 +159,6 @@ export function normalizeZipEntryPath(
 function packageSkill(skillPath: string, outputDir?: string): string | null {
   const resolvedPath = resolve(skillPath);
 
-  // Validate skill folder exists
   if (!existsSync(resolvedPath)) {
     console.error(`Error: Skill folder not found: ${resolvedPath}`);
     return null;
@@ -190,14 +169,12 @@ function packageSkill(skillPath: string, outputDir?: string): string | null {
     return null;
   }
 
-  // Validate SKILL.md exists
   const skillMdPath = join(resolvedPath, "SKILL.md");
   if (!existsSync(skillMdPath)) {
     console.error(`Error: SKILL.md not found in ${resolvedPath}`);
     return null;
   }
 
-  // Run validation before packaging
   console.log("Validating skill...");
   const { valid, message } = validateSkill(resolvedPath);
   if (!valid) {
@@ -207,7 +184,6 @@ function packageSkill(skillPath: string, outputDir?: string): string | null {
   }
   console.log(`${message}\n`);
 
-  // Determine output location
   const skillName = basename(resolvedPath);
   const outputPath = outputDir ? resolve(outputDir) : process.cwd();
 
@@ -217,13 +193,10 @@ function packageSkill(skillPath: string, outputDir?: string): string | null {
 
   const skillFilename = join(outputPath, `${skillName}.skill`);
 
-  // Create the .skill file (zip format)
   try {
-    // Get all files, using parent directory as base so skill folder is included
     const parentDir = dirname(resolvedPath);
     const entries = getAllFiles(resolvedPath, parentDir);
 
-    // Add the skill directory itself
     entries.unshift({
       path: `${skillName}/`,
       data: Buffer.alloc(0),
@@ -256,7 +229,6 @@ function isMainModule(): boolean {
     : false;
 }
 
-// CLI entry point
 if (isMainModule()) {
   const args = process.argv.slice(2);
 

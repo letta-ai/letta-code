@@ -1,14 +1,4 @@
 #!/usr/bin/env bun
-/**
- * Headless scenario test runner
- *
- * Runs a single multi-step scenario against the Letta Code CLI (headless) for a given
- * model and output format. Intended for CI matrix usage.
- *
- * Usage:
- *   bun tsx src/tests/headless-scenario.ts --model gpt-4.1 --output stream-json --parallel on
- *   bun tsx src/tests/headless-scenario.ts --backend local --model openai/gpt-5-mini --output text --parallel on
- */
 
 import { execFile as execFileCb, spawn } from "node:child_process";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
@@ -36,10 +26,6 @@ type Args = {
   output: "text" | "json" | "stream-json";
   parallel: "on" | "off" | "hybrid";
   provider?: LocalProvider;
-  // Smoke mode: trivial no-tools prompt asserting a sentinel word. Exercises
-  // the provider request path (connect/autodetect/round-trip) without the full
-  // tool-calling scenario — needed for weak/slow local models (e.g. Ollama on
-  // CPU runners) that cannot pass the frontier-model scenario in time.
   smoke: boolean;
 };
 
@@ -125,7 +111,6 @@ async function ensurePrereqs(args: Args): Promise<"ok" | "skip"> {
   }
 
   const provider = args.provider ?? inferLocalProvider(args.model);
-  // Ollama is a local endpoint (no API key); it needs a reachable base URL.
   if (provider === "ollama") {
     if (!process.env.OLLAMA_BASE_URL) {
       console.log("SKIP: Missing env OLLAMA_BASE_URL");
@@ -216,8 +201,6 @@ async function runCLI(args: Args): Promise<RunResult> {
     "--new-agent",
   ];
   if (args.smoke) {
-    // This lane verifies provider discovery and one inference round-trip. Keep
-    // unrelated harness context out so CPU-only local models finish reliably.
     cliArgs.push(
       "--tools=",
       "--no-skills",
@@ -228,8 +211,6 @@ async function runCLI(args: Args): Promise<RunResult> {
     );
   }
   if (args.backend === "api") {
-    // Skip the memfs pull to keep CI startup fast; agents are still
-    // memfs-enabled (non-memfs agents are no longer supported).
     cliArgs.push("--memfs-startup", "skip");
   }
   cliArgs.push(
@@ -243,11 +224,6 @@ async function runCLI(args: Args): Promise<RunResult> {
     args.model,
   );
 
-  // Cap each attempt at 6 minutes. The scenario should complete in ~2-3 min
-  // under normal conditions. Without a timeout, a WS proxy timeout mid-turn
-  // (observed at ~14 min in CI) can block a single attempt for 30+ minutes,
-  // consuming all retries with no useful signal. Killing early lets the outer
-  // retry loop start fresh with a clean agent context.
   const RUN_TIMEOUT_MS = 6 * 60 * 1000;
 
   return new Promise((resolve, reject) => {
@@ -312,8 +288,6 @@ export async function validateLocalStorage(storageDir: string | undefined) {
       JSON.parse(await readFile(join(storageDir, "agents", file), "utf8")),
     ),
   );
-  // Fresh memory workers persist their own agent records but edit the parent's
-  // checkout. Directory order cannot identify the primary agent.
   const primaries = agents.filter(
     (agent) => !agent.tags?.some((tag) => tag.startsWith("parent:")),
   );
@@ -384,9 +358,7 @@ function extractStreamJsonAssistantText(stdout: string): string {
       if (event.type === "result" && typeof event.result === "string") {
         parts.push(event.result);
       }
-    } catch {
-      // Ignore malformed lines; validation will fail if we never find the marker.
-    }
+    } catch {}
   }
   return parts.join("");
 }
@@ -445,8 +417,6 @@ async function main() {
         args.output,
         args.smoke ? SMOKE_MARKERS : REQUIRED_MARKERS,
       );
-      // Smoke mode only asserts the sentinel; it deliberately skips the
-      // tool-driven MemFS validation since it issues a no-tools prompt.
       if (args.backend === "local" && !args.smoke) {
         await validateLocalStorage(run.localStorageDir);
       }
@@ -480,7 +450,6 @@ async function main() {
       throw new Error(formatAttemptDiagnostics(failedAttempts));
     }
   } catch (e) {
-    // Dump full stdout to aid debugging
     console.error(
       `\n===== BEGIN STDOUT (${args.backend} / ${args.model} / ${args.output}) =====`,
     );

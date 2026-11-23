@@ -37,18 +37,10 @@ import {
 
 export { __testSetRunTurnImpl } from "@/websocket/app-server-openai-turn";
 
-/** @internal Clears chat-key and idempotency maps between tests. */
 export function __testResetConversationMap(): void {
   resetOpenAiCompatState();
 }
 
-// OpenAI-compatible surface for the App Server. Each Letta agent is
-// advertised as a "model". Conversation identity is explicit or absent:
-// clients that send a stable chat id header get a pinned Letta conversation
-// that receives only the newest message (stateful mode); header-less clients
-// are served statelessly — every request runs in a fresh conversation with
-// the client's transcript replayed — because identical transcripts are
-// indistinguishable and transcript fingerprinting cross-wires them.
 const MODELS_PATH = "/v1/models";
 const CHAT_COMPLETIONS_PATH = "/v1/chat/completions";
 
@@ -148,17 +140,11 @@ async function handleChatCompletions(
     return;
   }
 
-  // Stateful mode requires a stable chat identity from the client; without
-  // one, identical transcripts are indistinguishable and any reuse
-  // heuristic can cross-wire chats. Header-less requests run statelessly:
-  // a fresh conversation per request, with the client transcript replayed.
   const headerChatKey = chatKeyFromHeaders(request, body.stream === true);
   const idempotencyHeader = idempotencyKeyFromHeaders(request);
   const idempotencyKey = idempotencyHeader
     ? `${agent.id}:${headerChatKey ?? ""}:${idempotencyHeader}`
     : null;
-  // Consult the idempotency cache BEFORE any allocation: a replay must not
-  // create (and orphan) a conversation for a turn that will never run.
   const replayPromise = idempotencyKey
     ? getIdempotentOutcome(idempotencyKey)
     : undefined;
@@ -171,7 +157,6 @@ async function handleChatCompletions(
       if (headerChatKey) {
         const chatKey = `chat-key:${agent.id}:${headerChatKey}`;
         conversationId = await resolveConversationId(agent.id, chatKey);
-        // Pin immediately so concurrent requests for this chat reuse it.
         rememberConversation(chatKey, conversationId);
       } else {
         conversationId = await createConversationSerialized(agent.id);
@@ -280,8 +265,6 @@ async function handleChatCompletions(
       }
     }
     outcome = await turnPromise;
-    // Replayed outcomes stream their text as one chunk: the incremental
-    // pieces went to the original request's response.
     if (!ownsTurn && streaming && outcome.text && !clientClosed) {
       response.write(
         chatCompletionChunk(
@@ -317,9 +300,6 @@ async function handleChatCompletions(
   };
   const streamError = outcome.error;
 
-  // Headerless requests are stateless: their conversation exists only to
-  // host this turn, so remove it best-effort once the turn has settled.
-  // Header-keyed conversations persist — they ARE the chat's state.
   if (!headerChatKey && conversationId) {
     const ephemeralConversationId = conversationId;
     void getBackend()

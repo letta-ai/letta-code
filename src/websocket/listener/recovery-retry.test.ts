@@ -21,7 +21,6 @@ test("owner mismatch backs off, stops after five refused passes, and resets", as
     });
   for (const delay of [5000, 10000, 20000, 40000, Infinity]) {
     expect(await refuse()).toBeNull();
-    // Multiple acquisitions in one pass count as one refused pass.
     expect(await refuse()).toBeNull();
     expect(recoveryRetryDelay(listener, 5000)).toBe(delay);
   }

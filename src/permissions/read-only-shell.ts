@@ -68,8 +68,6 @@ const ALWAYS_SAFE_COMMANDS = new Set([
   "true",
 ]);
 
-// These commands inspect directory/path metadata but do not read file contents,
-// so absolute or home-anchored paths are still considered read-only.
 const EXTERNAL_PATH_METADATA_COMMANDS = new Set([
   "ls",
   "tree",
@@ -176,8 +174,6 @@ const SAFE_MEMORY_COMMANDS = new Set([
   "sleep",
 ]);
 
-// gh CLI read-only commands: category -> allowed actions
-// null means any action is allowed for that category
 export const SAFE_GH_COMMANDS: Record<string, Set<string> | null> = {
   pr: new Set(["list", "status", "checks", "diff", "view"]),
   issue: new Set(["list", "status", "view"]),
@@ -410,8 +406,6 @@ function isReadOnlyGitBranchArgs(args: string[]): boolean {
     "--verbose",
   ]);
 
-  // Filter flags that narrow which branches are listed — purely read-only.
-  // Each optionally accepts a commit/object as the next positional argument.
   const readOnlyFilterFlags = new Set([
     "--contains",
     "--no-contains",
@@ -451,17 +445,14 @@ function isReadOnlyGitBranchArgs(args: string[]): boolean {
       continue;
     }
 
-    // Filter flags like --contains, --merged, etc. take an optional commit arg.
     if (readOnlyFilterFlags.has(arg)) {
       sawReadOnlyFlag = true;
-      // Consume the optional commit/branch argument if present.
       if (typeof args[i + 1] === "string" && !args[i + 1]?.startsWith("-")) {
         i += 1;
       }
       continue;
     }
 
-    // Pattern arguments are read-only only when listing explicitly.
     if (sawListFlag && !arg.startsWith("-")) {
       sawReadOnlyFlag = true;
       continue;
@@ -559,7 +550,6 @@ function isSafeEnvInvocation(
       token === "-u" ||
       token === "--unset"
     ) {
-      // -u/--unset require a following variable name.
       if (token === "-u" || token === "--unset") {
         if (!tokens[index + 1]) {
           return false;
@@ -572,7 +562,6 @@ function isSafeEnvInvocation(
     }
 
     if (parseScopedAssignmentToken(token)) {
-      // Assignments may change how an otherwise read-only command behaves.
       return false;
     }
 
@@ -711,9 +700,6 @@ function rewriteScopedMemoryRedirects(
       ) {
         return null;
       }
-      // Preserve shell shape but replace the target with /dev/null so the
-      // read-only shell splitter can continue to reject unsafe commands while
-      // tolerating this already-validated scoped write redirection.
       rewritten += `${op} /dev/null`;
       i = target.end;
       continue;
@@ -1445,8 +1431,6 @@ function hasUnsafeRebaseOption(tokens: string[], startIndex: number): boolean {
 
 function isSafeMemoryGitConfig(tokens: string[], startIndex: number): boolean {
   const args = tokens.slice(startIndex);
-  // Memory git config is allowed except for scopes that write outside the
-  // memory repo.
   return !args.some((arg) => {
     const lower = arg.toLowerCase();
     return lower === "--global" || lower === "--system";
@@ -1454,7 +1438,6 @@ function isSafeMemoryGitConfig(tokens: string[], startIndex: number): boolean {
 }
 
 function isSafeMemoryGitFetch(tokens: string[], startIndex: number): boolean {
-  // Permit fetching from configured remotes, but not arbitrary URL/refspecs.
   const allowedFlags = new Set(["--prune", "--tags", "--quiet", "-q"]);
   const args = tokens.slice(startIndex);
   if (args.length === 0) {
@@ -1469,8 +1452,6 @@ function isSafeMemoryGitFetch(tokens: string[], startIndex: number): boolean {
     if (arg.startsWith("-")) {
       return false;
     }
-    // Remote names are local config aliases (usually "origin"). Disallow
-    // URL-like or path-like values so memory commands cannot fetch arbitrary URLs.
     if (!/^[A-Za-z0-9._-]+$/.test(arg)) {
       return false;
     }
@@ -1484,8 +1465,6 @@ function isSafeMemoryGitFetch(tokens: string[], startIndex: number): boolean {
 }
 
 function isSafeMemoryGitShowRef(tokens: string[], startIndex: number): boolean {
-  // Keep this intentionally narrow; the observed rollout need is plain
-  // `git show-ref` for local ref introspection.
   return tokens.length === startIndex;
 }
 
@@ -1954,9 +1933,6 @@ export function isScopedMemoryShellCommand(
   ).safe;
 }
 
-/**
- * Check if a shell command exclusively targets the agent's memory directory.
- */
 export function isMemoryDirCommand(
   command: string | string[] | undefined | null,
   agentId: string,

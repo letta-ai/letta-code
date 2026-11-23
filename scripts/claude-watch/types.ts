@@ -152,9 +152,7 @@ export interface ClaudeWatchStateSnapshot {
   runtime: ClaudeRuntimeSnapshot | null;
   fetched_at: string;
   workflow_run_url: string;
-  /** Physical parent on the durable state branch. */
   state_commit_parent: string | null;
-  /** Snapshot used for semantic diffing; undefined legacy snapshots use the physical parent. */
   analysis_parent_sha?: string | null;
 }
 

@@ -71,7 +71,6 @@ async function setup() {
 
 test("cold existing thread continues the host's waking status through reasoning and MessageChannel", async () => {
   const h = await setup();
-  // The external host already wrote waking before it could reach the gateway.
   const slack = getSlackWriteClient();
   await slack.assistant.threads.setStatus({
     channel_id: h.source.chatId,

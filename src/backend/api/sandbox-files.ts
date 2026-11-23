@@ -100,25 +100,57 @@ export async function uploadFileToSandbox(
 }
 
 export interface SandboxDesktopSession {
-  /** Optional browser viewer URL supplied by the server. */
   viewerUrl?: string;
-  /** Relay websocket URL carrying a bearer token; treat it as a secret. */
   url: string;
+  protocols?: string[];
   expiresAt: string;
 }
 
-/**
- * Start the sandbox's graphical desktop and mint a short-lived relay session.
- * The server fixes the lifetime (one hour today); the body is intentionally
- * empty because the endpoint accepts no options.
- */
+export interface SandboxExposure {
+  url: string;
+  port: number;
+  expiresAt: string;
+  private?: boolean;
+}
+
+export type SandboxExposureExpiry =
+  | { expiresInSeconds: number }
+  | { extendBySeconds: number };
+
+export interface SandboxExposureOptions {
+  public?: boolean;
+  sandboxId?: string;
+}
+
+export async function createSandboxExposure(
+  port: number,
+  expiry: SandboxExposureExpiry,
+  options: SandboxExposureOptions = {},
+  deps: SandboxFilesApiDeps = defaultDeps,
+): Promise<SandboxExposure> {
+  const response = await request(
+    "/v1/sandbox-exposures",
+    {
+      method: "POST",
+      body: JSON.stringify({ port, ...expiry, ...options }),
+      headers: { "Content-Type": "application/json" },
+    },
+    deps,
+  );
+  return (await response.json()) as SandboxExposure;
+}
+
 export async function createSandboxDesktopSession(
   sandboxId: string,
   deps: SandboxFilesApiDeps = defaultDeps,
 ): Promise<SandboxDesktopSession> {
   const response = await request(
     `/v1/sandboxes/${encodeURIComponent(sandboxId)}/desktop-session`,
-    { method: "POST", body: JSON.stringify({}) },
+    {
+      method: "POST",
+      body: JSON.stringify({ websocketProtocolAuth: true }),
+      headers: { "Content-Type": "application/json" },
+    },
     deps,
   );
   return (await response.json()) as SandboxDesktopSession;

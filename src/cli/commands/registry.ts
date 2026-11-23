@@ -1,6 +1,3 @@
-// src/cli/commands/registry.ts
-// Registry of available CLI commands
-
 import {
   type DreamCommandScope,
   requestCloudReflectionRun,
@@ -10,6 +7,7 @@ import { listWorkflowExecutions } from "@/tools/workflow/execution-registry";
 import { handleMemoryRepositoryCommand } from "./memory-repository";
 import { handleSecretCommand } from "./secret";
 import { handleSystemRemindersCommand } from "./system-reminders";
+import { handleVariableCommand } from "./variable";
 
 type CommandHandlerResult =
   | string
@@ -26,10 +24,10 @@ type CommandHandler = (
 interface Command {
   desc: string;
   handler: CommandHandler;
-  args?: string; // Optional argument syntax hint (e.g., "[conversation_id]", "<name>")
-  hidden?: boolean; // Hidden commands don't show in autocomplete but still work
-  order?: number; // Lower numbers appear first in autocomplete (default: 100)
-  noArgs?: boolean; // If true, reject any arguments passed to this command
+  args?: string;
+  hidden?: boolean;
+  order?: number;
+  noArgs?: boolean;
 }
 
 async function handleReflectionCommand(
@@ -38,7 +36,6 @@ async function handleReflectionCommand(
 ) {
   if (!scope) throw new Error("Reflection requires an active agent.");
   const output = await requestCloudReflectionRun(scope, args.join(" "));
-  // Code-managed reflection needs the TUI/listener runtime, not this registry.
   if (output === null)
     throw new Error(
       "Run this command in the TUI or listener to launch Code-managed reflection.",
@@ -47,13 +44,11 @@ async function handleReflectionCommand(
 }
 
 export const commands: Record<string, Command> = {
-  // === Page 1: Most commonly used (order 10-19) ===
   "/agents": {
     desc: "Browse agents (pinned, Letta Code, all)",
     order: 10,
     noArgs: true,
     handler: () => {
-      // Handled specially in App.tsx to open agent browser
       return "Opening agent browser...";
     },
   },
@@ -70,7 +65,6 @@ export const commands: Record<string, Command> = {
     order: 12,
     noArgs: true,
     handler: () => {
-      // Handled specially in App.tsx to send initialization prompt
       return "Initializing memory...";
     },
   },
@@ -79,7 +73,6 @@ export const commands: Record<string, Command> = {
     order: 12.1,
     args: "[symptom]",
     handler: () => {
-      // Handled by the primary-agent turn in the TUI and listener.
       return "Starting doctor...";
     },
   },
@@ -106,7 +99,6 @@ export const commands: Record<string, Command> = {
     args: "[--model-a MODEL] [--model-b MODEL] | resume <run-id> | choose <run-id> <1|2|tie> [notes]",
     order: 50.1,
     handler: () => {
-      // Handled specially in App.tsx
       return "Preparing reflection arena...";
     },
   },
@@ -115,7 +107,6 @@ export const commands: Record<string, Command> = {
     order: 28,
     noArgs: true,
     handler: () => {
-      // Handled specially in App.tsx to open skills browser overlay
       return "Opening skills browser...";
     },
   },
@@ -123,7 +114,6 @@ export const commands: Record<string, Command> = {
     desc: "Enter skill creation mode (/skill-creator [description])",
     order: 28.5,
     handler: () => {
-      // Handled specially in App.tsx to trigger skill-creation workflow
       return "Starting skill creation...";
     },
   },
@@ -132,7 +122,6 @@ export const commands: Record<string, Command> = {
     order: 15,
     noArgs: true,
     handler: () => {
-      // Handled specially in App.tsx to open memory viewer
       return "Opening memory viewer...";
     },
   },
@@ -141,7 +130,6 @@ export const commands: Record<string, Command> = {
     order: 16,
     noArgs: true,
     handler: () => {
-      // Handled specially in App.tsx - opens browser directly
       return "Opening Memory Palace...";
     },
   },
@@ -150,7 +138,6 @@ export const commands: Record<string, Command> = {
     order: 15.5,
     noArgs: true,
     handler: () => {
-      // Handled specially in App.tsx to open sleeptime settings
       return "Opening sleeptime settings...";
     },
   },
@@ -159,7 +146,6 @@ export const commands: Record<string, Command> = {
     order: 15.6,
     noArgs: true,
     handler: () => {
-      // Handled specially in App.tsx to open compaction settings
       return "Opening compaction settings...";
     },
   },
@@ -168,16 +154,14 @@ export const commands: Record<string, Command> = {
     args: "[tokens] [--override]",
     order: 15.7,
     handler: () => {
-      // Handled specially in App.tsx
       return "Setting max context window...";
     },
   },
   "/memfs": {
     desc: "Manage filesystem-backed memory (/memfs [enable|sync|reset])",
     args: "[enable|disable|sync|reset]",
-    order: 27.5, // Advanced feature, near /toolset
+    order: 27.5,
     handler: () => {
-      // Handled specially in App.tsx
       return "Managing memory filesystem...";
     },
   },
@@ -185,7 +169,6 @@ export const commands: Record<string, Command> = {
     desc: "Search messages across all agents (/search [query])",
     order: 15.1,
     handler: () => {
-      // Handled specially in App.tsx to show message search
       return "Opening message search...";
     },
   },
@@ -194,7 +177,6 @@ export const commands: Record<string, Command> = {
     order: 17,
     noArgs: true,
     handler: () => {
-      // Handled specially in App.tsx - opens ProviderSelector
       return "Opening provider connection...";
     },
   },
@@ -203,7 +185,6 @@ export const commands: Record<string, Command> = {
     order: 18,
     noArgs: true,
     handler: () => {
-      // Handled specially in App.tsx to reset agent messages
       return "Clearing in-context messages...";
     },
   },
@@ -212,7 +193,6 @@ export const commands: Record<string, Command> = {
     hidden: true,
     noArgs: true,
     handler: () => {
-      // Handled specially in App.tsx to reset agent messages
       return "Resetting agent messages...";
     },
   },
@@ -221,7 +201,6 @@ export const commands: Record<string, Command> = {
     args: "<path>",
     order: 18.5,
     handler: () => {
-      // Handled specially in App.tsx to switch local cwd
       return "Changing working directory...";
     },
   },
@@ -230,18 +209,15 @@ export const commands: Record<string, Command> = {
     args: "<path>",
     hidden: true,
     handler: () => {
-      // Handled specially in App.tsx to switch local cwd
       return "Changing working directory...";
     },
   },
 
-  // === Page 2: Agent management (order 20-29) ===
   "/new": {
     desc: "Start a new conversation (keep agent memory)",
     order: 20,
     noArgs: true,
     handler: () => {
-      // Handled specially in App.tsx to create new conversation
       return "Starting new conversation...";
     },
   },
@@ -250,7 +226,6 @@ export const commands: Record<string, Command> = {
     order: 20.5,
     noArgs: true,
     handler: () => {
-      // Handled specially in App.tsx to fork current conversation
       return "Forking conversation...";
     },
   },
@@ -258,7 +233,6 @@ export const commands: Record<string, Command> = {
     desc: "Fork conversation and ask a side question (/btw <question>)",
     order: 20.6,
     handler: () => {
-      // Handled specially in App.tsx to fork and ask in background
       return "Forking conversation...";
     },
   },
@@ -266,7 +240,6 @@ export const commands: Record<string, Command> = {
     desc: "Pin current agent (/pin [name])",
     order: 22,
     handler: () => {
-      // Handled specially in App.tsx
       return "Pinning agent...";
     },
   },
@@ -274,7 +247,6 @@ export const commands: Record<string, Command> = {
     desc: "Unpin current agent",
     order: 23,
     handler: () => {
-      // Handled specially in App.tsx
       return "Unpinning agent...";
     },
   },
@@ -282,7 +254,6 @@ export const commands: Record<string, Command> = {
     desc: "Rename agent or conversation (/rename agent [name]|convo [name])",
     order: 24,
     handler: () => {
-      // Handled specially in App.tsx to access agent ID and client
       return "Renaming...";
     },
   },
@@ -290,7 +261,6 @@ export const commands: Record<string, Command> = {
     desc: "Update the current agent's description (/description <text>)",
     order: 25,
     handler: () => {
-      // Handled specially in App.tsx to access agent ID and client
       return "Updating description...";
     },
   },
@@ -299,7 +269,6 @@ export const commands: Record<string, Command> = {
     order: 27,
     noArgs: true,
     handler: () => {
-      // Handled specially in App.tsx to access agent ID and client
       return "Opening toolset selector...";
     },
   },
@@ -307,7 +276,6 @@ export const commands: Record<string, Command> = {
     desc: "Toggle experiments",
     order: 27.1,
     handler: () => {
-      // Handled specially in App.tsx to open experiments selector
       return "Opening experiments selector...";
     },
   },
@@ -316,7 +284,6 @@ export const commands: Record<string, Command> = {
     order: 27.2,
     noArgs: true,
     handler: () => {
-      // Handled specially in AppCoordinator to reload runtime surfaces in-place
       return "Reloading...";
     },
   },
@@ -325,7 +292,6 @@ export const commands: Record<string, Command> = {
     order: 27.3,
     args: "learn [memory-citations] [options] | generate-env [request]",
     handler: () => {
-      // Handled specially in use-submit-handler.ts to stream mod learning progress
       return "Starting mod learning...";
     },
   },
@@ -334,18 +300,15 @@ export const commands: Record<string, Command> = {
     order: 28,
     noArgs: true,
     handler: () => {
-      // Handled specially in App.tsx to access agent ID and open browser
       return "Opening ADE...";
     },
   },
 
-  // === Page 3: Advanced features (order 30-39) ===
   "/system": {
     desc: "Switch system prompt",
     order: 30,
     noArgs: true,
     handler: () => {
-      // Handled specially in App.tsx to open system prompt selector
       return "Opening system prompt selector...";
     },
   },
@@ -354,7 +317,6 @@ export const commands: Record<string, Command> = {
     order: 30.5,
     noArgs: true,
     handler: () => {
-      // Handled specially in App.tsx to open personality selector
       return "Opening personality selector...";
     },
   },
@@ -363,7 +325,6 @@ export const commands: Record<string, Command> = {
     order: 31,
     noArgs: true,
     handler: () => {
-      // Handled specially in App.tsx to open SubagentManager component
       return "Opening subagent manager...";
     },
   },
@@ -371,9 +332,14 @@ export const commands: Record<string, Command> = {
     desc: "Manage MCP servers (add, connect with OAuth)",
     order: 32,
     handler: () => {
-      // Handled specially in App.tsx to show MCP server selector
       return "Opening MCP server manager...";
     },
+  },
+  "/variable": {
+    desc: "Manage plain variables for shell commands",
+    order: 33.05,
+    args: "<set|list|unset> [key] [value]",
+    handler: (args: string[]) => handleVariableCommand(args),
   },
   "/secret": {
     desc: "Manage secrets for shell commands",
@@ -395,7 +361,6 @@ export const commands: Record<string, Command> = {
     order: 33,
     noArgs: true,
     handler: () => {
-      // Handled specially in App.tsx to display usage stats
       return "Fetching usage statistics...";
     },
   },
@@ -404,7 +369,6 @@ export const commands: Record<string, Command> = {
     order: 33.5,
     noArgs: true,
     handler: () => {
-      // Handled specially in App.tsx to display context usage
       return "Fetching context usage...";
     },
   },
@@ -413,7 +377,6 @@ export const commands: Record<string, Command> = {
     order: 33.6,
     noArgs: true,
     handler: () => {
-      // Handled specially in App.tsx
       return "Recompiling agent and conversation...";
     },
   },
@@ -421,17 +384,15 @@ export const commands: Record<string, Command> = {
     desc: "Send feedback to the Letta team",
     order: 34,
     handler: () => {
-      // Handled specially in App.tsx to send feedback request
       return "Sending feedback...";
     },
   },
   "/help": {
     desc: "Show available commands",
     order: 35,
-    hidden: true, // Redundant with improved autocomplete, but still works if typed
+    hidden: true,
     noArgs: true,
     handler: () => {
-      // Handled specially in App.tsx to open help dialog
       return "Opening help...";
     },
   },
@@ -440,7 +401,6 @@ export const commands: Record<string, Command> = {
     order: 36,
     noArgs: true,
     handler: () => {
-      // Handled specially in App.tsx to open hooks manager
       return "Opening hooks manager...";
     },
   },
@@ -449,7 +409,6 @@ export const commands: Record<string, Command> = {
     args: "[request]",
     order: 36.5,
     handler: () => {
-      // Handled specially in App.tsx
       return "Starting statusline setup...";
     },
   },
@@ -458,7 +417,6 @@ export const commands: Record<string, Command> = {
     noArgs: true,
     order: 36.6,
     handler: () => {
-      // Handled specially in App.tsx
       return "Opening title configurator...";
     },
   },
@@ -467,7 +425,6 @@ export const commands: Record<string, Command> = {
     args: "[on|off|status]",
     order: 36.7,
     handler: () => {
-      // Handled specially in App.tsx
       return "Managing reasoning Tab shortcut...";
     },
   },
@@ -547,18 +504,15 @@ export const commands: Record<string, Command> = {
     order: 38,
     noArgs: true,
     handler: () => {
-      // Handled specially in App.tsx
       return "Opening GitHub App installer...";
     },
   },
 
-  // === Session management (order 40-49) ===
   "/bg": {
     desc: "Show background shell processes",
     order: 42,
     noArgs: true,
     handler: () => {
-      // Handled specially in App.tsx to show background processes
       return "Showing background processes...";
     },
   },
@@ -579,7 +533,6 @@ export const commands: Record<string, Command> = {
     order: 43,
     noArgs: true,
     handler: () => {
-      // Handled specially in App.tsx
       return "Exiting...";
     },
   },
@@ -588,7 +541,6 @@ export const commands: Record<string, Command> = {
     order: 43,
     noArgs: true,
     handler: () => {
-      // Handled specially in use-submit-handler.ts
       return "Signing in...";
     },
   },
@@ -597,18 +549,15 @@ export const commands: Record<string, Command> = {
     order: 44,
     noArgs: true,
     handler: () => {
-      // Handled specially in App.tsx to access settings manager
       return "Clearing credentials...";
     },
   },
 
-  // === Hidden commands (not shown in autocomplete) ===
   "/stream": {
     desc: "Toggle token streaming on/off",
     hidden: true,
     noArgs: true,
     handler: () => {
-      // Handled specially in App.tsx for live toggling
       return "Toggling token streaming...";
     },
   },
@@ -616,7 +565,6 @@ export const commands: Record<string, Command> = {
     desc: "Summarize conversation history (compaction) with optional mode",
     args: "[all|sliding_window|self_compact_all|self_compact_sliding_window]",
     handler: () => {
-      // Handled specially in App.tsx to access client and agent ID
       return "Compacting conversation...";
     },
   },
@@ -625,7 +573,6 @@ export const commands: Record<string, Command> = {
     args: "[tokens] [--override]",
     hidden: true,
     handler: () => {
-      // Handled specially in App.tsx
       return "Setting max context window...";
     },
   },
@@ -634,7 +581,6 @@ export const commands: Record<string, Command> = {
     hidden: true,
     noArgs: true,
     handler: () => {
-      // Handled specially in App.tsx to access agent ID and client
       return "Linking tools...";
     },
   },
@@ -643,7 +589,6 @@ export const commands: Record<string, Command> = {
     hidden: true,
     noArgs: true,
     handler: () => {
-      // Handled specially in App.tsx to access agent ID and client
       return "Unlinking tools...";
     },
   },
@@ -652,13 +597,12 @@ export const commands: Record<string, Command> = {
     args: "[conversation_id]",
     order: 19,
     handler: () => {
-      // Handled specially in App.tsx to show conversation selector or switch directly
       return "Opening conversation selector...";
     },
   },
   "/pinned": {
     desc: "Browse pinned agents",
-    hidden: true, // Alias for /agents (opens to Pinned tab)
+    hidden: true,
     noArgs: true,
     handler: () => {
       return "Opening agent browser...";
@@ -666,7 +610,7 @@ export const commands: Record<string, Command> = {
   },
   "/profiles": {
     desc: "Browse pinned agents",
-    hidden: true, // Alias for /agents (opens to Pinned tab)
+    hidden: true,
     noArgs: true,
     handler: () => {
       return "Opening agent browser...";
@@ -691,9 +635,6 @@ function normalizeCommandHandlerResult(result: CommandHandlerResult): {
   return result;
 }
 
-/**
- * Execute a command and return the result
- */
 export async function executeCommand(
   input: string,
   scope?: DreamCommandScope,

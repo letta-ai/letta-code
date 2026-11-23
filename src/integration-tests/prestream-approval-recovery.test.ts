@@ -143,13 +143,11 @@ async function startPendingApprovalSession(
         return;
       }
 
-      // If model responded without tool call, retry prompt up to max attempts.
       if (msg.type === "result" && promptAttempts < 3) {
         sendPrompt();
         return;
       }
 
-      // Pending approval is active when bidirectional mode asks for permission.
       if (
         msg.type === "control_request" &&
         msg.request?.subtype === "can_use_tool"
@@ -166,9 +164,7 @@ async function startPendingApprovalSession(
       for (const line of lines) {
         try {
           onMessage(JSON.parse(line));
-        } catch {
-          // Ignore non-JSON output lines
-        }
+        } catch {}
       }
     });
 

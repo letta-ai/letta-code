@@ -174,12 +174,6 @@ function sendJson(
   response.end(body);
 }
 
-/**
- * Start a process-local MCP proxy for one shell execution context. The child
- * receives only an opaque local capability. The parent resolves the context's
- * current originator at request time and adds the bearer to the Cloud request;
- * raw bearer material never enters the child process.
- */
 export function createMcpSubprocessBroker(options: {
   agentId: string;
   getAllowedAgentIds?: () => Promise<ReadonlySet<string>>;
@@ -281,8 +275,6 @@ export function createMcpSubprocessBroker(options: {
           sendJson(response, 403, { ok: false, error: "Forbidden" });
           return;
         }
-        // Discovery needs the same verified identity as execution so Cloud can
-        // omit restricted servers and tools from unauthorized turns.
         const headers = originatorHeaders(scope.originatorToken);
         const value =
           payload.method === "GET"
@@ -309,9 +301,7 @@ export function createMcpSubprocessBroker(options: {
     },
   );
 
-  server.on("error", () => {
-    // The child receives a bounded connection error. Do not crash the host.
-  });
+  server.on("error", () => {});
   server.on("connection", (connection: Socket) => {
     connections.add(connection);
     connection.once("close", () => connections.delete(connection));
@@ -337,9 +327,7 @@ export function createMcpSubprocessBroker(options: {
     } else {
       try {
         chmodSync(socket, 0o600);
-      } catch {
-        // The random capability still protects the short-lived broker.
-      }
+      } catch {}
     }
   });
   if (process.platform === "win32") {
@@ -363,15 +351,11 @@ export function createMcpSubprocessBroker(options: {
       connections.clear();
       try {
         server.close();
-      } catch {
-        // The child may exit before the asynchronous listen completes.
-      }
+      } catch {}
       if (existsSync(socket)) {
         try {
           unlinkSync(socket);
-        } catch {
-          // Best-effort cleanup; the randomized path is never reused.
-        }
+        } catch {}
       }
     },
   };
@@ -471,7 +455,6 @@ async function requestBrokerWithStartupRetry(
   throw lastError;
 }
 
-/** Return the parent-mediated MCP client available to a shell child. */
 export function createMcpSubprocessBrokerClient(
   env: NodeJS.ProcessEnv,
 ): UnifiedMcpClient | null {
@@ -493,7 +476,6 @@ export function createMcpSubprocessBrokerClient(
   };
 }
 
-/** Prefer the parent broker in a shell child; ordinary CLI calls use Cloud. */
 export async function getMcpSubprocessBrokerClientOrDefault(
   env: NodeJS.ProcessEnv,
 ): Promise<UnifiedMcpClient> {

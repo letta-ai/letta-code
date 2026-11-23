@@ -121,13 +121,11 @@ test("hasLiveAcceptedInputOwner: live started/queued owners qualify, terminal to
   const startedId = ordinaryInputIdentity("live-started");
   const queuedId = ordinaryInputIdentity("live-queued");
 
-  // Unknown identity: no owner at all.
   expect(
     hasLiveAcceptedInputOwner(runtime, ordinaryInputIdentity("unknown")),
   ).toBe(false);
   expect(hasLiveAcceptedInputOwner(runtime, undefined)).toBe(false);
 
-  // Started owner: live.
   const startedAdmission = reserveInputDisposition(runtime, startedId);
   expect(startedAdmission.kind).toBe("reserved");
   if (startedAdmission.kind !== "reserved") return;
@@ -141,7 +139,6 @@ test("hasLiveAcceptedInputOwner: live started/queued owners qualify, terminal to
   });
   expect(hasLiveAcceptedInputOwner(runtime, startedId)).toBe(true);
 
-  // Queued owner: live.
   const queuedAdmission = reserveInputDisposition(runtime, queuedId);
   expect(queuedAdmission.kind).toBe("reserved");
   if (queuedAdmission.kind !== "reserved") return;
@@ -155,13 +152,10 @@ test("hasLiveAcceptedInputOwner: live started/queued owners qualify, terminal to
   });
   expect(hasLiveAcceptedInputOwner(runtime, queuedId)).toBe(true);
 
-  // Replay-completed (terminal-retired) disposition: NOT live, even though
-  // the entry itself persists as a tombstone.
   completeInputReplay(runtime, startedId ? [startedId] : []);
   expect(getInputDisposition(runtime, startedId)).toBeDefined();
   expect(hasLiveAcceptedInputOwner(runtime, startedId)).toBe(false);
 
-  // Terminal-prepared disposition: NOT live.
   if (!queuedId) return;
   const preparedKey = dispositionKey(runtime.key, queuedId);
   const preparedEntry =
@@ -174,7 +168,6 @@ test("hasLiveAcceptedInputOwner: live started/queued owners qualify, terminal to
     expect(hasLiveAcceptedInputOwner(runtime, queuedId)).toBe(false);
   }
 
-  // Expired entry: NOT live.
   const expiredId = ordinaryInputIdentity("expired");
   const expiredAdmission = reserveInputDisposition(runtime, expiredId);
   expect(expiredAdmission.kind).toBe("reserved");
@@ -206,8 +199,6 @@ test("originator retirement proof: pre-owner-id records fail closed (evil-shub r
     "conversation-1",
   );
 
-  // New-format record: the persisted continuation carries the owner id, so
-  // its replayed finalizer can retire a recreated token entry.
   const newFormatId = ordinaryInputIdentity("new-format");
   expect(
     rememberInputDisposition(runtime, newFormatId, "started", {
@@ -222,9 +213,6 @@ test("originator retirement proof: pre-owner-id records fail closed (evil-shub r
     hasLiveAcceptedInputOwnerWithOriginatorRetirement(runtime, newFormatId),
   ).toBe(true);
 
-  // Old-format record (650eb75f): live owner, but no durable owner id —
-  // replaying it could never retire a recreated token, so recreation must
-  // fail closed (the continuation runs headerless instead).
   const oldFormatId = ordinaryInputIdentity("old-format");
   expect(
     rememberInputDisposition(runtime, oldFormatId, "started", {
@@ -236,7 +224,6 @@ test("originator retirement proof: pre-owner-id records fail closed (evil-shub r
     hasLiveAcceptedInputOwnerWithOriginatorRetirement(runtime, oldFormatId),
   ).toBe(false);
 
-  // Unknown identity: neither proof qualifies.
   const unknownId = ordinaryInputIdentity("unknown");
   expect(
     hasLiveAcceptedInputOwnerWithOriginatorRetirement(runtime, unknownId),

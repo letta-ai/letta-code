@@ -13,37 +13,40 @@ import type {
   ConversationCreateBody,
   ConversationMessageCompactBody,
   ConversationMessageCreateBody,
-  ConversationMessageListBody,
   ConversationMessageStreamBody,
   ConversationRecompileBody,
 } from "@/backend/backend";
+import { notifyConversationCompacted } from "@/backend/compaction-events";
 import {
   HEADLESS_BACKEND_CAPABILITIES,
   HeadlessBackend,
 } from "@/backend/dev/headless-backend";
 import type { HeadlessTurnExecutor } from "@/backend/dev/headless-turn-executor";
+import { toPiTools } from "@/backend/dev/pi-messages";
 import { LocalPiModelsRuntime } from "@/backend/dev/pi-models-runtime";
 import type {
   LocalContextPressure,
   PiStreamFunction,
 } from "@/backend/dev/pi-stream-adapter";
-import type {
-  LlmEndInfo,
-  LlmStartInfo,
-  ProviderTurnInput,
+import {
+  contextCompactionThreshold,
+  type LlmEndInfo,
+  type LlmStartInfo,
+  type ProviderTurnInput,
 } from "@/backend/dev/provider-turn-executor";
 import { settingsManager } from "@/settings-manager";
 import { isRecord } from "@/utils/type-guards";
 import {
   assertLocalCompactionProgress,
+  assertLocalPressureBudget,
   estimateLocalMessageTokens,
   finishLocalFullCompaction,
+  isLocalSelfCompactionMode,
   isLocalSlidingWindowCompactionPlanningError,
-  LOCAL_DEFAULT_COMPACTION_MODE,
-  LOCAL_DEFAULT_SLIDING_WINDOW_PERCENTAGE,
-  type LocalCompactionMode,
-  type LocalCompactionStats,
+  isLocalSlidingWindowMode,
+  type LocalCompactionResult,
   type LocalCompleteFunction,
+  type LocalSelfCompactionContext,
   packageLocalSummaryMessage,
   planLocalAllCompaction,
   planLocalSlidingWindowCompaction,
@@ -51,12 +54,19 @@ import {
   summarizeLocalMessagesAll,
   summarizeLocalMessagesSlidingWindow,
 } from "./compaction";
+import {
+  compactionSettingsRecord,
+  localCompactionSettingsForStorage,
+  type ResolvedLocalCompactionSettings,
+  resolveLocalCompactionSettings,
+  validateLocalCompactionSettingsRecord,
+} from "./compaction-settings";
 import { initialMemoryFilesFromCreateBody } from "./initial-memory";
 import {
   createLocalExecutor,
   type LocalBackendExecutionMode,
 } from "./local-executor-factory";
-import type { LocalMessage } from "./local-message";
+import type { LocalCompactionStats, LocalMessage } from "./local-message";
 import {
   listLocalModels,
   localModelSettingsForHandle,
@@ -91,12 +101,6 @@ export interface LocalBackendOptions {
   memfsEnabled?: boolean;
   modelsRuntime?: LocalPiModelsRuntime;
 }
-/**
- * Hooks the harness installs (via {@link LocalBackend.setModEventHooks}) so
- * mods can observe backend-internal lifecycle that only the local backend owns
- * (compaction and provider calls). The backend stays mod-agnostic: it invokes
- * these plain callbacks and never touches mod state.
- */
 export interface LocalBackendModEventHooks {
   onCompactStart?: (info: {
     agentId: string;
@@ -114,59 +118,6 @@ export interface LocalBackendModEventHooks {
   }) => void | Promise<void>;
   onLlmStart?: (info: LlmStartInfo) => void | Promise<void>;
   onLlmEnd?: (info: LlmEndInfo) => void | Promise<void>;
-}
-
-type LocalCompactionSettingsRecord = Record<string, unknown>;
-
-interface ResolvedLocalCompactionSettings {
-  mode: LocalCompactionMode;
-  prompt?: string | null;
-  clipChars?: number | null;
-  slidingWindowPercentage: number;
-}
-
-function compactionSettingsRecord(
-  value: unknown,
-): LocalCompactionSettingsRecord | null | undefined {
-  if (value === null) return null;
-  return isRecord(value) ? { ...value } : undefined;
-}
-
-function hasOwn(record: Record<string, unknown>, key: string): boolean {
-  return Object.hasOwn(record, key);
-}
-
-function localCompactionMode(value: unknown): LocalCompactionMode | undefined {
-  if (value === "all" || value === "sliding_window") return value;
-  return undefined;
-}
-
-function validateLocalCompactionSettingsRecord(
-  settings: LocalCompactionSettingsRecord,
-): void {
-  if (settings.mode === undefined || settings.mode === null) return;
-  if (!localCompactionMode(settings.mode)) {
-    throw new Error(
-      `Local backend compaction currently supports only modes "all" and "sliding_window" (received "${String(
-        settings.mode,
-      )}").`,
-    );
-  }
-}
-
-function localCompactionSettingsForStorage(
-  settings: LocalCompactionSettingsRecord | null | undefined,
-): LocalCompactionSettingsRecord | null | undefined {
-  if (settings === undefined || settings === null) return settings;
-
-  const hasLocalSetting =
-    hasOwn(settings, "mode") ||
-    hasOwn(settings, "prompt") ||
-    hasOwn(settings, "clip_chars") ||
-    hasOwn(settings, "sliding_window_percentage");
-  if (!hasLocalSetting) return undefined;
-
-  return { ...settings };
 }
 
 function formatMidConversationMemoryUpdate(
@@ -198,7 +149,6 @@ export class LocalBackend extends HeadlessBackend {
 
   constructor(options: LocalBackendOptions) {
     const localBackendRef: { current?: LocalBackend } = {};
-    // One runtime per backend: listing/turns/compaction share Models state.
     const runtime =
       options.modelsRuntime ??
       new LocalPiModelsRuntime({ storageDir: options.storageDir });
@@ -248,11 +198,6 @@ export class LocalBackend extends HeadlessBackend {
     this.piModelsRuntime = runtime;
   }
 
-  /**
-   * Late-bound because the backend is a process-global singleton constructed
-   * before the harness mod adapter exists. The harness calls this once the
-   * registry is ready to forward backend-internal events to local mods.
-   */
   setModEventHooks(hooks: LocalBackendModEventHooks | undefined): void {
     this.modEventHooks = hooks;
   }
@@ -266,9 +211,7 @@ export class LocalBackend extends HeadlessBackend {
     if (!hook) return;
     try {
       await hook({ agentId, conversationId, trigger });
-    } catch {
-      // Mod event hooks must never break compaction.
-    }
+    } catch {}
   }
 
   private async emitCompactEnd(
@@ -289,9 +232,7 @@ export class LocalBackend extends HeadlessBackend {
         contextTokensBefore: stats.context_tokens_before ?? 0,
         contextTokensAfter: stats.context_tokens_after ?? 0,
       });
-    } catch {
-      // Mod event hooks must never break compaction.
-    }
+    } catch {}
   }
 
   private async emitLlmStart(info: LlmStartInfo): Promise<void> {
@@ -299,9 +240,7 @@ export class LocalBackend extends HeadlessBackend {
     if (!hook) return;
     try {
       await hook(info);
-    } catch {
-      // Mod event hooks must never break a provider request.
-    }
+    } catch {}
   }
 
   private async emitLlmEnd(info: LlmEndInfo): Promise<void> {
@@ -309,9 +248,7 @@ export class LocalBackend extends HeadlessBackend {
     if (!hook) return;
     try {
       await hook(info);
-    } catch {
-      // Mod event hooks must never break a provider request.
-    }
+    } catch {}
   }
 
   getLocalStorageDir(): string {
@@ -331,7 +268,6 @@ export class LocalBackend extends HeadlessBackend {
     const memfsExplicitlyDisabled = isMemfsOptOutCreateTags(
       (body as Record<string, unknown>).tags,
     );
-    // Stamp local memfs agents so downstream tag checks enable memory sync.
     if (this.isLocalMemfsEnabled() && !memfsExplicitlyDisabled) {
       body = stampRootMemoryOnCreateBody(body);
       const bodyRecord = body as Record<string, unknown>;
@@ -385,7 +321,7 @@ export class LocalBackend extends HeadlessBackend {
   ) {
     const [agentId, body] = args;
     const bodyRecord = body as Record<string, unknown>;
-    const settings = hasOwn(bodyRecord, "compaction_settings")
+    const settings = Object.hasOwn(bodyRecord, "compaction_settings")
       ? compactionSettingsRecord(bodyRecord.compaction_settings)
       : undefined;
     if (settings !== undefined && settings !== null) {
@@ -394,7 +330,7 @@ export class LocalBackend extends HeadlessBackend {
     const compactionSettingsForStorage =
       localCompactionSettingsForStorage(settings);
     let agent = await super.updateAgent(...args);
-    if (hasOwn(bodyRecord, "compaction_settings")) {
+    if (Object.hasOwn(bodyRecord, "compaction_settings")) {
       if (compactionSettingsForStorage !== undefined) {
         agent = this.store.setAgentCompactionSettings(
           agentId,
@@ -465,6 +401,7 @@ export class LocalBackend extends HeadlessBackend {
       "manual",
       body,
     );
+    notifyConversationCompacted({ backend: this, conversationId, agentId });
     return {
       num_messages_before: result.numMessagesBefore,
       num_messages_after: result.numMessagesAfter,
@@ -497,7 +434,6 @@ export class LocalBackend extends HeadlessBackend {
       input.conversationId,
       input.agentId,
       input.agent,
-      input.history.length,
     );
     const clientSkills = Array.isArray(
       (input.body as Record<string, unknown>).client_skills,
@@ -555,6 +491,8 @@ export class LocalBackend extends HeadlessBackend {
       input.conversationId,
       input.agentId,
       "context_window_overflow",
+      undefined,
+      input,
     );
     return {
       uiMessages: this.store.listLocalMessages(
@@ -568,17 +506,24 @@ export class LocalBackend extends HeadlessBackend {
 
   private async compactForContextPressure(
     input: ProviderTurnInput,
-    _pressure: LocalContextPressure,
+    pressure: LocalContextPressure,
   ): Promise<{
     uiMessages: LocalMessage[];
     summary: string;
     stats?: LocalCompactionStats;
   } | null> {
+    const messageTokens = estimateLocalMessageTokens(
+      this.store.listLocalMessages(input.conversationId, input.agentId),
+    );
+    const fixedTokens = Math.max(0, pressure.contextTokens - messageTokens);
     const result = await runLocalPressureCompaction(() =>
       this.compactLocalConversation(
         input.conversationId,
         input.agentId,
         "context_window_limit",
+        undefined,
+        input,
+        (contextCompactionThreshold(pressure.contextWindow) ?? 0) - fixedTokens,
       ),
     );
     if (!result) return null;
@@ -623,15 +568,6 @@ export class LocalBackend extends HeadlessBackend {
       : undefined;
   }
 
-  /**
-   * Resolve the model that compaction should use for a conversation.
-   *
-   * A normal turn runs on the conversation's model override (set via `/model`),
-   * but compaction previously read only the agent's base model — so switching
-   * a conversation's model never changed which model compaction (and its
-   * summarizer) used. This overlays the conversation's `model` / `model_settings`
-   * onto the agent record so compaction mirrors the turn path.
-   */
   private effectiveAgentForConversation(
     conversationId: string,
     agentId: string,
@@ -666,80 +602,22 @@ export class LocalBackend extends HeadlessBackend {
     };
   }
 
-  private resolveCompactionSettings(
-    agent: LocalAgentRecord,
-    body?: ConversationMessageCompactBody,
-  ): ResolvedLocalCompactionSettings {
-    const bodyRecord = (body ?? {}) as Record<string, unknown>;
-    const requestSettings = compactionSettingsRecord(
-      bodyRecord.compaction_settings,
-    );
-    if (requestSettings !== undefined && requestSettings !== null) {
-      validateLocalCompactionSettingsRecord(requestSettings);
-    }
-    const agentSettings = compactionSettingsRecord(agent.compaction_settings);
-    const baseSettings =
-      agentSettings && agentSettings !== null ? agentSettings : {};
-    const mergedSettings =
-      requestSettings && requestSettings !== null
-        ? { ...baseSettings, ...requestSettings }
-        : baseSettings;
-    const requestChangedMode =
-      requestSettings !== undefined &&
-      requestSettings !== null &&
-      hasOwn(requestSettings, "mode");
-    const requestChangedPrompt =
-      requestSettings !== undefined &&
-      requestSettings !== null &&
-      hasOwn(requestSettings, "prompt");
-    if (
-      requestChangedMode &&
-      !requestChangedPrompt &&
-      agentSettings &&
-      agentSettings !== null &&
-      agentSettings.mode !== requestSettings.mode
-    ) {
-      delete mergedSettings.prompt;
-    }
-
-    const mode =
-      localCompactionMode(mergedSettings.mode) ?? LOCAL_DEFAULT_COMPACTION_MODE;
-    return {
-      mode,
-      prompt:
-        typeof mergedSettings.prompt === "string" ||
-        mergedSettings.prompt === null
-          ? mergedSettings.prompt
-          : undefined,
-      clipChars:
-        typeof mergedSettings.clip_chars === "number" ||
-        mergedSettings.clip_chars === null
-          ? mergedSettings.clip_chars
-          : undefined,
-      slidingWindowPercentage:
-        typeof mergedSettings.sliding_window_percentage === "number"
-          ? mergedSettings.sliding_window_percentage
-          : LOCAL_DEFAULT_SLIDING_WINDOW_PERCENTAGE,
-    };
-  }
-
   private async compactLocalConversation(
     conversationId: string,
     agentId: string,
     trigger: string,
     body?: ConversationMessageCompactBody,
-  ): Promise<{
-    numMessagesBefore: number;
-    numMessagesAfter: number;
-    summary: string;
-    stats: LocalCompactionStats;
-  }> {
+    turn?: ProviderTurnInput,
+    maxMessageTokens?: number,
+  ): Promise<LocalCompactionResult> {
     await this.emitCompactStart(conversationId, agentId, trigger);
     const result = await this.compactLocalConversationInner(
       conversationId,
       agentId,
       trigger,
       body,
+      turn,
+      maxMessageTokens,
     );
     await this.emitCompactEnd(conversationId, agentId, trigger, result.stats);
     return result;
@@ -750,28 +628,26 @@ export class LocalBackend extends HeadlessBackend {
     agentId: string,
     trigger: string,
     body?: ConversationMessageCompactBody,
-  ): Promise<{
-    numMessagesBefore: number;
-    numMessagesAfter: number;
-    summary: string;
-    stats: LocalCompactionStats;
-  }> {
+    turn?: ProviderTurnInput,
+    maxMessageTokens?: number,
+  ): Promise<LocalCompactionResult> {
     const agent = this.effectiveAgentForConversation(conversationId, agentId);
-    const settings = this.resolveCompactionSettings(agent, body);
-    let result: {
-      numMessagesBefore: number;
-      numMessagesAfter: number;
-      summary: string;
-      stats: LocalCompactionStats;
+    const settings = {
+      ...resolveLocalCompactionSettings(agent, body),
+      maxMessageTokens,
     };
-    if (settings.mode === "sliding_window") {
+    const self = isLocalSelfCompactionMode(settings.mode)
+      ? await this.selfCompactionContext(conversationId, agentId, turn)
+      : undefined;
+    if (isLocalSlidingWindowMode(settings.mode)) {
       try {
-        result = await this.compactLocalConversationSlidingWindow(
+        const result = await this.compactLocalConversationPass(
           conversationId,
           agentId,
           agent,
           trigger,
           settings,
+          self,
         );
         if (
           result.stats.context_window === undefined ||
@@ -791,16 +667,17 @@ export class LocalBackend extends HeadlessBackend {
         if (!isLocalSlidingWindowCompactionPlanningError(error)) throw error;
       }
     }
-    result = await this.compactLocalConversationAll(
+    const result = await this.compactLocalConversationPass(
       conversationId,
       agentId,
       agent,
       trigger,
       {
         ...settings,
-        mode: "all",
-        prompt: settings.prompt, // not a user mode switch: keep it (#3955)
+        mode: self ? "self_compact_all" : "all",
+        prompt: settings.prompt,
       },
+      self,
     );
     await this.compileAndMaybePersistSystemPrompt(conversationId, agentId, {
       dryRun: false,
@@ -808,77 +685,33 @@ export class LocalBackend extends HeadlessBackend {
     return result;
   }
 
-  private async compactLocalConversationAll(
+  private async compactLocalConversationPass(
     conversationId: string,
     agentId: string,
     agent: LocalAgentRecord,
     trigger: string,
     settings: ResolvedLocalCompactionSettings,
-  ): Promise<{
-    numMessagesBefore: number;
-    numMessagesAfter: number;
-    summary: string;
-    stats: LocalCompactionStats;
-  }> {
-    const messages = this.store.listLocalMessages(conversationId, agentId);
-    const contextTokensBefore = estimateLocalMessageTokens(messages);
-    const plan = planLocalAllCompaction(messages);
-    const summary = await summarizeLocalMessagesAll({
-      conversationId,
-      agent,
-      messages: plan.messagesToSummarize,
-      complete: this.complete,
-      prompt: settings.prompt,
-      clipChars: settings.clipChars,
-      localProviderAuthStorageDir: this.storageDir,
-      modelsRuntime: this.piModelsRuntime,
-    });
-    const stats: LocalCompactionStats = {
-      trigger,
-      context_tokens_before: contextTokensBefore,
-      context_tokens_after:
-        Math.ceil(summary.length / 4) +
-        estimateLocalMessageTokens(plan.messagesToKeep),
-      context_window: this.effectiveContextWindow(conversationId, agentId),
-      messages_count_before: messages.length,
-      messages_count_after: 1 + plan.messagesToKeep.length,
-    };
-    return finishLocalFullCompaction({
-      messages,
-      summary,
-      stats,
-      plan,
-      systemPrompt: agent.system,
-      persist: (summary, packedSummary, remainingMessages) =>
-        this.store.compactConversationAll({
-          conversationId,
-          agentId,
-          summary,
-          packedSummary,
-          stats,
-          remainingMessages,
-        }),
-    });
-  }
-  private async compactLocalConversationSlidingWindow(
-    conversationId: string,
-    agentId: string,
-    agent: LocalAgentRecord,
-    trigger: string,
-    settings: ResolvedLocalCompactionSettings,
-  ): Promise<{
-    numMessagesBefore: number;
-    numMessagesAfter: number;
-    summary: string;
-    stats: LocalCompactionStats;
-  }> {
+    self?: LocalSelfCompactionContext,
+  ): Promise<LocalCompactionResult> {
+    const slidingWindow = isLocalSlidingWindowMode(settings.mode);
     const messages = this.store.listLocalMessages(conversationId, agentId);
     const contextWindow = this.effectiveContextWindow(conversationId, agentId);
-    const plan = planLocalSlidingWindowCompaction(messages, {
-      slidingWindowPercentage: settings.slidingWindowPercentage,
-      contextWindow,
-    });
-    const summary = await summarizeLocalMessagesSlidingWindow({
+    const plan = slidingWindow
+      ? planLocalSlidingWindowCompaction(messages, {
+          slidingWindowPercentage: settings.slidingWindowPercentage,
+          contextWindow,
+        })
+      : planLocalAllCompaction(messages);
+    const keptTokens = estimateLocalMessageTokens(plan.messagesToKeep);
+    assertLocalPressureBudget(
+      keptTokens,
+      settings.mode,
+      settings.maxMessageTokens,
+    );
+    const summarize = slidingWindow
+      ? summarizeLocalMessagesSlidingWindow
+      : summarizeLocalMessagesAll;
+    const { summary, source } = await summarize({
       conversationId,
       agent,
       messages: plan.messagesToSummarize,
@@ -887,19 +720,45 @@ export class LocalBackend extends HeadlessBackend {
       clipChars: settings.clipChars,
       localProviderAuthStorageDir: this.storageDir,
       modelsRuntime: this.piModelsRuntime,
+      self,
     });
-    const contextTokensAfter =
-      Math.ceil(summary.length / 4) +
-      estimateLocalMessageTokens(plan.messagesToKeep);
     const stats: LocalCompactionStats = {
       trigger,
       context_tokens_before: estimateLocalMessageTokens(messages),
-      context_tokens_after: contextTokensAfter,
+      context_tokens_after: Math.ceil(summary.length / 4) + keptTokens,
       context_window: contextWindow,
       messages_count_before: messages.length,
       messages_count_after: 1 + plan.messagesToKeep.length,
+      ...(source ? { summary_source: source } : {}),
     };
-    assertLocalCompactionProgress(stats, "sliding_window");
+    if (!slidingWindow) {
+      assertLocalPressureBudget(
+        stats.context_tokens_after ?? 0,
+        settings.mode,
+        settings.maxMessageTokens,
+      );
+      return finishLocalFullCompaction({
+        messages,
+        summary,
+        stats,
+        plan,
+        systemPrompt: agent.system,
+        persist: (summary, packedSummary, remainingMessages) =>
+          this.store.compactConversationAll({
+            conversationId,
+            agentId,
+            summary,
+            packedSummary,
+            stats,
+            remainingMessages,
+          }),
+      });
+    }
+    assertLocalCompactionProgress(
+      stats,
+      settings.mode,
+      settings.maxMessageTokens,
+    );
     const storeResult = this.store.compactConversationAll({
       conversationId,
       agentId,
@@ -915,11 +774,27 @@ export class LocalBackend extends HeadlessBackend {
       stats,
     };
   }
+  private async selfCompactionContext(
+    conversationId: string,
+    agentId: string,
+    turn?: ProviderTurnInput,
+  ): Promise<LocalSelfCompactionContext> {
+    if (turn) {
+      return {
+        systemPrompt: turn.systemPrompt ?? turn.agent.system,
+        tools: toPiTools(turn.clientTools),
+      };
+    }
+    const compiled = await this.getOrCompileSystemPrompt(
+      conversationId,
+      agentId,
+    );
+    return { systemPrompt: compiled.content };
+  }
   private async getOrCompileSystemPrompt(
     conversationId: string,
     agentId: string,
     agent = this.store.retrieveAgentRecord(agentId),
-    previousMessageCount = 0,
   ): Promise<LocalCompiledSystemPrompt> {
     const existing = this.store.getCompiledSystemPrompt(
       conversationId,
@@ -942,10 +817,7 @@ export class LocalBackend extends HeadlessBackend {
       const compiled = await this.compileAndMaybePersistSystemPrompt(
         conversationId,
         agentId,
-        {
-          dryRun: true,
-          previousMessageCount,
-        },
+        { dryRun: true },
       );
       if (compiled.memfsRevision !== existing.memfsRevision) {
         const midConversationSystemPrompt =
@@ -963,30 +835,24 @@ export class LocalBackend extends HeadlessBackend {
 
     return this.compileAndMaybePersistSystemPrompt(conversationId, agentId, {
       dryRun: false,
-      previousMessageCount,
     });
   }
 
   private async compileAndMaybePersistSystemPrompt(
     conversationId: string,
     agentId: string,
-    options: { dryRun: boolean; previousMessageCount?: number },
+    options: { dryRun: boolean },
   ): Promise<LocalCompiledSystemPrompt> {
     const agent = this.store.retrieveAgentRecord(agentId);
     const memfsEnabled = this.isMemfsEnabledForAgent(agentId);
     if (memfsEnabled) {
       await this.ensureLocalMemoryRepo(agentId, [], agent.name);
     }
-    const previousMessageCount =
-      options.previousMessageCount ??
-      this.store.listConversationMessages(conversationId, {
-        agent_id: agentId,
-        order: "asc",
-      } as ConversationMessageListBody).length;
     const compiled = compileLocalSystemPrompt({
       agent,
       conversationId,
-      previousMessageCount,
+      previousMessageCount: () =>
+        this.store.countMessagesOutsideContext(conversationId, agentId),
       memoryDir: memfsEnabled ? this.memoryDirForAgent(agentId) : undefined,
       includeMemfs: memfsEnabled,
     });

@@ -65,7 +65,6 @@ export interface ExecuteMessageChannelOptions {
   resolver: MessageChannelExecutionResolver;
   channelTurnSources?: ChannelTurnSource[];
   idempotencyScope?: MessageChannelIdempotencyScope | null;
-  /** Available only when this host implements persisted binding operations. */
   bindings?: MessageChannelBindingOperations;
 }
 
@@ -100,11 +99,6 @@ function normalizeChatTarget(
   value: string,
 ): string {
   const trimmed = value.trim();
-  // Signal and Microsoft Teams conversation ids natively contain ':' segments
-  // (Teams direct chats are `a:...`; channels are `19:...@thread.tacv2`), so
-  // the channel-name prefix stripping below must not run for them: it would
-  // corrupt `a:...` ids into their suffix and break chat_id comparisons
-  // against turn sources and stored routes.
   if (channel === "signal" || channel === "microsoftteams") return trimmed;
   const parts = trimmed
     .split(":")
@@ -344,11 +338,6 @@ function effectiveTextReplyId(
   return isSlackDirect ? null : trimmedOrNull(request.replyToMessageId);
 }
 
-/**
- * Fingerprint only immutable text deliveries. Reactions are reversible,
- * downloads are repeatable, and a local media path can change contents during
- * a turn, so those actions intentionally bypass suppression.
- */
 function messageIdempotencyKey(
   request: ChannelMessageActionRequest,
   route: ChannelMessageActionRoute,
@@ -371,12 +360,6 @@ function messageIdempotencyKey(
   });
 }
 
-/**
- * Execute the canonical MessageChannel contract against host-owned routing and
- * transport adapters. This owns normalization, scope checks, thread/account
- * inference, action discovery, and outbound formatting without requiring the
- * local channel registry or local credentials.
- */
 export async function executeMessageChannel(
   input: MessageChannelInput | Record<string, unknown>,
   options: ExecuteMessageChannelOptions,
@@ -528,7 +511,6 @@ export async function executeMessageChannel(
   }
 }
 
-/** Execute MessageChannel and return the canonical external-tool result. */
 export async function executeMessageChannelExternalTool(
   input: MessageChannelInput | Record<string, unknown>,
   options: ExecuteMessageChannelOptions,

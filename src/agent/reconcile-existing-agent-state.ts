@@ -3,7 +3,6 @@ import type {
   AgentUpdateParams,
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Tool } from "@letta-ai/letta-client/resources/tools";
-import { DEFAULT_SUMMARIZATION_MODEL } from "@/constants";
 
 export const DEFAULT_ATTACHED_BASE_TOOLS = [
   "web_search",
@@ -90,9 +89,7 @@ async function resolveDesiredAttachedToolIds(
           resolvedByName.set(toolName, resolvedId);
           return;
         }
-      } catch {
-        // Treat as missing; caller decides whether to skip this tweak.
-      }
+      } catch {}
 
       missingToolNames.push(toolName);
     }),
@@ -128,10 +125,10 @@ export async function reconcileExistingAgentState(
       ? agent.compaction_settings.model.trim()
       : "";
 
-  if (!configuredCompactionModel) {
+  if (!configuredCompactionModel && agent.model) {
     patch.compaction_settings = {
       ...(agent.compaction_settings ?? {}),
-      model: DEFAULT_SUMMARIZATION_MODEL,
+      model: agent.model,
     };
     appliedTweaks.push("set_compaction_model");
   }
@@ -148,10 +145,6 @@ export async function reconcileExistingAgentState(
       `sync_attached_tools_missing:${desiredTools.missingToolNames.join(",")}`,
     );
   } else {
-    // Only ADD missing base tools — never remove existing tools.
-    // The previous logic replaced the entire tool_ids array with just the
-    // base tools, which wiped every other tool (MCP, memory, custom, etc.)
-    // on every agent startup.
     const currentToolIds = (agent.tools ?? [])
       .map((tool) => tool.id)
       .filter((toolId): toolId is string => Boolean(toolId));

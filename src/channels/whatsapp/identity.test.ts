@@ -30,8 +30,6 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-// -- invalid input table --
-
 const INVALID_INPUTS: Array<
   [label: string, transport: Record<string, unknown>]
 > = [
@@ -101,8 +99,6 @@ describe("resolveInboundIdentity — invalid inputs", () => {
   }
 });
 
-// -- direct --
-
 describe("resolveInboundIdentity — direct", () => {
   test("phone DM: canonical + observedMappings []", () => {
     const r = resolveInboundIdentity({
@@ -151,7 +147,6 @@ describe("resolveInboundIdentity — direct", () => {
     expect(r?.chatId).toBe(pn);
     expect(r?.senderId).toBe("58412222222");
     expect(r?.observedMappings).toEqual([{ lidJid: lj, phoneJid: pn }]);
-    // Resolver is pure — store NOT mutated.
     expect(store.resolve(lj)).toBeNull();
   });
 
@@ -266,8 +261,6 @@ describe("resolveInboundIdentity — direct", () => {
     ).toBeNull();
   });
 });
-
-// -- groups --
 
 describe("resolveInboundIdentity — groups", () => {
   test("phone participant: resolved directly, observedMappings []", () => {
@@ -433,7 +426,6 @@ describe("resolveInboundIdentity — groups", () => {
     store.record(exLid, phone("58419000010"));
     const newLid = lid("55667702");
     const newPhone = phone("58419000011");
-    // exLid + participantPn=newPhone (conflicts) ; newLid also paired
     const r = resolveInboundIdentity(
       {
         selfPhoneJid: SELF_PHONE,
@@ -453,7 +445,6 @@ describe("resolveInboundIdentity — groups", () => {
     const store = createLidStore(join(dir, "s.json"));
     const lj = lid("66778800");
     const pn = phone("58419000020");
-    // participant=LID, participantPn=PN, senderPn=PN — deduped to one observation
     const r = resolveInboundIdentity(
       {
         selfPhoneJid: SELF_PHONE,

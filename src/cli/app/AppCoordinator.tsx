@@ -1,4 +1,3 @@
-// src/cli/app/AppCoordinator.tsx
 import { join } from "node:path";
 import type {
   AgentState,
@@ -371,8 +370,6 @@ export function App({
   systemInfoReminderEnabled = true,
   modsDisabled = false,
 }: AppProps) {
-  // Warm model availability so /model is fast on first open, and refresh the
-  // runtime catalog. API mode keeps its persisted catalog on temporary failures.
   useEffect(() => {
     prefetchAvailableModelHandles();
     prefetchModelCatalog();
@@ -385,17 +382,13 @@ export function App({
     setHasAvailableLocalModels(true);
   }, []);
 
-  // Track current agent (can change when swapping)
   const [agentId, setAgentId] = useState(initialAgentId);
   const [agentState, setAgentState] = useState(initialAgentState);
 
-  // Helper to update agent name (updates agentState, which is the single source of truth)
   const updateAgentName = useCallback((name: string) => {
     setAgentState((prev) => (prev ? { ...prev, name } : prev));
   }, []);
 
-  // Check if the current agent would benefit from switching to the default prompt.
-  // Used to conditionally include the /system tip in streaming tip rotation.
   const includeSystemPromptUpgradeTip = useMemo(() => {
     if (!agentState?.id || !agentState.system) return false;
     const memMode = settingsManager.isMemfsEnabled(agentState.id)
@@ -409,7 +402,6 @@ export function App({
   const [conversationSummary, setConversationSummary] = useState<string | null>(
     null,
   );
-  // Keep a ref to the current agentId for use in callbacks that need the latest value
   const agentIdRef = useRef(agentId);
   useEffect(() => {
     agentIdRef.current = agentId;
@@ -425,28 +417,21 @@ export function App({
     setConversationId(nextConversationId);
   }, []);
 
-  // Tracks the transcript start index for the current user turn across
-  // approval continuations (requires_approval -> approval result round-trip).
   const pendingTranscriptStartLineIndexRef = useRef<number | null>(null);
 
-  // Track the most recent run ID from streaming (for statusline display)
   const lastRunIdRef = useRef<string | null>(null);
 
   const resumeKey = useSuspend();
 
-  // Pending conversation switch context — consumed on first message after a switch
   const pendingConversationSwitchRef = useRef<
     | import("@/cli/helpers/conversation-switch-alert").ConversationSwitchContext
     | null
   >(null);
 
-  // Track previous prop values to detect actual prop changes (not internal state changes)
   const prevInitialAgentIdRef = useRef(initialAgentId);
   const prevInitialAgentStateRef = useRef(initialAgentState);
   const prevInitialConversationIdRef = useRef(initialConversationId);
 
-  // Sync with prop changes (e.g., when parent updates from "loading" to actual ID)
-  // Only sync when the PROP actually changes, not when internal state changes
   useEffect(() => {
     if (initialAgentId !== prevInitialAgentIdRef.current) {
       prevInitialAgentIdRef.current = initialAgentId;
@@ -469,29 +454,22 @@ export function App({
     }
   }, [initialConversationId, setConversationIdAndRef]);
 
-  // Set agent context for tools (especially Task tool)
   useEffect(() => {
     if (agentId) {
       setCurrentAgentId(agentId);
     }
   }, [agentId]);
 
-  // Whether a stream is in flight (disables input)
-  // Uses synced state to keep ref in sync for reliable async checks
   const [streaming, setStreaming, streamingRef] = useSyncedState(false);
   const [networkPhase, setNetworkPhase] = useState<
     "upload" | "download" | "error" | null
   >(null);
   const [executionPhase, setExecutionPhase] = useState<ExecutionPhase>(null);
-  // Track permission mode changes for UI updates.
-  // Keep a ref in sync *synchronously* so async approval classification never
-  // reads a stale mode during the render/effect window.
   const [uiPermissionMode, _setUiPermissionMode] = useState(
     permissionMode.getMode(),
   );
   const uiPermissionModeRef = useRef<PermissionMode>(uiPermissionMode);
 
-  // Track which tool call output is expanded (ctrl+o toggles last one)
   const [expandedToolCallId, setExpandedToolCallId] = useState<string | null>(
     null,
   );
@@ -500,7 +478,6 @@ export function App({
     uiPermissionModeRef.current = mode;
     _setUiPermissionMode(mode);
 
-    // Keep the permissionMode singleton in sync *immediately*.
     if (permissionMode.getMode() !== mode) {
       permissionMode.setMode(mode);
     }
@@ -513,24 +490,15 @@ export function App({
     }
   }, [streaming]);
 
-  // Guard ref for preventing concurrent processConversation calls
-  // Separate from streaming state which may be set early for UI responsiveness
-  // Tracks depth to allow intentional reentry while blocking parallel calls
   const processingConversationRef = useRef(0);
 
-  // Generation counter - incremented on each ESC interrupt.
-  // Allows processConversation to detect if it's been superseded.
   const conversationGenerationRef = useRef(0);
 
-  // Whether an interrupt has been requested for the current stream
   const [interruptRequested, setInterruptRequested] = useState(false);
 
-  // Whether a command is running (disables input but no streaming UI)
-  // Uses synced state to keep ref in sync for reliable async checks
   const [commandRunning, setCommandRunning, commandRunningRef] =
     useSyncedState(false);
 
-  // Profile load confirmation - when loading a profile and current agent is unsaved
   const [profileConfirmPending, setProfileConfirmPending] = useState<{
     name: string;
     agentId: string;
@@ -546,7 +514,6 @@ export function App({
       runId: string;
     } | null>(null);
 
-  // If we have approval requests, we should show the approval dialog instead of the input area
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>(
     [],
   );
@@ -554,10 +521,8 @@ export function App({
     [],
   );
 
-  // /btw state - ephemeral pane for forked conversation responses
   const [btwState, setBtwState] = useState<BtwState>({ status: "idle" });
 
-  // Sequential approval: track results as user reviews each approval
   const [approvalResults, setApprovalResults] = useState<
     Array<
       | { type: "approve"; approval: ApprovalRequest }
@@ -571,17 +536,13 @@ export function App({
   const queuedApprovalResultsRef = useRef<ApprovalResult[] | null>(null);
   const toolAbortControllerRef = useRef<AbortController | null>(null);
 
-  // Bash mode state - track running commands for input locking and ESC cancellation
   const [bashRunning, setBashRunning] = useState(false);
   const bashAbortControllerRef = useRef<AbortController | null>(null);
 
-  // Eager approval checking: only enabled when resuming a session (LET-7101)
-  // After first successful message, we disable it since any new approvals are from our own turn
   const [needsEagerApprovalCheck, setNeedsEagerApprovalCheck] = useState(
     () => resumedExistingConversation || startupApprovals.length > 0,
   );
 
-  // Track auto-handled results to combine with user decisions
   const [autoHandledResults, setAutoHandledResults] = useState<
     Array<{
       toolCallId: string;
@@ -596,7 +557,6 @@ export function App({
   >([]);
   const executingToolCallIdsRef = useRef<string[]>([]);
   const interruptQueuedRef = useRef(false);
-  // Prevents interrupt handler from queueing results while approvals are in-flight.
   const toolResultsInFlightRef = useRef(false);
   const autoAllowedExecutionRef = useRef<{
     toolCallIds: string[];
@@ -637,22 +597,14 @@ export function App({
     [],
   );
 
-  // Bash mode: cache bash commands to prefix next user message
-  // Use ref instead of state to avoid stale closure issues in onSubmit
   const bashCommandCacheRef = useRef<Array<{ input: string; output: string }>>(
     [],
   );
 
-  // Derive current approval from pending approvals and results
-  // This is the approval currently being shown to the user
   const currentApproval = pendingApprovals[approvalResults.length];
   const currentApprovalContext = approvalContexts[approvalResults.length];
   const activeApprovalId = currentApproval?.toolCallId ?? null;
 
-  // Build Sets/Maps for three approval states (excluding the active one):
-  // - pendingIds: undecided approvals (index > approvalResults.length)
-  // - queuedIds: decided but not yet executed (index < approvalResults.length)
-  // Used to render appropriate stubs while one approval is active
   const {
     pendingIds,
     queuedIds,
@@ -669,7 +621,6 @@ export function App({
       { type: "approve" | "deny"; reason?: string }
     >();
 
-    // Helper to compute stub description - called once per approval during memo
     const computeStubDescription = (
       approval: ApprovalRequest,
     ): string | undefined => {
@@ -724,7 +675,6 @@ export function App({
       }
 
       if (i < activeIndex) {
-        // Decided but not yet executed
         queued.add(id);
         const result = approvalResults[i];
         if (result) {
@@ -734,7 +684,6 @@ export function App({
           });
         }
       } else {
-        // Undecided (waiting in queue)
         pending.add(id);
       }
     }
@@ -748,7 +697,6 @@ export function App({
     };
   }, [pendingApprovals, approvalResults, activeApprovalId]);
 
-  // Overlay/selector state - only one can be open at a time
   const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
   const pendingOverlayCommandRef = useRef<{
     overlay: ActiveOverlay;
@@ -794,15 +742,11 @@ export function App({
     setModelReasoningPrompt(null);
   }, [activeOverlay]);
 
-  // Queued overlay action - executed after end_turn when user makes a selection
-  // while agent is busy (streaming/executing tools)
   const [queuedOverlayAction, setQueuedOverlayAction] =
     useState<QueuedOverlayAction>(null);
 
-  // Derived: check if any selector/overlay is open (blocks queue processing and hides input)
   const anySelectorOpen = activeOverlay !== null;
 
-  // Other model/agent state
   const [currentSystemPromptId, setCurrentSystemPromptId] = useState<
     string | null
   >("default");
@@ -814,8 +758,6 @@ export function App({
   const [currentToolsetPreference, setCurrentToolsetPreference] =
     useState<ToolsetPreference>("auto");
   const [llmConfig, setLlmConfig] = useState<LlmConfig | null>(null);
-  // Keep state + ref synchronized so async callbacks (e.g. syncAgentState) never
-  // read a stale value and accidentally clobber conversation-scoped overrides.
   const [
     hasConversationModelOverride,
     setHasConversationModelOverride,
@@ -826,9 +768,6 @@ export function App({
     llmConfigRef.current = llmConfig;
   }, [llmConfig]);
 
-  // Cache the conversation's model_settings when a conversation-scoped override is active.
-  // On resume, llm_config may omit reasoning_effort even when the conversation model_settings
-  // includes it; this snapshot prevents the footer reasoning tag from missing.
   const [
     conversationOverrideModelSettings,
     setConversationOverrideModelSettings,
@@ -869,8 +808,6 @@ export function App({
     _setTempModelOverride(next);
   }, []);
 
-  // Keep temporary override scoped to the current agent/conversation identity.
-  // This uses render-time state adjustment instead of an Effect.
   if (
     tempModelOverrideContext.agentId !== agentId ||
     tempModelOverrideContext.conversationId !== conversationId
@@ -882,7 +819,6 @@ export function App({
       tempModelOverrideRef.current = null;
     }
   }
-  // Full model handle for API calls (e.g., "anthropic/claude-sonnet-4-5-20251101")
   const [currentModelHandle, setCurrentModelHandle] = useState<string | null>(
     null,
   );
@@ -890,12 +826,9 @@ export function App({
   useEffect(() => {
     currentModelHandleRef.current = currentModelHandle;
   }, [currentModelHandle]);
-  // Derive agentName from agentState (single source of truth)
   const agentName = agentState?.name ?? null;
   const [agentDescription, setAgentDescription] = useState<string | null>(null);
   const [agentLastRunAt, setAgentLastRunAt] = useState<string | null>(null);
-  // Prefer the currently-active model handle, then fall back to agent.model
-  // (canonical handle) and finally llm_config reconstruction.
   const currentModelLabel =
     tempModelOverride ||
     currentModelHandle ||
@@ -905,9 +838,6 @@ export function App({
       : (llmConfig?.model ?? null)) ||
     null;
 
-  // Derive reasoning effort from model_settings (canonical) with llm_config as legacy fallback.
-  // When a conversation override is active, the server may still return an agent llm_config
-  // with reasoning_effort="none"; prefer the conversation model_settings snapshot.
   const effectiveModelSettings = hasConversationModelOverride
     ? conversationOverrideModelSettings
     : agentState?.model_settings;
@@ -925,8 +855,6 @@ export function App({
     startupHasAvailableLocalModels: hasAvailableLocalModels,
   });
 
-  // Use tier-aware resolution so the display matches the agent's reasoning effort
-  // (e.g. "GPT-5.3-Codex" not just "GPT-5" for the first match).
   const currentModelDisplay = useMemo(() => {
     if (startupModelDisplayOverride) return startupModelDisplayOverride;
     if (!currentModelLabel) return null;
@@ -984,10 +912,8 @@ export function App({
 
   const hasTemporaryModelOverride = tempModelOverride !== null;
 
-  // Billing tier for conditional UI and error context (fetched once on mount)
   const [billingTier, setBillingTier] = useState<string | null>(null);
 
-  // Update error context when model or billing tier changes
   useEffect(() => {
     setErrorContext({
       modelDisplayName: currentModelDisplay ?? undefined,
@@ -1002,7 +928,6 @@ export function App({
     currentModelLabel,
   ]);
 
-  // Fetch billing tier once on mount
   useEffect(() => {
     (async () => {
       try {
@@ -1010,43 +935,32 @@ export function App({
         if (tier) {
           setBillingTier(tier);
         }
-      } catch {
-        // Silently ignore - billing tier is optional context
-      }
+      } catch {}
     })();
   }, []);
 
-  // Token streaming preference (can be toggled at runtime)
   const [tokenStreamingEnabled, setTokenStreamingEnabled] =
     useState(tokenStreaming);
 
-  // Reasoning tier Tab cycling preference (opt-in only, persisted globally)
   const [reasoningTabCycleEnabled, _setReasoningTabCycleEnabled] = useState(
     initialReasoningTabCycleEnabled,
   );
 
-  // Show compaction messages preference (can be toggled at runtime)
   const [showCompactionsEnabled, _setShowCompactionsEnabled] =
     useState(showCompactions);
   const [terminalTitleConfigRefreshEpoch, setTerminalTitleConfigRefreshEpoch] =
     useState(0);
 
-  // Live, approximate token counter (resets each turn)
   const [tokenCount, setTokenCount] = useState(0);
 
-  // Live total context tokens (history + system + output). Mirrors
-  // `contextTrackerRef.current.lastContextTokens` into reactive state so
-  // UI can react during streaming — the ref itself doesn't trigger renders.
   const [usedContextTokens, setUsedContextTokens] = useState(0);
 
-  // Trajectory token/time bases (accumulated across runs)
   const [trajectoryTokenBase, setTrajectoryTokenBase] = useState(0);
   const [trajectoryElapsedBaseMs, setTrajectoryElapsedBaseMs] = useState(0);
   const trajectoryRunTokenStartRef = useRef(0);
   const trajectoryTokenDisplayRef = useRef(0);
   const trajectorySegmentStartRef = useRef<number | null>(null);
 
-  // Current thinking message (rotates each turn)
   const [thinkingMessage, setThinkingMessage] = useState(
     getRandomThinkingVerb(),
   );
@@ -1056,15 +970,12 @@ export function App({
     setTerminalTitlePreviewOverride(undefined);
   }, []);
 
-  // Session stats tracking
   const sessionStatsRef = useRef(new SessionStats());
   const sessionStartTimeRef = useRef(Date.now());
   const sessionHooksRanRef = useRef(false);
   const sessionModStartAttemptedRef = useRef(false);
   const modAdapterRef = useRef<LocalModAdapter | null>(null);
 
-  // Initialize chunk log for this agent + session (clears buffer, GCs old files).
-  // Re-runs when agentId changes (e.g. agent switch via /agents).
   useEffect(() => {
     if (agentId && agentId !== "loading") {
       chunkLog.init(agentId, telemetry.getSessionId());
@@ -1107,19 +1018,16 @@ export function App({
     trajectorySegmentStartRef.current = null;
   }, []);
 
-  // Wire up session stats to telemetry for safety net handlers
   useEffect(() => {
     telemetry.setSessionStatsGetter(() =>
       sessionStatsRef.current.getSnapshot(),
     );
 
-    // Cleanup on unmount (defensive, prevents potential memory leak)
     return () => {
       telemetry.setSessionStatsGetter(undefined);
     };
   }, []);
 
-  // Track trajectory wall time based on streaming state (matches InputRich timer)
   useEffect(() => {
     if (streaming) {
       openTrajectorySegment();
@@ -1134,14 +1042,11 @@ export function App({
     syncTrajectoryElapsedBase,
   ]);
 
-  // SessionStart hook feedback to prepend to first user message
   const sessionStartFeedbackRef = useRef<string[]>([]);
 
-  // Run SessionStart hooks when agent becomes available (not the "loading" placeholder)
   useEffect(() => {
     if (agentId && agentId !== "loading" && !sessionHooksRanRef.current) {
       sessionHooksRanRef.current = true;
-      // Determine if this is a new session or resumed
       const isNewSession = !initialConversationId;
       runSessionStartHooks(
         isNewSession,
@@ -1150,18 +1055,14 @@ export function App({
         conversationIdRef.current ?? undefined,
       )
         .then((result) => {
-          // Store feedback to prepend to first user message
           if (result.feedback.length > 0) {
             sessionStartFeedbackRef.current = result.feedback;
           }
         })
-        .catch(() => {
-          // Silently ignore hook errors
-        });
+        .catch(() => {});
     }
   }, [agentId, agentName, initialConversationId]);
 
-  // Run SessionEnd hooks helper
   const runEndHooks = useCallback(
     async (reason: ModConversationCloseReason = "quit") => {
       const durationMs = Date.now() - sessionStartTimeRef.current;
@@ -1173,9 +1074,7 @@ export function App({
           agentIdRef.current ?? undefined,
           conversationIdRef.current ?? undefined,
         );
-      } catch {
-        // Silently ignore hook errors
-      }
+      } catch {}
 
       const modAdapter = modAdapterRef.current;
       if (modAdapter) {
@@ -1192,9 +1091,7 @@ export function App({
             },
             modAdapter.context,
           );
-        } catch {
-          // Mod lifecycle events are best-effort on shutdown.
-        }
+        } catch {}
       }
     },
     [],
@@ -1258,8 +1155,6 @@ export function App({
   const generateConversationTitle = useCallback(async () => {
     const fallback = deriveAutoConversationTitle();
 
-    // Heuristic-only when the experiment is off, on local backends, or for
-    // the agent-direct "default" conversation (which can't be forked safely).
     if (!getConversationTitleSettings().enabled) {
       return fallback;
     }
@@ -1356,10 +1251,8 @@ export function App({
     },
     [],
   );
-  // Static items (things that are done rendering and can be frozen)
   const [staticItems, setStaticItems] = useState<StaticItem[]>([]);
 
-  // Show in-transcript notification when auto-update applied a significant new version
   const [footerUpdateText, setFooterUpdateText] = useState<string | null>(null);
   useEffect(() => {
     if (!updateNotification) return;
@@ -1376,7 +1269,6 @@ export function App({
         },
       ];
     });
-    // Also show briefly in the footer placeholder area
     setFooterUpdateText(
       `New version available (${updateNotification}). Restart to update!`,
     );
@@ -1384,44 +1276,30 @@ export function App({
     return () => clearTimeout(timer);
   }, [updateNotification]);
 
-  // Track committed ids to avoid duplicates
   const emittedIdsRef = useRef<Set<string>>(new Set());
 
-  // Guard to append welcome snapshot only once
   const welcomeCommittedRef = useRef(false);
 
-  // AbortController for stream cancellation
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // Track if user wants to cancel (persists across state updates)
   const userCancelledRef = useRef(false);
 
-  // Retry counter for transient LLM API errors (ref for synchronous access in loop)
   const llmApiErrorRetriesRef = useRef(0);
-  const quotaAutoSwapAttemptedRef = useRef(false);
   const emptyResponseRetriesRef = useRef(0);
   const chatgptPlanSwapsRef = useRef(0);
   const chatgptExhaustedProvidersRef = useRef(new Set<string>());
-  // Retry counter for 409 "conversation busy" errors
   const conversationBusyRetriesRef = useRef(0);
 
-  // Message queue state for queueing messages during streaming
   const [queueDisplay, setQueueDisplay] = useState<QueuedMessage[]>([]);
 
-  // QueueRuntime — authoritative queue; queueDisplay is derived from its
-  // callbacks (see createTuiQueueRuntime). Lazy init; typed QueueRuntime | null.
   const tuiQueueRef = useRef<QueueRuntime | null>(null);
   if (!tuiQueueRef.current) {
     tuiQueueRef.current = createTuiQueueRuntime(setQueueDisplay);
   }
 
-  // Override content parts for queued submissions (to preserve part boundaries)
   const overrideContentPartsRef = useRef<MessageCreate["content"] | null>(null);
 
-  // Set up message queue bridge for background tasks
-  // This allows non-React code (Task.ts) to add notifications to queueDisplay
   useEffect(() => {
-    // Enqueue via QueueRuntime — onEnqueued callback updates queueDisplay.
     setMessageQueueAdder((message: QueuedMessage) => {
       tuiQueueRef.current?.enqueue(
         message.kind === "task_notification"
@@ -1441,10 +1319,6 @@ export function App({
     });
     return () => setMessageQueueAdder(null);
   }, []);
-  // ── Shadow cron scheduler ──────────────────────────────────────────
-  // Lightweight tui_cron scheduler when no matching WS listener is running.
-  // Defers to a live all-owner or this agent's scoped backend owner.
-  // The experiment check is inside tick() so toggling takes effect live.
   useEffect(() => {
     if (!agentId || agentId === "loading") return;
 
@@ -1453,7 +1327,6 @@ export function App({
     let lastMinuteKey = "";
 
     function tick(): void {
-      // Check experiment gate on each tick so toggling takes effect immediately
       if (!experimentManager.isEnabled("tui_cron")) return;
 
       const now = new Date();
@@ -1462,13 +1335,11 @@ export function App({
         return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}T${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
       })();
 
-      // Reset per-minute dedup when minute changes
       if (currentMinuteKey !== lastMinuteKey) {
         firedThisMinute.clear();
         lastMinuteKey = currentMinuteKey;
       }
 
-      // Defer to a live all-owner or this agent's scoped backend owner.
       const cronData = readCronFile();
       if (
         hasLiveSchedulerOwner(
@@ -1479,7 +1350,6 @@ export function App({
         return;
       }
 
-      // No active scheduler — process tasks for this agent
       const activeTasks = cronData.tasks.filter(
         (t) => t.status === "active" && t.agent_id === agentIdRef.current,
       );
@@ -1493,16 +1363,13 @@ export function App({
           firedThisMinute.add(task.id);
           const intendedOccurrence = getIntendedCronOccurrence(task, now);
 
-          // Apply jitter delay for recurring tasks (same as WS scheduler)
           const jitterMs = task.recurring ? task.jitter_offset_ms : 0;
           const taskId = task.id;
           const doFire = () => {
-            // Revalidate: task may have been deleted/cancelled during jitter
             const freshTask = getTask(taskId);
             if (!freshTask || freshTask.status !== "active") return;
 
             const schedulerNow = new Date();
-            // Use the same user-visible prompt formatter as the WS scheduler.
             const text = wrapCronPrompt(freshTask, {
               intendedOccurrence,
               schedulerNow,
@@ -1515,7 +1382,6 @@ export function App({
               conversationId: freshTask.conversation_id,
             });
 
-            // Update task state
             const nowIso = schedulerNow.toISOString();
             if (freshTask.recurring) {
               updateTask(freshTask.id, (t) => {
@@ -1550,7 +1416,6 @@ export function App({
       }
     }
 
-    // Initial tick
     tick();
 
     const interval = setInterval(tick, TICK_INTERVAL_MS);
@@ -1570,7 +1435,6 @@ export function App({
     restoreQueueOnCancelRef.current = restoreQueueOnCancel;
   }, [restoreQueueOnCancel]);
 
-  // Cache last sent input - cleared on successful completion, remains if interrupted
   const lastSentInputRef = useRef<Array<MessageCreate | ApprovalCreate> | null>(
     null,
   );
@@ -1619,20 +1483,12 @@ export function App({
     },
     [currentModelHandle, currentToolsetPreference],
   );
-  // Non-null only when the previous turn was explicitly interrupted by the user.
-  // Used to gate recovery alert injection to true user-interrupt retries.
   const pendingInterruptRecoveryConversationIdRef = useRef<string | null>(null);
 
-  // Epoch counter to force dequeue effect re-run when refs change but state doesn't.
   const [dequeueEpoch, setDequeueEpoch] = useState(0);
-  // Strict lock to ensure dequeue submit path is at-most-once while onSubmit is in flight.
   const dequeueInFlightRef = useRef(false);
 
-  // Queue defer mode: when 'defer', queued messages only fire on end_turn stop reason.
-  // Defer mode is only meaningful in API backend mode (local backend fires end_turn
-  // between each sequential tool call, making defer indistinguishable from immediate).
   const deferModeSupported = !isLocalAgentId(agentId);
-  // When 'immediate' (default), they fire on any turn end.
   const [queueMode, setQueueMode] = useState<"immediate" | "defer">(
     "immediate",
   );
@@ -1640,20 +1496,14 @@ export function App({
     if (!deferModeSupported) return;
     setQueueMode((prev) => (prev === "immediate" ? "defer" : "immediate"));
   }, [deferModeSupported]);
-  // Ref mirror of queueMode so useConversationLoop can read it without stale closures.
   const queueModeRef = useRef<"immediate" | "defer">("immediate");
   queueModeRef.current = queueMode;
-  // Tracks the stop reason of the last completed turn, set by useConversationLoop.
   const lastStopReasonRef = useRef<string | null>(null);
 
-  // Track last dequeued message for restoration on error
-  // If an error occurs after dequeue, we restore this to the input field (if input is empty)
   const lastDequeuedMessageRef = useRef<string | null>(null);
 
-  // Restored input value - set when we need to restore a message to the input after error
   const [restoredInput, setRestoredInput] = useState<string | null>(null);
 
-  // Busy = streaming/tool/command; refs allow synchronous access outside renders.
   // biome-ignore lint/correctness/useExhaustiveDependencies: refs are stable objects, .current is read dynamically
   const isAgentBusy = useCallback(() => {
     return (
@@ -1681,7 +1531,6 @@ export function App({
     [appendTaskNotificationEvents],
   );
 
-  // Queue callbacks remove consumed display entries by item ID.
   const consumeQueuedMessages = useCallback((): QueuedMessage[] | null => {
     const len = tuiQueueRef.current?.length ?? 0;
     if (len === 0) return null;
@@ -1695,8 +1544,6 @@ export function App({
       .map(toTuiQueuedMessage);
   }, []);
 
-  // Helper to wrap async handlers that need to close overlay and lock input
-  // Closes overlay and sets commandRunning before executing, releases lock in finally
   const withCommandLock = useCallback(
     async (asyncFn: () => Promise<void>) => {
       setActiveOverlay(null);
@@ -1710,7 +1557,6 @@ export function App({
     [setCommandRunning],
   );
 
-  // Track terminal dimensions for layout and overflow detection
   const rawColumns = useTerminalWidth();
   const terminalRows = useTerminalRows();
   const [stableColumns, setStableColumns] = useState(rawColumns);
@@ -1732,21 +1578,9 @@ export function App({
   const didImmediateShrinkClearRef = useRef(false);
   const isInitialResizeRef = useRef(true);
   const columns = stableColumns;
-  // Keep bottom chrome from ever exceeding the *actual* terminal width.
-  // When widening, we prefer the old behavior (wait until settle), so we use
-  // stableColumns. When shrinking, we must clamp to rawColumns to avoid Ink
-  // wrapping the footer/input chrome and "printing" divider rows into the
-  // transcript while dragging.
   const chromeColumns = Math.min(rawColumns, stableColumns);
   const debugFlicker = process.env.LETTA_DEBUG_FLICKER === "1";
 
-  // Terminal resize + Ink:
-  // When the terminal shrinks, the *previous* frame reflows (wraps to more
-  // lines) instantly at the emulator level. Ink's incremental redraw then tries
-  // to clear based on the old line count and can leave stale rows behind.
-  //
-  // Fix: on shrink events, clear the screen *synchronously* in the resize event
-  // handler (before React/Ink flushes the next frame) and remount Static output.
   useEffect(() => {
     if (
       typeof process === "undefined" ||
@@ -1768,14 +1602,12 @@ export function App({
       lastResizeColumnsRef.current = nextColumns;
       lastResizeRowsRef.current = nextRows;
 
-      // Skip initial mount.
       if (isInitialResizeRef.current) {
         return;
       }
 
       const shrunk = nextColumns < prevColumns || nextRows < prevRows;
       if (!shrunk) {
-        // Reset shrink-clear guard once the gesture ends.
         if (resizeGestureTimeoutRef.current) {
           clearTimeout(resizeGestureTimeoutRef.current);
         }
@@ -1786,8 +1618,6 @@ export function App({
         return;
       }
 
-      // During a shrink gesture, do an immediate clear only once.
-      // Clearing on every resize event causes extreme flicker.
       if (didImmediateShrinkClearRef.current) {
         if (resizeGestureTimeoutRef.current) {
           clearTimeout(resizeGestureTimeoutRef.current);
@@ -1806,7 +1636,6 @@ export function App({
         );
       }
 
-      // Cancel any debounced clear; we're taking the immediate-clear path.
       if (resizeClearTimeout.current) {
         clearTimeout(resizeClearTimeout.current);
         resizeClearTimeout.current = null;
@@ -1915,7 +1744,6 @@ export function App({
       resizeClearTimeout.current = setTimeout(() => {
         resizeClearTimeout.current = null;
 
-        // If resize changed again while waiting, let the latest schedule win.
         if (prevColumnsRef.current !== targetColumns) {
           if (debugFlicker) {
             // eslint-disable-next-line no-console
@@ -1952,13 +1780,11 @@ export function App({
     const prev = prevColumnsRef.current;
     if (rawColumns === prev) return;
 
-    // Clear pending debounced operation on any resize
     if (resizeClearTimeout.current) {
       clearTimeout(resizeClearTimeout.current);
       resizeClearTimeout.current = null;
     }
 
-    // Skip initial mount - no clearing needed on first render
     if (isInitialResizeRef.current) {
       isInitialResizeRef.current = false;
       prevColumnsRef.current = rawColumns;
@@ -1974,7 +1800,6 @@ export function App({
     }
 
     if (streaming) {
-      // Defer clear/remount until streaming ends to avoid Ghostty flicker.
       pendingResizeRef.current = true;
       pendingResizeColumnsRef.current = rawColumns;
       prevColumnsRef.current = rawColumns;
@@ -1988,20 +1813,11 @@ export function App({
       return;
     }
 
-    // Debounce to avoid flicker from rapid resize events (e.g., drag resize, Ghostty focus)
-    // and keep clear frequency bounded to prevent flash storms.
     scheduleResizeClear(rawColumns);
 
     prevColumnsRef.current = rawColumns;
   }, [rawColumns, streaming, scheduleResizeClear]);
 
-  // Reflow Static output for 1-col width changes too.
-  // rawColumns resize handling intentionally ignores 1-col "jitter" to reduce
-  // flicker, but that also means widening by small increments won't remount
-  // Static and existing output won't reflow.
-  //
-  // stableColumns only advances once the width has settled, so it's safe to use
-  // for a low-frequency remount trigger.
   useEffect(() => {
     if (isInitialResizeRef.current) return;
     if (streaming) return;
@@ -2052,7 +1868,6 @@ export function App({
     setDeferredCommitAt(null);
   }, []);
 
-  // Commit immutable/finished lines into the historical log
   const commitEligibleLines = useCallback(
     (b: Buffers, opts?: { deferToolCalls?: boolean }) => {
       const deferToolCalls = opts?.deferToolCalls !== false;
@@ -2061,8 +1876,6 @@ export function App({
       const deferredCommits = deferredToolCallCommitsRef.current;
       const now = Date.now();
       let blockedByDeferred = false;
-      // If we eagerly committed a tall preview for file tools, don't also
-      // commit the successful tool_call line (preview already represents it).
       const shouldSkipCommittedToolCall = (ln: Line): boolean => {
         if (ln.kind !== "tool_call") return false;
         if (!ln.toolCallId || !ln.name) return false;
@@ -2078,9 +1891,6 @@ export function App({
       const shouldSkipDeferral = (ln: Line): boolean => {
         if (ln.kind !== "tool_call") return false;
         if (ln.phase !== "finished") return false;
-        // Skip deferral when the result is already available: the component height
-        // has already changed (header + result), so deferring only extends the
-        // live-area repaint window that causes ghost lines in the terminal scrollback.
         return ln.resultText != null;
       };
       if (!deferToolCalls && deferredCommits.size > 0) {
@@ -2088,14 +1898,12 @@ export function App({
         setDeferredCommitAt(null);
       }
 
-      // Check if there are any in-progress Task tool_calls
       const hasInProgress = hasInProgressTaskToolCalls(
         b.order,
         b.byId,
         emittedIdsRef.current,
       );
 
-      // Collect finished Task tool_calls for grouping
       const finishedTaskToolCalls = collectFinishedTaskToolCalls(
         b.order,
         b.byId,
@@ -2103,7 +1911,6 @@ export function App({
         hasInProgress,
       );
 
-      // Commit regular lines (non-Task tools)
       for (const id of b.order) {
         if (emittedIdsRef.current.has(id)) continue;
         const ln = b.byId.get(id);
@@ -2118,13 +1925,11 @@ export function App({
           newlyCommitted.push({ ...ln });
           continue;
         }
-        // Events only commit when finished (they have running/finished phases)
         if (ln.kind === "event" && ln.phase === "finished") {
           emittedIdsRef.current.add(id);
           newlyCommitted.push({ ...ln });
           continue;
         }
-        // Commands with phase should only commit when finished
         if (ln.kind === "command" || ln.kind === "bash_command") {
           if (!ln.phase || ln.phase === "finished") {
             emittedIdsRef.current.add(id);
@@ -2132,8 +1937,6 @@ export function App({
           }
           continue;
         }
-        // Handle Task tool_calls specially - track position but don't add individually
-        // (unless there's no subagent data, in which case commit as regular tool call)
         if (ln.kind === "tool_call" && ln.name && isTaskTool(ln.name)) {
           if (hasInProgress && ln.toolCallId) {
             const subagent = getSubagentByToolCallId(ln.toolCallId);
@@ -2144,18 +1947,15 @@ export function App({
               continue;
             }
           }
-          // Check if this specific Task tool has subagent data (will be grouped)
           const hasSubagentData = finishedTaskToolCalls.some(
             (tc) => tc.lineId === id,
           );
           if (hasSubagentData) {
-            // Has subagent data - will be grouped later
             if (firstTaskIndex === -1) {
               firstTaskIndex = newlyCommitted.length;
             }
             continue;
           }
-          // No subagent data (e.g., backfilled from history) - commit as regular tool call
           if (ln.phase === "finished") {
             emittedIdsRef.current.add(id);
             newlyCommitted.push({ ...ln });
@@ -2191,29 +1991,22 @@ export function App({
           }
           emittedIdsRef.current.add(id);
           newlyCommitted.push({ ...ln });
-          // precomputedDiffs entries stay cached for Static remounts (resize
-          // repaints, ctrl+o, display toggles re-render committed items);
-          // StaticTranscript releases their oldStr/newStr payloads post-render.
         }
       }
 
-      // If we collected Task tool_calls (all are finished), create a subagent_group
       if (!blockedByDeferred && finishedTaskToolCalls.length > 0) {
-        // Mark all as emitted
         for (const tc of finishedTaskToolCalls) {
           emittedIdsRef.current.add(tc.lineId);
         }
 
         const groupItem = createSubagentGroupItem(finishedTaskToolCalls);
 
-        // Insert at the position of the first Task tool_call
         newlyCommitted.splice(
           firstTaskIndex >= 0 ? firstTaskIndex : newlyCommitted.length,
           0,
           groupItem,
         );
 
-        // Clear these agents from the subagent store
         clearSubagentsByIds(groupItem.agents.map((a) => a.id));
       }
 
@@ -2228,19 +2021,14 @@ export function App({
     [],
   );
 
-  // Render-ready transcript
   const [lines, setLines] = useState<Line[]>([]);
 
-  // Canonical buffers stored in a ref (mutated by onChunk), PERSISTED for session
   const buffersRef = useRef(createBuffers());
 
-  // Context-window token tracking, decoupled from streaming buffers
   const contextTrackerRef = useRef(createContextTracker());
 
-  // Track whether we've already backfilled history (should only happen once)
   const hasBackfilledRef = useRef(false);
 
-  // Keep buffers in sync with tokenStreamingEnabled state for aggressive static promotion
   useEffect(() => {
     buffersRef.current.tokenStreamingEnabled = tokenStreamingEnabled;
   }, [tokenStreamingEnabled]);
@@ -2330,14 +2118,10 @@ export function App({
     buffersRef.current.agentId = agentState?.id;
   }, [agentState?.id]);
   useMcpCleanup(agentState?.id);
-  // Cache precomputed diffs from approval dialogs for tool return rendering
-  // Key: toolCallId or "toolCallId:filePath" for Patch operations
   const precomputedDiffsRef = useRef<Map<string, AdvancedDiffSuccess>>(
     new Map(),
   );
 
-  // Track which approval tool call IDs have had their previews eagerly committed
-  // This prevents double-committing when the approval changes
   const eagerCommittedPreviewsRef = useRef<Set<string>>(new Set());
 
   const estimateApprovalPreviewLines = useCallback(
@@ -2381,7 +2165,7 @@ export function App({
             typeof args.description === "string" ? args.description : "";
         }
 
-        let lines = 3; // solid line + header + blank line
+        let lines = 3;
         lines += Math.min(
           countWrappedLines(command, wrapWidth),
           SHELL_PREVIEW_MAX_LINES,
@@ -2397,15 +2181,15 @@ export function App({
         isFileWriteTool(toolName) ||
         isPatchTool(toolName)
       ) {
-        const headerLines = 4; // solid line + header + dotted lines
+        const headerLines = 4;
         let diffLines = 0;
         const toolCallId = approval.toolCallId;
 
         if (isPatchTool(toolName) && typeof args.input === "string") {
           const operations = parsePatchOperations(args.input);
           operations.forEach((op, idx) => {
-            if (idx > 0) diffLines += 1; // blank line between operations
-            diffLines += 1; // filename line
+            if (idx > 0) diffLines += 1;
+            diffLines += 1;
 
             const diffKey = toolCallId ? `${toolCallId}:${op.path}` : undefined;
             const opDiff =
@@ -2435,7 +2219,7 @@ export function App({
               return;
             }
 
-            diffLines += 1; // delete placeholder
+            diffLines += 1;
           });
 
           return headerLines + diffLines;
@@ -2488,7 +2272,6 @@ export function App({
     return shouldEagerCommitApprovalPreview(currentApproval);
   }, [currentApproval, shouldEagerCommitApprovalPreview]);
 
-  // Recompute UI state from buffers after each streaming chunk
   const refreshDerived = useCallback(() => {
     const b = buffersRef.current;
     setTokenCount(b.tokenCount);
@@ -2552,7 +2335,6 @@ export function App({
     if (!input.startsWith("/")) {
       return;
     }
-    // Redact secret values so they don't leak into agent context
     if (/^\/secret\s+set\s+/i.test(input)) {
       const parts = input.split(/\s+/);
       if (parts.length >= 4) {
@@ -2632,7 +2414,6 @@ export function App({
     return pending.command;
   }, []);
 
-  // Combines startOverlayCommand + setActiveOverlay — these are always called together.
   const openOverlay = useCallback(
     (
       overlay: NonNullable<ActiveOverlay>,
@@ -2652,10 +2433,6 @@ export function App({
     [startOverlayCommand],
   );
 
-  // Combines consumeOverlayCommand + the UI-reset side of closeOverlay, but WITHOUT
-  // calling cmd.finish(dismissOutput). Use this when the overlay completed successfully
-  // and the caller will finish the command with a real result. Contrast with
-  // closeOverlay() (cancel path) which does finish with the dismiss message.
   const completeOverlay = useCallback(
     (overlay: NonNullable<ActiveOverlay>) => {
       const cmd = consumeOverlayCommand(overlay);
@@ -2691,13 +2468,10 @@ export function App({
     return () => clearTimeout(timer);
   }, [deferredCommitAt, refreshDerived]);
 
-  // Trailing-edge debounce for bash streaming output (100ms = max 10 updates/sec)
-  // Unlike refreshDerivedThrottled, this REPLACES pending updates to always show latest state
   const streamingRefreshTimeoutRef = useRef<ReturnType<
     typeof setTimeout
   > | null>(null);
   const refreshDerivedStreaming = useCallback(() => {
-    // Cancel any pending refresh - we want the LATEST state
     if (streamingRefreshTimeoutRef.current) {
       clearTimeout(streamingRefreshTimeoutRef.current);
     }
@@ -2710,7 +2484,6 @@ export function App({
     }, 100);
   }, [refreshDerived]);
 
-  // Cleanup streaming refresh on unmount
   useEffect(() => {
     return () => {
       if (streamingRefreshTimeoutRef.current) {
@@ -2719,7 +2492,6 @@ export function App({
     };
   }, []);
 
-  // Helper to update streaming output for bash/shell tools
   const updateStreamingOutput = useCallback(
     (toolCallId: string, chunk: string, isStderr = false) => {
       recordTuiPerf(`tool_output:${isStderr ? "stderr" : "stdout"}`, {
@@ -2732,7 +2504,6 @@ export function App({
       const entry = buffersRef.current.byId.get(lineId);
       if (!entry || entry.kind !== "tool_call") return;
 
-      // Immutable update with tail buffer
       const newStreaming = appendStreamingOutput(
         entry.streaming,
         chunk,
@@ -2750,19 +2521,12 @@ export function App({
     [refreshDerivedStreaming],
   );
 
-  // Throttled version for streaming updates (~60fps max)
   const refreshDerivedThrottled = useCallback(() => {
-    // Use a ref to track pending refresh
     if (!buffersRef.current.pendingRefresh) {
       buffersRef.current.pendingRefresh = true;
-      // Capture the current generation to detect if resume invalidates this refresh
       const capturedGeneration = buffersRef.current.commitGeneration || 0;
       setTimeout(() => {
         buffersRef.current.pendingRefresh = false;
-        // Skip refresh if stream was interrupted - prevents stale updates appearing
-        // after user cancels. Normal stream completion still renders (interrupted=false).
-        // Also skip if commitGeneration changed - this means a resume is in progress and
-        // committing now would lock in the stale "Interrupted by user" state.
         if (
           !buffersRef.current.interrupted &&
           (buffersRef.current.commitGeneration || 0) === capturedGeneration
@@ -2770,11 +2534,10 @@ export function App({
           recordTuiPerf("ui_refresh:stream");
           refreshDerived();
         }
-      }, 16); // ~60fps
+      }, 16);
     }
   }, [refreshDerived]);
 
-  // Eager commit for large approval previews (bash/file edits) to avoid flicker
   useEffect(() => {
     if (!currentApproval) return;
 
@@ -2803,17 +2566,13 @@ export function App({
     eagerCommittedPreviewsRef.current.add(toolCallId);
   }, [currentApproval, currentApprovalShouldCommitPreview]);
 
-  // Backfill message history when resuming (only once). Use layout timing so
-  // the ready input is not painted before the resumed transcript.
   useLayoutEffect(() => {
     if (
       loadingState === "ready" &&
       messageHistory.length > 0 &&
       !hasBackfilledRef.current
     ) {
-      // Set flag FIRST to prevent double-execution in strict mode
       hasBackfilledRef.current = true;
-      // Append welcome snapshot FIRST so it appears above history
       if (!welcomeCommittedRef.current) {
         welcomeCommittedRef.current = true;
         setStaticItems((prev) => [
@@ -2830,18 +2589,14 @@ export function App({
           },
         ]);
       }
-      // Use backfillBuffers to properly populate the transcript from history
       backfillBuffers(buffersRef.current, messageHistory);
 
-      // Add combined status at the END so user sees it without scrolling
       const statusId = `status-resumed-${Date.now().toString(36)}`;
 
-      // Check if agent is pinned
       const isPinned = agentState?.id
         ? settingsManager.isAgentPinned(agentState.id)
         : false;
 
-      // Build status message
       const agentName = agentState?.name || "Unnamed Agent";
       const isResumingConversation =
         resumedExistingConversation || messageHistory.length > 0;
@@ -2866,16 +2621,14 @@ export function App({
         hasAvailableLocalModels: startupHasAvailableLocalModels,
       });
 
-      // Build status lines with optional release notes above header
       const statusLines: string[] = [];
 
       const startupSystemPromptWarning =
         buildStartupSystemPromptWarning(agentState);
 
-      // Add release notes first (above everything) - same styling as rest of status block
       if (releaseNotes) {
         statusLines.push(releaseNotes);
-        statusLines.push(""); // blank line separator
+        statusLines.push("");
       }
 
       if (startupSystemPromptWarning) {
@@ -2908,14 +2661,12 @@ export function App({
     messageHistory,
   ]);
 
-  // Fetch llmConfig when agent is ready
   useEffect(() => {
     if (loadingState === "ready" && agentId && agentId !== "loading") {
       let cancelled = false;
 
       const fetchConfig = async () => {
         try {
-          // Use pre-loaded agent state if available, otherwise fetch
           const backend = getBackend();
           let agent: AgentState;
           if (initialAgentState && initialAgentState.id === agentId) {
@@ -2928,13 +2679,10 @@ export function App({
           setLlmConfig(agent.llm_config);
           setAgentDescription(agent.description ?? null);
 
-          // Infer the system prompt id for footer/selector display by matching the
-          // stored agent.system content against our known prompt presets.
           try {
             const agentSystem = (agent as { system?: unknown }).system;
             if (typeof agentSystem === "string") {
               const normalize = (s: string) => {
-                // Match prompt presets even if a managed memory section is present.
                 const withoutMemfs = s.replace(/\n# Memory[\s\S]*$/, "");
                 return withoutMemfs.replace(/\r\n/g, "\n").trim();
               };
@@ -2944,9 +2692,6 @@ export function App({
                 SYSTEM_PROMPTS,
                 SYSTEM_PROMPT,
               } = await import("@/agent/prompt-assets");
-              // Best-effort preset detection.
-              // Exact match is ideal, but allow prefix-matches because the stored
-              // agent.system may have additional sections appended.
               let matched: string | null = null;
               const contentMatches = (content: string): boolean => {
                 const norm = normalize(content);
@@ -2971,24 +2716,19 @@ export function App({
                 if (found) {
                   matched = found.id;
                 } else if (contentMatches(SYSTEM_PROMPT)) {
-                  // SYSTEM_PROMPT is used when no preset was specified.
-                  // Display as default since it maps to the default selector option.
                   matched = "default";
                 }
               }
 
               setCurrentSystemPromptId(matched ?? "custom");
             } else {
-              // A null raw prompt is Cloud's managed default, not a custom preset.
               setCurrentSystemPromptId(
                 agentSystem === null ? "default" : "custom",
               );
             }
           } catch {
-            // best-effort only
             setCurrentSystemPromptId("custom");
           }
-          // Get last message timestamp from agent state if available
           const lastRunCompletion = (
             agent as {
               last_run_completion?: string;
@@ -2996,7 +2736,6 @@ export function App({
           ).last_run_completion;
           setAgentLastRunAt(lastRunCompletion ?? null);
 
-          // Derive model ID from the configured model handle for ModelSelector.
           const agentModelHandle = getPreferredAgentModelHandle(agent);
           const { getModelInfoForLlmConfig } = await import("@/agent/model");
           const modelInfo = getModelInfoForLlmConfig(
@@ -3011,7 +2750,6 @@ export function App({
           } else {
             setCurrentModelId(agentModelHandle || null);
           }
-          // Store full handle for API calls (e.g., compaction)
           setCurrentModelHandle(agentModelHandle || null);
 
           if (backend.capabilities.serverSideToolManagement) {
@@ -3052,9 +2790,6 @@ export function App({
     return undefined;
   }, [loadingState, agentId, initialAgentState]);
 
-  // Mod provider metadata can arrive after the first local AgentState
-  // projection on cold boot. Re-project the active local agent when the provider
-  // registry changes so statusline context windows reflect registered models.
   useEffect(() => {
     if (
       !isLocalBackend ||
@@ -3144,7 +2879,6 @@ export function App({
     loadingState,
   ]);
 
-  // Keep effective model state in sync with the active conversation override.
   // biome-ignore lint/correctness/useExhaustiveDependencies: ref.current is intentionally read dynamically
   useEffect(() => {
     if (
@@ -3190,10 +2924,6 @@ export function App({
       setCurrentModelHandle(agentModelHandle ?? null);
       syncToolset(agentModelHandle, agentState.model_settings);
 
-      // If the model handle hasn't changed, skip re-deriving the model ID.
-      // The current ID (set by handleModelSelect or a prior derivation) is
-      // already correct. Re-deriving is lossy for variants that share a
-      // handle but differ only by context_window (e.g. 1M vs 200k).
       const currentHandle = buildModelHandleFromLlmConfig(llmConfigRef.current);
       if (agentModelHandle && agentModelHandle === currentHandle) {
         return;
@@ -3212,10 +2942,6 @@ export function App({
     };
 
     const syncConversationModel = async () => {
-      // "default" is a virtual sentinel for the agent's primary message history,
-      // not a real conversation object — skip the API call.
-      // If the user just switched models via /model, honour the local override
-      // until the next agent state refresh brings back the updated model.
       if (conversationId === "default") {
         if (!hasConversationModelOverrideRef.current) {
           applyAgentModelLocally();
@@ -3341,9 +3067,6 @@ export function App({
           "Failed to sync conversation model override: %O",
           error,
         );
-        // Preserve current local state on transient errors — the override flag
-        // was set by a successful /model write and should not be cleared by a
-        // failed read. The next sync cycle will retry and self-correct.
         debugLog(
           "conversation-model",
           "Keeping current model state after sync error (override in DB is authoritative)",
@@ -3387,9 +3110,6 @@ export function App({
 
       try {
         const { updateConversationLLMConfig } = await import("@/agent/modify");
-        // The preserved window rides as contextWindowOverride so it survives
-        // on local backends too (local catalog resolution ignores
-        // updateArgs.context_window); presets stay in updateArgs. LET-9786.
         await updateConversationLLMConfig(
           targetConversationId,
           carryover.modelHandle,
@@ -3410,12 +3130,6 @@ export function App({
     [],
   );
 
-  // Helper to append an error to the transcript
-  // Also tracks the error in telemetry so we know an error was shown.
-  // Pass `true` or `{ skip: true }` to suppress telemetry (e.g. hint
-  // lines that follow an already-tracked primary error).
-  // Pass an options object with errorType / context / etc. to enrich the
-  // telemetry event beyond the default "ui_error" / "error_display".
   const appendError = useCallback(
     (
       message: string,
@@ -3430,7 +3144,6 @@ export function App({
             runId?: string;
           },
     ) => {
-      // Defensive: ensure message is always a string (guards against [object Object])
       const text =
         typeof message === "string"
           ? message
@@ -3447,7 +3160,6 @@ export function App({
       buffersRef.current.order.push(id);
       refreshDerived();
 
-      // Track error in telemetry (unless explicitly skipped)
       const skip =
         typeof options === "boolean" ? options : (options?.skip ?? false);
       if (!skip) {
@@ -3474,7 +3186,7 @@ export function App({
       output: string,
       success: boolean,
       input = "/memfs sync",
-      keepRunning = false, // If true, keep phase as "running" (for conflict dialogs)
+      keepRunning = false,
     ) => {
       buffersRef.current.byId.set(commandId, {
         kind: "command",
@@ -3499,16 +3211,12 @@ export function App({
     if (memoryFilesystemInitializedRef.current) {
       return;
     }
-    // Only run startup sync if memfs is enabled for this agent
     if (!settingsManager.isMemfsEnabled(agentId)) {
       return;
     }
 
     memoryFilesystemInitializedRef.current = true;
 
-    // Git-backed memory: API-backed MemFS clones/pulls from the Letta remote.
-    // Local backend MemFS is already a local git repo under the local backend
-    // store, so startup only needs to ensure the repo exists.
     (async () => {
       try {
         if (getBackend().capabilities.localMemfs) {
@@ -3535,9 +3243,7 @@ export function App({
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         debugWarn("memfs-git", `Startup sync failed: ${errMsg}`);
-        // Warn user visually
         appendError(`Memory git sync failed: ${errMsg}`);
-        // Inject reminder so the agent also knows memory isn't synced
         pendingGitReminderRef.current = {
           dirty: false,
           aheadOfRemote: false,
@@ -3547,9 +3253,6 @@ export function App({
     })();
   }, [agentId, agentName, loadingState, appendError]);
 
-  // Set up fs.watch on the memory directory to detect external file edits.
-  // When a change is detected, set a dirty flag — the actual conflict check
-  // runs on the next turn (debounced, non-blocking).
   useEffect(() => {
     if (!agentId || agentId === "loading") return;
     if (!settingsManager.isMemfsEnabled(agentId)) return;
@@ -3563,10 +3266,7 @@ export function App({
         const memRoot = getScopedMemoryFilesystemRoot(agentId);
         if (!existsSync(memRoot)) return;
 
-        watcher = watch(memRoot, { recursive: true }, () => {
-          // Git-backed memory: no auto-sync on file changes.
-          // Agent handles commit/push. Status checked on interval.
-        });
+        watcher = watch(memRoot, { recursive: true }, () => {});
         memfsWatcherRef.current = watcher;
         debugLog("memfs", `Watching memory directory: ${memRoot}`);
 
@@ -3595,9 +3295,6 @@ export function App({
       }
     };
   }, [agentId]);
-
-  // Note: Old memFS conflict resolution overlay (handleMemorySyncConflictSubmit/Cancel)
-  // removed. Git-backed memory uses standard git merge conflict resolution via the agent.
 
   const maybeRunPostTurnReflection = useCallback(async (): Promise<void> => {
     const reflectionAgentId = agentIdRef.current;
@@ -3718,7 +3415,6 @@ export function App({
     queuedApprovalResultsRef,
     queueApprovalResults,
     queueSnapshotRef,
-    quotaAutoSwapAttemptedRef,
     refreshDerived,
     refreshDerivedThrottled,
     resetTrajectoryBases,
@@ -3833,14 +3529,11 @@ export function App({
   const handleExit = useCallback(async () => {
     await prepareSessionExit(conversationIdRef.current);
 
-    // Run SessionEnd hooks
     await runEndHooks();
 
-    // Track session end explicitly (before exit) with stats
     const stats = sessionStatsRef.current.getSnapshot();
     telemetry.trackSessionEnd(stats, "exit_command");
 
-    // Record session to local history file
     try {
       recordSessionEnd(
         agentId,
@@ -3858,15 +3551,12 @@ export function App({
           exitReason: "exit_command",
         },
       );
-    } catch {
-      // Non-critical, don't fail the exit
-    }
+    } catch {}
 
     await closeMcp();
     await telemetry.flush();
 
     setShowExitStats(true);
-    // Give React time to render the stats, then exit
     setTimeout(() => {
       process.exit(0);
     }, 100);
@@ -3878,16 +3568,10 @@ export function App({
     currentModelProvider,
   ]);
 
-  // Queue edit: load all queued user messages into the input (joined with newlines),
-  // then clear them from the queue so the user can edit and re-submit as one message.
   const handleQueueEdit = useCallback((): string => {
     const userMessages = queueDisplay.filter((m) => m.kind === "user");
     if (userMessages.length === 0) return "";
 
-    // Try to remove each message from the runtime queue. Only include text
-    // from messages that were actually removed — if removeItem returns null,
-    // the item was already dequeued (race with auto-send) and should NOT be
-    // loaded into the input (it would cause a double-send).
     const removedTexts: string[] = [];
     for (const msg of userMessages) {
       if (msg.queueItemId) {
@@ -3895,22 +3579,18 @@ export function App({
         if (removed) {
           removedTexts.push(msg.text);
         }
-        // If removed is null, item was already dequeued/sent — skip it
       } else {
-        // No queueItemId (shouldn't happen for user messages), include anyway
         removedTexts.push(msg.text);
       }
     }
 
-    if (removedTexts.length === 0) return ""; // All already dequeued/sent
+    if (removedTexts.length === 0) return "";
 
-    // Clear display immediately — same render cycle as the input update
     setQueueDisplay((prev) => prev.filter((m) => m.kind !== "user"));
 
     return removedTexts.join("\n");
   }, [queueDisplay]);
 
-  // Handle paste errors (e.g., image too large)
   const handlePasteError = useCallback(
     (message: string) => {
       const statusId = uid("status");
@@ -3964,13 +3644,11 @@ export function App({
     waitingForQueueCancelRef,
   });
 
-  // Keep ref to latest processConversation to avoid circular deps in useEffect
   const processConversationRef = useRef(processConversation);
   useEffect(() => {
     processConversationRef.current = processConversation;
   }, [processConversation]);
 
-  // Reasoning tier cycling state shared by /model, /agents, and tab-cycling flows.
   const reasoningCycleDebounceMs = 500;
   const reasoningCycleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -4243,12 +3921,9 @@ export function App({
     onSubmitRef.current = onSubmit;
   }, [onSubmit]);
 
-  // Process queued messages when streaming ends.
-  // dequeueEpoch re-triggers: enqueue, turn completion, interrupt settle.
   useEffect(() => {
-    void dequeueEpoch; // explicit dep to satisfy exhaustive-deps lint
+    void dequeueEpoch;
 
-    // Esc-parked user messages are skipped: only ready items count here.
     const queueLen = tuiQueueRef.current?.readyLength ?? 0;
     const hasAnythingQueued = queueLen > 0;
     if (!hasAnythingQueued && (tuiQueueRef.current?.length ?? 0) > 0) {
@@ -4258,24 +3933,20 @@ export function App({
     if (
       !streaming &&
       hasAnythingQueued &&
-      !queuedOverlayAction && // Prioritize queued model/toolset/system switches before dequeuing messages
+      !queuedOverlayAction &&
       pendingApprovals.length === 0 &&
       !commandRunning &&
       !isExecutingTool &&
       !reflectionArenaChoicePending &&
-      !anySelectorOpen && // Don't dequeue while a selector/overlay is open
-      !waitingForQueueCancelRef.current && // Don't dequeue while waiting for cancel
-      !userCancelledRef.current && // Don't dequeue if user just cancelled
-      !abortControllerRef.current && // Don't dequeue while processConversation is still active
-      !dequeueInFlightRef.current && // Don't dequeue while previous dequeue submit is still in flight
-      // In defer mode, only dequeue when the agent is truly done:
-      // - last stop reason was end_turn (not requires_approval or error)
-      // - processingConversationRef === 0 (no nested processConversation calls outstanding)
+      !anySelectorOpen &&
+      !waitingForQueueCancelRef.current &&
+      !userCancelledRef.current &&
+      !abortControllerRef.current &&
+      !dequeueInFlightRef.current &&
       (queueMode === "immediate" ||
         (lastStopReasonRef.current === "end_turn" &&
           processingConversationRef.current === 0))
     ) {
-      // consumeItems(n) fires onDequeued → setQueueDisplay(prev => prev.slice(n)).
       const batch = tuiQueueRef.current?.consumeItems(queueLen);
       if (!batch) return;
 
@@ -4290,32 +3961,24 @@ export function App({
         `Dequeuing ${batch.mergedCount} message(s): "${concatenatedMessage.slice(0, 50)}${concatenatedMessage.length > 50 ? "..." : ""}"`,
       );
 
-      // Store before submit — allows restoration on error (ESC path).
       lastDequeuedMessageRef.current = concatenatedMessage;
 
-      // Submit via normal flow — overrideContentPartsRef carries rich content parts.
       overrideContentPartsRef.current = queuedContentParts;
-      // Lock prevents re-entrant dequeue if deps churn before processConversation
-      // sets abortControllerRef (which is the normal long-term gate).
       dequeueInFlightRef.current = true;
-      // Reset to immediate mode after each dequeue — defer is opt-in per batch.
       setQueueMode("immediate");
       void onSubmitRef
         .current(concatenatedMessage, submitOptions)
         .finally(() => {
           dequeueInFlightRef.current = false;
-          // If more items arrived while in-flight, bump epoch so the effect re-runs.
           if ((tuiQueueRef.current?.length ?? 0) > 0) {
             setDequeueEpoch((e) => e + 1);
           }
         });
     } else if (hasAnythingQueued) {
-      // Log why dequeue was blocked (useful for debugging stuck queues)
       debugLog(
         "queue",
         `Dequeue blocked: streaming=${streaming}, queuedOverlayAction=${!!queuedOverlayAction}, pendingApprovals=${pendingApprovals.length}, commandRunning=${commandRunning}, isExecutingTool=${isExecutingTool}, anySelectorOpen=${anySelectorOpen}, waitingForQueueCancel=${waitingForQueueCancelRef.current}, userCancelled=${userCancelledRef.current}, abortController=${!!abortControllerRef.current}`,
       );
-      // Emit queue_blocked on blocked-reason transitions only (dedup via tryDequeue).
       const blockedReason = getTuiBlockedReason({
         streaming,
         isExecutingTool,
@@ -4389,8 +4052,6 @@ export function App({
     withCommandLock,
   });
 
-  // Process queued overlay actions when streaming ends: interactive commands
-  // (/agents, /model) used while busy apply after end_turn.
   useEffect(() => {
     if (
       !streaming &&
@@ -4400,17 +4061,14 @@ export function App({
       queuedOverlayAction !== null
     ) {
       const action = queuedOverlayAction;
-      setQueuedOverlayAction(null); // Clear immediately to prevent re-runs
+      setQueuedOverlayAction(null);
 
-      // Process the queued action
       if (action.type === "switch_agent") {
-        // Call handleAgentSelect - it will see isAgentBusy() as false now
         handleAgentSelect(action.agentId, {
           commandId: action.commandId,
           backendMode: action.backendMode,
         });
       } else if (action.type === "switch_model") {
-        // Call handleModelSelect - it will see isAgentBusy() as false now
         handleModelSelect(
           action.modelSelection ?? action.modelId,
           action.commandId,
@@ -4431,7 +4089,6 @@ export function App({
           phase: "running",
         });
 
-        // Execute the conversation switch asynchronously
         (async () => {
           setCommandRunning(true);
           try {
@@ -4457,7 +4114,6 @@ export function App({
 
                 settingsManager.persistSession(agentId, action.conversationId);
 
-                // Reset context tokens for new conversation
                 resetContextHistory(contextTrackerRef.current);
                 resetBootstrapReminderState();
 
@@ -4525,7 +4181,6 @@ export function App({
     queuedOverlayAction,
   ]);
 
-  // Handle escape when profile confirmation is pending
   const { handleFeedbackSubmit } = useFeedbackHandler({
     agentDescription,
     agentId,
@@ -4548,13 +4203,10 @@ export function App({
     }
   }, [commandRunner, profileConfirmPending]);
 
-  // Toggle expand/collapse for a specific tool call ID
   const handleToggleExpandedToolCall = useCallback((id: string) => {
     setExpandedToolCallId((prev) => (prev === id ? null : id));
   }, []);
 
-  // The ID of the last finished shell tool call — used for the ctrl+o hint and handler.
-  // lines is intentionally in the dep array to recompute when buffers change (buffersRef is a ref).
   // biome-ignore lint/correctness/useExhaustiveDependencies: lines triggers recompute when buffer changes
   const lastShellToolCallId = useMemo(() => {
     const order = buffersRef.current.order;
@@ -4575,17 +4227,14 @@ export function App({
     return null;
   }, [lines]);
 
-  // ctrl+o toggles the last shell tool call output
   const handleCtrlO = useCallback(() => {
     if (lastShellToolCallId) {
       handleToggleExpandedToolCall(lastShellToolCallId);
     }
   }, [lastShellToolCallId, handleToggleExpandedToolCall]);
 
-  // Handle permission mode changes from the Input component (e.g., shift+tab cycling)
   const handlePermissionModeChange = useCallback(
     (mode: PermissionMode) => {
-      // permissionMode.setMode() is called in InputRich.tsx before this callback
       setUiPermissionMode(mode);
     },
     [setUiPermissionMode],
@@ -4620,7 +4269,6 @@ export function App({
       withCommandLock,
     });
 
-  // Live area shows only in-progress items
   // biome-ignore lint/correctness/useExhaustiveDependencies: staticItems.length and deferredCommitAt are intentional triggers to recompute when items are promoted to static or deferred commits complete
   const liveItems = useMemo(() => {
     return lines.filter((ln) => {
@@ -4630,20 +4278,14 @@ export function App({
         return ln.phase === "running";
       }
       if (ln.kind === "tool_call") {
-        // Task tool_calls need special handling:
-        // - Only include if pending approval (phase: "ready" or "streaming")
-        // - Running/finished Task tools are handled by SubagentGroupDisplay
         if (ln.name && isTaskTool(ln.name)) {
-          // Only show Task tools that are awaiting approval (not running/finished)
           return ln.phase === "ready" || ln.phase === "streaming";
         }
-        // Always show other tool calls in progress
         return (
           ln.phase !== "finished" ||
           deferredToolCallCommitsRef.current.has(ln.id)
         );
       }
-      // Events (like compaction) show while running
       if (ln.kind === "event") {
         if (!showCompactionsEnabled && ln.eventType === "compaction")
           return false;
@@ -4660,16 +4302,11 @@ export function App({
     deferredCommitAt,
   ]);
 
-  // Subscribe to subagent state for reactive overflow detection
   const { agents: subagents } = useSyncExternalStore(
     subscribeToSubagents,
     getSubagentSnapshot,
   );
 
-  // A background task whose remote stop failed is still running: idle Esc
-  // must reach the interrupt handler so it can retry the stop, and the
-  // failure must surface as a transcript event instead of letting the
-  // promoted "interrupted" line claim the stop succeeded.
   const hasStopFailedTasks = hasStopFailedSubagents({
     agentId,
     conversationId,
@@ -4679,9 +4316,6 @@ export function App({
     const { failures, stops } = selectStopFailedNotifications(
       subagents,
       stopFailedNotifiedRef.current,
-      // Match the Esc retry's scoping: a failure (or its correction) must
-      // land in the transcript of the agent that owns the row, never be
-      // consumed by whichever agent the user switched to mid-flight.
       { agentId, conversationId },
     );
     const messages = [...failures, ...stops];
@@ -4690,27 +4324,21 @@ export function App({
     }
   }, [subagents, conversationId, appendTaskNotificationEvents, agentId]);
 
-  // Estimate live area height for overflow detection.
   const estimatedLiveHeight = useMemo(() => {
-    // Count actual lines in live content by counting newlines
     const countLines = (text: string | undefined): number => {
       if (!text) return 0;
       return (text.match(/\n/g) || []).length + 1;
     };
 
-    // Estimate height for each live item based on actual content
     let liveItemsHeight = 0;
     for (const item of liveItems) {
-      // Base height for each item (header line, margins)
       let itemHeight = 2;
 
       if (item.kind === "bash_command" || item.kind === "command") {
-        // Count lines in command input and output
         itemHeight += countLines(item.input);
         itemHeight += countLines(item.output);
       } else if (item.kind === "tool_call") {
-        // Count lines in tool args and result
-        itemHeight += Math.min(countLines(item.argsText), 5); // Cap args display
+        itemHeight += Math.min(countLines(item.argsText), 5);
         itemHeight += countLines(item.resultText);
       } else if (
         item.kind === "assistant" ||
@@ -4723,12 +4351,9 @@ export function App({
       liveItemsHeight += itemHeight;
     }
 
-    // Subagents: 4 lines each (description + URL + status + margin)
     const LINES_PER_SUBAGENT = 4;
     const subagentsHeight = subagents.length * LINES_PER_SUBAGENT;
 
-    // Fixed buffer for header, input area, status bar, margins
-    // Using larger buffer to catch edge cases and account for timing lag
     const FIXED_BUFFER = 20;
 
     const estimatedHeight = liveItemsHeight + subagentsHeight + FIXED_BUFFER;
@@ -4736,8 +4361,6 @@ export function App({
     return estimatedHeight;
   }, [liveItems, subagents.length]);
 
-  // Overflow detection with hysteresis: disable quickly on overflow, re-enable
-  // only after we've recovered extra headroom to avoid flap near the boundary.
   const [shouldAnimate, setShouldAnimate] = useState(
     () => estimatedLiveHeight < terminalRows,
   );
@@ -4811,18 +4434,14 @@ export function App({
     ],
   );
 
-  // Commit welcome snapshot once when ready for fresh sessions (no history)
-  // Wait for agentProvenance to be available for new agents (continueSession=false)
   useEffect(() => {
     if (
       loadingState === "ready" &&
       !welcomeCommittedRef.current &&
       messageHistory.length === 0
     ) {
-      // For new agents, wait until provenance is available
-      // For resumed agents, provenance stays null (that's expected)
       if (!continueSession && !agentProvenance) {
-        return; // Wait for provenance to be set
+        return;
       }
       welcomeCommittedRef.current = true;
       setStaticItems((prev) => [
@@ -4839,15 +4458,12 @@ export function App({
         },
       ]);
 
-      // Add status line showing agent info
       const statusId = `status-agent-${Date.now().toString(36)}`;
 
-      // Check if agent is pinned
       const isPinned = agentState?.id
         ? settingsManager.isAgentPinned(agentState.id)
         : false;
 
-      // Build status message based on session type
       const agentName = agentState?.name || "Unnamed Agent";
       const headerMessage = resumedExistingConversation
         ? `Resuming new conversation with **${agentName}**`
@@ -4864,16 +4480,14 @@ export function App({
         hasAvailableLocalModels: startupHasAvailableLocalModels,
       });
 
-      // Build status lines with optional release notes above header
       const statusLines: string[] = [];
 
       const startupSystemPromptWarning =
         buildStartupSystemPromptWarning(agentState);
 
-      // Add release notes first (above everything) - same styling as rest of status block
       if (releaseNotes) {
         statusLines.push(releaseNotes);
-        statusLines.push(""); // blank line separator
+        statusLines.push("");
       }
 
       if (startupSystemPromptWarning) {
@@ -5047,7 +4661,6 @@ export function App({
         includeSystemPromptUpgradeTip={includeSystemPromptUpgradeTip}
         inputEnabled={inputEnabled}
         inputVisible={inputVisible}
-        // Aborted-but-unwound turn: keep Esc routed to the interrupt handler.
         interruptRequested={
           interruptRequested || !!abortControllerRef.current?.signal.aborted
         }

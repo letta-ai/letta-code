@@ -100,6 +100,15 @@ Cloud decisions service.
 - `phase(title)` — start a new phase; subsequent agent() calls are grouped
   under this title in progress output.
 - `log(message)` — emit a progress message to the user.
+- `budget` — live run cost in USD: `budget.spent`, `budget.limit`, and
+  `budget.remaining` (limit and remaining are `null` without a `maxCostUsd`;
+  spent and remaining are `null` once any usage had no cost estimate).
+  With a budget, reaching it stops the run: pending and new calls reject with
+  `code: "budget_exceeded"` and running subagents are interrupted (a model
+  request already in flight finishes first, so the final spend can exceed the
+  limit by that much). Check `budget.remaining` between stages to skip
+  optional work (an extra verification pass) instead of hitting the limit
+  mid-stage.
 - `decide(state, questions, opts?)` → Promise; not a subagent call. Ask a
   calibrated Jev model (chosen internally — no model option) questions about
   `state`. `questions` is a non-empty OBJECT keyed by question id — never an

@@ -33,3 +33,55 @@ file to change.
 Run focused tests for the component or hook you changed. For render-sensitive
 work, also exercise narrow and wide terminals, tall output, and parallel
 approvals or paste input when those paths are affected.
+
+## Known Gotchas
+
+- **`*Rich.tsx` naming inversion.** The `*Rich.tsx` files are the ACTIVE
+  components, not the plain-named siblings. `App.tsx` imports Rich files and
+  renames them on import. The non-Rich files were dead stubs. When auditing a
+  `*Rich` file, check `App.tsx` imports first.
+- **CLI glyph registry.** `src/cli/helpers/glyphs.ts` is the central registry
+  for display glyphs. All components import from there.
+- **Threading state through app subsystems.** When adding state that crosses
+  subsystem boundaries, update ALL context types: `ConversationLoopContext`,
+  `SubmitHandlerContext`, `ConversationSwitchingContext`. Missing one causes
+  type error (missing definition) or runtime undefined (missing
+  destructuring/prop-passing).
+
+## Code Review Signals
+
+### TUI Flicker (most common bug)
+
+App.tsx has ~54 `useEffect` calls and spread state. Adding any `useState` or
+`useReducer` that updates on keystroke, timer tick, or streaming chunk triggers
+re-renders across the entire component tree.
+
+- **Do:** Use refs for values that don't need to trigger renders. Use
+  `React.memo()` for static content. Keep state minimal.
+- **Don't:** Add `useState`/`useReducer` for UI features that update on every
+  keystroke, timer tick, or streaming chunk.
+- **Debug:** `LETTA_DEBUG_FLICKER=1` logs re-render triggers to file.
+- **Review signal:** any PR adding state to App.tsx, modifying `useEffect` deps,
+  or touching approval/rendering components.
+
+### Ink `<Static>` and Double-Printing
+
+Ink's `<Static>` writes to stdout and never erases. Changing the component key
+re-mounts and re-renders all items, but previously rendered items persist on
+screen, causing duplicate/triple output.
+
+- Do not change the `<Static>` key unless items are already empty.
+- Do not render the same output through both buffers (`commandRunner`) and
+  `setStaticItems`.
+- The accepted exception is an intentional transcript repaint on a display
+  toggle (PR #4032): clear the screen first (`CLEAR_SCREEN_AND_HOME`), or use
+  vendored Ink's atomic `repaintStaticOutput`. A key change without a preceding
+  clear is a double-print risk.
+
+### Interrupt Lock / State Cleanup
+
+`EAGER_CANCEL` path and non-EAGER fallback BOTH need to clear ALL state flags
+(`isExecutingTool`, `abortControllerRef`, `toolResultsInFlightRef`). Missing
+one = permanently busy.
+
+- **Review signal:** interrupt handling, ESC key, tool execution cleanup paths.

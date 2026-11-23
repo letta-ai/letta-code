@@ -1,4 +1,8 @@
-import { createTask, type TaskRecord } from "./tasks/store.js";
+import {
+  createTask,
+  getTaskSnapshot,
+  type TaskRecordResult,
+} from "./tasks/store.js";
 import { validateRequiredParams } from "./validation.js";
 
 interface TaskCreateArgs {
@@ -8,7 +12,9 @@ interface TaskCreateArgs {
   metadata?: Record<string, string>;
 }
 
-export async function task_create(args: TaskCreateArgs): Promise<TaskRecord> {
+export async function task_create(
+  args: TaskCreateArgs,
+): Promise<TaskRecordResult> {
   validateRequiredParams(args, ["subject", "description"], "TaskCreate");
   if (typeof args.subject !== "string" || args.subject.length === 0) {
     throw new Error("TaskCreate: 'subject' must be a non-empty string");
@@ -36,10 +42,11 @@ export async function task_create(args: TaskCreateArgs): Promise<TaskRecord> {
     }
   }
 
-  return createTask({
+  const record = createTask({
     subject: args.subject,
     description: args.description,
     activeForm: args.activeForm,
     metadata: args.metadata,
   });
+  return { ...record, ...getTaskSnapshot() };
 }

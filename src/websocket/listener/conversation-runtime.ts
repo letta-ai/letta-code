@@ -213,6 +213,7 @@ function queueRemovalTransition(
   return {
     client_message_id: item.clientMessageId ?? `cm-${item.id}`,
     disposition,
+    source: item.source,
   };
 }
 export function ensureConversationQueueRuntime(
@@ -430,7 +431,6 @@ export function restoreDurableQueuedInputs(
   }
   return restored;
 }
-/** Promote terminal journals before connection state-sync attempts replay. */
 export function promotePreparedInputTerminals(
   listener: ListenerRuntime,
   terminalStore = createTurnFinishedStore(),

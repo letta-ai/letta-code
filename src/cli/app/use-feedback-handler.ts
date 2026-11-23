@@ -1,5 +1,3 @@
-// src/cli/app/useFeedbackHandler.ts
-
 import { type MutableRefObject, useCallback } from "react";
 import type { SessionStats } from "@/agent/stats";
 import {
@@ -68,7 +66,6 @@ export function useFeedbackHandler(ctx: FeedbackHandlerContext) {
           const apiKey =
             process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
 
-          // Only send anonymized, safe settings for debugging
           const {
             env: _env,
             refreshToken: _refreshToken,
@@ -89,11 +86,9 @@ export function useFeedbackHandler(ctx: FeedbackHandlerContext) {
               version: getVersion(),
               platform: process.platform,
               settings: JSON.stringify(safeSettings),
-              // System info
               local_time: getLocalTime(),
               device_type: getDeviceType(),
               cwd: process.cwd(),
-              // Session stats
               ...(() => {
                 const stats = sessionStatsRef.current?.getSnapshot();
                 if (!stats) return {};
@@ -110,16 +105,12 @@ export function useFeedbackHandler(ctx: FeedbackHandlerContext) {
                   context_tokens: stats.usage.contextTokens,
                 };
               })(),
-              // Agent info
               agent_name: agentName ?? undefined,
               agent_description: agentDescription ?? undefined,
               model: currentModelId ?? undefined,
-              // Account info
               billing_tier: billingTier ?? undefined,
               server_version: telemetry.getServerVersion() ?? undefined,
-              // Recent chunk log for diagnostics
               recent_chunks: chunkLog.getEntries(),
-              // Debug log tail for diagnostics
               debug_log_tail: debugLogFile.getTail(),
             },
           );

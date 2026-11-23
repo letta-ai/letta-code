@@ -132,7 +132,6 @@ describe("full-history reads of image-heavy transcripts", () => {
         parentId = entryId;
       }
     }
-    // Only the last two turns are in context; earlier images are history.
     const inContextIds = [turns - 2, turns - 1].flatMap((turn) => [
       `msg-${turn}-call`,
       `msg-${turn}-result`,
@@ -171,7 +170,6 @@ describe("full-history reads of image-heavy transcripts", () => {
             { type: "text", text: LOCAL_OMITTED_IMAGE_PLACEHOLDER },
           ];
 
-    // Every parsed row: old images are placeholders from parse time on.
     const parsed = readLocalTranscriptRowsForHistory(
       messagesPath,
       inContextIds,
@@ -183,8 +181,6 @@ describe("full-history reads of image-heavy transcripts", () => {
       Array.from({ length: turns }, (_, turn) => expectedContent(turn)),
     );
 
-    // Resident tail of 1 cannot cover the 4 in-context ids, so this takes
-    // the full-history disk read used by compaction, fork, and fallback.
     const store = new LocalStore(agentId, {
       storageDir,
       residentMessageTailLimit: 1,
@@ -444,10 +440,6 @@ describe("in-context tail window and unread head validation", () => {
     return join(storageDir, "conversations", key, file);
   }
 
-  // 80 messages of ~2 KB. The tail load parses every in-context row, so an
-  // unparsed head only remains for compacted history (`compactKeep`) or for
-  // a record without an in-context list (`clearInContext`, where the 4-message
-  // floor bounds the window and every message counts as in context).
   async function seedTranscript(
     options: { compactKeep?: number; clearInContext?: boolean } = {},
   ): Promise<string> {
@@ -506,8 +498,6 @@ describe("in-context tail window and unread head validation", () => {
     const storageDir = await seedTranscript({ compactKeep: 2 });
     const messagesPath = conversationPath(storageDir, "messages.jsonl");
     const original = await readFile(messagesPath, "utf8");
-    // The 64 KB suffix drops its partial first line; that line must still be
-    // validated as part of the head. Corrupt it in place (same length).
     const boundary = Buffer.byteLength(original) - 64 * 1024;
     const lineStart = original.lastIndexOf("\n", boundary - 1) + 1;
     const corrupted = `${original.slice(0, lineStart)}X${original.slice(lineStart + 1)}`;
@@ -550,8 +540,6 @@ describe("in-context tail window and unread head validation", () => {
 
     const store = freshStore(storageDir);
     expect(() => sendUserMessage(store, "first")).toThrow();
-    // The bounded resident window prevents the listing from falling back to a
-    // full read, without clearing the pending check for the next append.
     expect(store.listLocalMessages("default", agentId)).toHaveLength(4);
     expect(() => sendUserMessage(store, "retry")).toThrow();
     expect(await readFile(messagesPath, "utf8")).toBe(corrupted);
@@ -564,8 +552,6 @@ describe("in-context tail window and unread head validation", () => {
     await corruptFirstLine(messagesPath);
     const record = await readFile(recordPath, "utf8");
 
-    // Tail loaded by a non-writing path; the compacted in-context set is
-    // resident, so reads never touch the corrupt head.
     const reopened = freshStore(storageDir);
     reopened.settleInterruptedToolCalls("default", { agentId });
     const current = reopened.listLocalMessages("default", agentId);
@@ -585,8 +571,6 @@ describe("in-context tail window and unread head validation", () => {
     const storageDir = await seedTranscript();
     const store = freshStore(storageDir);
     appendTurn(store, "after reload");
-    // Every in-context message is resident despite the 4-message floor, so
-    // full-history reads never go back to disk.
     await writeFile(conversationPath(storageDir, "messages.jsonl"), "{gone\n");
     const messages = store.listLocalMessages("default", agentId);
     expect(messages).toHaveLength(82);
@@ -614,7 +598,6 @@ describe("in-context tail window and unread head validation", () => {
       packedSummary: "packed summary",
       remainingMessages: messages.slice(-6),
     });
-    // Summary + 6 kept exceeds the 4-message floor; none of it is evicted.
     expect(inspectResidency(store)).toEqual({
       residentMessages: 7,
       persistedSnapshots: 7,
@@ -640,7 +623,6 @@ describe("in-context tail window and unread head validation", () => {
       .in_context_message_ids as string[];
     expect(inContext).toHaveLength(5);
     expect(inContext).not.toContain(danglingId);
-    // The window covers the pruned context: reads stay off disk.
     await writeFile(conversationPath(storageDir, "messages.jsonl"), "{gone\n");
     expect(restarted.listLocalMessages("default", agentId)).toHaveLength(5);
   });
@@ -654,7 +636,6 @@ describe("spliceOutOfContextMessages", () => {
     const window = messages();
     const evicted = spliceOutOfContextMessages(window, ["b", "d"], 2);
     expect(evicted.map((message) => message.id)).toEqual(["a", "c"]);
-    // The newest message stays even though it is not yet in context.
     expect(window.map((message) => message.id)).toEqual(["b", "d", "e"]);
   });
 

@@ -1,12 +1,3 @@
-/**
- * Terminal-title output helpers for the TUI.
- *
- * This mirrors Codex's narrow OSC title writer: callers decide when a title
- * should change, while this module owns sanitization and the BEL-terminated OSC
- * 0 write. It does not try to restore the terminal's previous title because
- * that is not portable across terminals.
- */
-
 const MAX_TERMINAL_TITLE_CHARS = 240;
 
 export type SetTerminalTitleResult = "applied" | "no-visible-content";

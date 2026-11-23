@@ -24,13 +24,6 @@ export function buildConversationModelCarryoverUpdate(params: {
 }): {
   modelHandle: string;
   updateArgs?: Record<string, unknown>;
-  /**
-   * The active conversation's preserved context window, when one exists and
-   * is not server-clamp poison. Callers must pass this through
-   * `contextWindowOverride` so it survives on local backends too (local
-   * catalog resolution ignores updateArgs.context_window). Catalog preset
-   * windows stay in updateArgs only — local backends own those limits.
-   */
   contextWindowOverride?: number;
 } | null {
   const { rawModelHandle, currentLlmConfig } = params;
@@ -71,12 +64,6 @@ export function buildConversationModelCarryoverUpdate(params: {
     updateArgs.enable_reasoner = enableReasoner;
   }
 
-  // Carry the active conversation's window forward — unless it looks like
-  // the server's legacy 128k clamp (LET-9786), in which case fall back to the
-  // model preset so new conversations start healed rather than poisoned.
-  // The preserved value rides as contextWindowOverride (honored on all
-  // backends); the preset stays in updateArgs (local backends deliberately
-  // ignore it in favor of the pi catalog).
   const contextWindowOverride = preservableContextWindow(
     activeConversationContextWindowLimit,
     modelHandle,

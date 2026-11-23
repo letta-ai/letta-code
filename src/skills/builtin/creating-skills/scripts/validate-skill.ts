@@ -1,13 +1,4 @@
 #!/usr/bin/env node
-/**
- * Skill Validator - Validates skill structure and frontmatter
- *
- * Usage:
- *   node validate-skill.ts <skill-directory>
- *
- * Example:
- *   node validate-skill.ts .skills/my-skill
- */
 
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
@@ -68,9 +59,6 @@ function parseScalar(value: string): unknown {
     return parseQuotedScalar(trimmed);
   }
 
-  // The fallback parser intentionally accepts only the frontmatter subset this
-  // validator needs. Unquoted ": " inside a scalar is the most common YAML
-  // authoring mistake; reject it instead of silently producing a bad value.
   if (trimmed.includes(": ")) {
     throw new Error(`Unexpected ':' in unquoted scalar: ${trimmed}`);
   }
@@ -96,8 +84,6 @@ function parseFrontmatterFallback(source: string): Record<string, unknown> {
     }
 
     if (/^\s/.test(line)) {
-      // Nested data belongs to the previous top-level key. The validator only
-      // checks top-level field names plus name/description scalar values.
       continue;
     }
 
@@ -154,21 +140,17 @@ function parseFrontmatter(source: string): Record<string, unknown> {
 }
 
 export function validateSkill(skillPath: string): ValidationResult {
-  // Check SKILL.md exists
   const skillMdPath = join(skillPath, "SKILL.md");
   if (!existsSync(skillMdPath)) {
     return { valid: false, message: "SKILL.md not found" };
   }
 
-  // Read content
   const content = readFileSync(skillMdPath, "utf-8");
 
-  // Check for frontmatter
   if (!content.startsWith("---")) {
     return { valid: false, message: "No YAML frontmatter found" };
   }
 
-  // Extract frontmatter
   const match = content.match(/^---\n([\s\S]*?)\n---/);
   if (!match) {
     return { valid: false, message: "Invalid frontmatter format" };
@@ -176,7 +158,6 @@ export function validateSkill(skillPath: string): ValidationResult {
 
   const frontmatterText = match[1] as string;
 
-  // Parse YAML frontmatter
   let frontmatter: Record<string, unknown>;
   try {
     frontmatter = parseFrontmatter(frontmatterText);
@@ -190,7 +171,6 @@ export function validateSkill(skillPath: string): ValidationResult {
     };
   }
 
-  // Check for unexpected properties (warn but don't fail for forward-compatibility)
   const warnings: string[] = [];
   const unexpectedKeys = Object.keys(frontmatter).filter(
     (key) => !ALLOWED_PROPERTIES.has(key),
@@ -201,7 +181,6 @@ export function validateSkill(skillPath: string): ValidationResult {
     );
   }
 
-  // Check required fields
   if (!("name" in frontmatter)) {
     return { valid: false, message: "Missing 'name' in frontmatter" };
   }
@@ -209,7 +188,6 @@ export function validateSkill(skillPath: string): ValidationResult {
     return { valid: false, message: "Missing 'description' in frontmatter" };
   }
 
-  // Validate name
   const name = frontmatter.name;
   if (typeof name !== "string") {
     return {
@@ -219,7 +197,6 @@ export function validateSkill(skillPath: string): ValidationResult {
   }
   const trimmedName = name.trim();
   if (trimmedName) {
-    // Check naming convention (hyphen-case: lowercase with hyphens)
     if (!/^[a-z0-9-]+$/.test(trimmedName)) {
       return {
         valid: false,
@@ -236,7 +213,6 @@ export function validateSkill(skillPath: string): ValidationResult {
         message: `Name '${trimmedName}' cannot start/end with hyphen or contain consecutive hyphens`,
       };
     }
-    // Check name length
     if (trimmedName.length > MAX_SKILL_NAME_LENGTH) {
       return {
         valid: false,
@@ -244,7 +220,6 @@ export function validateSkill(skillPath: string): ValidationResult {
       };
     }
 
-    // Check name matches directory name (warn if not)
     const dirName = basename(skillPath);
     if (trimmedName !== dirName) {
       warnings.push(
@@ -253,7 +228,6 @@ export function validateSkill(skillPath: string): ValidationResult {
     }
   }
 
-  // Validate description
   const description = frontmatter.description;
   if (typeof description !== "string") {
     return {
@@ -263,14 +237,12 @@ export function validateSkill(skillPath: string): ValidationResult {
   }
   const trimmedDescription = description.trim();
   if (trimmedDescription) {
-    // Check for angle brackets
     if (trimmedDescription.includes("<") || trimmedDescription.includes(">")) {
       return {
         valid: false,
         message: "Description cannot contain angle brackets (< or >)",
       };
     }
-    // Check description length (max 1024 characters)
     if (trimmedDescription.length > 1024) {
       return {
         valid: false,
@@ -293,7 +265,6 @@ function isMainModule(): boolean {
     : false;
 }
 
-// CLI entry point
 if (isMainModule()) {
   const args = process.argv.slice(2);
   if (args.length !== 1) {

@@ -7,15 +7,10 @@ import { Text } from "./Text";
 
 interface PinDialogProps {
   currentName: string;
-  onSubmit: (newName: string | null) => void; // null means keep current name
+  onSubmit: (newName: string | null) => void;
   onCancel: () => void;
 }
 
-/**
- * Validate agent name against backend rules.
- * Matches: Unicode letters, digits, underscores, spaces, hyphens, apostrophes
- * Blocks: / \ : * ? " < > |
- */
 export function validateAgentName(name: string): string | null {
   if (!name || !name.trim()) {
     return "Name cannot be empty";
@@ -23,9 +18,6 @@ export function validateAgentName(name: string): string | null {
 
   const trimmed = name.trim();
 
-  // Match backend regex: ^[\w '-]+$ with unicode
-  // \w matches Unicode letters, digits, and underscores
-  // We also allow spaces, hyphens, and apostrophes
   const validPattern = /^[\w '-]+$/u;
 
   if (!validPattern.test(trimmed)) {
@@ -39,9 +31,6 @@ export function validateAgentName(name: string): string | null {
   return null;
 }
 
-/**
- * Check if the name is the default Letta Code agent name.
- */
 export function isDefaultAgentName(name: string): boolean {
   return name === DEFAULT_AGENT_NAME;
 }
@@ -56,7 +45,6 @@ export function PinDialog({ currentName, onSubmit, onCancel }: PinDialogProps) {
   const [error, setError] = useState("");
 
   useInput((input, key) => {
-    // CTRL-C: immediately cancel (bypasses mode transitions)
     if (key.ctrl && input === "c") {
       onCancel();
       return;
@@ -64,7 +52,6 @@ export function PinDialog({ currentName, onSubmit, onCancel }: PinDialogProps) {
 
     if (key.escape) {
       if (mode === "input" && !isDefault) {
-        // Go back to choose mode
         setMode("choose");
         setError("");
       } else {
@@ -80,10 +67,8 @@ export function PinDialog({ currentName, onSubmit, onCancel }: PinDialogProps) {
         setSelectedOption((prev) => Math.max(prev - 1, 0));
       } else if (key.return) {
         if (selectedOption === 0) {
-          // Keep current name
           onSubmit(null);
         } else {
-          // Change name
           setMode("input");
         }
       }
@@ -102,7 +87,6 @@ export function PinDialog({ currentName, onSubmit, onCancel }: PinDialogProps) {
     onSubmit(trimmed);
   };
 
-  // Input-only mode for default names
   if (isDefault || mode === "input") {
     return (
       <Box flexDirection="column" paddingY={1}>
@@ -154,7 +138,6 @@ export function PinDialog({ currentName, onSubmit, onCancel }: PinDialogProps) {
     );
   }
 
-  // Choice mode for custom names
   return (
     <Box flexDirection="column" paddingY={1}>
       <Box marginBottom={1}>
