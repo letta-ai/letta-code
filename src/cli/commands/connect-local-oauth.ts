@@ -19,6 +19,7 @@ import {
   checkProviderApiKey,
   createOrUpdateProvider,
 } from "@/providers/byok-providers";
+import { settingsManager } from "@/settings-manager";
 import { openOAuthBrowser } from "./connect-oauth-core";
 
 export interface LocalOAuthConnectCallbacks {
@@ -29,6 +30,11 @@ export interface LocalOAuthConnectCallbacks {
   signal?: AbortSignal;
   baseURL?: string;
   timeout?: LocalProviderTimeout;
+  /**
+   * Stable ID of this installation. Sign in with ChatGPT sends it to OpenAI
+   * as the agent host ID and refuses to start without one.
+   */
+  getDeviceId?: () => string;
 }
 
 function localOAuthProviderId(provider: ByokProvider): string {
@@ -130,7 +136,11 @@ export async function runProviderOAuthLogin(
     },
   };
 
-  const credential = await oauth.login(interaction);
+  const credential = await oauth.login(interaction, {
+    agentName: "Letta Code",
+    getDeviceId:
+      callbacks.getDeviceId ?? (() => settingsManager.getOrCreateDeviceId()),
+  });
   if (credential.type !== "oauth") {
     throw new Error(`${oauth.name} returned invalid OAuth credentials.`);
   }
