@@ -1,6 +1,7 @@
 import { expect, mock, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import type { InboundChannelMessage } from "@/channels/types";
+import { buildChannelNotificationXml } from "@/channels/xml";
 import {
   consoleWarnSpy,
   createTelegramAdapter,
@@ -107,18 +108,22 @@ test("telegram adapter batches media groups and downloads inbound images", async
   }
 });
 
-test("telegram adapter preserves photo mime type when Telegram download responds with octet-stream", async () => {
-  globalThis.fetch = mock(
+test("telegram adapter retries a failed getFile and a transient download response", async () => {
+  const getFile = mock(async () => ({ file_path: "photos/photo.jpg" }));
+  getFile.mockRejectedValueOnce(
+    new Error("Network request for getFile failed"),
+  );
+  FakeBot.nextGetFileImpl = getFile;
+
+  const fetchFile = mock(
     async () =>
       new Response(Buffer.from("fake-jpeg"), {
         status: 200,
         headers: { "content-type": "application/octet-stream" },
       }),
-  ) as unknown as typeof fetch;
-
-  FakeBot.nextGetFileImpl = async () => ({
-    file_path: "photos/photo.jpg",
-  });
+  );
+  fetchFile.mockResolvedValueOnce(new Response(null, { status: 503 }));
+  globalThis.fetch = fetchFile as unknown as typeof fetch;
 
   const adapter = createTelegramAdapter({
     ...telegramAccountDefaults,
@@ -148,6 +153,8 @@ test("telegram adapter preserves photo mime type when Telegram download responds
       },
     });
 
+    expect(getFile).toHaveBeenCalledTimes(3);
+    expect(fetchFile).toHaveBeenCalledTimes(2);
     expect(onMessage).toHaveBeenCalledTimes(1);
     const firstCall = onMessage.mock.calls[0] as unknown as
       | [InboundChannelMessage]
@@ -363,25 +370,30 @@ test("telegram adapter logs when oversized inbound attachments are skipped", asy
   );
 });
 
-test("telegram adapter logs attachment download failures", async () => {
-  globalThis.fetch = mock(async () => {
-    throw new Error("network down");
-  }) as unknown as typeof fetch;
-
-  FakeBot.nextGetFileImpl = async () => ({
-    file_path: "documents/fail.wav",
+test("telegram adapter preserves failed attachments and logs a safe cause after three attempts", async () => {
+  const token = "test-token";
+  const remotePath = "photos/private.jpg";
+  const url = `https://api.telegram.org/file/bot${token}/${remotePath}`;
+  const fetchFile = mock(async () => {
+    throw new TypeError(`fetch failed for ${url}`, {
+      cause: Object.assign(new Error(`connection reset for ${url}`), {
+        code: "ECONNRESET",
+      }),
+    });
   });
+  globalThis.fetch = fetchFile as unknown as typeof fetch;
+  FakeBot.nextGetFileImpl = async () => ({ file_path: remotePath });
 
   const adapter = createTelegramAdapter({
     ...telegramAccountDefaults,
     channel: "telegram",
     enabled: true,
-    token: "test-token",
+    token,
     dmPolicy: "pairing",
     allowedUsers: [],
   });
 
-  const onMessage = mock(async () => {});
+  const onMessage = mock(async (_message: InboundChannelMessage) => {});
   adapter.onMessage = onMessage;
 
   await adapter.start();
@@ -391,21 +403,36 @@ test("telegram adapter logs attachment download failures", async () => {
     message: {
       chat: { id: 123 },
       from: { id: 456, username: "alice", first_name: "Alice" },
-      text: "Download this",
       date: 1_736_380_800,
       message_id: 10,
-      document: {
-        file_id: "fail",
-        file_name: "fail.wav",
-        file_size: 9,
-      },
+      photo: [{ file_id: "fail", file_unique_id: "unique-fail", file_size: 9 }],
     },
   });
 
-  expect(onMessage).toHaveBeenCalledWith(
-    expect.objectContaining({ attachments: undefined }),
-  );
+  expect(fetchFile).toHaveBeenCalledTimes(3);
+  expect(onMessage).toHaveBeenCalledTimes(1);
+  const inbound = onMessage.mock.calls[0]?.[0];
+  if (!inbound) {
+    throw new Error("Expected photo-only message to reach onMessage");
+  }
+  expect(inbound.attachments).toEqual([
+    {
+      id: "fail",
+      name: "photo-unique-fail.jpg",
+      mimeType: "image/jpeg",
+      kind: "image",
+      downloadReason: "download_failed",
+    },
+  ]);
+  const xml = buildChannelNotificationXml(inbound);
+  expect(xml).toContain('download_status="not_downloaded"');
+  expect(xml).toContain('download_reason="download_failed"');
+
   expect(consoleWarnSpy).toHaveBeenCalledWith(
-    "[Telegram] Attachment download failed for fail.wav: network down",
+    "[Telegram] Attachment download failed after 3 attempts: ECONNRESET.",
   );
+  const warnings = JSON.stringify(consoleWarnSpy.mock.calls);
+  for (const secret of [token, url, remotePath]) {
+    expect(warnings).not.toContain(secret);
+  }
 });
