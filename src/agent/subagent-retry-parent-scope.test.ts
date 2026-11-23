@@ -35,8 +35,6 @@ describe("executeSubagent lost-output retry wiring", () => {
   test("retries once with the original payload when the child reports lost stdout or its output looks truncated", () => {
     const retryCalls = managerSource.match(retryCallPattern);
 
-    // One retry site for the stderr lost-stdout marker (non-zero exit) and
-    // one for a clean exit whose stdout ends mid-line without a result.
     expect(retryCalls).toHaveLength(2);
   });
 

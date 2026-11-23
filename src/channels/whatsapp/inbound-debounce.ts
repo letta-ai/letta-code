@@ -100,9 +100,7 @@ export function createWhatsAppInboundDebounceController<TOwner, TKey>(
       if (!pendingEntries.delete(entry)) continue;
       try {
         entry.onDeliveryStarted?.();
-      } catch {
-        // Claim bookkeeping must not block inbound delivery.
-      }
+      } catch {}
     }
   };
 
@@ -113,9 +111,7 @@ export function createWhatsAppInboundDebounceController<TOwner, TKey>(
       if (!pendingEntries.delete(entry)) continue;
       try {
         entry.onDiscarded?.();
-      } catch {
-        // Claim bookkeeping must not break cancellation.
-      }
+      } catch {}
     }
   };
 
@@ -125,17 +121,13 @@ export function createWhatsAppInboundDebounceController<TOwner, TKey>(
   ): void => {
     try {
       params.onDeliveryError?.(error, entries);
-    } catch {
-      // Error reporting must not break the debounce pipeline.
-    }
+    } catch {}
   };
 
   const reportReadReceiptError = (error: unknown, keys: TKey[]): void => {
     try {
       params.onReadReceiptError?.(error, keys);
-    } catch {
-      // Receipt error reporting is best-effort.
-    }
+    } catch {}
   };
 
   const startReadReceipts = (

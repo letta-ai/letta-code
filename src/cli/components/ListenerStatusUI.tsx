@@ -5,12 +5,6 @@ import { useEffect, useState } from "react";
 interface ListenerStatusUIProps {
   connectionId: string;
   envName: string;
-  /**
-   * First registration on this computer. The welcome banner above already
-   * named it, and a first `letta server` is always in service of a flow in
-   * Letta (onboarding, the computer picker) that detects the listener on its
-   * own, so the footer points back at Letta. Later runs show no footer.
-   */
   isFirstRun?: boolean;
   onReady: (callbacks: {
     updateStatus: (status: "idle" | "receiving" | "processing") => void;

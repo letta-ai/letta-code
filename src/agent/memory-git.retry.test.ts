@@ -123,9 +123,6 @@ describe("runGitWithRetry HTTP failures", () => {
         { baseDelayMs: 0, timeoutMs: 5_000 },
       );
       if (scenario.succeeds) {
-        // This scenario has hung on Windows CI until the per-attempt timeout.
-        // Keep the server's view of the attempts so the next failure says
-        // which request git was waiting on.
         await clone.catch((error: Error) => {
           error.message += `\nserver requests:\n${requests.join("\n")}`;
           throw error;
@@ -170,8 +167,6 @@ describe("runGit HTTP timeout cleanup", () => {
       );
       await expect(clone).rejects.toThrow();
       expect(requests).toBeGreaterThan(0);
-      // Observe FIN/close from the real git-remote-http process, without
-      // forcibly closing server sockets to hide an orphaned helper.
       await new Promise<void>((resolve, reject) => {
         const deadline = setTimeout(
           () =>

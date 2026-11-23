@@ -20,8 +20,6 @@ const MEMORY_MODE = buildFsSandboxPolicy({
   restrictWrites: true,
 });
 
-// Writes scoped to ~/.letta: base carve, cross-agent tree denied inside it, self
-// memory re-carved. The three must be emitted in nesting order to layer right.
 const LETTA_SCOPED = buildFsSandboxPolicy({
   baseWritableRoots: ["/home/u/.letta"],
   deniedRoots: ["/home/u/.letta/agents"],
@@ -70,7 +68,6 @@ test("writable and readonly carveouts are restored after the deny", () => {
   const readonlyIdx = profile.indexOf(
     '(allow file-read* (subpath (param "READONLY_0")))',
   );
-  // Last-match-wins: carveouts must come after the deny to take effect.
   expect(writableIdx).toBeGreaterThan(denyIdx);
   expect(readonlyIdx).toBeGreaterThan(denyIdx);
 });
@@ -102,7 +99,6 @@ test("write-scoped profile denies all writes but keeps /dev and restores writabl
   );
   expect(globalDenyIdx).toBeGreaterThan(-1);
   expect(devIdx).toBeGreaterThan(globalDenyIdx);
-  // Writable roots restored after the global write-deny.
   expect(writableIdx).toBeGreaterThan(globalDenyIdx);
 });
 
@@ -119,11 +115,8 @@ test("base writable is layered: after global write-deny, before the deny, self a
     '(allow file-read* file-write* (subpath (param "WRITABLE_0")))',
   );
   expect(globalDeny).toBeGreaterThan(-1);
-  // ~/.letta becomes writable AFTER the global write-deny...
   expect(base).toBeGreaterThan(globalDeny);
-  // ...the cross-agent tree deny comes AFTER the base (so the nested tree wins)...
   expect(deny).toBeGreaterThan(base);
-  // ...and self memory is re-carved AFTER the deny (so self wins again).
   expect(self).toBeGreaterThan(deny);
 });
 
@@ -181,6 +174,5 @@ test("args carry the profile and -D defines for the inner launcher", () => {
   expect(args[0]).toBe("-p");
   expect(args).toContain("-DDENIED_0=/home/u/.letta/agents");
   expect(args).toContain("-DWRITABLE_1=/tmp");
-  // SANDBOX_EXEC_PATH itself is added by wrapLauncher, not here.
   expect(args).not.toContain(SANDBOX_EXEC_PATH);
 });

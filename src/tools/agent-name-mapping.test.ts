@@ -18,7 +18,6 @@ describe("Task → Agent server-name mapping", () => {
   });
 
   test("non-mapped internal names round-trip through getInternalToolName", () => {
-    // Unknown server names are returned as-is so unknown tools don't break.
     expect(getInternalToolName("DoesNotExist")).toBe("DoesNotExist");
   });
 });

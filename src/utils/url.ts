@@ -12,9 +12,7 @@ export function parseUrl(
     if (parsed.hostname) {
       return parsed;
     }
-  } catch {
-    // Fall through to optional http:// fallback below.
-  }
+  } catch {}
 
   if (!options.allowMissingProtocol) {
     return null;

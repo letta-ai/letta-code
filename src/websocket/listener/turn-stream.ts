@@ -31,9 +31,7 @@ export type TurnStreamDrainParams = {
   conversationId: string;
   turnLease: TurnLease;
   turnCorrelation: TurnCorrelation;
-  /** Run IDs observed so far in this turn; the first run_id of this stream is appended. */
   msgRunIds: string[];
-  /** Last run ID observed by the turn before this stream started, if any. */
   runId: string | undefined;
   durableInputIdentities?: readonly InputIdentity[];
   terminalConsumerIds?: readonly string[];
@@ -45,18 +43,9 @@ export type TurnStreamDrainParams = {
 
 export type TurnStreamDrainResult = {
   result: Awaited<ReturnType<typeof drainStreamWithResume>>;
-  /** Last run ID observed on the stream, or the incoming value when none arrived. */
   runId: string | undefined;
 };
 
-/**
- * Drains one message-turn stream for the listener: records the run ID on the
- * lease, forwards chunks to listener clients, and reports non-terminal stream
- * errors. When the socket carrying the stream dies mid-run, the resume loop
- * inside drainStreamWithResume re-attaches to the run with
- * LISTENER_STREAM_RESUME_POLICY, so a cloud-api rolling restart does not end
- * the turn.
- */
 export async function drainTurnStreamWithEmission(
   stream: Stream<LettaStreamingResponse>,
   buffers: ReturnType<typeof createBuffers>,

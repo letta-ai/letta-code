@@ -1,13 +1,9 @@
-// Config resolution and rendering for the terminal window title.
-// Precedence: local project > project > global settings.
-
 import { homedir } from "node:os";
 import { basename, resolve } from "node:path";
 import { formatCompact } from "@/cli/helpers/format";
 import { settingsManager } from "@/settings-manager";
 import { debugLog } from "@/utils/debug";
 
-/** All valid field keys for the window title, in Codex's terminal-title item order. */
 export const WINDOW_TITLE_FIELDS = [
   "app-name",
   "project-name",
@@ -35,13 +31,11 @@ export const WINDOW_TITLE_FIELDS = [
 
 export type WindowTitleField = (typeof WINDOW_TITLE_FIELDS)[number];
 
-/** Items shown in the terminal title when the user has not configured a custom selection. */
 export const DEFAULT_WINDOW_TITLE_ITEMS = [
   "activity",
   "agent-name",
 ] as const satisfies readonly WindowTitleField[];
 
-/** Braille-pattern dot-spinner frames for the terminal title animation. */
 export const TERMINAL_TITLE_SPINNER_FRAMES = [
   "⠋",
   "⠙",
@@ -55,19 +49,15 @@ export const TERMINAL_TITLE_SPINNER_FRAMES = [
   "⠏",
 ] as const;
 
-/** Time between spinner frame advances in the terminal title. */
 export const TERMINAL_TITLE_SPINNER_INTERVAL_MS = 100;
 
-/** Time between action-required blink phases in the terminal title. */
 export const TERMINAL_TITLE_ACTION_REQUIRED_INTERVAL_MS = 1000;
 
-/** Prefix shown in the terminal title when the agent is blocked on user input. */
 export const TERMINAL_TITLE_ACTION_REQUIRED_PREFIX = "[ ! ] Action Required";
 export const TERMINAL_TITLE_ACTION_REQUIRED_PREFIX_HIDDEN =
   "[ . ] Action Required";
 export const ACTION_REQUIRED_PREVIEW_PREFIX = "[ ! ] Action Required";
 
-/** Human-readable labels and descriptions for each field. */
 export const WINDOW_TITLE_FIELD_INFO: Record<
   WindowTitleField,
   { label: string; description: string }
@@ -179,7 +169,6 @@ const WINDOW_TITLE_FIELD_ALIASES: Record<string, WindowTitleField> = {
   "conversation-name": "thread-title",
 };
 
-/** Data available for rendering the window title. */
 export interface WindowTitleData {
   agentName?: string | null;
   appName?: string | null;
@@ -222,11 +211,6 @@ export function normalizeWindowTitleItems(
   });
 }
 
-/**
- * Resolve the effective window title items from all settings levels.
- * Returns the Codex default items when no config is set. An explicitly empty
- * configured list is preserved and means "clear the managed title".
- */
 export function resolveWindowTitleConfig(
   workingDirectory: string = process.cwd(),
 ): WindowTitleField[] {
@@ -258,13 +242,6 @@ export function resolveWindowTitleConfig(
   }
 }
 
-/**
- * Render the terminal window title from the selected items and available data.
- *
- * Values render in configured order. Unavailable values are omitted. The
- * activity item uses Codex's separator rule: a plain space next to activity,
- * and ` | ` between all other adjacent rendered items.
- */
 export function renderWindowTitle(
   items: readonly WindowTitleField[],
   data: WindowTitleData,

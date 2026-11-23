@@ -96,7 +96,6 @@ describe("composeSubagentChildEnv", () => {
         SUBAGENT_NAME_ENV
       ],
     ).toBe("Joi (subagent)");
-    // Forks and existing-agent launches have no reservation.
     expect(composeSubagentChildEnv(options)[SUBAGENT_NAME_ENV]).toBeUndefined();
     expect(parentProcessEnv[SUBAGENT_NAME_ENV]).toBe("Deckard (subagent)");
   });
@@ -150,7 +149,6 @@ describe("composeSubagentChildEnv", () => {
 
     expect(env.LETTA_PARENT_AGENT_ID).toBe(PARENT_ID);
     expect(env.LETTA_CODE_AGENT_ROLE).toBe("subagent");
-    // Default launch profile: MEMORY_DIR is NOT overridden to parent
     expect(env.MEMORY_DIR).toBeUndefined();
     expect(env.LETTA_MEMORY_DIR).toBeUndefined();
   });
@@ -200,12 +198,9 @@ describe("composeSubagentChildEnv", () => {
   });
 
   test("memory subagent with no primaryRoot keeps parent marker but clears dir", () => {
-    // memfs disabled for parent — subagent knows its parent but has no
-    // filesystem pointer. Its memory tool calls will error appropriately.
     const env = composeSubagentChildEnv({
       parentProcessEnv: {
         HOME: "/home/user",
-        // Parent env happened to have stale MEMORY_DIR — must be cleared.
         MEMORY_DIR: "/stale/memory/dir",
       },
       parentAgentId: PARENT_ID,
@@ -227,18 +222,10 @@ describe("composeSubagentChildEnv", () => {
     });
 
     expect(env.LETTA_PARENT_AGENT_ID).toBeUndefined();
-    // Even in the memory-subagent profile with an inherited root, without a parent
-    // ID the subagent shouldn't claim to operate on parent memory.
-    // (We still set MEMORY_DIR here because that's the filesystem pointer
-    // decision — the guard will still block cross-agent access because
-    // there is no parent marker.)
     expect(env.MEMORY_DIR).toBe(PARENT_MEMORY_DIR);
   });
 
   test("normal subagent preserves parent's pre-existing MEMORY_DIR", () => {
-    // If the developer sourced a .envrc or otherwise had MEMORY_DIR in
-    // their listener env, default-profile subagents shouldn't clobber it —
-    // they have no opinion about where the fs root should be.
     const existingMemoryDir = "/existing/memory/dir";
     const env = composeSubagentChildEnv({
       parentProcessEnv: {
@@ -356,8 +343,6 @@ describe("composeSubagentChildEnv", () => {
   });
 
   test("missing API key + base URL preserves parent env values", () => {
-    // When auth resolution returns null/undefined, we shouldn't clobber
-    // whatever the parent had (could be legitimately set by user).
     const env = composeSubagentChildEnv({
       parentProcessEnv: {
         LETTA_API_KEY: "sk-parent-key",

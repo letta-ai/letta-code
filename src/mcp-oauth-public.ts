@@ -2,7 +2,6 @@ import { connectMcpServer } from "@/mcp-client";
 import { createMcpOAuthSessionWithStorage } from "@/mcp-oauth";
 import { mcpOAuthCredentialKey } from "@/mcp-oauth-identity";
 
-/** Credentials produced by a completed MCP OAuth flow. */
 export interface McpOAuthCredentialSnapshot {
   access_token: string;
   refresh_token?: string;
@@ -10,16 +9,10 @@ export interface McpOAuthCredentialSnapshot {
   client_secret?: string;
   redirect_uri: string;
   token_type?: string;
-  /** Remaining access-token lifetime in seconds at export time. */
   expires_in?: number;
   scope?: string;
 }
 
-/**
- * Abort-aware persistence for completed MCP OAuth credentials.
- * Implementations must reject promptly when `signal` aborts and must not apply
- * a write or delete after cancellation.
- */
 export interface McpOAuthStorage {
   get(
     credentialKey: string,
@@ -29,39 +22,21 @@ export interface McpOAuthStorage {
   delete(credentialKey: string, signal: AbortSignal): Promise<unknown>;
 }
 
-/** Package-owned structural fetch shape for MCP OAuth network requests. */
 export type McpOAuthFetch = (
   url: string | URL,
   init?: RequestInit,
 ) => Promise<Response>;
 
-/** Options for one complete, single-flight MCP OAuth authorization. */
 export interface AuthorizeMcpServerWithStorageOptions {
-  /** Owning agent used to namespace the credential key. */
   agentId: string;
-  /** Stable identity for the physical backend, account, and profile. */
   storageNamespace: string;
   storage: McpOAuthStorage;
   serverName: string;
   serverUrl: string;
-  /**
-   * Custom fetch used for the MCP transport plus OAuth discovery, dynamic
-   * registration, token exchange, and authenticated MCP requests.
-   */
   fetch?: McpOAuthFetch;
   openBrowser?: (url: string) => Promise<void>;
   onStatus?: (message: string) => void;
-  /**
-   * Inspect provider callback params before the token exchange; throwing
-   * aborts the flow. Flights are shared per fetch function, so pair a custom
-   * hook with its own fetch.
-   */
   onAuthorizationCallback?: (callback: { domain?: string }) => void;
-  /**
-   * `client_name` shown on the provider's consent screen. Defaults to
-   * "Letta Code"; only sent at dynamic client registration, so a provider that
-   * already has a registration for this storage keeps its original name.
-   */
   clientName?: string;
   signal?: AbortSignal;
 }
@@ -77,17 +52,6 @@ const inFlightAuthorizations = new Map<string, InFlightAuthorization>();
 const fetchFunctionIds = new WeakMap<McpOAuthFetch, number>();
 let nextFetchFunctionId = 1;
 
-/**
- * Authorize and validate one HTTP MCP server, then return importable credentials.
- *
- * Calls for the same storage namespace, agent, and server share one in-flight
- * SDK authorization lifecycle when they also use the same fetch function.
- * Distinct fetch functions never share a flight, so one caller cannot bypass
- * another caller's network policy. Aborting one subscriber does not interrupt
- * another; the underlying operation is cancelled when its final subscriber
- * leaves. A storage namespace must remain stable for wrappers around the same
- * physical backend and unique across physically distinct backends.
- */
 export async function authorizeMcpServerWithStorage(
   options: AuthorizeMcpServerWithStorageOptions,
 ): Promise<McpOAuthCredentialSnapshot> {
@@ -105,8 +69,6 @@ export async function authorizeMcpServerWithStorage(
     options.serverName,
     options.serverUrl,
   );
-  // A different consent-screen name is a different registration, so callers
-  // asking for distinct names must not share one authorization flight.
   const flightKey = `${options.storageNamespace}\0${credentialKey}\0${fetchIdentity(options.fetch)}\0${options.clientName ?? ""}`;
   let flight = inFlightAuthorizations.get(flightKey);
   if (!flight) {

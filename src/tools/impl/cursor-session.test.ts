@@ -66,7 +66,6 @@ test("Cursor rejects cancelled work and unsafe persisted-session paths", async (
   ).rejects.toThrow("Invalid Cursor session");
 });
 
-// Real worker process and SDK against a local stand-in for the Cursor API.
 async function withCursorApi<T>(
   respond: (path: string) => Response,
   body: (env: NodeJS.ProcessEnv, paths: string[]) => Promise<T>,

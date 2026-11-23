@@ -5,10 +5,6 @@ import {
   emitLocalToolReturns,
 } from "./headless-tool-events";
 
-/**
- * Capture the JSON lines written via writeWireMessage (which uses console.log)
- * without mock.module — swap console.log locally and restore it afterwards.
- */
 function captureWireLines(fn: () => void): Array<Record<string, unknown>> {
   const original = console.log;
   const lines: Array<Record<string, unknown>> = [];

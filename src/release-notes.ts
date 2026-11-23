@@ -1,23 +1,8 @@
-/**
- * Release notes displayed to users once per version when they upgrade Letta Code.
- * Notes appear above the "Starting new conversation with..." line in the transcript.
- *
- * To add release notes for a new version:
- * 1. Add an entry keyed by the base version (e.g., "0.13.0", not "0.13.0-next.5")
- * 2. Use markdown formatting (rendered with MarkdownDisplay)
- * 3. Keep notes concise - 2-4 bullet points max
- */
-
 import { settingsManager } from "./settings-manager";
 import { compareSemver } from "./utils/version";
 import { getVersion } from "./version";
 
-// Map of base version → markdown string
-// Notes are looked up by base version (pre-release suffix stripped)
 export const releaseNotes: Record<string, string> = {
-  // Add release notes for new versions here.
-  // Keep concise - 3-4 bullet points max.
-  // Use → for bullets to match the command hints below.
   "0.25.7": `🔐 **Permissions update in Letta Code 0.25.7**
 → The default permission mode is now **unrestricted**, so Letta Code starts without approval prompts unless you change it
 → Run **/permissions** and choose **standard** if you want the old request-approval behavior back
@@ -33,17 +18,10 @@ export const releaseNotes: Record<string, string> = {
 → Read more: https://docs.letta.com/letta-code/changelog#0130`,
 };
 
-/**
- * Get release notes for a specific base version (or null if none exist).
- */
 export function getReleaseNotes(baseVersion: string): string | null {
   return releaseNotes[baseVersion] ?? null;
 }
 
-/**
- * Strip pre-release suffix from version string.
- * "0.13.0-next.5" → "0.13.0"
- */
 export function getBaseVersion(version: string): string {
   return version.split("-")[0] ?? version;
 }
@@ -55,12 +33,6 @@ function getOrderedReleaseNoteVersions(): string[] {
   });
 }
 
-/**
- * Return release note versions the user has not seen yet between their last
- * seen checkpoint and the current version.
- *
- * If there is no checkpoint yet, only the current version's note is shown.
- */
 export function getPendingReleaseNoteVersions(
   currentVersion: string,
   lastSeenVersion?: string,
@@ -104,19 +76,7 @@ export function getPendingReleaseNotes(
     .join("\n\n");
 }
 
-/**
- * Check if there are release notes to display for the current version.
- * Returns the notes markdown string if:
- * - Notes exist for the current base version or any skipped versions since the
- *   user's last seen checkpoint
- * - User hasn't already crossed this checkpoint (tracked in settings)
- *
- * Also updates settings to mark notes as seen up to the current base version.
- *
- * Debug: Set LETTA_SHOW_RELEASE_NOTES=1 to force display.
- */
 export async function checkReleaseNotes(): Promise<string | null> {
-  // Skip for subagents (background processes)
   if (process.env.LETTA_CODE_AGENT_ROLE === "subagent") {
     return null;
   }
@@ -124,7 +84,6 @@ export async function checkReleaseNotes(): Promise<string | null> {
   const currentVersion = getVersion();
   const baseVersion = getBaseVersion(currentVersion);
 
-  // Debug flag to force show (still respects whether notes exist)
   if (process.env.LETTA_SHOW_RELEASE_NOTES === "1") {
     return getReleaseNotes(baseVersion);
   }
@@ -136,7 +95,6 @@ export async function checkReleaseNotes(): Promise<string | null> {
   );
 
   if (notes) {
-    // Store current BASE version so skipped notes are not re-shown on the next run.
     await settingsManager.updateSettings({
       lastSeenReleaseNotesVersion: baseVersion,
     });

@@ -18,8 +18,6 @@ import type {
 } from "@/channels/types";
 
 beforeEach(() => {
-  // These tests exercise dispatch, not persistence. Keep their routes in memory
-  // so another suite cannot reload them after the preload clears the route map.
   __testOverrideLoadRoutes(() => null);
   __testOverrideSaveRoutes(() => {});
   __testOverrideLoadPendingControlRequestStore(null);
@@ -321,13 +319,10 @@ describe("pending channel control requests", () => {
       source: { ...baseEvent.source, senderId: "U123" },
     });
 
-    // A different participant in the same chat/thread cannot answer the
-    // prompt; their reply falls through to normal ingress handling.
     await adapter.onMessage?.(createInboundMessage("2", { senderId: "U999" }));
     expect(approvalResponses).toHaveLength(0);
     expect(deliveries).toHaveLength(0);
 
-    // The initiating sender's reply still resolves the pending prompt.
     await adapter.onMessage?.(createInboundMessage("2"));
     expect(approvalResponses).toHaveLength(1);
     __testOverrideLoadChannelAccounts(null);

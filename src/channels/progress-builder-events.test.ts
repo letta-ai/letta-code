@@ -316,8 +316,6 @@ test("channel progress builders do not share accumulated state", () => {
     ],
   } as unknown as StreamDelta);
 
-  // A different turn's builder must not see the first turn's cached
-  // arguments or tool names for the same tool_call_id.
   const secondBuilder = createChannelTurnProgressBuilder();
   expect(
     secondBuilder.buildUpdates({

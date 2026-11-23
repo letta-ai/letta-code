@@ -84,7 +84,6 @@ const retryTimers = new WeakMap<
   ListenerRuntime,
   ReturnType<typeof setTimeout>
 >();
-/** Reconnect can retry a deferred record, but observing a conversation creates none. */
 export async function recoverRecordedTurns(
   listener: ListenerRuntime,
   deps: Partial<{
@@ -536,9 +535,6 @@ export async function recoverRecordedTurns(
           deferred = true;
           continue;
         }
-        // A finished run's approvals are stale, except when it finished by
-        // stopping for one: `completed` + `requires_approval` is how every
-        // client-side tool step ends, including while this listener was down.
         if (
           recordedRun &&
           recordedRun.status !== "running" &&
@@ -808,7 +804,6 @@ export async function recoverRecordedTurns(
               },
               record.revision ?? null,
             );
-        // results below replace those, rather than appending a second result.
         runtime.pendingInterruptedResults = null;
         runtime.pendingInterruptedContext = null;
         runtime.pendingInterruptedToolCallIds = null;

@@ -1,11 +1,3 @@
-/**
- * Applying personalities to agents: agent creation via the backend and
- * rewriting persona/human files in an agent's memory repo.
- *
- * Pure preset definitions and content builders live in
- * `personality-presets.ts` (bundled into the `agent-presets` package export).
- */
-
 import { execFile as execFileCb } from "node:child_process";
 import {
   existsSync,
@@ -57,7 +49,6 @@ const PRIMARY_PERSONA_RELATIVE_PATH = "system/persona.md";
 const LEGACY_PERSONA_RELATIVE_PATH = "memory/system/persona.md";
 const PRIMARY_HUMAN_RELATIVE_PATH = "system/human.md";
 const LEGACY_HUMAN_RELATIVE_PATH = "memory/system/human.md";
-// MemFS v2 root layout (root MEMORY.md marker): persona/human live at the root.
 const ROOT_PERSONA_RELATIVE_PATH = "persona.md";
 const ROOT_HUMAN_RELATIVE_PATH = "human.md";
 
@@ -102,7 +93,6 @@ function getMemoryFileRelativePathForRepo(
     return legacyRelativePath;
   }
 
-  // Prefer legacy layout when the repo has a top-level memory/ directory.
   if (existsSync(join(repoDir, "memory"))) {
     return legacyRelativePath;
   }
@@ -128,10 +118,6 @@ function getHumanRelativePathForRepo(repoDir: string): string {
   );
 }
 
-/**
- * "cloud" environment covers any remote backend; only Letta Cloud gets the
- * v2 root layout. Self-hosted servers keep the legacy memfs mode.
- */
 async function resolvePersonalityMemoryPromptMode(
   environment: PersonalityEnvironment,
 ): Promise<CreateAgentOptions["memoryPromptMode"]> {
@@ -139,7 +125,6 @@ async function resolvePersonalityMemoryPromptMode(
   try {
     return (await isLettaCloud()) ? "root-memfs" : "memfs";
   } catch {
-    // Settings may be uninitialized in tests; fall back to the URL check.
     return isCloudServerUrl() ? "root-memfs" : "memfs";
   }
 }
@@ -211,9 +196,7 @@ export async function enableMemfsForCreatedAgent(params: {
       });
     }
     settingsManager.setMemfsEnabled(agentId, true);
-  } catch {
-    // Self-hosted or memfs not available - skip silently
-  }
+  } catch {}
 }
 
 export async function createAgentForPersonality(params: {
@@ -301,9 +284,7 @@ async function getMemoryCommitAuthor(agentId: string): Promise<{
     if (agent.name?.trim()) {
       authorName = agent.name.trim();
     }
-  } catch {
-    // best-effort fallback to agent id
-  }
+  } catch {}
 
   return {
     agentId,
@@ -312,10 +293,6 @@ async function getMemoryCommitAuthor(agentId: string): Promise<{
   };
 }
 
-/**
- * New root-layout (MemFS v2) files may only carry `name` and `description`
- * frontmatter, and both are required by the pre-commit validator.
- */
 function buildRootMemoryFile(
   relativePath: string,
   templatePromptAssetName: string,
@@ -332,7 +309,6 @@ function buildRootMemoryFile(
   })}\n\n${ensureTrailingNewline(normalizedBody.trim())}`;
 }
 
-/** What a personality switch changed, so a failed switch can be undone. */
 interface PersonalityFileUndo {
   absolutePath: string;
   previousContent: string | null;
@@ -346,7 +322,6 @@ function applyPersonalityFiles(
     templatePromptAssetName: string;
     content: string;
     description?: string;
-    /** Only write when the file is missing or its body is blank. */
     onlyIfBlank?: boolean;
   }>,
   undoLog: PersonalityFileUndo[],
@@ -410,10 +385,6 @@ function applyPersonalityFiles(
   return changedPaths;
 }
 
-/**
- * Restore files touched by a switch that did not commit, so the memory repo
- * is clean again and later switches are not blocked by uncommitted changes.
- */
 async function undoPersonalityFiles(
   repoDir: string,
   undoLog: PersonalityFileUndo[],
@@ -426,24 +397,18 @@ async function undoPersonalityFiles(
       } else {
         writeFileSync(entry.absolutePath, entry.previousContent, "utf-8");
       }
-      // createdDirs is ordered deepest first.
       for (const dir of entry.createdDirs) {
         if (existsSync(dir) && readdirSync(dir).length === 0) rmdirSync(dir);
       }
-    } catch {
-      // Best-effort restore; keep undoing the remaining files.
-    }
+    } catch {}
   }
-  // The commit path already unstages on failure; this is a safety net.
   try {
     await execFile(
       "git",
       ["reset", "-q", "--", ...undoLog.map((entry) => entry.absolutePath)],
       { cwd: repoDir, timeout: 10_000 },
     );
-  } catch {
-    // Best-effort only.
-  }
+  } catch {}
 }
 
 export async function applyPersonalityToMemory(
@@ -460,7 +425,6 @@ export async function applyPersonalityToMemory(
     ? getScopedMemoryFilesystemRoot(params.agentId)
     : getMemoryRepoDir(params.agentId);
 
-  // Fail early if the memory repo has uncommitted changes
   const statusResult = await execFile("git", ["status", "--porcelain"], {
     cwd: repoDir,
     timeout: 10_000,
@@ -494,7 +458,6 @@ export async function applyPersonalityToMemory(
       templatePromptAssetName: blockDefinitions.human.templatePromptAssetName,
       content: blockDefinitions.human.value,
       description: blockDefinitions.human.description,
-      // Never overwrite what the agent already knows about the user.
       onlyIfBlank: true,
     },
   ];

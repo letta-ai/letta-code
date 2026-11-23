@@ -1,11 +1,3 @@
-/**
- * Extracted handler for the list_messages control request.
- *
- * Returns a ControlResponse object (caller does console.log + JSON.stringify).
- * Accepting a minimal backend interface makes the handler fully testable with
- * mock objects — no real network or process required.
- */
-
 import { randomUUID } from "node:crypto";
 import type { Backend, ConversationMessageListBody } from "@/backend";
 import type {
@@ -15,10 +7,6 @@ import type {
 } from "@/types/protocol";
 import { resolveListMessagesRoute } from "./list-messages-routing";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Minimal backend interface — only what the handler needs
-// ─────────────────────────────────────────────────────────────────────────────
-
 export type ListMessagesHandlerBackend = Pick<
   Backend,
   "listConversationMessages"
@@ -26,25 +14,13 @@ export type ListMessagesHandlerBackend = Pick<
 
 export interface HandleListMessagesParams {
   listReq: ListMessagesControlRequest;
-  /** Session's current resolved conversationId ("default" or a real conv id). */
   sessionConversationId: string;
-  /** Session's agentId — used as fallback for the agents path. */
   sessionAgentId: string;
   sessionId: string;
   requestId: string;
   backend: ListMessagesHandlerBackend;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Handler
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Execute a list_messages control request and return the ControlResponse.
- *
- * Caller is responsible for serialising + writing to stdout:
- *   console.log(JSON.stringify(await handleListMessages(params)));
- */
 export async function handleListMessages(
   params: HandleListMessagesParams,
 ): Promise<ControlResponse> {

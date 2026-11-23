@@ -98,7 +98,6 @@ describe("createSdkSpawner cost reporting", () => {
         async *[Symbol.asyncIterator]() {
           yield { type: "loop_status", status: "PROCESSING_API_RESPONSE" };
           controller.abort();
-          // The request already in flight finishes and bills after the stop.
           await new Promise((resolve) => setTimeout(resolve, 20));
           interruptedBeforeUsage = interrupted;
           yield usage(2_000, 0.02);

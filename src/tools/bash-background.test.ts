@@ -17,7 +17,6 @@ import {
 
 const isWindows = process.platform === "win32";
 
-// These tests use bash-specific syntax (echo with quotes, sleep)
 describe.skipIf(isWindows)("Bash background tools", () => {
   beforeEach(() => {
     __resetBackgroundRetentionConfigForTests();
@@ -31,13 +30,10 @@ describe.skipIf(isWindows)("Bash background tools", () => {
       .map((proc) => proc.outputFile)
       .filter((filePath): filePath is string => Boolean(filePath));
     for (const proc of backgroundProcesses.values()) {
-      // A killed fixture can settle after the next test installs its listener.
       proc.completionNotificationSuppressed = true;
       try {
         proc.process.kill("SIGTERM");
-      } catch {
-        // Ignore cleanup failures for already-exited processes
-      }
+      } catch {}
     }
     backgroundProcesses.clear();
     clearPendingMessages();
@@ -142,7 +138,6 @@ describe.skipIf(isWindows)("Bash background tools", () => {
   });
 
   test("killBackgroundProcess terminates background process", async () => {
-    // Start long-running process
     const startResult = await bash({
       command: "sleep 10",
       description: "Test kill",
@@ -197,19 +192,15 @@ describe.skipIf(isWindows)("Bash background tools", () => {
       run_in_background: true,
     });
 
-    // Extract bash ID and get the output file path
     const match = startResult.content[0]?.text.match(/bash_(\d+)/);
     expect(match).toBeDefined();
     const bashId = `bash_${match?.[1]}`;
 
-    // Wait for command to complete
     await new Promise((resolve) => setTimeout(resolve, 300));
 
-    // Get the output file path from the background process
     const bgProcess = backgroundProcesses.get(bashId);
     expect(bgProcess?.outputFile).toBeDefined();
 
-    // Read the file and verify content
     const outputFile = bgProcess?.outputFile;
     expect(outputFile).toBeDefined();
     const fileContent = fs.readFileSync(outputFile as string, "utf-8");

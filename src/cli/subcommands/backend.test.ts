@@ -4,8 +4,6 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createIsolatedCliTestEnv } from "@/test-utils/test-process-env";
 
-// Cold source startup can exceed 15s on CI. These tests check backend behavior,
-// not startup latency; allow each CLI process time to load the module graph.
 const CLI_TIMEOUT_MS = 60_000;
 const TEST_CLEANUP_MS = 5_000;
 
@@ -104,8 +102,6 @@ test.each([
     const changed = await cli(["backend", saved]);
     expect(changed.code, changed.stderr).toBe(0);
 
-    // Usage distinguishes the active backend without making a provider request:
-    // Local reports BYOK, whereas credentialless Cloud fails authentication.
     const result = await cli(["--backend", override, "usage"]);
     if (override === "local") {
       expect(result.code, result.stderr).toBe(0);

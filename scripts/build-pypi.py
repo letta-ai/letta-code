@@ -22,7 +22,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 NODE = "22.23.4"
-# Official nodejs.org SHASUMS256.txt; pin the archive, not only the version.
 TARGETS = {
     ("Linux", "x86_64"): (
         "linux-x64",
@@ -53,7 +52,6 @@ TARGETS = {
 
 
 def run(args, **kwargs):
-    # npm.cmd requires a shell on Windows; all arguments here are build-owned.
     if os.name == "nt" and args[0] in ("npm", "bun"):
         args[0] += ".cmd" if args[0] == "npm" else ".exe"
     return subprocess.check_output(args, cwd=ROOT, **kwargs)
@@ -66,7 +64,6 @@ def main():
     target, wheel_platform, checksum = TARGETS[key]
     if platform.system() == "Linux" and platform.libc_ver()[0] != "glibc":
         raise SystemExit("Only glibc Linux is supported (not musl/Alpine)")
-    # Do not falsely label artifacts built on a newer glibc as manylinux_2_28.
     if platform.system() == "Linux" and platform.libc_ver()[1] != "2.28":
         if os.environ.get("LETTA_PYPI_LOCAL_TEST") != "1":
             raise SystemExit(
@@ -91,7 +88,6 @@ def main():
         if hashlib.sha256(archive.read_bytes()).hexdigest() != checksum:
             raise SystemExit("Node archive checksum mismatch")
         prefix = f"node-v{NODE}-{target}"
-        # Extract only trusted, explicitly named runtime/license files, never npm.
         names = {
             "node.exe" if os.name == "nt" else "bin/node": "bin/node.exe"
             if os.name == "nt"
@@ -124,7 +120,6 @@ def main():
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / path, destination)
     run([str(node), "scripts/stage-pypi-deps.mjs", str(app)], env=env)
-    # Native addons must be built with the Node ABI we ship, not Bun/host Node.
     npm = shutil.which("npm")
     native_env = env.copy()
     native_env["npm_config_build_from_source"] = "true"

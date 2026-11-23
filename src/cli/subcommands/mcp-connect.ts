@@ -15,13 +15,11 @@ export interface McpOAuthHandoff {
 }
 
 export interface McpConnectDependencies {
-  /** Mint a single-use OAuth handoff for the agent with this login's credentials. */
   mintMcpOAuthHandoff?: (
     agentId: string,
     service: string,
     serverUrl: string,
   ) => Promise<McpOAuthHandoff>;
-  /** Run the localhost-callback OAuth and submit the credentials to Cloud. */
   connectMcpOAuth?: (
     request: BrowserDeviceMcpOAuthRequest,
     onSubmissionStarted: () => void,
@@ -89,10 +87,6 @@ function resolveConnectServer(
   return { service, serverUrl: matched };
 }
 
-/**
- * Validate `--client-name` before the browser flow starts. Undefined keeps the
- * provider consent screen on the default name.
- */
 function resolveConnectClientName(
   clientName: string | undefined,
 ): string | undefined {
@@ -150,9 +144,6 @@ async function authorizeAndSubmit(
     `Opening your browser to authorize ${service}. Complete the sign-in there; waiting for the localhost callback...`,
   );
   let submitting = false;
-  // The OAuth callback server and its timeouts are unref'd so a long-lived
-  // listener can exit cleanly; this one-shot command must stay alive until the
-  // callback arrives or the authorization times out.
   const keepAlive = setInterval(() => undefined, 60_000);
   try {
     await (deps.connectMcpOAuth ?? defaultConnectMcpOAuth)(
@@ -194,10 +185,6 @@ async function authorizeAndSubmit(
   }
 }
 
-/**
- * Authorize a localhost-callback MCP server (Datadog, Comfy) on this machine
- * and save the connection to the Cloud agent through a minted OAuth handoff.
- */
 export async function runMcpConnect(
   deps: McpConnectDependencies & { stderr: McpOutput },
   agentId: string,
@@ -210,9 +197,6 @@ export async function runMcpConnect(
   const clientName = resolveConnectClientName(clientNameArg);
   const { service } = resolved;
   let { serverUrl } = resolved;
-  // Datadog may authorize on the org's real site (e.g. us5) rather than the
-  // selected one. Its callback `domain` names that site, so restart once
-  // against the matching allowlisted URL with a handoff bound to it.
   for (let attempt = 0; ; attempt += 1) {
     try {
       await authorizeAndSubmit(deps, agentId, service, serverUrl, clientName);

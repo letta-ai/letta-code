@@ -3,7 +3,7 @@ import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { Text } from "./Text";
 
-const PREFIX_WIDTH = 5; // `  └  ` or `     `
+const PREFIX_WIDTH = 5;
 const LABEL_WIDTH = 8;
 
 export interface EnterWorktreeDisplayResult {

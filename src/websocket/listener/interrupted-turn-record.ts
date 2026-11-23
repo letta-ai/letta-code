@@ -969,8 +969,6 @@ export async function recordListenerWorkRetriably(
       ) {
         throw error;
       }
-      // Keep this timer referenced: it is the only event-loop yield between
-      // lock attempts; Bun on Windows can otherwise strand the awaited retry.
       await new Promise<void>((resolve) =>
         setTimeout(resolve, options.retryDelayMs ?? 10),
       );

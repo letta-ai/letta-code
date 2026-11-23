@@ -28,8 +28,6 @@ describe("/clear-messages command", () => {
   });
 
   test("is not advertised to remote clients", () => {
-    // The remote clear corrupted the listener's durable input ledger and was
-    // removed; the TUI command above is a separate path and still works.
     expect(SUPPORTED_REMOTE_COMMANDS).not.toContain("clear-messages");
     expect(SUPPORTED_REMOTE_COMMANDS).not.toContain("clear");
   });

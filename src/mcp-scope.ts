@@ -8,11 +8,6 @@ export type ParentAgentLookup = (
   agentId: string,
 ) => Promise<string | undefined>;
 
-/**
- * The agent a subagent inherits from. A fresh Cloud subagent runs in a
- * detached conversation, so its session ID is a `conv-` ID whose
- * `parent_agent_id` names the parent.
- */
 export async function lookupParentAgent(
   agentId: string,
 ): Promise<string | undefined> {
@@ -28,7 +23,6 @@ export async function lookupParentAgent(
     ?.slice("parent:".length);
 }
 
-/** Follow the existing subagent parent relationship, without changing identity. */
 export async function getMcpScopeAgentId(
   agentId: string,
   env = getRuntimeExecutionEnv(

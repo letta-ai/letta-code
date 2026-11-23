@@ -1,15 +1,3 @@
-/**
- * Tests for the interrupt queue mechanism (LET-7796).
- *
- * Structure:
- * 1. Structural tests — field initialization, teardown, epoch guards
- * 2. Behavior-path tests — exercises populateInterruptQueue + consumeInterruptQueue
- *    through the same state sequences as the production cancel/resume flow:
- *    - Cancel during tool execution (Path A) → next turn consumes queued results
- *    - Cancel during approval wait (Path B) → next turn consumes synthesized denials
- *    - Post-cancel next turn → no repeated error loop (queue consumed once)
- *    - Stale-ID guard: clearing IDs after send prevents stale Path-B denials
- */
 import { describe, expect, test } from "bun:test";
 import WebSocket from "ws";
 import type { ApprovalResult } from "@/agent/approval-execution";
@@ -55,10 +43,6 @@ class MockSocket {
     return this;
   }
 }
-
-// ---------------------------------------------------------------------------
-// 1. Structural tests
-// ---------------------------------------------------------------------------
 
 describe("ListenerRuntime interrupt queue fields", () => {
   test("createRuntime initializes interrupt queue fields to safe defaults", () => {
@@ -395,17 +379,12 @@ describe("getInterruptApprovalsForEmission", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// 2. Behavior-path tests using extracted helpers
-// ---------------------------------------------------------------------------
-
 describe("Path A: cancel during tool execution → next turn consumes actual results", () => {
   test("full sequence: populate with execution results → consume on next turn", () => {
     const runtime = createRuntime();
     const agentId = "agent-abc";
     const conversationId = "conv-xyz";
 
-    // Simulate: executeApprovalBatch completed, results captured
     const executionResults: ApprovalResult[] = [
       { type: "approval", tool_call_id: "call-1", approve: true },
       {
@@ -415,7 +394,6 @@ describe("Path A: cancel during tool execution → next turn consumes actual res
       } as unknown as ApprovalResult,
     ];
 
-    // Cancel fires: populateInterruptQueue (Path A — has execution results)
     const populated = populateInterruptQueue(runtime, {
       lastExecutionResults: executionResults,
       lastExecutingToolCallIds: [],
@@ -432,7 +410,6 @@ describe("Path A: cancel during tool execution → next turn consumes actual res
       continuationEpoch: 0,
     });
 
-    // Next user message arrives: consumeInterruptQueue
     const consumed = consumeInterruptQueue(runtime, agentId, conversationId);
 
     expect(consumed).not.toBeNull();
@@ -441,7 +418,6 @@ describe("Path A: cancel during tool execution → next turn consumes actual res
     expect(consumed?.approvalMessage.approvals).toHaveLength(2);
     expect(consumed?.interruptedToolCallIds).toEqual([]);
 
-    // Queue is atomically cleared after consumption
     expect(runtime.pendingInterruptedResults).toBeNull();
     expect(runtime.pendingInterruptedContext).toBeNull();
   });
@@ -449,7 +425,6 @@ describe("Path A: cancel during tool execution → next turn consumes actual res
   test("Path A takes priority over Path B even when both sources available", () => {
     const runtime = createRuntime();
 
-    // Both execution results AND batch map IDs exist
     const executionResults: ApprovalResult[] = [
       { type: "approval", tool_call_id: "call-1", approve: true },
     ];
@@ -464,9 +439,8 @@ describe("Path A: cancel during tool execution → next turn consumes actual res
     });
 
     expect(populated).toBe(true);
-    // Should contain the execution results (Path A), not synthesized denials (Path B)
     expect(runtime.pendingInterruptedResults?.[0]).toMatchObject({
-      approve: true, // Path A preserves actual approval state
+      approve: true,
     });
   });
 
@@ -555,14 +529,12 @@ describe("Path B: cancel during approval wait → next turn consumes synthesized
     const agentId = "agent-abc";
     const conversationId = "conv-xyz";
 
-    // Simulate: approvals classified, batch IDs remembered, waiting for user input
     rememberPendingApprovalBatchIds(
       runtime,
       [{ toolCallId: "call-1" }, { toolCallId: "call-2" }],
       "batch-42",
     );
 
-    // Cancel fires during approval wait: no execution results
     const populated = populateInterruptQueue(runtime, {
       lastExecutionResults: null,
       lastExecutingToolCallIds: [],
@@ -574,7 +546,6 @@ describe("Path B: cancel during approval wait → next turn consumes synthesized
     expect(populated).toBe(true);
     expect(runtime.pendingInterruptedResults).toHaveLength(2);
 
-    // Verify synthesized denials
     const pendingResults = runtime.pendingInterruptedResults ?? [];
     for (const result of pendingResults) {
       expect(result).toMatchObject({
@@ -589,19 +560,16 @@ describe("Path B: cancel during approval wait → next turn consumes synthesized
     expect(ids).toContain("call-1");
     expect(ids).toContain("call-2");
 
-    // Next user message: consume
     const consumed = consumeInterruptQueue(runtime, agentId, conversationId);
     expect(consumed).not.toBeNull();
     expect(consumed?.approvalMessage.approvals).toHaveLength(2);
 
-    // Queue cleared
     expect(runtime.pendingInterruptedResults).toBeNull();
   });
 
   test("fallback to lastNeedsUserInputToolCallIds when batch map empty", () => {
     const runtime = createRuntime();
 
-    // No batch map entries, but we have the snapshot IDs
     const populated = populateInterruptQueue(runtime, {
       lastExecutionResults: null,
       lastExecutingToolCallIds: [],
@@ -640,7 +608,6 @@ describe("post-cancel next turn: queue consumed exactly once (no error loop)", (
     const agentId = "agent-1";
     const convId = "conv-1";
 
-    // Populate
     populateInterruptQueue(runtime, {
       lastExecutionResults: [
         {
@@ -656,11 +623,9 @@ describe("post-cancel next turn: queue consumed exactly once (no error loop)", (
       conversationId: convId,
     });
 
-    // First consume — gets the results
     const first = consumeInterruptQueue(runtime, agentId, convId);
     expect(first).not.toBeNull();
 
-    // Second consume — queue is empty, returns null
     const second = consumeInterruptQueue(runtime, agentId, convId);
     expect(second).toBeNull();
   });
@@ -680,8 +645,8 @@ describe("post-cancel next turn: queue consumed exactly once (no error loop)", (
       conversationId: convId,
     });
 
-    consumeInterruptQueue(runtime, agentId, convId); // first
-    consumeInterruptQueue(runtime, agentId, convId); // second
+    consumeInterruptQueue(runtime, agentId, convId);
+    consumeInterruptQueue(runtime, agentId, convId);
     const third = consumeInterruptQueue(runtime, agentId, convId);
     expect(third).toBeNull();
   });
@@ -718,7 +683,6 @@ describe("idempotency: first cancel populates, second is no-op", () => {
     });
     expect(second).toBe(false);
 
-    // First results preserved
     expect(runtime.pendingInterruptedResults?.[0]).toMatchObject({
       tool_call_id: "call-first",
     });
@@ -737,10 +701,8 @@ describe("idempotency: first cancel populates, second is no-op", () => {
       conversationId: "conv-1",
     });
 
-    // Consume clears
     consumeInterruptQueue(runtime, "agent-1", "conv-1");
 
-    // Re-populate succeeds
     const repopulated = populateInterruptQueue(runtime, {
       lastExecutionResults: [
         { type: "approval", tool_call_id: "call-2", approve: true },
@@ -762,7 +724,6 @@ describe("epoch guard: stale context discarded on consume", () => {
     const runtime = createRuntime();
     runtime.socket = new MockSocket(WebSocket.OPEN) as unknown as WebSocket;
 
-    // Populate at epoch 0
     populateInterruptQueue(runtime, {
       lastExecutionResults: [
         { type: "approval", tool_call_id: "call-1", approve: true },
@@ -773,14 +734,10 @@ describe("epoch guard: stale context discarded on consume", () => {
       conversationId: "conv-1",
     });
 
-    // Stop bumps epoch, also clears — but let's test the guard directly:
-    // Manually bump epoch without clearing (simulating a theoretical race)
     runtime.continuationEpoch = 99;
 
     const consumed = consumeInterruptQueue(runtime, "agent-1", "conv-1");
-    // Context has epoch 0, runtime has epoch 99 → mismatch → no consumption
     expect(consumed).toBeNull();
-    // But queue IS cleared (atomic clear regardless of match)
     expect(runtime.pendingInterruptedResults).toBeNull();
   });
 
@@ -799,7 +756,6 @@ describe("epoch guard: stale context discarded on consume", () => {
 
     const consumed = consumeInterruptQueue(runtime, "agent-new", "conv-1");
     expect(consumed).toBeNull();
-    // Cleared regardless
     expect(runtime.pendingInterruptedResults).toBeNull();
   });
 
@@ -825,12 +781,10 @@ describe("stale Path-B IDs: clearing after successful send prevents re-denial", 
   test("populate with cleared IDs after send produces no Path B denials", () => {
     const runtime = createRuntime();
 
-    // After successful send: both lastExecutionResults and lastNeedsUserInputToolCallIds cleared
-    // Also batch map should be cleared by clearPendingApprovalBatchIds
     const populated = populateInterruptQueue(runtime, {
       lastExecutionResults: null,
       lastExecutingToolCallIds: [],
-      lastNeedsUserInputToolCallIds: [], // cleared after send
+      lastNeedsUserInputToolCallIds: [],
       agentId: "agent-1",
       conversationId: "conv-1",
     });
@@ -842,13 +796,12 @@ describe("stale Path-B IDs: clearing after successful send prevents re-denial", 
   test("batch map as primary Path B source after send still works if not cleared", () => {
     const runtime = createRuntime();
 
-    // Batch map still has entries (from a NEW approval round that wasn't sent yet)
     runtime.pendingApprovalBatchByToolCallId.set("call-new-1", "batch-new");
 
     const populated = populateInterruptQueue(runtime, {
       lastExecutionResults: null,
       lastExecutingToolCallIds: [],
-      lastNeedsUserInputToolCallIds: [], // cleared from previous send
+      lastNeedsUserInputToolCallIds: [],
       agentId: "agent-1",
       conversationId: "conv-1",
     });
@@ -863,11 +816,6 @@ describe("stale Path-B IDs: clearing after successful send prevents re-denial", 
 });
 
 describe("cancel-induced stop reason reclassification", () => {
-  /**
-   * Mirrors the effectiveStopReason computation from the Case 3 stream path.
-   * Both the legacy and canonical listener branches use effectiveStopReason.
-   * This test verifies the reclassification logic those branches depend on.
-   */
   function computeEffectiveStopReason(
     cancelRequested: boolean,
     rawStopReason: string | null,
@@ -943,7 +891,6 @@ describe("consume clears pendingApprovalBatchByToolCallId", () => {
       conversationId: "conv-old",
     });
 
-    // Different agent → context mismatch → discard, but still clears
     consumeInterruptQueue(runtime, "agent-new", "conv-new");
 
     expect(runtime.pendingApprovalBatchByToolCallId.size).toBe(0);

@@ -106,18 +106,12 @@ export function terminalMessageWithoutConsumers(
   return withoutConsumers;
 }
 
-/**
- * Atomically replace replayable input with its terminal intent. A restart may
- * promote this journal entry to the terminal replay store, but must never run
- * the accepted input again after its side effects have completed.
- */
 export function prepareInputTerminal(
   runtime: ConversationRuntime,
   identities: readonly InputIdentity[],
   terminal: DurablePreparedInputTerminal,
   options?: {
     mergeTerminalConsumerIds?: boolean;
-    /** Runs under the disposition lock after consumer merge, before retirement. */
     onPrepared?: (terminal: DurablePreparedInputTerminal) => boolean;
   },
 ): boolean {
@@ -241,7 +235,6 @@ export function prepareInputTerminal(
   return true;
 }
 
-/** Clear a journal only after its terminal has another durable home. */
 export function completePreparedInputTerminal(
   runtime: ConversationRuntime,
   identities: readonly InputIdentity[],
@@ -295,7 +288,6 @@ export function completePreparedInputTerminal(
   return true;
 }
 
-/** Read deduplicated terminal journals under the same lock as input replay. */
 export function loadPreparedInputTerminals(
   listener: ListenerRuntime,
 ): DurablePreparedInputTerminal[] {
@@ -670,11 +662,6 @@ export function publishPreparedInputTerminalIfCurrent(
   });
 }
 
-/**
- * Convert unresolved predecessor journals into a stable migration fence.
- * Only pre-sequence/pre-identity authorities can reach this path, so its
- * cardinality is bounded by the already-capped pre-upgrade ledger.
- */
 export function quarantinePreparedTerminalAuthority(
   listener: ListenerRuntime,
   scope: { agentId: string | null; conversationId: string },
@@ -908,7 +895,6 @@ export function clearPreparedInputTerminal(
   return true;
 }
 
-/** Drop stale prepared evidence without claiming it completed a newer authority. */
 export function discardPreparedInputTerminal(
   listener: ListenerRuntime,
   scope: DurablePreparedInputTerminal["scope"],
@@ -950,7 +936,6 @@ export function discardPreparedInputTerminal(
   return true;
 }
 
-/** Atomically retain disposition tombstones while retiring replay payloads. */
 export function completeInputReplay(
   runtime: ConversationRuntime,
   identities: readonly InputIdentity[],

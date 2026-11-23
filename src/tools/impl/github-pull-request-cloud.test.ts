@@ -197,7 +197,6 @@ describe("Cloud snapshot fetcher", () => {
         ["https://api.letta.com", "local", false],
       ] as const) {
         process.env.LETTA_BASE_URL = url;
-        // The backend mode is process-global, so set it explicitly per case.
         setConfiguredBackendMode(mode);
         const request = mock(async () => success());
         const fetchGh = mock(async () => expected);
@@ -307,7 +306,6 @@ describe("Cloud snapshot fetcher", () => {
       expect(result).toEqual(expected);
       expect(trackError).toHaveBeenCalledTimes(1);
       expect(fetchGh).not.toHaveBeenCalled();
-      // Another cooldown in the same watch must not duplicate telemetry.
       wait.mockImplementation(async (ms) => {
         time += ms;
         request.mockImplementation(async () => success());

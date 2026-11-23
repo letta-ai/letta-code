@@ -11,7 +11,6 @@ import {
 interface FakeOllamaState {
   tags: unknown;
   show: Record<string, unknown>;
-  /** `GET /api/ps` payload; omitted means the endpoint answers 404. */
   ps?: unknown;
   failTags?: boolean;
   failShowFor?: Set<string>;
@@ -50,8 +49,6 @@ function qwenState(): FakeOllamaState {
       models: [{ name: "qwen3.6:27b" }, { name: "smol-text:3b" }],
     },
     show: {
-      // Authoritative engine metadata: multimodal despite a model name with
-      // no "vl"/"vision"/"llava" marker (the LET-10127 regression).
       "qwen3.6:27b": {
         capabilities: ["completion", "vision", "tools", "thinking"],
         model_info: {
@@ -344,10 +341,6 @@ describe("createOllamaPiProvider", () => {
     expect(text?.contextWindow).toBe(32768);
   });
 
-  // Ollama serves OLLAMA_CONTEXT_LENGTH, not the GGUF maximum, and silently
-  // truncates anything longer. Publishing the architectural maximum makes the
-  // harness think it has room it does not have, so compaction never fires and
-  // the engine drops the front of the prompt — persona and memory included.
   test("prefers the runtime window from /api/ps over GGUF metadata", async () => {
     const state = qwenState();
     state.ps = {
@@ -366,8 +359,6 @@ describe("createOllamaPiProvider", () => {
 
   test("does not apply another loaded model's window as an endpoint default", async () => {
     const state = qwenState();
-    // A client can load each model with a different num_ctx. `/api/ps` is
-    // authoritative only for the exact model identity in that record.
     state.ps = { models: [{ name: "smol-text:3b", context_length: 8192 }] };
     const provider = createOllamaPiProvider({
       baseURL: "http://localhost:11434",
@@ -391,7 +382,6 @@ describe("createOllamaPiProvider", () => {
     });
     await provider.refreshModels?.(testRefreshContext());
 
-    // 262144 in metadata, clamped by the harness default.
     expect(
       provider.getModels().find((m) => m.id === "qwen3.6:27b")?.contextWindow,
     ).toBe(128000);
@@ -414,8 +404,6 @@ describe("createOllamaPiProvider", () => {
       provider.getModels().find((m) => m.id === "qwen3.6:27b")?.contextWindow,
     ).toBe(8192);
 
-    // Daemon restarted with a larger OLLAMA_CONTEXT_LENGTH: same blob, new
-    // window. The digest fast-path must not pin the stale value.
     state.ps = { models: [{ name: "qwen3.6:27b", context_length: 65536 }] };
     await provider.refreshModels?.(refreshContext);
     expect(
@@ -444,14 +432,12 @@ describe("createOllamaPiProvider", () => {
       state.requests.filter((url) => url.endsWith("/api/show")).length;
     expect(showCalls()).toBe(1);
 
-    // Unchanged digest: refresh reuses the published Model, no metadata read.
     await provider.refreshModels?.(refreshContext);
     expect(showCalls()).toBe(1);
     expect(
       provider.getModels().find((m) => m.id === "qwen3.6:27b")?.input,
     ).toEqual(["text", "image"]);
 
-    // New digest (model updated): metadata is re-read.
     state.tags = { models: [{ name: "qwen3.6:27b", digest: "sha256-bbb" }] };
     await provider.refreshModels?.(refreshContext);
     expect(showCalls()).toBe(2);
@@ -563,8 +549,6 @@ describe("createOllamaPiProvider as Ollama Cloud", () => {
       expect(state.requests.some((url) => url.endsWith("/api/generate"))).toBe(
         false,
       );
-      // Catalog discovery may probe /api/ps best-effort and receive 404. Turn
-      // resolution must not require a local-daemon served-window result.
       expect(state.requests.some((url) => url.endsWith("/api/ps"))).toBe(true);
     } finally {
       if (previousApiKey === undefined) delete process.env.OLLAMA_API_KEY;

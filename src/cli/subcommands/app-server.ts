@@ -59,7 +59,6 @@ async function waitForShutdown(close: () => Promise<void>): Promise<number> {
   });
 }
 
-/** App Server settings parsed from `letta server --listen` arguments. */
 export interface AppServerCliOptions {
   listen?: string;
   websocketAuth: AppServerWebsocketAuthSettings;
@@ -70,7 +69,6 @@ function stringOption(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-/** Parse App Server arguments; throws on unknown or invalid options. */
 export function parseAppServerCliArgs(
   argv: string[],
 ): { help: true } | ({ help: false } & AppServerCliOptions) {
@@ -107,7 +105,6 @@ export function parseAppServerCliArgs(
   };
 }
 
-/** Print the App Server's addresses in the format SDK launchers parse. */
 export function printAppServerListening(
   info: AppServerListeningInfo,
   openaiApi: boolean,

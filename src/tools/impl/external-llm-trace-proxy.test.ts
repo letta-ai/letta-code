@@ -74,7 +74,6 @@ test("compressed responses pass through and each oversized payload is compacted 
   let large = false;
   const upstream = createServer(async (req, res) => {
     for await (const _chunk of req) {
-      /* consume each request before reusing the connection */
     }
     if (large) {
       res.writeHead(200, { "content-type": "application/json" });
@@ -180,8 +179,6 @@ test("upstream aborts retain an incomplete trace without changing delivered byte
     });
     if (!reply.body) throw new Error("Missing response body");
     const reader = reply.body.getReader();
-    // Read until the transport error. Some Bun versions surface a stray
-    // "\r\n" chunk before rejecting; the stream must never end cleanly.
     const decoder = new TextDecoder();
     let received = "";
     let endedCleanly = false;
@@ -212,14 +209,11 @@ test("upstream aborts retain an incomplete trace without changing delivered byte
 test.each([undefined, "application/json"])(
   "captures a Codex SSE response with content-type %s",
   async (contentType) => {
-    // Recorded Responses event shape; identifiers and model replaced, metadata removed.
-    // The observed successful response had no content-type or content-encoding.
     const response = await Bun.file(
       `${import.meta.dir}/__fixtures__/codex-stream.sse`,
     ).text();
     const upstream = createServer(async (req, res) => {
       for await (const _chunk of req) {
-        /* consume request */
       }
       res.writeHead(200, contentType ? { "content-type": contentType } : {});
       res.end(response);
@@ -274,7 +268,6 @@ test.each(["claude_code", "codex"] as const)(
   async (harness) => {
     const upstream = createServer(async (req, res) => {
       for await (const _chunk of req) {
-        /* consume request */
       }
       res.end('{"id":"reply"}');
     }).listen(0, "127.0.0.1");
@@ -297,8 +290,6 @@ test.each(["claude_code", "codex"] as const)(
     });
     const historyKey = harness === "claude_code" ? "messages" : "input";
     const path = harness === "claude_code" ? "messages" : "responses";
-    // Redaction expands the captured payload beyond 2 MiB while keeping
-    // the loopback requests small enough for older Bun HTTP implementations.
     const original = { role: "user", content: "x".repeat(190000) };
     const appended = { role: "assistant", content: "é".repeat(120000) };
     const latest = { role: "user", content: "keep this" };

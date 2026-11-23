@@ -111,9 +111,7 @@ describe("Memory tool", () => {
     );
     write(v2, "skills/demo/SKILL.md", "---\nname: demo\n---\n");
 
-    // Legacy layout: MemFS on but no root MEMORY.md.
     write(memoryDir(V1_AGENT), "system/persona.md", "legacy\n");
-    // MemFS off even though a v2 root exists on disk.
     write(memoryDir(MEMFS_OFF_AGENT), "MEMORY.md", "# Memory\n");
   });
 
@@ -130,7 +128,6 @@ describe("Memory tool", () => {
     expect(await toolNamesFor(V1_AGENT)).toEqual(["Read"]);
     expect(await toolNamesFor(MEMFS_OFF_AGENT)).toEqual(["Read"]);
 
-    // The gate is evaluated per turn, so a v1 -> v2 migration attaches it.
     write(memoryDir(V1_AGENT), "MEMORY.md", "# Memory\n");
     try {
       expect(await toolNamesFor(V1_AGENT)).toContain("Memory");
@@ -154,7 +151,6 @@ describe("Memory tool", () => {
     expect(text).toContain(
       '<file description="Committed last.">reference/new.md</file>',
     );
-    // Frontmatter-free child index falls back to its first prose paragraph.
     expect(text).toContain(
       '<directory description="Area summary paragraph.">reference/area</directory>',
     );

@@ -75,10 +75,6 @@ function memoryBlocks(body: AgentCreateBody): Array<Record<string, unknown>> {
     : [];
 }
 
-/**
- * Local agents are always born on the MemFS v2 root layout, whether or not
- * the create body carries the root `MEMORY` block.
- */
 export function initialMemoryFilesFromCreateBody(
   body: AgentCreateBody,
 ): InitialLocalMemoryFile[] {

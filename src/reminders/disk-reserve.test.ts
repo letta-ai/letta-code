@@ -43,7 +43,7 @@ test("watcher releases at 95%, alerts once, and recreates only with safe headroo
   available = 2 * GIB;
   await poll();
   expect(existsSync(path)).toBe(false);
-  available = 2 * GIB + 4096; // allocation would leave exactly 90% used
+  available = 2 * GIB + 4096;
   await poll();
   expect(existsSync(path)).toBe(false);
   available = 3 * GIB;

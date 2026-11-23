@@ -97,13 +97,6 @@ function replaceControlCharacters(value: string): string {
   return result;
 }
 
-/**
- * Shared sanitization core for channel-facing progress text: strips ANSI
- * escapes and control characters, redacts secret-looking assignments, and
- * neutralizes platform mentions. Platform adapters layer their own escaping
- * (and truncation marker) on top of this instead of maintaining parallel
- * redaction rules.
- */
 export function sanitizeChannelProgressCore(value: unknown): string {
   const raw = typeof value === "string" ? value : String(value ?? "");
   const redacted = raw
@@ -145,8 +138,6 @@ function summarizeShellCommand(command: string): string {
     return "";
   }
 
-  // Preview the first command segment (or two short ones) and drop pipelines
-  // so multi-step shell invocations stay readable at Slack-row lengths.
   const segments = normalized
     .split(/\s*;\s*/)
     .map((segment) => segment.trim())
@@ -250,10 +241,6 @@ function formatFragmentedShellProgressDetails(
     );
   }
 
-  // Do not expose command previews from incomplete shell-tool JSON. Slack's
-  // task stream appends, rather than replaces, changed details for the same
-  // task id; sending a provisional command before the streamed description
-  // arrives leaves both strings glued together in the preview.
   return undefined;
 }
 
@@ -565,7 +552,6 @@ export function formatToolProgressDetails(
     return undefined;
   }
 
-  // Try JSON parse first (complete arguments)
   const parsedArguments = parseToolArguments(summary.argumentsText);
   if (parsedArguments) {
     if (isWebSearchTool(summary.name)) {
@@ -623,7 +609,6 @@ export function formatToolProgressDetails(
     return undefined;
   }
 
-  // Fallback: extract known preview fields from fragmented/incomplete JSON.
   if (isShellTool(summary.name)) {
     return formatFragmentedShellProgressDetails(summary);
   }

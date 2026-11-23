@@ -23,7 +23,6 @@ export function stripSystemReminders(text: string): string {
     .trim();
 }
 
-/** User-visible text of the first message in a turn input, minus reminders. */
 export function getRestorableUserText(
   input: ReadonlyArray<MessageCreate | ApprovalCreate>,
 ): string {

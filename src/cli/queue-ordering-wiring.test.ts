@@ -29,8 +29,6 @@ describe("queue ordering wiring", () => {
     expect(segment).toContain("!userCancelledRef.current");
     expect(segment).toContain("!abortControllerRef.current");
     expect(segment).toContain("queuedOverlayAction=");
-    // Queue is now drained via QueueRuntime.consumeItems; setQueueDisplay is
-    // updated automatically via the onDequeued callback — no direct setState here.
     expect(segment).toContain("tuiQueueRef.current?.consumeItems(queueLen)");
     expect(segment).toMatch(
       /onSubmitRef\s*\.current\(concatenatedMessage, submitOptions\)/,
@@ -50,8 +48,6 @@ describe("queue ordering wiring", () => {
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
 
-    // A dequeue may skip Esc-parked user messages ahead of the consumed items,
-    // so trimming the display by count would drop the wrong entries.
     const segment = source.slice(start, end);
     expect(segment).toContain("batch.items.map((item) => item.id)");
     expect(segment).toContain("consumed.has(msg.queueItemId)");
@@ -69,7 +65,6 @@ describe("queue ordering wiring", () => {
     expect(end).toBeGreaterThan(start);
 
     const segment = source.slice(start, end);
-    // Empty input is rejected unless it resumes an Esc-parked queue.
     expect(segment).toContain("if (!msg && !hasOverrideContent) {");
     expect(segment).toContain("if (paused === 0) return { submitted: false };");
     expect(segment).toContain(
