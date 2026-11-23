@@ -1,9 +1,3 @@
-/**
- * Protocol V2 (alpha hard-cut contract)
- * This file defines the runtime-scoped websocket contract for device-mode UIs.
- * It is self-defined rather than importing legacy transport/event shapes.
- */
-
 import type {
   AgentCreateParams,
   AgentListParams,
@@ -28,6 +22,7 @@ import type {
   MessageListParams,
 } from "@letta-ai/letta-client/resources/conversations/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
+import type { ExperimentId } from "@/experiments/types";
 import type { ConnectProviderOAuthConfig } from "@/types/provider-oauth-config";
 import type { TurnFinishedAckCommand } from "@/types/turn-finished-protocol";
 import type {
@@ -106,15 +101,7 @@ export type * from "./teleport-protocol";
 export type * from "./toolset-protocol";
 
 export type DmPolicy = "pairing" | "allowlist" | "open";
-export type ExperimentId =
-  | "artifacts"
-  | "conversation_titles"
-  | "desktop_conversation_bootstrap"
-  | "diffs"
-  | "memory_palace"
-  | "reflection_arena"
-  | "tui_cron";
-
+export type { ExperimentId } from "@/experiments/types";
 export type ExperimentSource = "override" | "env" | "default";
 
 export interface ExperimentSnapshot {
@@ -127,9 +114,6 @@ export interface ExperimentSnapshot {
   override: boolean | null;
 }
 
-/**
- * Base envelope shared by all v2 websocket messages.
- */
 export interface RuntimeEnvelope {
   runtime: ConversationRuntimeScope;
   event_seq: number;
@@ -293,7 +277,6 @@ export interface ChannelSummary {
   pending_pairings_count: number;
   approved_users_count: number;
   routes_count: number;
-  /** Declarative config schema for dynamic settings UI, or null. */
   config_schema: ChannelConfigSchema | null;
 }
 
@@ -304,7 +287,6 @@ export interface ChannelConfigSnapshot {
   enabled: boolean;
   dm_policy: DmPolicy;
   allowed_users: string[];
-  /** Plugin-owned redacted config/settings payload. */
   config: ChannelPluginConfig;
 }
 
@@ -317,7 +299,6 @@ export interface ChannelAccountSnapshot {
   running: boolean;
   dm_policy: DmPolicy;
   allowed_users: string[];
-  /** Plugin-owned redacted config/settings payload. */
   config: ChannelPluginConfig;
   created_at: string;
   updated_at: string;
@@ -359,18 +340,11 @@ export interface ChannelTargetSnapshot {
   last_message_id?: string;
 }
 
-/**
- * Git repository state for the current working directory.
- * Null when the CWD is not inside a git repository.
- */
 export interface GitContext {
-  /** Current branch name. Null on detached HEAD or repos with no commits. */
   branch: string | null;
-  /** Up to 10 local branches sorted by most-recently-committed, excluding the current branch. */
   recent_branches: string[];
 }
 
-/** Bottom-bar and device execution context state. */
 export interface DeviceStatus {
   current_connection_id: string | null;
   connection_name: string | null;
@@ -378,7 +352,6 @@ export interface DeviceStatus {
   is_processing: boolean;
   current_permission_mode: DevicePermissionMode;
   current_working_directory: string | null;
-  /** Monotonic signal for cwd changes and rejected stale cwd requests. */
   cwd_revision?: number;
   git_context: GitContext | null;
   letta_code_version: string | null;
@@ -391,36 +364,17 @@ export interface DeviceStatus {
   pending_control_requests: PendingControlRequest[];
   experiments: ExperimentSnapshot[];
   memory_directory: string | null;
-  /**
-   * Persisted CWD overrides keyed by listener scope key.
-   *
-   * Key format:
-   * - `conversation:<conversation_id>` for conversation-scoped overrides
-   * - `agent:<agent_id>::conversation:default` for an agent's default conversation scope
-   *
-   * Example: `conversation:conv_123` or `agent:agent_123::conversation:default`
-   */
   cwd_map?: Record<string, string>;
-  /** Listener boot CWD used when a conversation has no matching formatted key in `cwd_map`. */
   boot_working_directory?: string | null;
   should_doctor?: boolean;
   reflection_settings: ReflectionSettingsSnapshot | null;
-  /** Remote slash command IDs this letta-code version can handle via `execute_command`. */
   supported_commands: string[];
-  /**
-   * Slash commands contributed by locally loaded mods. Advertised separately
-   * from `supported_commands` (which gates the client's built-in allowlist) so
-   * clients can auto-surface mod commands by their own policy. Invoked through
-   * the same `execute_command` path. Omitted when no mod commands are loaded.
-   */
   mod_commands?: ModCommandInfo[];
 }
 
-/** A mod-contributed slash command advertised to clients for rendering. */
 export interface ModCommandInfo {
   id: string;
   description: string;
-  /** Optional argument hint shown in the palette (e.g. "<query>"). */
   args?: string;
 }
 
@@ -445,7 +399,7 @@ export interface QueueMessage {
   source: QueueMessageSource;
   content: MessageCreate["content"] | string;
   enqueued_at: string;
-  paused?: boolean; // parked by abort_message/Esc until resume_queue/next input
+  paused?: boolean;
 }
 
 export interface DeviceStatusUpdateMessage extends RuntimeEnvelope {
@@ -458,14 +412,12 @@ export interface LoopStatusUpdateMessage extends RuntimeEnvelope {
   loop_status: LoopState;
 }
 
-/** Full queue snapshot plus ordered dequeue/cancel transitions; emitted on mutation. */
 export interface QueueUpdateMessage extends RuntimeEnvelope {
   type: "update_queue";
   queue: QueueMessage[];
   removed?: import("./queue-update-protocol").QueueRemovalTransition[];
 }
 
-/** Standard Letta message delta forwarded through the stream channel. */
 export type MessageDelta = { type: "message" } & LettaStreamingResponse;
 
 export interface ClientToolStartMessage extends UmiLifecycleMessageBase {
@@ -537,7 +489,6 @@ export interface TurnFinishedMessage extends RuntimeEnvelope {
   terminal_consumer_ids?: string[];
   run_id?: string;
   error?: string;
-  /** Final CLI counters, independent of control/stream socket delivery order. */
   usage?: LettaStreamingResponse.LettaUsageStatistics;
 }
 
@@ -555,8 +506,8 @@ export interface SubagentSnapshot extends SubagentProtocol.SubagentEvents {
   status: "pending" | "running" | "completed" | "error";
   agent_url: string | null;
   agent_id?: string | null;
-  conversation_id?: string | null; // Own conversation; local URLs do not carry it.
-  super_run_id?: string; // Exact accepted Super Run for a remote child send.
+  conversation_id?: string | null;
+  super_run_id?: string;
   model?: string;
   is_background?: boolean;
   claims_parent_runtime?: boolean;
@@ -566,11 +517,11 @@ export interface SubagentSnapshot extends SubagentProtocol.SubagentEvents {
   parent_conversation_id?: string;
   start_time: number;
   tool_calls: SubagentSnapshotToolCall[];
-  progress_texts?: { id: string; at: string; text: string }[]; // Absent = none
+  progress_texts?: { id: string; at: string; text: string }[];
   total_tokens: number;
   duration_ms: number;
   error?: string;
-  result?: string; // Truncated final report for `notify: "caller"` launches.
+  result?: string;
 }
 
 export interface SubagentStateUpdateMessage extends RuntimeEnvelope {
@@ -578,11 +529,6 @@ export interface SubagentStateUpdateMessage extends RuntimeEnvelope {
   subagents: SubagentSnapshot[];
 }
 
-/**
- * Controller -> execution-environment commands.
- * In v2, the WS server accepts runtime-scoped chat/device commands plus
- * device capability commands (filesystem, memory, cron, terminals).
- */
 export type { ClientPreferences } from "./client-preferences";
 export type {
   ApprovalResponseAllowDecision,
@@ -623,7 +569,6 @@ export interface ChangeDeviceStateCommand {
 export interface AbortMessageCommand {
   type: "abort_message";
   runtime: ConversationRuntimeScope;
-  /** When provided, app-server sends abort_message_response on the control channel. */
   request_id?: string;
   run_id?: string | null;
 }
@@ -631,16 +576,9 @@ export interface AbortMessageCommand {
 export interface SyncCommand {
   type: "sync";
   runtime: ConversationRuntimeScope;
-  /** When provided, app-server sends sync_response after replaying state. */
   request_id?: string;
-  /** Consult the backend for stale approvals (default true). Observer-safe. */
   recover_approvals?: boolean;
-  /** Owner-only: resume the interrupted turn now (listener/recovery-sync.ts). */
   resume_interrupted_turn?: boolean;
-  /**
-   * Force the sync replay to include update_device_status even when the
-   * listener's last device-status snapshot for this socket/scope is unchanged.
-   */
   force_device_status?: boolean;
 }
 
@@ -649,7 +587,6 @@ export interface TerminalSpawnCommand {
   terminal_id: string;
   cols: number;
   rows: number;
-  /** Agent's current working directory. Falls back to bootWorkingDirectory if absent. */
   cwd?: string;
 }
 
@@ -694,7 +631,6 @@ export interface AbortMessageResponseMessage {
   type: "abort_message_response";
   request_id: string;
   runtime: ConversationRuntimeScope;
-  /** True when an active turn or pending approval was interrupted. */
   aborted: boolean;
   success: boolean;
   error?: string;
@@ -710,59 +646,32 @@ export interface SyncResponseMessage {
 
 export interface SearchFilesCommand {
   type: "search_files";
-  /** Substring to match against file paths. Empty string returns top files by mtime. */
   query: string;
-  /** Echoed back in the response for request correlation. */
   request_id: string;
-  /** Maximum number of results to return. Defaults to 5. */
   max_results?: number;
-  /** Working directory to scope the search to. When provided, only files
-   *  within this directory (relative to the index root) are returned. */
   cwd?: string;
 }
 
-/**
- * Listener command — IntelliJ-style "find in files" content search.
- * Returns line-level matches (text + line/column range) instead of
- * just the file list so the client can render an IDE-grade results
- * pane with snippet previews.
- */
 export interface GrepInFilesCommand {
   type: "grep_in_files";
-  /** Echoed back in the response for request correlation. */
   request_id: string;
-  /** Literal or regex pattern depending on `is_regex`. */
   query: string;
-  /** When true, `query` is treated as a regex. Defaults to false. */
   is_regex?: boolean;
-  /** Case-sensitive match. Defaults to false. */
   case_sensitive?: boolean;
-  /** Whole-word match. Defaults to false. */
   whole_word?: boolean;
-  /** Glob filter (e.g. "*.tsx" or "src/** /*.ts"). Empty = no filter. */
   glob?: string;
-  /** Scope search to this absolute dir. Falls back to the index root. */
   cwd?: string;
-  /** Max match lines returned (not files). Defaults to 500. */
   max_results?: number;
-  /** Lines of context before/after each match. Defaults to 2. */
   context_lines?: number;
 }
 
 export interface GrepInFilesMatch {
-  /** Path relative to the search root. */
   path: string;
-  /** 1-based line number of the matched line. */
   line: number;
-  /** 1-based column (character offset of match start, inclusive). */
   column: number;
-  /** 1-based column of match end (exclusive). */
   column_end: number;
-  /** The full matched line's text (no trailing newline). */
   text: string;
-  /** Lines immediately before the match (up to context_lines). */
   before?: string[];
-  /** Lines immediately after the match (up to context_lines). */
   after?: string[];
 }
 
@@ -792,15 +701,10 @@ export interface GrepInFilesResponseMessage {
 
 export interface ListInDirectoryCommand {
   type: "list_in_directory";
-  /** Absolute path to list entries in. */
   path: string;
-  /** When true, response includes non-directory entries in `files`. */
   include_files?: boolean;
-  /** Max entries to return (folders + files combined). */
   limit?: number;
-  /** Number of entries to skip before returning. */
   offset?: number;
-  /** Echoed back in the response for request correlation. */
   request_id?: string;
 }
 
@@ -818,11 +722,8 @@ export interface ListInDirectoryResponseMessage {
 
 export interface GetTreeCommand {
   type: "get_tree";
-  /** Absolute path to the root of the subtree to fetch. */
   path: string;
-  /** Maximum depth of the subtree to return (e.g. 3). */
   depth: number;
-  /** Echoed back in the response for request correlation. */
   request_id: string;
 }
 
@@ -843,15 +744,8 @@ export interface GetTreeResponseMessage {
 
 export interface ReadFileCommand {
   type: "read_file";
-  /** Absolute path to the file to read. */
   path: string;
-  /** Echoed back in the response for request correlation. */
   request_id: string;
-  /**
-   * Content encoding for the response. Defaults to "utf8" (strict UTF-8
-   * text). "base64" returns raw bytes base64-encoded, enabling binary
-   * reads such as image previews on web clients without Electron IPC.
-   */
   encoding?: "utf8" | "base64";
 }
 
@@ -860,7 +754,6 @@ export interface ReadFileResponseMessage {
   request_id: string;
   path: string;
   content: string | null;
-  /** Encoding of `content`. Mirrors the request; "utf8" when omitted. */
   encoding?: "utf8" | "base64";
   success: boolean;
   error?: string;
@@ -868,55 +761,41 @@ export interface ReadFileResponseMessage {
 
 export interface WatchFileCommand {
   type: "watch_file";
-  /** Absolute path to the file to watch for external changes. */
   path: string;
   request_id: string;
 }
 
 export interface UnwatchFileCommand {
   type: "unwatch_file";
-  /** Absolute path to the file to stop watching. */
   path: string;
   request_id: string;
 }
 
-/** Bidirectional: Egwalker CRDT ops for collaborative editing. */
 export interface FileOpsCommand {
   type: "file_ops";
-  /** Absolute path to the file being edited. */
   path: string;
-  /** Serialized causal-graph entries. */
   cg_entries: {
     agent: string;
     seq: number;
     len: number;
     parents: [string, number][];
   }[];
-  /** The operations (insert / delete). */
   ops: {
     type: "ins" | "del";
     pos: number;
     content?: string;
   }[];
-  /** Who generated these ops (e.g. 'window-abc', 'agent-xyz'). */
   source: string;
-  /** Full document content after these ops were applied. */
   document_content?: string;
 }
 
 export interface EditFileCommand {
   type: "edit_file";
-  /** Absolute path to the file to edit. */
   file_path: string;
-  /** The exact text to find and replace. */
   old_string: string;
-  /** The replacement text. */
   new_string: string;
-  /** When true, replace all occurrences. */
   replace_all?: boolean;
-  /** Expected number of replacements (validation). */
   expected_replacements?: number;
-  /** Echoed back in the response for request correlation. */
   request_id: string;
 }
 
@@ -939,105 +818,63 @@ export interface FileChangedMessage {
 
 export interface ListMemoryCommand {
   type: "list_memory";
-  /** Echoed back in every response chunk for request correlation. */
   request_id: string;
-  /** The agent whose memory to list. */
   agent_id: string;
-  /** When true, include parsed file references for graph edges. */
   include_references?: boolean;
 }
 
 export interface MemoryHistoryCommand {
   type: "memory_history";
-  /** Echoed back in the response for request correlation. */
   request_id: string;
-  /** The agent whose memory history to fetch. */
   agent_id: string;
-  /** Relative path within the memory directory (e.g. "system/persona.md"). Omit for global history across all files. */
   file_path?: string;
-  /** Max commits to return (default 50). */
   limit?: number;
 }
 
 export interface MemoryFileAtRefCommand {
   type: "memory_file_at_ref";
-  /** Echoed back in the response for request correlation. */
   request_id: string;
-  /** The agent whose memory to read. */
   agent_id: string;
-  /** Relative path within the memory directory. */
   file_path: string;
-  /** Git SHA to read the file at. */
   ref: string;
 }
 
-/** Read a file from the agent's MemFS working tree. Use base64 for binary. */
 export interface ReadMemoryFileCommand {
   type: "read_memory_file";
-  /** Echoed back in the response for request correlation. */
   request_id: string;
-  /** The agent whose memory to read. */
   agent_id: string;
-  /** Relative to the memory root. */
   path: string;
-  /** Defaults to "utf8". */
   encoding?: "utf8" | "base64";
 }
 
-/**
- * Write a file into the agent's MemFS and commit.
- *
- * Use for agent memory writes (e.g. profile images). Path is
- * relative to the memory root and is rejected if it escapes the root.
- */
 export interface WriteMemoryFileCommand {
   type: "write_memory_file";
-  /** Echoed back in the response for request correlation. */
   request_id: string;
-  /** The agent whose memory to write to. */
   agent_id: string;
-  /** Relative path within the memory directory (e.g. "profile.png"). */
   path: string;
-  /** Content to write — utf8 string or base64-encoded bytes. */
   content: string;
-  /** Encoding of `content`. Defaults to "utf8". */
   encoding?: "utf8" | "base64";
-  /** Optional commit message; defaults to a sensible fallback. */
   commit_message?: string;
 }
 
-/**
- * Delete a single file from the agent's MemFS working tree and commit
- * the deletion. Idempotent: if the file is already absent, the handler
- * returns success without producing a commit.
- */
 export interface DeleteMemoryFileCommand {
   type: "delete_memory_file";
-  /** Echoed back in the response for request correlation. */
   request_id: string;
-  /** The agent whose memory to delete from. */
   agent_id: string;
-  /** Relative path within the memory directory. */
   path: string;
-  /** Optional commit message; defaults to a sensible fallback. */
   commit_message?: string;
 }
 
 export interface MemoryCommitDiffCommand {
   type: "memory_commit_diff";
-  /** Echoed back in the response for request correlation. */
   request_id: string;
-  /** The agent whose memory to read. */
   agent_id: string;
-  /** Git SHA of the commit to show. */
   sha: string;
 }
 
 export interface EnableMemfsCommand {
   type: "enable_memfs";
-  /** Echoed back in the response for request correlation. */
   request_id: string;
-  /** The agent to enable memfs for. */
   agent_id: string;
 }
 
@@ -1148,13 +985,7 @@ export interface MemoryUpdatedMessage {
 
 export interface ListModelsCommand {
   type: "list_models";
-  /** Echoed back in the response for request correlation. */
   request_id: string;
-  /**
-   * Bypass the listener's availability cache and refetch from the backend.
-   * Sent by user-initiated refreshes so they can never be answered with a
-   * stale-but-within-TTL snapshot.
-   */
   force?: boolean;
 }
 
@@ -1162,19 +993,15 @@ export type ConnectProviderStorageTarget = "local";
 
 export interface ListConnectProvidersCommand {
   type: "list_connect_providers";
-  /** Echoed back in the response for request correlation. */
   request_id: string;
-  /** Provider store to inspect. MVP supports local provider storage. */
   target: ConnectProviderStorageTarget;
 }
 
 export interface ConnectProviderCommand {
   type: "connect_provider";
-  /** Echoed back in the response for request correlation. */
   request_id: string;
   target: ConnectProviderStorageTarget;
   provider_id: string;
-  /** Optional auth method id for providers with multiple auth methods. */
   auth_method_id?: string;
   fields: Record<string, string>;
   provider_name?: string;
@@ -1183,13 +1010,9 @@ export interface ConnectProviderCommand {
 
 export interface DisconnectProviderCommand {
   type: "disconnect_provider";
-  /** Echoed back in the response for request correlation. */
   request_id: string;
-  /** Provider store to write. MVP supports local provider storage. */
   target: ConnectProviderStorageTarget;
-  /** Provider id from list_connect_providers. */
   provider_id: string;
-  /** Optional connected provider name to remove when a row has multiple aliases. */
   provider_name?: string;
 }
 
@@ -1231,9 +1054,7 @@ export interface ConnectProviderEntry {
   requires_api_key: boolean;
   fields?: ConnectProviderField[];
   auth_methods?: ConnectProviderAuthMethod[];
-  /** First connected provider, preserved for older clients. */
   connected: ConnectProviderConnectionState;
-  /** All connected provider aliases represented by this row. */
   connected_providers: ConnectProviderConnectionState[];
 }
 
@@ -1267,11 +1088,8 @@ export interface DisconnectProviderResponseMessage {
 }
 
 export interface UpdateModelPayload {
-  /** Preferred runtime catalog model identifier (e.g. "sonnet") */
   model_id?: string;
-  /** Optional direct handle override (e.g. "anthropic/claude-sonnet-4-6") */
   model_handle?: string;
-  /** Explicit effort for an OpenAI-compatible proxy; null restores provider Default. */
   reasoning_effort?:
     | "none"
     | "minimal"
@@ -1285,9 +1103,7 @@ export interface UpdateModelPayload {
 
 export interface UpdateModelCommand {
   type: "update_model";
-  /** Echoed back in the response for request correlation. */
   request_id: string;
-  /** Runtime scope — identifies which conversation this targets. */
   runtime: ConversationRuntimeScope;
   payload: UpdateModelPayload;
 }
@@ -1308,9 +1124,7 @@ export interface ListModelsResponseMessage {
   request_id: string;
   success: boolean;
   entries: ListModelsResponseModelEntry[];
-  /** Handles available to this user from the API. null = lookup failed; absent = old server. */
   available_handles?: string[] | null;
-  /** BYOK provider name → base provider (e.g. "lc-anthropic" → "anthropic") */
   byok_provider_aliases?: Record<string, string>;
   error?: string;
 }
@@ -1329,11 +1143,8 @@ export interface UpdateModelResponseMessage {
 
 export interface UpdateToolsetCommand {
   type: "update_toolset";
-  /** Echoed back in the response for request correlation. */
   request_id: string;
-  /** Runtime scope — identifies which conversation this targets. */
   runtime: ConversationRuntimeScope;
-  /** The toolset preference to apply (e.g. "auto", "default", "codex", "gemini") */
   toolset_preference: ToolsetPreference;
 }
 
@@ -1349,9 +1160,7 @@ export interface UpdateToolsetResponseMessage {
 
 export interface SkillEnableCommand {
   type: "skill_enable";
-  /** Echoed back in the response for request correlation. */
   request_id: string;
-  /** Absolute path to the skill directory on the local machine. */
   skill_path: string;
 }
 
@@ -1365,9 +1174,7 @@ export interface SkillEnableResponseMessage {
 
 export interface SkillDisableCommand {
   type: "skill_disable";
-  /** Echoed back in the response for request correlation. */
   request_id: string;
-  /** Skill name (symlink name in ~/.letta/skills/). */
   name: string;
 }
 
@@ -1386,147 +1193,105 @@ export interface SkillsUpdatedMessage {
 
 export interface CreateAgentCommand {
   type: "create_agent";
-  /** Echoed back in the response for request correlation. */
   request_id: string;
-  /** Built-in personality preset to create. */
   personality: "memo" | "tutorial" | "blank" | "linus" | "kawaii";
-  /** Optional model identifier and additional creation tags. */
   model?: string;
   tags?: string[];
-  /** Whether to pin the agent globally after creation. Defaults to true. */
   pin_global?: boolean;
 }
 export interface AgentListCommand {
   type: "agent_list";
-  /** Echoed back in the response for request correlation. */
   request_id: string;
-  /** Query params forwarded to the Letta agents list API. */
   query?: AgentListParams;
 }
 
 export interface AgentRetrieveCommand {
   type: "agent_retrieve";
-  /** Echoed back in the response for request correlation. */
   request_id: string;
   agent_id: string;
 }
 
 export interface AgentCreateCommand {
   type: "agent_create";
-  /** Echoed back in the response for request correlation. */
   request_id: string;
-  /** Body forwarded to the Letta agents create API. */
   body: AgentCreateParams;
 }
 
 export interface AgentUpdateCommand {
   type: "agent_update";
-  /** Echoed back in the response for request correlation. */
   request_id: string;
   agent_id: string;
-  /** Body forwarded to the Letta agents update API. */
   body: AgentUpdateParams;
 }
 
 export interface AgentDeleteCommand {
   type: "agent_delete";
-  /** Echoed back in the response for request correlation. */
   request_id: string;
   agent_id: string;
 }
 
 export interface ConversationListCommand {
   type: "conversation_list";
-  /** Echoed back in the response for request correlation. */
   request_id: string;
-  /** Query params forwarded to the Letta conversations list API. */
   query?: ConversationListParams;
 }
 
 export interface ConversationRetrieveCommand {
   type: "conversation_retrieve";
-  /** Echoed back in the response for request correlation. */
   request_id: string;
   conversation_id: string;
 }
 
 export interface ConversationCreateCommand {
   type: "conversation_create";
-  /** Echoed back in the response for request correlation. */
   request_id: string;
-  /** Body forwarded to the Letta conversations create API. */
   body: ConversationCreateParams;
-  /**
-   * Set by cloud-api when relaying the command: the authenticated WS
-   * subscriber's cloud user id. The listener echoes it back as the
-   * `X-Letta-Acting-User-Id` HTTP header on the outbound
-   * conversations.create call so cloud attributes the new conversation
-   * to the human who actually created it — not the user whose API key
-   * spawned the sandbox / desktop runtime. Absent for self-hosted or
-   * direct (non-relayed) flows.
-   */
   acting_user_id?: string;
 }
 
 export interface ConversationUpdateCommand {
   type: "conversation_update";
-  /** Echoed back in the response for request correlation. */
   request_id: string;
   conversation_id: string;
-  /** Body forwarded to the Letta conversations update API. */
   body: ConversationUpdateParams;
 }
 
 export interface ConversationRecompileCommand {
   type: "conversation_recompile";
-  /** Echoed back in the response for request correlation. */
   request_id: string;
   conversation_id: string;
-  /** Body/query forwarded to the Letta conversations recompile API. */
   body?: ConversationRecompileParams;
 }
 
 export interface ConversationForkCommand {
   type: "conversation_fork";
-  /** Echoed back in the response for request correlation. */
   request_id: string;
   conversation_id: string;
   body?: ConversationForkBody;
-  /**
-   * Set by cloud-api when relaying the command — see
-   * `ConversationCreateCommand.acting_user_id`. The fork produces a new
-   * conversation, so it is attributed the same way.
-   */
   acting_user_id?: string;
 }
 
 export interface ConversationMessagesListCommand {
   type: "conversation_messages_list";
-  /** Echoed back in the response for request correlation. */
   request_id: string;
   conversation_id: string;
-  /** Query params forwarded to the Letta conversation messages list API. */
   query?: MessageListParams;
 }
 
 export interface ConversationCompactCommand {
   type: "conversation_compact";
-  /** Echoed back in the response for request correlation. */
   request_id: string;
   conversation_id: string;
-  /** Body forwarded to the Letta conversation messages compact API. */
   body?: MessageCompactParams;
 }
 
 export interface GetReflectionSettingsCommand {
   type: "get_reflection_settings";
-  /** Echoed back in the response for request correlation. */
   request_id: string;
   runtime: AgentRuntimeScope;
 }
 export interface SetReflectionSettingsCommand {
   type: "set_reflection_settings";
-  /** Echoed back in the response for request correlation. */
   request_id: string;
   runtime: AgentRuntimeScope;
   settings: {
@@ -1567,7 +1332,6 @@ export interface ChannelAccountCreatePayload {
   enabled?: boolean;
   dm_policy?: DmPolicy;
   allowed_users?: string[];
-  /** Plugin-owned account config. New fields should be added here, not centrally. */
   config?: ChannelPluginConfig;
 }
 
@@ -1827,8 +1591,8 @@ export interface ConversationMessagesListResponseMessage {
   request_id: string;
   success: boolean;
   messages: LettaMessage[];
-  next_before: string | null; // Oldest message ID, for loading older history.
-  has_more: boolean; // Whether messages older than `next_before` exist.
+  next_before: string | null;
+  has_more: boolean;
   error?: string;
 }
 
@@ -2086,10 +1850,6 @@ export interface ChannelTargetsUpdatedMessage {
   channel_id: ChannelId;
 }
 
-// ─────────────────────────────────────────────────
-//  Git branch commands
-// ─────────────────────────────────────────────────
-
 export interface GitBranchInfo {
   name: string;
   is_current: boolean;
@@ -2098,13 +1858,9 @@ export interface GitBranchInfo {
 
 export interface SearchBranchesCommand {
   type: "search_branches";
-  /** Echoed back in the response for request correlation. */
   request_id: string;
-  /** Substring filter for branch names. Empty string returns all branches. */
   query: string;
-  /** Maximum number of results to return. Defaults to 20. */
   max_results?: number;
-  /** Working directory to run git in. Falls back to conversation cwd. */
   cwd?: string;
 }
 
@@ -2118,44 +1874,23 @@ export interface SearchBranchesResponse {
 
 export interface CheckoutBranchCommand {
   type: "checkout_branch";
-  /** Echoed back in the response for request correlation. */
   request_id: string;
-  /** Branch name to checkout. */
   branch: string;
-  /** Create a new branch if it doesn't exist. */
   create?: boolean;
-  /** Working directory to run git in. Falls back to conversation cwd. */
   cwd?: string;
 }
 
 export interface CheckoutBranchResponse {
   type: "checkout_branch_response";
   request_id: string;
-  /** The branch now checked out. */
   branch: string;
   success: boolean;
   error?: string;
 }
 
-// ─────────────────────────────────────────────────
-//  Secrets management (modal + CLI source of truth)
-//
-//  letta-code owns the secrets cache. All reads and writes go through these
-//  three commands so the in-memory cache stays consistent. Per-turn
-//  hydration is one-shot — these commands are the only paths that re-touch
-//  core after the initial fetch.
-// ─────────────────────────────────────────────────
-
-/**
- * Refresh the local secrets cache from core and return the available
- * secrets. The modal needs the plaintext values to populate the form, so
- * this command intentionally exposes them. The CLI's `/secret list` uses a
- * separate code path that returns names only.
- */
 export interface SecretListCommand {
   type: "secret_list";
   request_id: string;
-  /** Agent whose secrets to list. */
   agent_id: string;
 }
 
@@ -2163,29 +1898,15 @@ export interface SecretListResponse {
   type: "secret_list_response";
   request_id: string;
   success: boolean;
-  /** Sorted secret entries (key + plaintext value). Empty on failure. */
   secrets: Array<{ key: string; value: string }>;
   error?: string;
 }
 
-/**
- * Apply a batch of secret mutations atomically. The device computes the
- * resulting map (current ∪ set) ∖ unset and PATCHes core in a single call,
- * eliminating the read-modify-write race that would plague parallel
- * per-key calls. This is the only WS-surfaced write — single-key set/unset
- * are CLI-only via `setSecretOnServer` / `deleteSecretOnServer`.
- *
- * Keys provided in `set` override any existing values; `unset` keys are
- * removed from the final map. Keys appearing in both lists resolve to
- * `unset` (defensive — clients shouldn't send both).
- */
 export interface SecretApplyCommand {
   type: "secret_apply";
   request_id: string;
   agent_id: string;
-  /** Keys to add or replace, with their plaintext values. */
   set: Record<string, string>;
-  /** Keys to remove. Normalized to uppercase server-side. */
   unset: string[];
 }
 
@@ -2193,7 +1914,6 @@ export interface SecretApplyResponse {
   type: "secret_apply_response";
   request_id: string;
   success: boolean;
-  /** Sorted secret names after the apply. Empty on failure. */
   names: string[];
   error?: string;
 }

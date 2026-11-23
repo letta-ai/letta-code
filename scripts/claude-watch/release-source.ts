@@ -87,7 +87,6 @@ function compareTimestampsThenVersions(
   );
 }
 
-/** Parse, normalize, filter, de-duplicate, and chronologically order GitHub releases. */
 export function parseClaudeGitHubReleases(
   input: unknown,
 ): ClaudeGitHubRelease[] {
@@ -135,7 +134,6 @@ export function parseClaudeGitHubReleases(
   );
 }
 
-/** Parse the npm registry document into the small, stable shape used by the watcher. */
 export function parseClaudeNpmMetadata(input: unknown): ClaudeNpmMetadata {
   const raw = object(input, "npm metadata response");
   const rawTags = object(raw["dist-tags"], "npm dist-tags");
@@ -200,10 +198,6 @@ function assertSourcesAgree(
   }
 }
 
-/**
- * Select one release without side effects. Sources are checked before any selection,
- * so a disagreement cannot accidentally advance persisted watcher state.
- */
 export function selectClaudeReleaseCandidate(
   options: ReleaseSelectionOptions,
 ): ClaudeReleaseCandidate | null {

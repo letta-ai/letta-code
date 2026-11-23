@@ -51,7 +51,6 @@ export interface ProviderTurnInput {
   clientSkills: unknown[];
 }
 
-/** Provider-request start info emitted at the model-call boundary. */
 export interface LlmStartInfo {
   agentId: string;
   conversationId: string;
@@ -67,7 +66,6 @@ export interface LlmEndErrorInfo {
   retryable: boolean;
 }
 
-/** Provider-request completion info emitted once a final message is produced. */
 export interface LlmEndInfo {
   agentId: string;
   conversationId: string;
@@ -210,13 +208,6 @@ export function estimateProviderContextTokens(
   return total > 0 ? total : undefined;
 }
 
-/**
- * Tokens the request cannot shed: the compiled system prompt plus the tool
- * definitions. Compaction rewrites message history, so when this floor alone
- * exceeds the serving context window there is no recovery — every turn would be
- * truncated by the engine before the model ever sees the memory the system
- * prompt carries. Callers use this to fail loudly instead.
- */
 export function estimateProviderPromptFloorTokens(
   input: ProviderTurnInput,
 ): number {
@@ -226,23 +217,6 @@ export function estimateProviderPromptFloorTokens(
   );
 }
 
-/**
- * Context pressure must be handled before the provider request, not only after
- * an overflow. pi-ai first makes an oversized request valid by shrinking its
- * output allowance to `contextWindow - estimatedContext - 4096`, floored at
- * one token. A near-full request can therefore finish with `length` instead of
- * throwing the overflow that our retry path would catch.
- *
- * Keep the same 16,384-token reserve as Pi's coding-agent harness, capped at
- * 20% for small local windows. This is deliberately based on context usage,
- * not the configured output limit: an intentionally small `max_tokens` value
- * remains a normal provider length stop (the policy preserved by #3355).
- *
- * Upstream references, pinned when #3508 was fixed:
- * - pi-ai clamp: https://github.com/earendil-works/pi/blob/cee5ff7520d8828bed9955ef00419e995d1f91e0/packages/ai/src/api/simple-options.ts#L12-L19
- * - Pi reserve: https://github.com/earendil-works/pi/blob/cee5ff7520d8828bed9955ef00419e995d1f91e0/packages/coding-agent/src/core/compaction/compaction.ts#L128-L137
- * - Pi threshold: https://github.com/earendil-works/pi/blob/cee5ff7520d8828bed9955ef00419e995d1f91e0/packages/coding-agent/src/core/compaction/compaction.ts#L235-L238
- */
 export function contextCompactionThreshold(
   contextWindow: number | undefined,
 ): number | undefined {
@@ -287,12 +261,6 @@ function serializedLength(value: unknown): number {
   }
 }
 
-// Approximate request payload size in bytes (serialized chars ~= bytes for the
-// dominant base64/ASCII content). This intentionally measures bytes, not
-// tokens: image/base64 payloads are cheap in provider tokens but can break
-// provider transports when the raw request body grows too large. Slightly
-// overcounts versus the real request because local message wrappers
-// (ids/timestamps/metadata) are included.
 export function estimateProviderRequestBytes(
   input: ProviderTurnInput,
 ): number | undefined {
@@ -321,8 +289,6 @@ function createUsageStatisticsChunk(
   const reasoningTokens = usage?.reasoning;
   return {
     message_type: "usage_statistics",
-    // One chunk per completed provider step (see the `done` handler), so each
-    // reports exactly one step, matching Cloud's per-step usage_statistics.
     step_count: 1,
     api_cost_usd: costUsd,
     ...(usage?.cacheWrite1h !== undefined
@@ -497,6 +463,12 @@ function createProviderLettaStream(
           }
 
           if (part.type === "toolcall_end") {
+            if (part.toolCall.argumentsError) {
+              yield* createProviderErrorChunks(
+                new Error(part.toolCall.argumentsError),
+              );
+              return;
+            }
             sawToolCall = true;
             yield {
               message_type: "approval_request_message",

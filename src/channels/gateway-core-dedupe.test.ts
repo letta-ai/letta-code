@@ -8,10 +8,6 @@ import {
 } from "./gateway-test-support";
 
 test("drops a resubmitted delivery whose clientMessageId was already accepted", async () => {
-  // Cloud resubmits under the same stable clientMessageId when a delivery
-  // activity retries or falls back to one message at a time (LET-13629). A
-  // running gateway must not post the message to the model a second time.
-  // A restarted listener loses this state: LET-13660.
   const client = new FakeClient();
   const { hooks, lifecycleEvents } = makeHooks();
   const gateway = new ChannelGateway(client, hooks);
@@ -33,7 +29,6 @@ test("drops a resubmitted delivery whose clientMessageId was already accepted", 
     (event) => event.type === "queued",
   ).length;
 
-  // The whole chunk again, from the first message.
   for (const delivery of deliveries) {
     expect(await gateway.submit(delivery)).toBe(true);
   }

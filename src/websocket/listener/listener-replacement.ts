@@ -10,10 +10,6 @@ import type {
   StartListenerOptions,
 } from "./types";
 
-/**
- * Why a replacement token is not adoptable. Reported in the thrown message so
- * a rejected re-registration is diagnosable without leaking token contents.
- */
 type ListenerReplacementRejection =
   | "unknown_provenance"
   | "identity_mismatch"
@@ -29,12 +25,6 @@ type ListenerReplacementProvenance = {
   authorityEpoch: number | null;
 };
 
-/**
- * Private provenance for every issued token. Adoption is authorized by this
- * table alone — never by the token's own fields — so a structural clone, a
- * hand-built object, or a replay of an already-consumed token cannot transfer
- * accepted-input ownership.
- */
 const replacementProvenance = new WeakMap<
   ListenerClientReplacement,
   ListenerReplacementProvenance
@@ -67,13 +57,6 @@ export function createListenerClientReplacement(
   return replacement;
 }
 
-/**
- * Resolve the exact authoritative predecessor behind `opts.replacement`.
- *
- * Returns null when no token was supplied. Throws — without mutating anything
- * — when a token was supplied but is not adoptable, so a stale or replayed
- * token is rejected harmlessly instead of destroying a healthy runtime.
- */
 function resolveAdoptableReplacement(
   opts: StartListenerOptions,
 ): ListenerReplacementProvenance | null {
@@ -88,18 +71,12 @@ function resolveAdoptableReplacement(
     rejectReplacement("identity_mismatch");
   }
   const issuer = provenance.issuer;
-  // The issuer must still own the generation it issued against. A late socket
-  // that reconnected after the token was minted advances it, which makes the
-  // token a stale view of a runtime that is once again serving.
   if (
     (issuer.startupGenerationByLineage.get(provenance.lineageId) ?? 0) !==
     provenance.generation
   ) {
     rejectReplacement("stale_generation");
   }
-  // Clearing the active pointer for a stopped runtime does not erase history.
-  // The issuer remains authoritative only until some different non-null runtime
-  // becomes active, even if that newer runtime has also stopped by adoption.
   if (
     provenance.authorityEpoch === null ||
     provenance.authorityEpoch !== getLatestRuntimeAuthorityEpoch()
@@ -112,7 +89,6 @@ function resolveAdoptableReplacement(
   return provenance;
 }
 
-/** Consume the registration handoff without replacing its live runtime. */
 export function adoptListenerClientReplacement(
   opts: StartListenerOptions,
 ): ListenerRuntime | null {

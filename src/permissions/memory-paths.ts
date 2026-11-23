@@ -107,11 +107,6 @@ function getExplicitEnvRoots(env: NodeJS.ProcessEnv): ExplicitEnvRoots {
   };
 }
 
-/**
- * Resolve the current agent ID from: (1) the explicit argument, (2) the
- * `AGENT_ID` / `LETTA_AGENT_ID` env vars, or (3) the in-process agent
- * context. Returns null when none of those sources yields a non-empty ID.
- */
 export function deriveAgentId(
   env: NodeJS.ProcessEnv,
   explicitAgentId?: string | null,

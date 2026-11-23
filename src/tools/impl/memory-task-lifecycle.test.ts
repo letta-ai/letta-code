@@ -108,7 +108,6 @@ test("interactive exit lets a quick worker finish without cancelling it", async 
 test("interactive exit cancels a worker that outlives the grace period", async () => {
   const controller = new AbortController();
   let settled = false;
-  // Mirrors a worker whose lifecycle only settles once its signal fires.
   runningMemoryTask(
     controller,
     new Promise<void>((resolve) => {

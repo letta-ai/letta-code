@@ -1,5 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises";
-import { APIError } from "@letta-ai/letta-client";
+import { APIConnectionError, APIError } from "@letta-ai/letta-client";
 import { getClient } from "@/backend/api/client";
 import { isCloudServerUrl } from "@/backend/api/server-url";
 import { resolveBackendMode } from "@/backend/backend-mode";
@@ -13,14 +13,19 @@ import type {
 } from "./github-pull-request-types";
 import { fetchGitHubPullRequestSnapshot } from "./github-pull-request-watch";
 
+export class GitHubPullRequestSnapshotPending extends Error {
+  constructor() {
+    super("Cloud PR snapshot is still cooling down");
+    this.name = "GitHubPullRequestSnapshotPending";
+  }
+}
+
 type SnapshotOptions = { cwd: string; signal?: AbortSignal };
 type FetchSnapshot = (
   ref: GitHubPullRequestRef,
   options: SnapshotOptions,
 ) => Promise<GitHubPullRequestSnapshot>;
 
-// TODO: switch to the generated @letta-ai/letta-client types once the SDK
-// includes POST /v1/integrations/github/pull-request-snapshots.
 interface CloudComment {
   id: string;
   author: string;
@@ -29,7 +34,7 @@ interface CloudComment {
   updated_at: string;
 }
 
-interface CloudPullRequestSnapshot {
+export interface CloudPullRequestSnapshot {
   ref: GitHubPullRequestRef;
   head_sha: string;
   state: PullRequestState;
@@ -81,6 +86,7 @@ type CloudSnapshotResult =
   | { status: 404 | 429 | 501 };
 
 interface CloudSnapshotDeps {
+  allowInaccessibleFallback?: boolean;
   isCloud?: () => boolean;
   fetchGh?: FetchSnapshot;
   request?: (
@@ -89,10 +95,11 @@ interface CloudSnapshotDeps {
   ) => Promise<CloudSnapshotResult>;
   wait?: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
   now?: () => number;
+  random?: () => number;
 }
 
-// Used when the server signals a cooldown without a usable retry time.
 const DEFAULT_COOLDOWN_MS = 30_000;
+const MAX_COOLDOWN_MS = 60_000;
 
 async function requestSnapshot(
   ref: GitHubPullRequestRef,
@@ -109,7 +116,6 @@ async function requestSnapshot(
           ],
         },
         signal,
-        // Handle quota cooldown here instead of the SDK's automatic retries.
         maxRetries: 0,
         timeout: 30_000,
       },
@@ -144,7 +150,7 @@ function toComment(comment: CloudComment): PullRequestComment {
   };
 }
 
-function toClientSnapshot(
+export function toClientSnapshot(
   ref: GitHubPullRequestRef,
   snapshot: CloudPullRequestSnapshot,
 ): GitHubPullRequestSnapshot {
@@ -156,7 +162,6 @@ function toClientSnapshot(
     mergeable: snapshot.mergeable,
     mergeStateStatus: snapshot.merge_state_status,
     reviewDecision: snapshot.review_decision,
-    // Readiness still requires two same-head client reads.
     readinessConfirmed: false,
     checks: snapshot.checks,
     checkAttempts: snapshot.check_attempts,
@@ -180,7 +185,6 @@ function toClientSnapshot(
   };
 }
 
-/** One fetcher per watch: capability and telemetry state never leak to other watches. */
 export function createGitHubPullRequestSnapshotFetcher(
   deps: CloudSnapshotDeps = {},
 ): FetchSnapshot {
@@ -190,11 +194,13 @@ export function createGitHubPullRequestSnapshotFetcher(
   const fetchGh = deps.fetchGh ?? fetchGitHubPullRequestSnapshot;
   const request = deps.request ?? requestSnapshot;
   const now = deps.now ?? Date.now;
+  const random = deps.random ?? Math.random;
   const wait =
     deps.wait ??
     (async (ms, signal) => {
       await delay(ms, undefined, { signal });
     });
+  let hasSnapshot = false;
   let unsupported = false;
   let reportedRateLimit = false;
 
@@ -208,39 +214,71 @@ export function createGitHubPullRequestSnapshotFetcher(
       );
     }
     const remaining = Date.parse(retryAt ?? "") - now();
-    // A missing or expired retry time must not cause a busy retry loop.
-    await wait(remaining > 0 ? remaining : DEFAULT_COOLDOWN_MS, signal);
+    await wait(
+      Math.min(
+        MAX_COOLDOWN_MS - 2_000,
+        remaining > 0 ? remaining : DEFAULT_COOLDOWN_MS,
+      ) +
+        random() * 2_000,
+      signal,
+    );
   };
 
   return async (ref, options) => {
     if (unsupported || !shouldFetchCloud()) return fetchGh(ref, options);
-    while (true) {
-      options.signal?.throwIfAborted();
-      const result = await request(ref, options.signal);
-      if (!("body" in result)) {
-        // The endpoint reports quota as 200 + rate_limits; 429 is defensive.
-        if (result.status === 429) {
-          await pause(undefined, options.signal);
+    let waited = false;
+    const cooldownError = new GitHubPullRequestSnapshotPending();
+    const cooldown = async (retryAt?: string) => {
+      if (waited) {
+        throw cooldownError;
+      }
+      waited = true;
+      await pause(retryAt, options.signal);
+    };
+    try {
+      while (true) {
+        options.signal?.throwIfAborted();
+        const result = await request(ref, options.signal);
+        if (!("body" in result)) {
+          if (result.status === 429) {
+            await cooldown();
+            continue;
+          }
+          unsupported = true;
+          return fetchGh(ref, options);
+        }
+        const entry = result.body.snapshots.find((item) => sameRef(item, ref));
+        const limit = result.body.rate_limits?.find((item) =>
+          sameRef(item, ref),
+        );
+        if (limit || entry?.stale) {
+          await cooldown(entry?.retry_at ?? limit?.retry_at);
           continue;
         }
-        // 404/501: an older Cloud without the route.
-        unsupported = true;
-        return fetchGh(ref, options);
+        if (entry?.inaccessible) {
+          if (!hasSnapshot && deps.allowInaccessibleFallback) {
+            unsupported = true;
+            return fetchGh(ref, options);
+          }
+          throw new Error(`Cloud could not access ${ref.url}`);
+        }
+        if (!entry?.snapshot) {
+          throw new Error("Cloud returned no PR snapshot");
+        }
+        hasSnapshot = true;
+        return toClientSnapshot(ref, entry.snapshot);
       }
-      const entry = result.body.snapshots.find((item) => sameRef(item, ref));
-      const limit = result.body.rate_limits?.find((item) => sameRef(item, ref));
-      // Stale data must never advance the baseline, so wait for fresh data.
-      if (limit || entry?.stale) {
-        await pause(entry?.retry_at ?? limit?.retry_at, options.signal);
-        continue;
+    } catch (error) {
+      options.signal?.throwIfAborted();
+      if (
+        !hasSnapshot &&
+        (error === cooldownError || error instanceof APIConnectionError)
+      ) {
+        const snapshot = await fetchGh(ref, options);
+        hasSnapshot = true;
+        return snapshot;
       }
-      if (entry?.inaccessible) {
-        throw new Error(`Cloud could not access ${ref.url}`);
-      }
-      if (!entry?.snapshot) {
-        throw new Error("Cloud returned no PR snapshot");
-      }
-      return toClientSnapshot(ref, entry.snapshot);
+      throw error;
     }
   };
 }

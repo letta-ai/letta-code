@@ -266,7 +266,6 @@ async function fetchGitHubReleasePayload<T>(
     let response: Response;
     try {
       response = await fetchImpl(url, { headers });
-      // A successful fetch can still lose its connection while reading the body.
       if (response.ok) return (await response.json()) as T;
     } catch (error) {
       if (error instanceof SyntaxError) throw error;

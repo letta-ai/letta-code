@@ -3,6 +3,10 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebSocketServer } from "ws";
+import {
+  resolveBackendMode,
+  setConfiguredBackendMode,
+} from "@/backend/backend-mode";
 import type { MonitorStopCommand } from "@/types/task-control-protocol";
 import {
   clearPendingMessages,
@@ -19,6 +23,7 @@ import { stopMonitor } from "./stop-monitor";
 import { task_stop } from "./task-stop";
 
 let dir: string;
+let previousBackendMode = resolveBackendMode();
 let notices: import("@/utils/message-queue-bridge").QueuedMessage[];
 const scope = {
   agent_id: "agent-a",
@@ -52,19 +57,20 @@ function fakeMonitor(
   return process;
 }
 beforeEach(() => {
+  previousBackendMode = resolveBackendMode();
+  setConfiguredBackendMode("local");
   dir = mkdtempSync(join(tmpdir(), "monitor-cancel-test-"));
   notices = [];
   clearPendingMessages();
   setMessageQueueAdder((message) => notices.push(message));
 });
 afterEach(() => {
+  setConfiguredBackendMode(previousBackendMode);
   for (const [id, process] of backgroundProcesses) {
     process.completionNotificationSuppressed = true;
     try {
       process.process.kill("SIGKILL");
-    } catch {
-      /* gone */
-    }
+    } catch {}
     clearBackgroundProcessCleanup(id);
   }
   backgroundProcesses.clear();
@@ -95,6 +101,9 @@ describe("stopMonitor", () => {
       conversationId: scope.conversation_id,
       actingUserId: scope.acting_user_id,
     });
+    expect(notices[0]?.text).toContain(
+      "<summary>Monitor: CI results</summary>",
+    );
     const [retry, second] = await Promise.all([
       stopMonitor(command(id)),
       stopMonitor(command(id)),

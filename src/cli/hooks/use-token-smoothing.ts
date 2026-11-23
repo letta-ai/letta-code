@@ -1,15 +1,3 @@
-// React hook that returns a smoothed version of a monotonic count.
-//
-// Raw streaming counts jump in chunk-sized steps which reads as twitchy.
-// We catch up to the target on a 50ms tick with a piecewise-linear rule:
-//   +3 when close (<70), 15% of the gap when mid-range (<200), capped at
-//   +50 when far. Forward-only during active streaming; snaps to the
-//   exact target when inactive so post-stream values match the real total.
-//
-// Defensive: if the target ever decreases mid-stream (no current call path
-// does this, but resets are plausible) the displayed value snaps to the new
-// target rather than getting stuck at the higher value.
-
 import { useEffect, useRef, useState } from "react";
 
 const TICK_MS = 50;

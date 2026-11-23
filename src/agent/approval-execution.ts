@@ -1,5 +1,3 @@
-// src/agent/approval-execution.ts
-// Shared logic for executing approval batches (used by both interactive and headless modes)
 import * as path from "node:path";
 import { APIUserAbortError } from "@letta-ai/letta-client/core/error";
 import type {
@@ -23,11 +21,8 @@ import {
   type ToolReturnContent,
 } from "@/tools/manager";
 
-/** Grace period an aborted batch waits for signal-honoring tools to unwind
- * before discarding stragglers (ms). */
 export const ABORT_GRACE_MS = 500;
 
-/** True when an error represents a user-initiated abort of a tool batch. */
 export function isUserAbortError(error: unknown): boolean {
   return (
     error instanceof APIUserAbortError ||
@@ -38,10 +33,6 @@ export function isUserAbortError(error: unknown): boolean {
   );
 }
 
-/** Overlay real partial results over queued synthetic interrupted results:
- * settled tools' actual outputs win; stragglers keep their synthetics.
- * Partials for tools never present in the queue (denials, precomputed
- * results) are appended so real work is not silently dropped. */
 export function overlayPartialResults(
   queued: ApprovalResult[] | null,
   partials: ApprovalResult[] | undefined,
@@ -53,8 +44,6 @@ export function overlayPartialResults(
   return [...overlaid, ...extras];
 }
 
-/** Map auto-denied decisions to their wire form. Denials are decisions, not
- * tool executions: they must reach the server even when the batch aborts. */
 export function buildDeniedResults(
   autoDenied: Array<{ approval: ApprovalRequest; reason: string }>,
 ): ApprovalResult[] {
@@ -66,10 +55,6 @@ export function buildDeniedResults(
   }));
 }
 
-/** Results for decisions that never execute client-side: auto-handled tools
- * with precomputed results and auto-denied calls. They must ride along on
- * both the fulfilled path and the grace-expiry overlay, or the server's
- * approval batch goes out incomplete. */
 export function buildCompanionResults(
   autoHandled: Array<{
     toolCallId: string;
@@ -90,8 +75,6 @@ export function buildCompanionResults(
   ];
 }
 
-/** Attach extra decisions (e.g. pre-built denials) to an abort error's
- * partials so the recovery queue carries a complete approval batch. */
 export function appendAbortPartials(
   error: unknown,
   extras: ApprovalResult[],
@@ -101,37 +84,25 @@ export function appendAbortPartials(
   abortError.partialResults = [...(abortError.partialResults ?? []), ...extras];
 }
 
-/**
- * Extract displayable text from tool return content (for UI display).
- * Multimodal content returns the text parts concatenated.
- */
 export function getDisplayableToolReturn(content: ToolReturnContent): string {
   if (typeof content === "string") {
     return content;
   }
-  // Extract text from multimodal content
   return content
     .filter((part): part is TextContent => part.type === "text")
     .map((part) => part.text)
     .join("\n");
 }
 
-/**
- * Tools that are safe to execute in parallel (read-only or independent).
- * These tools don't modify files or shared state, so they can't race with each other.
- * Note: Bash/shell tools are intentionally excluded - they can run arbitrary commands that may write files.
- */
 const PARALLEL_SAFE_TOOLS = new Set([
   "Read",
   "ViewImage",
   "Grep",
   "Memory",
   "Glob",
-  // Search/fetch tools (external APIs or read-only queries)
   "conversation_search",
   "web_search",
   "fetch_webpage",
-  // Task spawns independent subagents
   "Task",
   "Agent",
 ]);
@@ -143,61 +114,36 @@ function isParallelSafe(toolName: string, toolContextId?: string): boolean {
   );
 }
 
-/**
- * Tools that modify a single file and use `file_path` as their resource identifier.
- * These can run in parallel when targeting different files.
- */
 const FILE_PATH_TOOLS = new Set(["Edit", "Write"]);
 
-/**
- * Tools that use a global lock (can touch multiple resources or have arbitrary side effects).
- * These must serialize with ALL other write tools to prevent race conditions.
- */
 const GLOBAL_LOCK_TOOLS = new Set([
-  // Shell tools (arbitrary side effects)
   "Bash",
   "exec_command",
   "write_stdin",
-  // Patch tool (can touch several files in one call)
   "ApplyPatch",
 ]);
 
-/**
- * Extract the resource key for a tool execution.
- * Tools with the same resource key must be serialized to avoid race conditions.
- *
- * Note: Only call this for non-parallel-safe tools. Use isParallelSafe() first.
- *
- * @param toolName - The name of the tool being executed
- * @param toolArgs - The arguments passed to the tool
- * @returns Resource key string for grouping
- */
 export function getResourceKey(
   toolName: string,
   toolArgs: Record<string, unknown>,
   workingDirectory: string = getCurrentWorkingDirectory(),
 ): string {
-  // Global lock tools serialize with everything
   if (GLOBAL_LOCK_TOOLS.has(toolName)) {
     return "__global__";
   }
 
-  // File-based tools use the file path as resource key
   if (FILE_PATH_TOOLS.has(toolName)) {
     const filePath = toolArgs.file_path;
     if (typeof filePath === "string") {
-      // Normalize to absolute path for consistent comparison
       return path.isAbsolute(filePath)
         ? path.normalize(filePath)
         : path.resolve(workingDirectory, filePath);
     }
   }
 
-  // Unknown tools or missing file_path get global lock for safety
   return "__global__";
 }
 
-/** Result format expected by App.tsx for auto-allowed tools */
 export type AutoAllowedResult = {
   toolCallId: string;
   result: ToolExecutionResult;
@@ -208,7 +154,6 @@ export type ApprovalDecision =
       type: "approve";
       approval: ApprovalRequest;
       reason?: string;
-      // If set, skip executeTool and use this result (for fancy UI tools)
       precomputedResult?: ToolExecutionResult;
     }
   | { type: "deny"; approval: ApprovalRequest; reason: string };
@@ -217,13 +162,8 @@ export type ApprovalToolResult = ToolReturn & {
   reason?: string;
 };
 
-// Align result type with the SDK's expected union for approvals payloads
 export type ApprovalResult = ApprovalToolResult | ApprovalReturn;
 
-/**
- * Execute a single approval decision and return the result.
- * Extracted to allow parallel execution of Task tools.
- */
 async function executeSingleDecision(
   decision: ApprovalDecision,
   onChunk?: (chunk: ToolReturnMessage) => void,
@@ -237,18 +177,14 @@ async function executeSingleDecision(
     toolContextId?: string;
     parentScope?: { agentId: string; conversationId: string };
     onFileWrite?: (filePath: string, content: string) => void;
-    /** Synchronous durability fence immediately before an approved tool runs. */
     beforeToolExecution?: (toolCallId: string) => void | Promise<void>;
-    /** Durable result checkpoint immediately after approved tool code settles. */
     afterToolExecution?: (
       toolCallId: string,
       result: ApprovalResult,
     ) => void | Promise<void>;
-    /** Injectable executor for production-path concurrency tests. */
     executeTool?: typeof executeTool;
   },
 ): Promise<ApprovalResult> {
-  // If aborted, record an interrupted result
   if (options?.abortSignal?.aborted) {
     if (onChunk) {
       onChunk({
@@ -269,7 +205,6 @@ async function executeSingleDecision(
   }
 
   if (decision.type === "approve") {
-    // If fancy UI already computed the result, use it directly
     if (decision.precomputedResult) {
       return {
         type: "tool",
@@ -282,18 +217,14 @@ async function executeSingleDecision(
       };
     }
 
-    // Cross the caller's durable effect fence immediately before tool code can run.
     await options?.beforeToolExecution?.(decision.approval.toolCallId);
 
-    // Execute the approved tool
     try {
-      // Safe parse - toolArgs should be "{}" but handle edge cases
       let parsedArgs: Record<string, unknown> = {};
       if (typeof decision.approval.toolArgs === "string") {
         try {
           parsedArgs = JSON.parse(decision.approval.toolArgs);
         } catch {
-          // Empty or malformed args - use empty object
           parsedArgs = {};
         }
       } else {
@@ -320,8 +251,6 @@ async function executeSingleDecision(
         },
       );
 
-      // Update UI if callback provided (interactive mode)
-      // Note: UI display uses text-only version, backend gets full multimodal content
       if (onChunk) {
         onChunk({
           message_type: "tool_return_message",
@@ -338,7 +267,7 @@ async function executeSingleDecision(
       return {
         type: "tool",
         tool_call_id: decision.approval.toolCallId,
-        tool_return: toolResult.toolReturn, // Full multimodal content for backend
+        tool_return: toolResult.toolReturn,
         status: toolResult.status,
         stdout: toolResult.stdout,
         stderr: toolResult.stderr,
@@ -373,7 +302,6 @@ async function executeSingleDecision(
     }
   }
 
-  // Format denial for backend
   if (onChunk) {
     onChunk({
       message_type: "tool_return_message",
@@ -393,26 +321,6 @@ async function executeSingleDecision(
   };
 }
 
-/**
- * Execute a batch of approval decisions and format results for the backend.
- *
- * This function handles:
- * - Executing approved tools (with error handling)
- * - Formatting denials
- * - Combining all results into a single batch
- *
- * Execution strategy for performance:
- * - Parallel-safe tools (read-only + Task) are executed in parallel
- * - Write tools are grouped by resource (file path) and executed with per-resource queuing:
- *   - Different resources → parallel execution
- *   - Same resource → sequential execution to avoid race conditions
- *
- * Used by both interactive (App.tsx) and headless (headless.ts) modes.
- *
- * @param decisions - Array of approve/deny decisions for each tool
- * @param onChunk - Optional callback to update UI with tool results (for interactive mode)
- * @returns Array of formatted results ready to send to backend (maintains original order)
- */
 export async function executeApprovalBatch(
   decisions: ApprovalDecision[],
   onChunk?: (chunk: ToolReturnMessage) => void,
@@ -435,7 +343,6 @@ export async function executeApprovalBatch(
     executeTool?: typeof executeTool;
   },
 ): Promise<ApprovalResult[]> {
-  // Tools are what fill the disk, so watch it while they run.
   return watchDiskSpaceDuring(
     options?.workingDirectory ?? getCurrentWorkingDirectory(),
     (text) => deliverDiskSpaceReminder(text, options?.parentScope),
@@ -450,17 +357,10 @@ export async function settleApprovalExecutionTasks(
 ): Promise<void> {
   const signal = options?.abortSignal;
   if (!signal || signal.aborted) {
-    // No signal, or one aborted before the batch started: every executor
-    // returns its interrupted result without running tools (freeze
-    // semantics), so settle normally instead of racing the signal.
     throwFirstSettledRejection(await Promise.allSettled(tasks), partialResults);
     return;
   }
 
-  // Record each task's settlement as it happens so an abort can unwind the
-  // batch without waiting for a tool that ignores the abort signal. Without
-  // this race, cancelling a turn waits for the slowest signal-ignoring tool
-  // to finish ("abort waits for the tool" bug).
   const settled: PromiseSettledResult<void>[] = new Array(tasks.length);
   let remaining = tasks.length;
   const tracked = tasks.map((task, index) =>
@@ -494,10 +394,6 @@ export async function settleApprovalExecutionTasks(
     return;
   }
 
-  // Aborted while tools are still in flight. Give signal-honoring tools a
-  // short grace window to unwind so a well-behaved batch settles exactly as
-  // fast as the base implementation and callers observe real results instead
-  // of a spurious "This operation was aborted" error.
   let graceTimer: ReturnType<typeof setTimeout> | undefined;
   const graceExpired = new Promise<void>((resolve) => {
     graceTimer = setTimeout(resolve, ABORT_GRACE_MS);
@@ -515,12 +411,6 @@ export async function settleApprovalExecutionTasks(
     return;
   }
 
-  // Grace expired with stragglers still running and ignoring the abort
-  // signal. Prefer an actual rejection (a tool that honored the signal)
-  // over a synthesized abort error so callers observe the same error shape
-  // as a signal-honoring cancel; the straggler keeps running detached and
-  // its late result is discarded (or CAS-upgraded by the listener's effect
-  // boundary if it settles later).
   throwFirstSettledRejection(
     settled.filter((result) => result !== undefined),
     partialResults,
@@ -563,14 +453,9 @@ async function executeApprovalBatchUnwatched(
         ).contextId
       : undefined);
 
-  // Pre-allocate results array to maintain original order
   const results: (ApprovalResult | null)[] = new Array(decisions.length).fill(
     null,
   );
-  // Once the settle race throws (grace-expiry abort), the batch's results
-  // are discarded: suppress late onChunk/onStreamingOutput callbacks from
-  // detached straggler tools so they cannot overwrite the tool lines the
-  // interrupt already marked cancelled.
   let batchDiscarded = false;
   const guardedOnChunk = onChunk
     ? (chunk: ToolReturnMessage) => {
@@ -592,7 +477,6 @@ async function executeApprovalBatchUnwatched(
       }
     : options;
 
-  // Categorize decisions by execution strategy
   const parallelIndices: number[] = [];
   const writeToolsByResource = new Map<string, number[]>();
   const denyIndices: number[] = [];
@@ -611,14 +495,11 @@ async function executeApprovalBatchUnwatched(
     if (isParallelSafe(toolName, toolContextId)) {
       parallelIndices.push(i);
     } else {
-      // Get resource key for write tools
-      // Safe parse - handle empty or malformed toolArgs
       let args: Record<string, unknown> = {};
       if (typeof decision.approval.toolArgs === "string") {
         try {
           args = JSON.parse(decision.approval.toolArgs);
         } catch {
-          // Empty or malformed args - use empty object (will use global lock)
           args = {};
         }
       } else {
@@ -636,7 +517,6 @@ async function executeApprovalBatchUnwatched(
     }
   }
 
-  // Helper to execute a decision and store result
   const execute = async (i: number) => {
     const decision = decisions[i];
     if (decision) {
@@ -659,20 +539,11 @@ async function executeApprovalBatchUnwatched(
     }
   };
 
-  // Execute all categories concurrently:
-  // 1. Parallel-safe tools (all in parallel)
-  // 2. Write tools grouped by resource (sequential within each group, parallel across groups)
-  // 3. Denials (no actual execution needed, but process for UI updates)
-  //
-  // Do not fail fast here. A sibling may already have crossed its effect boundary;
-  // callers must retain their claim/lease until every started group has settled.
   try {
     await settleApprovalExecutionTasks(
       [
-        // Parallel-safe tools + denials: all run in parallel
         ...parallelIndices.map(execute),
         ...denyIndices.map(execute),
-        // Write tools: sequential within each resource group, parallel across groups
         ...Array.from(writeToolsByResource.values()).map(async (indices) => {
           for (const i of indices) {
             await execute(i);
@@ -688,20 +559,9 @@ async function executeApprovalBatchUnwatched(
     throw error;
   }
 
-  // Filter out nulls (shouldn't happen, but TypeScript needs this)
   return results.filter((r): r is ApprovalResult => r !== null);
 }
 
-/**
- * Helper to execute auto-allowed tools and map results to the format expected by App.tsx.
- * Consolidates the common pattern of converting approvals to decisions, executing them,
- * and mapping the results back.
- *
- * @param autoAllowed - Array of auto-allowed approval contexts (must have .approval property)
- * @param onChunk - Callback to update UI with tool results
- * @param options - Optional abort signal for cancellation
- * @returns Array of results with toolCallId and ToolExecutionResult
- */
 export async function executeAutoAllowedTools(
   autoAllowed: Array<{ approval: ApprovalRequest }>,
   onChunk: (chunk: ToolReturnMessage) => void,

@@ -1,3 +1,4 @@
+import { getRuntimeContext } from "@/runtime-context";
 import { telemetry } from "@/telemetry";
 import { messageChannelTelemetry } from "@/telemetry/channel";
 import { normalizeExternalToolResultContent } from "@/tools/external-tool-content";
@@ -7,7 +8,6 @@ import type {
 } from "@/tools/external-tool-types";
 import { clampToolReturnContent } from "@/tools/impl/tool-return-clamp";
 
-/** Execute one dispatched request; registry ownership remains with the manager. */
 export async function executeExternalToolRequest(
   toolCallId: string,
   toolName: string,
@@ -36,7 +36,9 @@ export async function executeExternalToolRequest(
       toolCallId,
       toolName,
       input,
-      tool ? { tool, signal } : undefined,
+      tool
+        ? { tool, signal, turnStartedAt: getRuntimeContext()?.turnStartedAt }
+        : undefined,
     );
     success = !result.isError;
     return {

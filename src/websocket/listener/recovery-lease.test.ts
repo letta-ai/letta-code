@@ -292,8 +292,6 @@ describe("recovered approval lease boundaries", () => {
       },
     );
 
-    // The first failed reacquire enters bounded exponential backoff instead of
-    // polling the authenticated claim route four times per second forever.
     await Bun.sleep(1_100);
     await waitFor(() => acquisitions === 3);
     await waitFor(() => runtime.recoveredApprovalState === null);

@@ -24,10 +24,6 @@ function bridgeMessage(text: string, otid: string): IncomingMessage {
 
 describe("queue noCoalesce batching", () => {
   test("noCoalesce messages drain as single-item batches with their own OTIDs", () => {
-    // Through the REAL queue path (enqueue → consumeQueuedTurn →
-    // buildQueuedTurnMessage): without noCoalesce, two same-scope messages
-    // merge into one batch that carries only the first request's OTID,
-    // which strands the second request's turn correlation.
     const runtime = getOrCreateScopedRuntime(
       createRuntime(),
       "agent-1",

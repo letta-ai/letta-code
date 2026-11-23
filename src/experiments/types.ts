@@ -1,4 +1,6 @@
 export type ExperimentId =
+  | "cloud_monitors"
+  | "cloud_watch_pr"
   | "artifacts"
   | "conversation_titles"
   | "desktop_conversation_bootstrap"

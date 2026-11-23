@@ -28,17 +28,14 @@ import type {
 } from "@/websocket/listener/types";
 
 const EXTERNAL_TOOL_CALL_TIMEOUT_MS = 5 * 60 * 1000;
-/** One connection's tools and tool policy for one conversation. */
 interface RuntimeToolRegistration {
   connectionId: ListenerConnectionId;
   runtimeKey: string;
   tools: ExternalToolDefinition[];
   toolPolicy?: RuntimeToolPolicy;
-  /** Monotonic registration order; the newest registration wins ties. */
   sequence: number;
 }
 
-// Listener-level so conversation-runtime eviction keeps registrations alive.
 const registeredToolsByRuntime = new WeakMap<
   ListenerRuntime,
   Map<string, RuntimeToolRegistration>
@@ -245,6 +242,9 @@ export function installExternalToolBridge(
       type: "external_tool_call_request",
       request_id: requestId,
       ...(requestRuntime ? { runtime: requestRuntime } : {}),
+      ...(context?.turnStartedAt !== undefined
+        ? { turn_started_at: context.turnStartedAt }
+        : {}),
       tool_call_id: toolCallId,
       tool_name: toolName,
       input,
@@ -309,8 +309,6 @@ export function installExternalToolBridge(
             try {
               connection.writer.send(pending.requestFrame);
               pending.sentOn = connection.writer;
-              // A foreground interrupt has no result consumer left. Send cancel,
-              // then release local state without waiting for confirmation.
               if (
                 context.signal?.reason === EXTERNAL_TOOL_FOREGROUND_INTERRUPTED
               ) {
@@ -409,7 +407,6 @@ export function registerRuntimeExternalTools(
       controllers.set(tool.registrationKey, connectionId);
     }
   }
-  // Delete first so a replacement moves to the end in registration order.
   registeredTools.delete(registrationScope);
   if (tools.length > 0 || toolPolicy !== undefined) {
     registeredTools.set(registrationScope, {
@@ -422,7 +419,6 @@ export function registerRuntimeExternalTools(
   }
 }
 
-/** Remember which connection last submitted input on a runtime. */
 export function recordRuntimeSubmittingConnection(
   runtime: ListenerRuntime,
   runtimeScope: RuntimeScope<string | null>,
@@ -434,14 +430,6 @@ export function recordRuntimeSubmittingConnection(
   );
 }
 
-/**
- * Pick the connection whose registration shapes a turn's tools. A client turn
- * uses its own connection when that connection registered tools here. Any
- * other turn (task notification, cron, recovery, or input relayed by a
- * connection without a registration, such as Cloud delivering to a registered
- * computer) uses the last connection that submitted input on this runtime if
- * it still has a registration here, else the newest registration.
- */
 export function resolveRuntimeToolOwner(
   runtime: ListenerRuntime,
   runtimeScope: RuntimeScope<string | null>,
@@ -537,13 +525,6 @@ export function handleExternalToolCallResponseCommand(
   return true;
 }
 
-/**
- * Resend requests still awaiting a response after the connection's socket was
- * replaced. A transient close (e.g. code 1001) can drop a frame that was
- * written just before it; without a resend the call waits out its timeout.
- * The server dedupes by request_id, so a request that did arrive is not
- * executed twice.
- */
 export function resendPendingExternalToolCallsForConnection(
   runtime: ListenerRuntime,
   connection: Pick<ListenerConnectionState, "id" | "writer">,

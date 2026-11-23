@@ -76,7 +76,6 @@ const AGENTS_OPTIONS = {
   "include-blocks": { type: "boolean" },
   shared: { type: "boolean" },
   limit: { type: "string" },
-  // Create options
   model: { type: "string" },
   personality: { type: "string" },
   description: { type: "string" },
@@ -84,7 +83,6 @@ const AGENTS_OPTIONS = {
   body: { type: "string" },
 } as const;
 
-// Create options that --body replaces.
 const BODY_EXCLUSIVE_OPTIONS = [
   "name",
   "model",
@@ -161,7 +159,6 @@ async function printCreatedAgent(
     settingsManager.pinAgent(agentId);
   }
 
-  // Re-fetch agent through the active backend to get updated output.
   const updatedAgent = await getBackend().retrieveAgent(agentId);
 
   console.log(JSON.stringify(updatedAgent, null, 2));

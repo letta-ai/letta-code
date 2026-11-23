@@ -137,7 +137,6 @@ describe("inputs that arrive while a queued turn is pending", () => {
       releaseTurnA = resolve;
     });
     let turnAEntered = false;
-    // Hold pre-turn setup while the lifecycle still projects idle.
     const holdTurnA = async () => {
       turnAEntered = true;
       await turnAGate;

@@ -1,6 +1,13 @@
 Start a background monitor that streams events from a long-running script. Each stdout line is an event — you keep working and notifications arrive in the chat. Events arrive on their own schedule and are not replies from the user, even if one lands while you're waiting for the user to answer a question.
 
-Use Monitor when you need one notification per occurrence: indefinitely ("every time an ERROR line appears": `tail -f`, `inotifywait -m`, `while true`), or until a known end ("each CI step result, stop when the run completes": a command that emits lines and then exits). For a single notification ("tell me when the server is ready"), run a command that exits when the condition is true, e.g. `until grep -q "Ready" dev.log; do sleep 0.5; done`, in the background with your shell tool; you get one completion notification. An unbounded command used for a single notification stays armed until timeout, and `tail -f log | grep -m 1 ...` can hang the same way.
+Use Monitor whenever you are waiting for something to happen. Wake is only for an explicit time condition, or when no monitor is possible.
+
+Pick the command by how many notifications you need:
+- One ("tell me when the server is ready"): a command that exits when the condition is true, e.g. `until grep -q "Ready" dev.log; do sleep 0.5; done`. You are notified when it exits.
+- One per occurrence, indefinitely ("every time an ERROR line appears"): an unbounded command (`tail -f`, `inotifywait -m`, `while true`).
+- One per occurrence, until a known end ("each CI step result, stop when the run completes"): a command that emits lines and then exits.
+
+An unbounded command used for a single notification stays armed until timeout, and `tail -f log | grep -m 1 ...` can hang the same way.
 
 For open github.com pull requests, use WatchPR instead. It covers the whole PR surface and keeps watching after CI finishes. Use Monitor only when WatchPR does not apply.
 
@@ -13,6 +20,8 @@ For open github.com pull requests, use WatchPR instead. It covers the whole PR s
 
 Exit ends the watch (exit code is reported). Timeout → killed. Set `persistent: true` for session-length watches (log tails, long-lived event streams). In managed Cloud sandboxes, every monitor, including persistent ones, stops after {{MONITOR_MAX_TIMEOUT}} (this sandbox's monitor cap); elsewhere persistent monitors run until TaskStop or session end. Call Monitor again to re-arm it if you still need to watch. For much longer Cloud waits, schedule a Wake or cron (which does not keep the sandbox running between turns) and combine it with shorter monitors. Use TaskStop to cancel early.
 
-When someone is waiting on the result, set `backup_after_seconds` (e.g. 900). If the monitor goes that long without an event, a durable Wake brings you back to check the real state, so a queued, hung, or dead watch can't leave them waiting in silence.
+Set `backup_after_seconds` (e.g. 900) as the durable fallback when someone is waiting on the result. If the monitor goes that long without an event, a durable Wake brings you back to check the real state, so a queued, hung, or dead watch can't leave them waiting in silence.
 
 Instead of `command`, `ws` streams each WebSocket text frame as an event (prefer it over `websocat`), and `script` runs a JavaScript watch loop with CodeMode's globals plus `emit(text)` and `sleep(ms)`; `decide()` spends money on every call, so call it only when an observed change needs judgment.
+
+Pass `resume` with a paused monitor id to restart it with its saved arguments.

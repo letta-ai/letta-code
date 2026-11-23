@@ -5,10 +5,6 @@ import {
   matchesToolPattern,
 } from "@/permissions/matcher";
 
-// ============================================================================
-// File Pattern Matching Tests
-// ============================================================================
-
 test("File pattern: exact match", () => {
   expect(
     matchesFilePattern("Read(.env)", "Read(.env)", "/Users/test/project"),
@@ -84,7 +80,7 @@ test("File pattern: any .ts file", () => {
 });
 
 test("File pattern: absolute path with // prefix", () => {
-  if (process.platform === "win32") return; // Skip on Windows - Unix paths
+  if (process.platform === "win32") return;
 
   expect(
     matchesFilePattern(
@@ -96,7 +92,7 @@ test("File pattern: absolute path with // prefix", () => {
 });
 
 test("File pattern: tilde expansion", () => {
-  if (process.platform === "win32") return; // Skip on Windows - Unix paths
+  if (process.platform === "win32") return;
 
   const homedir = require("node:os").homedir();
   expect(
@@ -157,10 +153,6 @@ test("File pattern: secrets directory", () => {
     ),
   ).toBe(false);
 });
-
-// ============================================================================
-// Bash Pattern Matching Tests
-// ============================================================================
 
 test("Bash pattern: exact match", () => {
   expect(matchesBashPattern("Bash(pwd)", "Bash(pwd)")).toBe(true);
@@ -306,10 +298,6 @@ test("Bash pattern: wildcard rules match export setup plus curl lookups", () => 
   ).toBe(true);
 });
 
-// ============================================================================
-// Tool Pattern Matching Tests
-// ============================================================================
-
 test("Tool pattern: exact tool name", () => {
   expect(matchesToolPattern("WebFetch", "WebFetch")).toBe(true);
   expect(matchesToolPattern("TodoWrite", "WebFetch")).toBe(false);
@@ -337,13 +325,7 @@ test("Tool pattern: case sensitivity", () => {
   expect(matchesToolPattern("WebFetch", "WebFetch")).toBe(true);
 });
 
-// ============================================================================
-// Windows Path Normalization Tests (Issue #790)
-// These test that backslash paths work correctly for glob matching
-// ============================================================================
-
 test("File pattern: Windows-style backslashes in pattern", () => {
-  // Pattern with backslashes should match forward-slash paths
   expect(
     matchesFilePattern(
       "Edit(.skills/obsidian-mcp/scripts/foo.js)",
@@ -354,7 +336,6 @@ test("File pattern: Windows-style backslashes in pattern", () => {
 });
 
 test("File pattern: Windows-style backslashes in query", () => {
-  // Query with backslashes should match forward-slash patterns
   expect(
     matchesFilePattern(
       "Edit(.skills\\obsidian-mcp\\scripts\\foo.js)",
@@ -365,7 +346,6 @@ test("File pattern: Windows-style backslashes in query", () => {
 });
 
 test("File pattern: Windows-style backslashes in both", () => {
-  // Both using backslashes should still match
   expect(
     matchesFilePattern(
       "Edit(.skills\\obsidian-mcp\\scripts\\foo.js)",
@@ -376,9 +356,6 @@ test("File pattern: Windows-style backslashes in both", () => {
 });
 
 test("File pattern: Edit(**) matches any path with backslashes", () => {
-  // The ** glob should match everything, even with Windows paths
-  // Note: minimatch requires dot:true to match dot-prefixed paths with **
-  // so we test with a non-dot path here
   expect(
     matchesFilePattern(
       "Edit(skills\\obsidian-mcp\\scripts\\foo.js)",
@@ -389,7 +366,6 @@ test("File pattern: Edit(**) matches any path with backslashes", () => {
 });
 
 test("File pattern: Windows absolute path in working directory", () => {
-  // Windows-style working directory should work
   expect(
     matchesFilePattern(
       "Edit(src/file.ts)",

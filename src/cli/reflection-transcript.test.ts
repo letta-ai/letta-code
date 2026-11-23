@@ -410,7 +410,6 @@ describe("reflectionTranscript helper", () => {
     expect(payload).not.toBeNull();
     if (!payload) return;
 
-    // Two more assistant steps complete while reflection is "running".
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
       { kind: "user", id: "u2", text: "second", messageId: "u2" },
       {
@@ -867,8 +866,6 @@ describe("reflectionTranscript helper", () => {
     expect(prompt).toContain("The payload path is available as the");
     expect(prompt).toContain("multi_transcript_reflection_payload");
     expect(prompt).toContain('mode: "replay"');
-    // Prompt references the $TRANSCRIPT_PATH env var (resolved via Bash),
-    // not a literal absolute path.
     expect(prompt).toContain("$TRANSCRIPT_PATH");
     expect(prompt).toContain('wc -c "$TRANSCRIPT_PATH"');
     expect(prompt).not.toContain("/tmp/transcript");

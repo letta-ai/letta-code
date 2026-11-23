@@ -2,6 +2,7 @@ import { createContextTracker } from "@/cli/helpers/context-tracker";
 import { createSharedReminderState } from "@/reminders/state";
 import type { PendingControlRequest } from "@/types/protocol_v2";
 import { redactWsEventForLogging } from "@/websocket/ws-event-redaction";
+import { hasRunningBackgroundWork } from "./background-process-snapshot";
 import { getWorkingDirectoryScopeKey } from "./cwd";
 import { cancelFailedTeleportCleanup } from "./failed-teleport-cleanup";
 import {
@@ -20,11 +21,6 @@ import type {
 } from "./types";
 
 let activeRuntime: ListenerRuntime | null = null;
-/**
- * Process-wide authority history. Clearing the active pointer deliberately does
- * not reset this epoch: a stopped predecessor remains current only until a new
- * non-null runtime takes ownership.
- */
 let activeRuntimeAuthorityEpoch = 0;
 const authorityEpochByRuntime = new WeakMap<ListenerRuntime, number>();
 
@@ -62,9 +58,7 @@ export function safeEmitWsEvent(
       label,
       redactWsEventForLogging(event),
     );
-  } catch {
-    // Debug hook must never break transport flow.
-  }
+  } catch {}
 }
 
 export function nextEventSeq(runtime: ListenerRuntime | null): number | null {
@@ -99,19 +93,10 @@ export function clearRuntimeTimers(runtime: ListenerRuntime): void {
   }
 }
 
-/**
- * How long an evicted conversation's worktree watcher may stay alive waiting
- * for the conversation to come back. Runtime eviction is routine (it fires
- * after every quiescent turn), and the watcher's job is to track worktree
- * changes for an attached client *between* turns — so it must survive
- * eviction, but not for the life of the process. Without this, one live
- * fs.watch loop accumulates per conversation ever touched (LET-10138).
- */
 export const WORKTREE_WATCHER_IDLE_STOP_MS = 30 * 60 * 1000;
 
 type WatcherIdleStop = {
   timer: ReturnType<typeof setTimeout>;
-  /** Structural view of WorktreeWatcherState; a type import would cycle. */
   watcher: { abort: AbortController };
 };
 
@@ -155,8 +140,6 @@ function fireWatcherIdleStop(
   watcher: WatcherIdleStop["watcher"],
 ): void {
   watcherIdleStopsByListener.get(listener)?.delete(scopeKey);
-  // Only stop the watcher this timer was scheduled for; a CWD change may
-  // have replaced it with a fresh one that is still in use.
   if (listener.worktreeWatcherByConversation.get(scopeKey) === watcher) {
     watcher.abort.abort();
     listener.worktreeWatcherByConversation.delete(scopeKey);
@@ -164,7 +147,6 @@ function fireWatcherIdleStop(
 }
 
 export const __watcherIdleStopTestUtils = {
-  /** Fire every pending idle stop immediately (tests cannot wait 30 minutes). */
   firePending(listener: ListenerRuntime): void {
     const stops = watcherIdleStopsByListener.get(listener);
     if (!stops) return;
@@ -178,7 +160,6 @@ export const __watcherIdleStopTestUtils = {
   },
 };
 
-/** The conversation is active again: keep its worktree watcher running. */
 function cancelWorktreeWatcherIdleStop(
   listener: ListenerRuntime,
   agentId?: string | null,
@@ -216,7 +197,9 @@ export function evictConversationRuntimeIfIdle(
     runtime.queueRuntime?.length > 0 ||
     ((runtime.workspaceSandbox !== undefined ||
       runtime.executionSettings !== undefined) &&
-      runtime.listener.connectionIdsByRuntimeKey.has(runtime.key))
+      runtime.listener.connectionIdsByRuntimeKey.has(runtime.key)) ||
+    (runtime.agentId !== null &&
+      hasRunningBackgroundWork(runtime.agentId, runtime.conversationId))
   ) {
     return false;
   }

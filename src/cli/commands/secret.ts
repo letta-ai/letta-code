@@ -1,9 +1,3 @@
-/**
- * /secret command handler for managing secrets.
- * Secrets are stored per agent and can be referenced via $SECRET_NAME syntax
- * in shell commands.
- */
-
 import {
   deleteSecretOnServer,
   refreshAndListSecrets,
@@ -15,13 +9,6 @@ export interface SecretCommandResult {
   refreshSecretsInfo?: boolean;
 }
 
-/**
- * Handle the /secret command.
- * Usage:
- *   /secret set KEY value  - Set a secret
- *   /secret list           - List available secret names
- *   /secret unset KEY      - Unset a secret
- */
 export async function handleSecretCommand(
   args: string[],
 ): Promise<SecretCommandResult> {
@@ -41,7 +28,6 @@ export async function handleSecretCommand(
 
       const normalizedKey = key.toUpperCase();
 
-      // Validate key format (must be valid for $SECRET_NAME pattern)
       if (!/^[A-Z_][A-Z0-9_]*$/.test(normalizedKey)) {
         return {
           output: `Invalid secret name '${key}'. Use uppercase letters, numbers, and underscores only. Must start with a letter or underscore.`,

@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-/** Prepares one candidate for every bundled skill in a daily parallel review. */
 
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

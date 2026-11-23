@@ -92,11 +92,8 @@ describe("createModPiProvider", () => {
     });
     const refreshContext = testRefreshContext();
 
-    // Static declaration seeds the list before the first refresh.
     expect(provider.getModels().map((m) => m.id)).toEqual(["static-seed"]);
 
-    // pi-ai 0.81 merges the static baseline with the dynamic overlay by id;
-    // discoveries extend the declared baseline rather than replacing it.
     await provider.refreshModels?.(refreshContext);
     expect(provider.getModels().map((m) => m.id)).toEqual([
       "static-seed",
@@ -147,9 +144,6 @@ describe("LocalPiModelsRuntime mod provider integration", () => {
     });
     const runtime = new LocalPiModelsRuntime();
 
-    // Selecting a model persists its derived settings onto the agent —
-    // values equal to the published model's. A turn with those settings
-    // must still resolve the exact published instance (no clone).
     const persisted = localModelSettingsForHandle(
       `${PROVIDER}/acme-large`,
       runtime,
@@ -166,8 +160,6 @@ describe("LocalPiModelsRuntime mod provider integration", () => {
 
   test("OAuth account switch on a dynamic mod drops the old account's catalog", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "pi-mod-oauth-"));
-    // Local daemon autodetection must fail instantly so refresh never
-    // touches real endpoints; the mod's listModels hook needs no fetch.
     const failingFetch = (async () => {
       throw new Error("no local endpoint in tests");
     }) as unknown as typeof fetch;
@@ -183,7 +175,6 @@ describe("LocalPiModelsRuntime mod provider integration", () => {
           getApiKey: (credentials) => credentials.access,
         },
         listModels: (connection) => {
-          // The catalog is account-scoped: only account A publishes.
           if (connection.apiKey !== "access-a") throw new Error("unauthorized");
           return [model("account-a-model")];
         },
@@ -201,9 +192,6 @@ describe("LocalPiModelsRuntime mod provider integration", () => {
       await runtime.refreshAll();
       expect(runtime.getModel(PROVIDER, "account-a-model")).toBeDefined();
 
-      // Log in as account B. The mod reconstruction signature (revision/
-      // base URL/API key) cannot see this; credential-identity invalidation
-      // must — a turn may never pair B's auth with A's cached catalog.
       setLocalOAuthProvider({
         providerName: PROVIDER,
         providerType: PROVIDER,
@@ -253,10 +241,6 @@ describe("LocalPiModelsRuntime mod provider integration", () => {
       await runtime.refreshAll();
       expect(runtime.getModel(PROVIDER, "account-a-model")).toBeDefined();
 
-      // Logins are not serialized against turn resolution: complete the
-      // switch to account B right after resolveTurn's invalidation snapshot
-      // reads account A, so the later auth read inside Models.getAuth sees
-      // B while the catalog was validated against A.
       const internals = runtime as unknown as { credentials: CredentialStore };
       const read = internals.credentials.read.bind(internals.credentials);
       let switchAccounts: (() => void) | undefined = () => {
@@ -288,9 +272,6 @@ describe("LocalPiModelsRuntime mod provider integration", () => {
       throw new Error("no local endpoint in tests");
     }) as unknown as typeof fetch;
     try {
-      // The login to account B completes while the on-miss refresh is
-      // running: the fresh catalog then reflects B while auth was already
-      // resolved as A — the mirror image of the auth-read race.
       let switchAccounts: (() => void) | undefined = () => {
         switchAccounts = undefined;
         setLocalOAuthProvider({
@@ -328,7 +309,6 @@ describe("LocalPiModelsRuntime mod provider integration", () => {
       });
 
       const turn = await runtime.resolveTurn(PROVIDER, "catalog-b");
-      // Resolution retries until auth and catalog come from one identity.
       expect(turn.auth?.auth.apiKey).toBe("access-b");
       expect(turn.model?.id).toBe("catalog-b");
     } finally {
@@ -369,10 +349,6 @@ describe("LocalPiModelsRuntime mod provider integration", () => {
       await runtime.refreshAll();
       expect(runtime.getModel(PROVIDER, "catalog-a")).toBeDefined();
 
-      // Pathological flapping: a different account lands after every
-      // credential read, so no attempt ever observes one stable identity.
-      // Resolution must fail closed rather than return whatever model/auth
-      // pairing the final attempt happened to assemble.
       let generation = 0;
       const internals = runtime as unknown as { credentials: CredentialStore };
       const read = internals.credentials.read.bind(internals.credentials);
@@ -409,7 +385,6 @@ describe("LocalPiModelsRuntime mod provider integration", () => {
       expect(runtime.getModel("openai-codex", "proxy-model")).toBeDefined();
 
       unregisterPiProvider("openai-codex");
-      // The built-in provider (and its catalog) must survive the mod.
       const builtin = runtime.getModels("openai-codex");
       expect(builtin.length).toBeGreaterThan(0);
       expect(builtin.some((m) => m.id === "proxy-model")).toBe(false);

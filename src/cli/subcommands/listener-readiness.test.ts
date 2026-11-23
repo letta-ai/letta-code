@@ -271,13 +271,11 @@ test("keeps the gateway for a resumed runtime and rebuilds for a new runtime", a
   await startGateway();
   expect(events).toEqual(["start:A"]);
 
-  // Re-registration rotates the relay identity while keeping its runtime.
   runtimeA.connectionId = "conn-reregistered";
   setActiveRuntime(runtimeA);
   await Promise.all([startGateway(), startGateway()]);
   expect(events).toEqual(["start:A"]);
 
-  // An unrelated runtime replacement still closes and rebuilds the gateway.
   stopRuntime(runtimeA, true);
   const runtimeB = createRuntime();
   runtimes.set(runtimeB, "B");

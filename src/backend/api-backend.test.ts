@@ -73,6 +73,7 @@ const createMessageStreamMock = mock(
 const streamConversationMessagesMock = mock(
   async (_conversationId: string, _body: unknown, _options?: unknown) => ({
     kind: "resume-stream",
+    async *[Symbol.asyncIterator]() {},
   }),
 );
 const cancelConversationMock = mock(async (_conversationId: string) => ({
@@ -319,8 +320,6 @@ describe("APIBackend", () => {
       byokProviderRefresh: true,
       localModelCatalog: false,
       localMemfs: false,
-      // Depends on the configured server URL; environment-routing-capability.test.ts
-      // covers the cloud/self-hosted split.
       environmentRouting: expect.any(Boolean),
     });
     const agentUpdateBody = { system: "system" } as AgentUpdateBody;

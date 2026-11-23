@@ -55,15 +55,7 @@ const CONFIGURED_DISCOVERY_TIMEOUT_MS = 2_000;
 const AUTODETECT_DISCOVERY_TIMEOUT_MS = 500;
 const MAX_TURN_RESOLUTION_RETRIES = 2;
 
-/**
- * Letta-documented environment aliases for env vars the upstream providers
- * read. Resolved inside pi-ai's own auth resolution via AuthContext, so the
- * factory never needs an ambient credential fallback of its own. Keep this
- * list to exact, documented aliases only.
- */
 const PROVIDER_ENV_ALIASES: Readonly<Record<string, readonly string[]>> = {
-  // Upstream google reads GEMINI_API_KEY; Letta documents
-  // GOOGLE_GENERATIVE_AI_API_KEY.
   GEMINI_API_KEY: ["GOOGLE_GENERATIVE_AI_API_KEY"],
 };
 
@@ -101,12 +93,6 @@ interface ManagedEndpointProviderInput {
   discoveryTimeoutMs: number;
 }
 
-/**
- * Local endpoint providers this runtime discovers and owns end-to-end. Each
- * entry is a real dynamic pi-ai Provider built on the shared
- * `createLocalEndpointPiProvider` skeleton; only the engine's native
- * capability-metadata protocol differs per provider.
- */
 const MANAGED_ENDPOINT_PROVIDERS: ReadonlyMap<
   string,
   (input: ManagedEndpointProviderInput) => Provider
@@ -153,11 +139,6 @@ function resolveLocalEndpointConnection(
   };
 }
 
-/**
- * Stable credential identity: API keys compare by value; OAuth compares by
- * everything except the volatile access token/expiry (refresh token,
- * account/enterprise fields), so token rotation is not an identity change.
- */
 function credentialIdentitySignature(
   credential: Credential | undefined,
 ): string {
@@ -187,19 +168,6 @@ function withOllamaServedContext(
   return { ...model, contextWindow, maxTokens };
 }
 
-/**
- * Per-local-backend pi-ai Models runtime: the source of truth for provider
- * registration, model lookup, refresh, and stream dispatch in the local turn
- * path (LET-10126). One instance per LocalBackend — never module-global — so
- * concurrent agents with different storage dirs cannot share mutable provider
- * state.
- *
- * Built-in pi-ai providers are registered as-is. Local endpoint providers
- * that own dynamic discovery (Ollama LET-10127, Ollama Cloud, llama.cpp
- * LET-10128, LM Studio LET-10129) are rebuilt when their Letta-side
- * connection record (base URL/auth) changes; a change invalidates and
- * refreshes only that provider.
- */
 export class LocalPiModelsRuntime {
   private readonly models: MutableModels;
   private readonly storageDir?: string;
@@ -214,9 +182,6 @@ export class LocalPiModelsRuntime {
   constructor(options: LocalPiModelsRuntimeOptions = {}) {
     this.storageDir = options.storageDir;
     this.fetchImpl = options.fetchImpl;
-    // Letta's auth.json is the credential source of truth, adapted into the
-    // runtime so Models.getAuth() resolves stored keys and refreshes OAuth
-    // tokens under the store's write lock.
     this.credentials = createLocalPiCredentialStore(options.storageDir);
     this.models = createModels({
       modelsStore: this.modelsStore,
@@ -234,12 +199,6 @@ export class LocalPiModelsRuntime {
     );
   }
 
-  /**
-   * Provider ids whose published catalog can vary with the stored account:
-   * dynamic built-ins (e.g. Radius) plus mod providers with a `listModels`
-   * hook. A mod registration owns its id either way — a static mod catalog
-   * overriding a dynamic built-in id is not account-scoped.
-   */
   private accountScopedProviderIds(): Set<string> {
     const ids = new Set(this.dynamicBuiltinIds);
     for (const registered of listRegisteredPiProviders()) {
@@ -249,16 +208,6 @@ export class LocalPiModelsRuntime {
     return ids;
   }
 
-  /**
-   * Account-scoped catalogs are invalidated when the stored credential's
-   * identity changes: drop the persisted catalog and rebuild the provider so
-   * one account's models cannot be listed — or resolved for a turn — while
-   * requests authenticate as another. This covers OAuth account switches on
-   * dynamic mods too, whose reconstruction signature (revision/base URL/API
-   * key) cannot see OAuth credentials. Routine access-token refreshes keep
-   * the identity (volatile `access`/`expires` fields are excluded), so they
-   * do not clear last-known retention.
-   */
   private async invalidateOnCredentialChange(): Promise<void> {
     for (const providerId of this.accountScopedProviderIds()) {
       const credential = await this.credentials.read(providerId);
@@ -266,7 +215,6 @@ export class LocalPiModelsRuntime {
       const previous = this.credentialSignatures.get(providerId);
       this.credentialSignatures.set(providerId, signature);
       if (previous === undefined || previous === signature) continue;
-      // InMemoryModelsStore deletes synchronously.
       void this.modelsStore.delete(providerId);
       const registered = getRegisteredPiProvider(providerId);
       if (registered) {
@@ -285,31 +233,12 @@ export class LocalPiModelsRuntime {
     }
   }
 
-  /**
-   * Resolve request auth for a provider through the runtime: stored
-   * credential (via the auth.json adapter, refreshing OAuth as needed) or
-   * the provider's ambient sources.
-   */
   async getAuth(providerId: string): Promise<AuthResult | undefined> {
     this.ensureManagedProviders(providerId);
     await this.invalidateOnCredentialChange();
     return this.models.getAuth(providerId);
   }
 
-  /**
-   * One consistent turn resolution: credential-identity invalidation, auth,
-   * and model lookup happen against the same provider state, so a
-   * credential change can never pair the new account's auth with a stale
-   * account's cached model. On a model miss, dynamic catalogs refresh once.
-   *
-   * Account writes (logins) are not serialized against resolution, and
-   * `Models.getAuth` performs its own credential read — so after resolving,
-   * verify the stored identity is still the one the invalidation snapshot
-   * validated the catalog against. If it moved mid-flight, invalidate and
-   * retry with the new identity; if it is still moving when the retry
-   * budget is exhausted, fail closed (throw) rather than return a pair
-   * whose auth and catalog may come from different accounts.
-   */
   async resolveTurn(
     providerId: string,
     modelId: string,
@@ -326,9 +255,6 @@ export class LocalPiModelsRuntime {
         ? this.models.getModel(providerId, fallbackModelId)
         : undefined);
     for (let attempt = 0; ; attempt++) {
-      // Re-check connection-backed provider registration on every retry. This
-      // prevents native preflight against one endpoint from being paired with
-      // auth or a catalog built from another endpoint after a concurrent write.
       this.ensureManagedProviders(providerId);
       await this.invalidateOnCredentialChange();
       const auth = await this.models.getAuth(providerId);
@@ -364,19 +290,14 @@ export class LocalPiModelsRuntime {
         });
         try {
           await this.refresh(providerId);
-        } catch {
-          // Exact serving truth is already known. Retained catalog capabilities
-          // remain usable, but their contextWindow does not.
-        }
+        } catch {}
       }
 
       let model = lookup();
       if (!model) {
         try {
           await this.models.refresh({ force: true });
-        } catch {
-          // Refresh failures keep last-known lists; the lookup below decides.
-        }
+        } catch {}
         model = lookup();
       }
       const credentialMoved =
@@ -407,12 +328,6 @@ export class LocalPiModelsRuntime {
     }
   }
 
-  /**
-   * Detects an account switch that landed between the invalidation snapshot
-   * and auth/catalog resolution. Only account-scoped providers have a
-   * recorded identity to compare against — other catalogs do not vary by
-   * account, so a mid-flight credential change cannot mismatch them.
-   */
   private async credentialIdentityMovedSinceInvalidation(
     providerId: string,
   ): Promise<boolean> {
@@ -422,14 +337,12 @@ export class LocalPiModelsRuntime {
     return credentialIdentitySignature(credential) !== recorded;
   }
 
-  /** Stored (possibly just-refreshed) credential for a provider. */
   async getStoredCredential(
     providerId: string,
   ): Promise<Credential | undefined> {
     return this.credentials.read(providerId);
   }
 
-  /** Providers whose models this runtime discovers and owns end-to-end. */
   isRuntimeManagedProvider(providerId: string): boolean {
     return (
       getRegisteredPiProvider(providerId) !== undefined ||
@@ -437,7 +350,6 @@ export class LocalPiModelsRuntime {
     );
   }
 
-  /** Built-in local Ollama daemon, excluding mods that override its id. */
   isBuiltInLocalOllamaProvider(providerId: string): boolean {
     return (
       providerId === OLLAMA_PI_PROVIDER_ID &&
@@ -445,21 +357,12 @@ export class LocalPiModelsRuntime {
     );
   }
 
-  /**
-   * Registers/refreshes the pi-ai Provider for a mod registration. Returns
-   * true when the provider id is (or was) mod-owned — mod registrations take
-   * precedence over the built-in endpoint table, matching pi-model-factory's
-   * resolution order. The per-name registry revision detects re-registration
-   * so only the affected provider is rebuilt.
-   */
   private ensureModProvider(providerId: string): boolean {
     const registered = getRegisteredPiProvider(providerId);
     if (!registered) {
       if (this.modSignatures.delete(providerId)) {
         this.models.deleteProvider(providerId);
         void this.modelsStore.delete(providerId);
-        // A mod that overrode a built-in provider id must not take the
-        // built-in with it when it unloads.
         const builtin = builtinProviders().find(
           (provider) => provider.id === providerId,
         );
@@ -511,9 +414,6 @@ export class LocalPiModelsRuntime {
     ) {
       return;
     }
-    // Connection changed: replace only this provider and drop its persisted
-    // catalog, so stale discovery from the old endpoint cannot be restored
-    // by the next refresh. (InMemoryModelsStore deletes synchronously.)
     if (previousSignature !== undefined && previousSignature !== signature) {
       void this.modelsStore.delete(providerId);
     }
@@ -558,41 +458,20 @@ export class LocalPiModelsRuntime {
     return this.models.getModel(providerId, modelId);
   }
 
-  /**
-   * Canonical catalog refresh: pi-ai's Models.refresh resolves each dynamic
-   * provider's effective credential (refreshing OAuth under the store lock),
-   * supplies its store-backed RefreshModelsContext, and skips unconfigured
-   * providers — so unconfigured remote endpoints and mod listModels hooks
-   * are never probed, while keyless local daemons ("not-needed") and
-   * credentialed dynamic built-ins (e.g. radius) refresh correctly.
-   * Per-provider fetch failures keep that provider's last-known list.
-   */
   async refreshAll(): Promise<void> {
     this.ensureManagedProviders();
     await this.invalidateOnCredentialChange();
     await this.models.refresh({ force: true });
   }
 
-  /**
-   * Refresh with per-provider error semantics: rejects with the given
-   * provider's fetch error while the provider keeps serving its last-known
-   * list.
-   */
   async refresh(providerId: string): Promise<void> {
     this.ensureManagedProviders(providerId);
     await this.invalidateOnCredentialChange();
-    // pi-ai refreshes the collection as a whole (configured dynamic
-    // providers only); this method adds per-provider error semantics on top.
     const result = await this.models.refresh({ force: true });
     const error = result.errors.get(providerId);
     if (error) throw error;
   }
 
-  /**
-   * Runtime model lookup for turn execution: last-known list first, then one
-   * refresh attempt for dynamic providers when the model is absent. Returns
-   * the same Model instance that listing published.
-   */
   async resolveModel(
     providerId: string,
     modelId: string,
@@ -602,9 +481,7 @@ export class LocalPiModelsRuntime {
     if (known) return known;
     try {
       await this.refresh(providerId);
-    } catch {
-      // Refresh failure keeps the last-known list; the lookup below decides.
-    }
+    } catch {}
     return this.getModel(providerId, modelId);
   }
 

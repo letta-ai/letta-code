@@ -22,8 +22,14 @@ import {
   emitSubagentStateUpdate,
 } from "./protocol-outbound";
 import { scheduleQueuePump } from "./queue";
-import { clearRuntimeTimers, getActiveRuntime } from "./runtime";
+import {
+  clearRuntimeTimers,
+  evictConversationRuntimeIfIdle,
+  getActiveRuntime,
+  getConversationRuntime,
+} from "./runtime";
 import { clearSubagentSnapshotCache } from "./subagent-state-cache";
+import { isRuntimeTeleportPending } from "./teleport";
 import type { ListenerTransport } from "./transport";
 import { isListenerTransportOpen } from "./transport";
 import type {
@@ -47,27 +53,38 @@ export function installProcessEventRouting(params: {
   ) => {
     const transport = runtime.transport ?? runtime.socket;
     if (!transport || !isListenerTransportOpen(transport)) {
-      // Nothing was delivered, so the next connection starts from full state.
       clearSubagentSnapshotCache(runtime);
       return;
     }
     emitSubagentStateUpdate(transport, runtime, scope, TO_SUBSCRIBERS, options);
   };
+  type SnapshotScope = { agent_id: string | null; conversation_id: string };
+  let previousOwnerScopes = new Map<string, SnapshotScope>();
   runtime._unsubscribeSubagentState = subscribeToSubagentState(() => {
-    if (runtime.conversationRuntimes.size === 0) {
+    const ownerScopes = new Map<string, SnapshotScope>();
+    for (const subagent of getSubagents()) {
+      if (!subagent.parentAgentId) continue;
+      const scope = {
+        agent_id: subagent.parentAgentId,
+        conversation_id: subagent.parentConversationId ?? "default",
+      };
+      ownerScopes.set(JSON.stringify(scope), scope);
+    }
+    const scopes = new Map([...previousOwnerScopes, ...ownerScopes]);
+    previousOwnerScopes = ownerScopes;
+    for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+      const scope = {
+        agent_id: conversationRuntime.agentId,
+        conversation_id: conversationRuntime.conversationId,
+      };
+      scopes.set(JSON.stringify(scope), scope);
+    }
+    if (scopes.size === 0) {
       emitSubagentState();
       return;
     }
-    // Each snapshot is scoped to its parent conversation, so only send it to
-    // conversations whose snapshot changed instead of fanning out to all.
-    for (const conversationRuntime of runtime.conversationRuntimes.values()) {
-      emitSubagentState(
-        {
-          agent_id: conversationRuntime.agentId,
-          conversation_id: conversationRuntime.conversationId,
-        },
-        { onlyIfChanged: true },
-      );
+    for (const scope of scopes.values()) {
+      emitSubagentState(scope, { onlyIfChanged: true });
     }
   });
 
@@ -116,6 +133,14 @@ export function installProcessEventRouting(params: {
           agent_id: scope.agentId,
           conversation_id: scope.conversationId,
         });
+        const conversationRuntime = getConversationRuntime(
+          runtime,
+          scope.agentId,
+          scope.conversationId,
+        );
+        if (conversationRuntime) {
+          evictConversationRuntimeIfIdle(conversationRuntime);
+        }
         return;
       }
       if (runtime.conversationRuntimes.size === 0) {
@@ -132,6 +157,14 @@ export function installProcessEventRouting(params: {
 
   setMessageQueueAdder((queuedMessage) => {
     if (!queuedMessage.agentId || !queuedMessage.conversationId) return;
+    if (
+      isRuntimeTeleportPending(
+        runtime,
+        queuedMessage.agentId,
+        queuedMessage.conversationId,
+      )
+    )
+      return;
     const targetRuntime = getOrCreateScopedRuntime(
       runtime,
       queuedMessage.agentId,
@@ -156,9 +189,6 @@ export function installProcessEventRouting(params: {
     scheduleQueuePump(targetRuntime, processTransport, opts, processQueuedTurn);
   });
 
-  // One disk watcher per sandbox. Alert only the most recently active
-  // conversation so idle agents don't all wake to free space at once; the
-  // rest see the between-turns reminder on their next turn.
   runtime._stopDiskSpaceWatch?.();
   runtime._stopDiskSpaceWatch = watchSandboxDiskSpace(
     getCurrentWorkingDirectory,
@@ -180,7 +210,6 @@ export function deliverSandboxDiskAlert(
   );
 }
 
-/** A running turn counts as now; otherwise the last model response time. */
 function getMostRecentlyActiveConversation(
   runtime: ListenerRuntime,
 ): ConversationRuntime | null {

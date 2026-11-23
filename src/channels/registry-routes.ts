@@ -29,14 +29,6 @@ type ConversationModelPin = Pick<
   "model" | "model_settings"
 >;
 
-/**
- * Resolve the agent's current model (and model settings) so channel-created
- * conversations pin it at creation time. A conversation created without an
- * explicit model live-inherits the agent's model, so a later agent-level
- * model change would silently switch active channel threads. If the agent
- * lookup fails, return an empty pin so thread handling never breaks — the
- * conversation is then created modelless, matching the previous behavior.
- */
 export async function resolveConversationModelPin(
   agentId: string,
 ): Promise<ConversationModelPin> {
@@ -134,9 +126,6 @@ export function createChannelRouteProvisioner(deps: {
       );
       return null;
     }
-
-    // Sender access (dmPolicy/allowedUsers, admin and env grants, pairing)
-    // is enforced centrally in registry-inbound before provisioning runs.
 
     const accountId = msg.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
     const routeThreadId =
@@ -367,8 +356,6 @@ export function createChannelRouteProvisioner(deps: {
       return null;
     }
 
-    // Sender access is enforced centrally in registry-inbound.
-
     const accountId = msg.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
     const routeThreadId = msg.threadId ?? null;
     let route = getRouteFromStore(
@@ -391,9 +378,6 @@ export function createChannelRouteProvisioner(deps: {
       return { route, isFirstRouteTurn: false };
     }
 
-    // In guild channels, only create routes from explicit mentions or
-    // policy-permitted open-channel traffic.
-    // Existing routed threads continue above via the route lookup path.
     if (msg.chatType === "channel" && !msg.isMention && !msg.isOpenChannel) {
       return null;
     }
@@ -451,8 +435,6 @@ export function createChannelRouteProvisioner(deps: {
       }
       return null;
     }
-
-    // Sender access is enforced centrally in registry-inbound.
 
     const accountId = msg.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
     let route = getRouteFromStore(msg.channel, msg.chatId, accountId, null);
@@ -537,8 +519,6 @@ export function createChannelRouteProvisioner(deps: {
       }
       return null;
     }
-
-    // Sender access is enforced centrally in registry-inbound.
 
     const accountId = msg.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
     let route = getRouteFromStore(msg.channel, msg.chatId, accountId, null);
