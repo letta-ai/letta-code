@@ -495,32 +495,55 @@ test("terminal turn_finished with error emits finished with error outcome and er
   gateway.close();
 });
 
-test("MessageChannel external tool execution routes to hooks.executeExternalTool", async () => {
-  const client = new FakeClient();
-  const collector = makeHooks();
-  const gateway = new ChannelGateway(client, collector.hooks);
+test.each(["initial batch", "mid-turn dequeue"] as const)(
+  "MessageChannel receives both same-chat message IDs after %s",
+  async (deliveryMode) => {
+    const client = new FakeClient();
+    let messageIds: Array<string | undefined> = [];
+    const { hooks } = makeHooks({
+      executeExternalTool: async (_request, sources) => {
+        messageIds = sources.map((source) => source.messageId);
+        return { content: [{ type: "text", text: "ok" }] };
+      },
+    });
+    const gateway = new ChannelGateway(client, hooks);
+    const first = makeSource({ messageId: "first" });
+    const second = makeSource({ messageId: "second" });
+    const toolRequest: ExternalToolCallRequestMessage = {
+      type: "external_tool_call_request",
+      request_id: "ext-1",
+      runtime: TEST_RUNTIME,
+      tool_call_id: "call-1",
+      tool_name: "MessageChannel",
+      input: { channel: "telegram", action: "send", text: "Hi" },
+    };
 
-  const source = makeSource({ channel: "telegram", chatId: "chat-1" });
-  await gateway.submit(makeDelivery({ sources: [source] }));
+    try {
+      await gateway.submit(
+        makeDelivery({
+          sources: deliveryMode === "initial batch" ? [first, second] : [first],
+        }),
+      );
+      if (deliveryMode === "mid-turn dequeue") {
+        client.inputResponse.disposition = "queued";
+        await gateway.submit(
+          makeDelivery({ sources: [second], clientMessageId: "cm-second" }),
+        );
+        client.emit(
+          makeQueueUpdate([], TEST_RUNTIME, [
+            { client_message_id: "cm-second", disposition: "dequeued" },
+          ]),
+        );
+        await Bun.sleep(0);
+      }
+      client.emitExternalToolCall(toolRequest);
 
-  const toolRequest: ExternalToolCallRequestMessage = {
-    type: "external_tool_call_request",
-    request_id: "ext-1",
-    runtime: TEST_RUNTIME,
-    tool_call_id: "call-1",
-    tool_name: "MessageChannel",
-    input: { channel: "telegram", action: "send", text: "Hi" },
-  };
-
-  client.emitExternalToolCall(toolRequest);
-
-  await new Promise((resolve) => setTimeout(resolve, 10));
-
-  expect(collector.externalToolResults).toHaveLength(1);
-  expect(collector.externalToolResults[0]?.content[0]?.text).toBe("ok");
-
-  gateway.close();
-});
+      expect(messageIds).toEqual(["first", "second"]);
+    } finally {
+      gateway.close();
+    }
+  },
+);
 
 test("process-owned turns execute MessageChannel with the runtime's routed sources", async () => {
   const client = new FakeClient();

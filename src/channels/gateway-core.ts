@@ -191,7 +191,7 @@ export class ChannelGateway {
           ? this.states.get(runtimeKey(request.runtime))
           : undefined;
         const active = state?.active;
-        const sources = active?.routingSources ?? state?.routedSources ?? [];
+        const sources = active?.lifecycleSources ?? state?.routedSources ?? [];
         return hooks.executeExternalTool(
           request,
           sources,
