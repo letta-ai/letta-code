@@ -113,6 +113,7 @@ import {
   normalizeLocalMessageForPi,
   overlayResidentLocalMessageSuffix,
   overlayResidentLocalMessageTail,
+  prepareTranscriptAppend,
   readJsonFile,
   readJsonlFileSuffix,
   readLocalTranscriptTailWindow,
@@ -3021,7 +3022,8 @@ export class LocalStore {
     entry: LocalTranscriptAppendEntry,
   ): void {
     this.validateUnreadTranscriptHeadOnce(key);
-    appendFileSync(messagesPath, `${JSON.stringify(entry)}\n`);
+    const separator = prepareTranscriptAppend(messagesPath);
+    appendFileSync(messagesPath, `${separator}${JSON.stringify(entry)}\n`);
     this.sessionEntryIds(key).add(entry.id);
     this.sessionEntryIdsByMessageId(key).set(entry.message.id, entry.id);
     this.persistedMessagesByMessageId(key).set(
