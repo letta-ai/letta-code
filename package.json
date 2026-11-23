@@ -159,7 +159,7 @@
   },
   "dependencies": {
     "@cursor/sdk": "1.1.0",
-    "@earendil-works/pi-ai": "^1.5.2",
+    "@earendil-works/pi-ai": "^1.6.0",
     "@letta-ai/letta-agent-sdk": "0.8.38",
     "@letta-ai/letta-client": "^1.10.2",
     "@letta-ai/trajectory": "0.2.0",
@@ -287,8 +287,8 @@
   },
   "lettaLifecycleProtocol": 1,
   "lettaRuntimeGraphProtocol": 1,
-  "lettaRuntimeGraphSha512": "sha512-CTLf4WYRYSuRg7EHRwPqT+Pn4zKpkZ0x/1eEdhxqa/gMYFqilj78CiHQEtP6nKQuLVzweBGOVrLtoDKnvu5Z3A==",
+  "lettaRuntimeGraphSha512": "sha512-UTKBkXcCVL0BLUlfnWjc1MydDsTdjMxlRJxBz8m2UtdvvjlTRwUJ806Lsm802PES6pBnMmLQPG6z4fQ69vvupQ==",
   "patchedDependencies": {
-    "@earendil-works/pi-ai@1.5.2": "patches/@earendil-works%2Fpi-ai@1.5.2.patch"
+    "@earendil-works/pi-ai@1.6.0": "patches/@earendil-works%2Fpi-ai@1.6.0.patch"
   }
 }
