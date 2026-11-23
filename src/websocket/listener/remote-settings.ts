@@ -1,10 +1,3 @@
-/**
- * Persistent remote session settings stored below the product config root.
- *
- * Stores per-conversation CWD and permission mode so both survive letta server
- * restarts. Mirrors the in-memory Map keys used by cwd.ts and permissionMode.ts.
- */
-
 import { randomUUID } from "node:crypto";
 import {
   existsSync,
@@ -29,10 +22,8 @@ import {
   tryAcquireRemoteSettingsLockSync,
 } from "./remote-settings-lock";
 
-/** Persisted permission mode state for a single conversation. */
 export interface PersistedPermissionModeState {
   mode: PermissionMode;
-  /** Set when the mode was explicitly chosen rather than inherited from a default. */
   explicit?: boolean;
 }
 
@@ -81,7 +72,6 @@ interface PendingRemoteSettingsPatch {
   repairJournalId?: string;
 }
 
-// Module-level cache to avoid repeated disk reads and enable cheap merges.
 let _cache: RemoteSettings | null = null;
 let _settingsGeneration = 0;
 let _settledGeneration = 0;
@@ -98,13 +88,6 @@ export function getRemoteSettingsPath(): string {
   return path.join(resolveGlobalConfigDir(), "remote-settings.json");
 }
 
-/**
- * Load remote settings synchronously from disk (called once at startup).
- * Populates the in-memory cache. Returns {} on any read/parse error.
- *
- * Applies a one-time migration: if cwdMap is absent, tries to load
- * the legacy cwd-cache.json in the same product config root.
- */
 export function loadRemoteSettings(): RemoteSettings {
   if (_cache !== null) {
     return _cache;
@@ -119,17 +102,12 @@ export function loadRemoteSettings(): RemoteSettings {
       const parsed = JSON.parse(raw) as RemoteSettings;
       loaded = parsed;
     }
-  } catch {
-    // Silently fall back to empty settings.
-  }
+  } catch {}
 
   let repairedCwdMap = false;
   let migratedLegacyCwdMap = false;
   let originalCwdMap: Record<string, string> | undefined;
 
-  // Validate cwdMap entries and durably remove stale paths. Persisting this
-  // startup repair matters: otherwise recreating a deleted path can resurrect
-  // the old conversation mapping on the next process restart.
   if (loaded.cwdMap) {
     originalCwdMap = { ...loaded.cwdMap };
     const validCwdMap: Record<string, string> = {};
@@ -143,7 +121,6 @@ export function loadRemoteSettings(): RemoteSettings {
     loaded.cwdMap = validCwdMap;
   }
 
-  // One-time migration: load legacy cwd-cache.json if cwdMap not present.
   if (!loaded.cwdMap) {
     loaded.cwdMap = loadLegacyCwdCache();
     migratedLegacyCwdMap = true;
@@ -229,9 +206,7 @@ function readCwdRepairJournals(settingsPath: string): CwdRepairJournal[] {
       );
       if (Object.keys(cwdDeletes).length === 0) continue;
       journals.push({ cwdDeletes, id: record.id, path: journalPath });
-    } catch {
-      // Preserve unreadable journals for a later retry or manual diagnosis.
-    }
+    } catch {}
   }
   return journals;
 }
@@ -296,9 +271,7 @@ function writeCwdRepairJournal(
   } finally {
     try {
       rmSync(tempPath, { force: true });
-    } catch {
-      // Best-effort cleanup; the published journal never uses the temp path.
-    }
+    } catch {}
   }
 }
 
@@ -306,9 +279,7 @@ function cleanupCwdRepairJournals(journals: CwdRepairJournal[]): void {
   for (const journal of journals) {
     try {
       rmSync(journal.path, { force: true });
-    } catch {
-      // The applied journal ID fences a replay if cleanup fails or we crash.
-    }
+    } catch {}
   }
 }
 
@@ -533,14 +504,11 @@ function persistRemoteSettingsSync(generation: number): boolean {
     cleanupCwdRepairJournals(current.repairJournals);
     return true;
   } catch {
-    // Callers keep the generation dirty so it can be retried.
     return false;
   } finally {
     try {
       rmSync(tempPath, { force: true });
-    } catch {
-      // Best-effort cleanup; a later retry overwrites the same temp path.
-    }
+    } catch {}
     releaseRemoteSettingsLockSync(lock);
   }
 }
@@ -573,10 +541,6 @@ async function persistPendingRemoteSettings(): Promise<void> {
       );
       await writeFile(tempPath, JSON.stringify(settings, null, 2));
 
-      // A synchronous repair increments the generation before touching disk.
-      // Since this check and rename are one JavaScript turn, the older staged
-      // snapshot can only publish before the repair (which then wins) or be
-      // discarded after it.
       if (generation === _settingsGeneration) {
         renameSync(tempPath, settingsPath);
         published = true;
@@ -633,9 +597,6 @@ function persistCurrentSettingsSync(): void {
   }
 }
 
-/**
- * Merge updates and queue the newest snapshot for serialized persistence.
- */
 export function saveRemoteSettings(updates: Partial<RemoteSettings>): void {
   if (_cache === null) {
     loadRemoteSettings();
@@ -660,12 +621,6 @@ export function saveRemoteSettings(updates: Partial<RemoteSettings>): void {
   scheduleRemoteSettingsWrite();
 }
 
-/**
- * Queue an explicit cwd assignment even when it matches this process's cache.
- * Another listener may have published a conditional repair journal after our
- * cache was loaded; the unconditional set records that this user assignment is
- * newer than that repair when both are merged under the settings lock.
- */
 export function saveRemoteSettingsCwdAssignment(
   scopeKey: string,
   workingDirectory: string,
@@ -690,10 +645,6 @@ export function saveRemoteSettingsCwdAssignment(
   scheduleRemoteSettingsWrite();
 }
 
-/**
- * Attempt immediate repair persistence and fence older queued snapshots.
- * Transient failures stay queued for the asynchronous retry loop.
- */
 export function saveRemoteSettingsSync(updates: Partial<RemoteSettings>): void {
   if (_cache === null) {
     loadRemoteSettings();
@@ -752,9 +703,6 @@ export async function flushRemoteSettingsWrites(): Promise<boolean> {
   return false;
 }
 
-/**
- * Reset the in-memory cache (for testing).
- */
 export function resetRemoteSettingsCache(): void {
   clearRemoteSettingsRetry();
   _cache = null;
@@ -763,9 +711,6 @@ export function resetRemoteSettingsCache(): void {
   _settledGeneration = Math.max(_settledGeneration, generation);
 }
 
-/**
- * @deprecated - only used for one-time migration from legacy cwd-cache.json
- */
 function loadLegacyCwdCache(): Record<string, string> {
   try {
     const legacyPath = path.join(resolveGlobalConfigDir(), "cwd-cache.json");

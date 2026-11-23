@@ -40,7 +40,6 @@ export const LISTENER_MOD_CAPABILITIES: ModCapabilities = {
 
 const LISTENER_AGENT_MOD_CAPABILITIES: ModCapabilities = {
   ...LISTENER_MOD_CAPABILITIES,
-  // Provider registration is process-global and cannot be isolated per agent.
   providers: false,
 };
 
@@ -195,8 +194,6 @@ function resolveListenerAgentModsDirectory(agentId: string): string | null {
 }
 
 function resolveListenerAgentModCacheDirectory(agentId: string): string {
-  // A distinct import path gives each agent its own ESM module instance while
-  // keeping generated files outside the git-backed MemFS repository.
   const cacheKey = createHash("sha256").update(agentId).digest("hex");
   return join(getModCacheDirectory(), "listener-agents", cacheKey);
 }

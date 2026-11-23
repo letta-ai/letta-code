@@ -83,9 +83,7 @@ afterEach(() => {
   for (const proc of backgroundProcesses.values()) {
     try {
       proc.process.kill("SIGTERM");
-    } catch {
-      // Already exited.
-    }
+    } catch {}
   }
   backgroundProcesses.clear();
   clearPendingMessages();
@@ -109,7 +107,6 @@ test("a conversation with running background Bash stays held and is re-reported 
     processQueuedTurn: async () => {
       turns += 1;
       if (turns > 1) return;
-      // The turn starts background work and ends while it is still running.
       const result = await bash({
         command: `"${process.execPath}" "${script}"`,
         run_in_background: true,
@@ -137,10 +134,8 @@ test("a conversation with running background Bash stays held and is re-reported 
       "queue pump to finish",
     );
 
-    // Turn ended, but the background shell still belongs to this conversation.
     expect(listener.conversationRuntimes.get(runtimeKey)).toBe(runtime);
 
-    // A new connection re-reports the running process for this conversation.
     const transport = new MockTransport();
     const connection = openListenerConnection({
       runtime: listener,
@@ -154,12 +149,8 @@ test("a conversation with running background Bash stays held and is re-reported 
       }),
     ).toBe(true);
     expect(reportedProcessIds(transport)).toContain(bashId as string);
-    // Drop the sync-only connection so the notification turn is not gated on
-    // a subscribed recipient for it.
     closeListenerConnection(listener, "conn-bg-evict-2");
 
-    // Once the shell exits and its notification turn runs, the conversation
-    // is released.
     writeFileSync(releaseFile, "");
     await waitFor(() => turns === 2, "notification turn");
     await waitFor(
@@ -186,7 +177,6 @@ setInterval(() => {
   return { script, releaseFile };
 }
 
-/** Run one turn that leaves an exec_command session running in the background. */
 async function holdConversationWithExecSession(script: string) {
   const listener = createRuntime();
   setActiveRuntime(listener);
@@ -233,7 +223,6 @@ test("a stopped exec_command session releases its held conversation", async () =
   const { listener, runtimeKey, sessionId } =
     await holdConversationWithExecSession(script);
   try {
-    // TaskStop must not leave the conversation held after the session ends.
     expect(killBackgroundProcess(sessionId)).toBe(true);
     await waitFor(
       () => !listener.conversationRuntimes.has(runtimeKey),
@@ -270,7 +259,6 @@ test("Bash completion sends its queued notification before the zero-Bash device 
   const listener = createRuntime();
   setActiveRuntime(listener);
   const runtime = getOrCreateScopedRuntime(listener, AGENT_ID, CONVERSATION_ID);
-  // Keep the notification queued while inspecting the actual transport frames.
   const lease = runtime.turnLifecycle.begin({
     origin: "message",
     workingDirectory: "/tmp",

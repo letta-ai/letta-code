@@ -22,7 +22,6 @@ export interface ScriptToolScope {
   callTool: WorkflowToolCaller;
   builtinToolNames: string[];
   listTools(): Promise<WorkflowToolInfo[]>;
-  /** What a Bash command sees, plus every secret of the invoking agent. */
   env: Readonly<Record<string, string>>;
   cleanup(): Promise<void>;
 }
@@ -31,7 +30,6 @@ const SCRIPT_EXCLUDED_TOOLS = new Set([
   "AskUserQuestion",
   "Workflow",
   "CodeMode",
-  // A script cannot hold a background watch's lifetime or approval.
   "Monitor",
 ]);
 
@@ -39,11 +37,6 @@ interface ServerTool extends WorkflowToolInfo {
   requiresApproval: boolean;
 }
 
-/**
- * Tools attached to the agent that Letta Cloud executes (e.g. web_search).
- * MCP tools are served by the MCP session instead, and local built-ins win
- * on a name collision, matching what the model sees in a turn.
- */
 async function loadServerTools(
   agentId: string | null,
   builtins: ReadonlySet<string>,
@@ -56,7 +49,6 @@ async function loadServerTools(
     const agent = await (await getClient()).agents.retrieve(agentId, {
       include: ["agent.tools"],
     });
-    // The server asks the client for approval on these instead of running them.
     const approvalRules = new Set(
       (agent.tool_rules ?? [])
         .filter((rule) => rule.type === "requires_approval")
@@ -77,9 +69,7 @@ async function loadServerTools(
           tool.default_requires_approval === true || approvalRules.has(name),
       });
     }
-  } catch {
-    // Server tools are optional; built-ins and MCP still work without them.
-  }
+  } catch {}
   return tools;
 }
 
@@ -147,13 +137,11 @@ export async function resolveScriptParentAgentId(
   return isOwningAgentId(parentAgentId) ? parentAgentId : null;
 }
 
-/** Capture the invoking turn's tools without creating an SDK client or workers. */
 export async function createScriptToolScope(
   parentAgentId: string | null,
   signal?: AbortSignal,
 ): Promise<ScriptToolScope> {
   const toolContextId = getRuntimeContext()?.toolContextId ?? null;
-  // Tool implementations are loaded by the manager; a static import cycles.
   const manager = await import("@/tools/manager");
   const permissionModeState = toolContextId
     ? manager.getExecutionContextPermissionModeState(toolContextId)
@@ -162,8 +150,6 @@ export async function createScriptToolScope(
   const context = toolContextId
     ? manager.getExecutionContextById(toolContextId)
     : undefined;
-  // Use the same captured, filtered definitions sent with this turn, including
-  // controller-owned tools and overrides. Never consult live registrations.
   const builtinSchemas = (
     context
       ? serializeClientTools(
@@ -190,12 +176,8 @@ export async function createScriptToolScope(
     );
     return mcpSession;
   };
-  // Bash injects only the secrets a command references; `process.env` reads
-  // are synchronous, so load the agent's whole vault up front. Tool results
-  // and queued messages already redact these values.
   const { getShellEnv } = await import("@/tools/impl/shell-env");
   const secrets = await import("@/utils/secrets-store");
-  // Like Bash, an unreachable vault leaves secrets unset rather than failing.
   if (parentAgentId)
     await secrets.ensureSecretsLoaded(parentAgentId).catch(() => undefined);
   const env: Record<string, string> = {};

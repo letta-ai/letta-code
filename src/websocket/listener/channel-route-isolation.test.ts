@@ -13,8 +13,6 @@ import {
   handleTeleportRequest,
 } from "./teleport";
 
-// Deliberately reuse the same identifiers across consecutive tests. The shared
-// preload, not a per-suite cleanup or a unique identifier, owns their isolation.
 test("a channel route blocks teleport in the test that registers it", () => {
   __testOverrideLoadRoutes(() => null);
   __testOverrideSaveRoutes(() => {});

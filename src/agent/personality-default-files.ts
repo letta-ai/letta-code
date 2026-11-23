@@ -111,17 +111,13 @@ async function discardUncommittedFile(
 ): Promise<void> {
   try {
     unlinkSync(absolutePath);
-  } catch {
-    // The file may already have been removed by another cleanup path.
-  }
+  } catch {}
   try {
     await execFile("git", ["reset", "--quiet", "--", relativePath], {
       cwd: memoryDir,
       timeout: 10_000,
     });
-  } catch {
-    // A new file is not always staged when the write fails.
-  }
+  } catch {}
 }
 
 export async function seedPersonalityDefaultMemoryFiles(
@@ -189,7 +185,6 @@ export async function seedPersonalityDefaultMemoryFiles(
         reason: file.commitMessage,
         author: {
           agentId: params.agentId,
-          // Defaults belong to the preset, even when the agent was renamed.
           authorName: personality.label,
           authorEmail: `${params.agentId}@letta.com`,
         },

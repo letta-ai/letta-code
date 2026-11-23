@@ -105,9 +105,7 @@ function resolveChannelRuntimeModulePath(
   for (const resolver of getRuntimeResolvers(channelId)) {
     try {
       return resolver.resolve(moduleName);
-    } catch {
-      // Try next resolver.
-    }
+    } catch {}
   }
 
   return null;
@@ -181,9 +179,7 @@ async function linkUserPluginNodeModules(
       channelNodeModules,
       process.platform === "win32" ? "junction" : "dir",
     );
-  } catch {
-    // Best-effort convenience for ESM package resolution from plugin.mjs.
-  }
+  } catch {}
 }
 
 function resolveInstallPackageManager(): RuntimePackageManager {
@@ -208,8 +204,6 @@ function getInstallArgs(
   packageManager: RuntimePackageManager,
   installPackages: string[],
 ): string[] {
-  // On Windows, npm/pnpm create .bin symlinks (junctions) that break
-  // 7-Zip during Electron/NSIS packaging. --no-bin-links avoids this.
   const noBinLinks =
     resolveInstallPlatform() === "win32" && packageManager !== "bun";
 

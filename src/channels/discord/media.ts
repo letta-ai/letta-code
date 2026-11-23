@@ -115,13 +115,10 @@ export async function resolveDiscordInboundAttachments(params: {
         localPath,
       };
 
-      // Encode images as base64 for vision
       if (kind === "image" && attachment.contentType?.startsWith("image/")) {
         entry.imageDataBase64 = buffer.toString("base64");
       }
 
-      // Discord voice messages arrive as ordinary audio attachments, so the
-      // opt-in applies to inbound audio attachments generally.
       if (kind === "audio" && params.transcribeVoice) {
         const { isTranscriptionConfigured, transcribeAudioFile } = await import(
           "../transcription/index"
@@ -153,10 +150,6 @@ interface DiscordThreadMessage {
   text: string;
 }
 
-/**
- * Fetch the starter message for a Discord thread.
- * In Discord, threads have a "starter message" that is the parent message.
- */
 export async function resolveDiscordThreadStarter(params: {
   client: { channels: { fetch: (id: string) => Promise<unknown> } };
   threadChannelId: string;
@@ -193,9 +186,6 @@ export async function resolveDiscordThreadStarter(params: {
   }
 }
 
-/**
- * Fetch recent thread history for first-turn context hydration.
- */
 export async function resolveDiscordThreadHistory(params: {
   client: { channels: { fetch: (id: string) => Promise<unknown> } };
   threadChannelId: string;

@@ -29,7 +29,6 @@ export type TelegramAttachmentCandidate = {
   name?: string;
   mimeType?: string;
   sizeBytes?: number;
-  /** True when the attachment originated from a Telegram voice memo. */
   isVoice?: boolean;
 };
 
@@ -533,7 +532,6 @@ async function downloadTelegramAttachment(params: {
       : {}),
   };
 
-  // Auto-transcribe voice memos when enabled and an API key is available.
   if (candidate.isVoice && params.transcribeVoice) {
     const { isTranscriptionConfigured, transcribeAudioFile } = await import(
       "@/channels/transcription/index"

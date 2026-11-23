@@ -57,8 +57,6 @@ export async function runListenerTurnCleanup(params: {
       onMemoryPushed: () => {
         const transport = runtime.listener.transport ?? runtime.listener.socket;
         if (!transport || !isListenerTransportOpen(transport)) return;
-        // Direct file edits bypass the memory tool's notification. Wait for
-        // the push so readers fetch the new remote contents, not the old ones.
         emitProtocolV2Message(
           transport,
           runtime,

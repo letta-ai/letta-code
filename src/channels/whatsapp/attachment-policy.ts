@@ -9,7 +9,6 @@ import {
   stripDeviceSuffix,
 } from "./jid";
 
-/** Extension classification only; this does not inspect file contents. */
 const WHATSAPP_ATTACHMENT_MIME_TYPES: Readonly<Record<string, string>> = {
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",

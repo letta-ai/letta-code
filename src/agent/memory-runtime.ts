@@ -3,14 +3,6 @@ import { settingsManager } from "@/settings-manager";
 import { isMemoryUnavailable } from "@/utils/memory-access";
 import { getScopedMemoryFilesystemRoot } from "./memory-filesystem";
 
-/**
- * Runtime MemFS state for the active backend.
- *
- * Cloud/API MemFS is an agent setting. Local backend MemFS is a backend
- * capability unless explicitly disabled before backend construction, so most
- * UI surfaces should treat local backend agents as MemFS-enabled even before a
- * persisted per-agent setting exists.
- */
 export function isActiveMemfsEnabled(agentId: string): boolean {
   return (
     !isMemoryUnavailable(agentId) &&

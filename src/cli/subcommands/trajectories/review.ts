@@ -6,13 +6,6 @@ import type {
   TrajectoryManifest,
 } from "@/cli/subcommands/trajectories/types";
 
-/**
- * Read-side helpers for a trajectory export directory: list the manifest,
- * render one session readably, and search message content. These back the
- * `letta trajectories list|view|search` commands and are source-agnostic —
- * every session is trajectory-v1, whatever harness produced it.
- */
-
 export interface SessionFilter {
   source?: string;
   project?: string;
@@ -41,10 +34,6 @@ export function filterSessions(
   );
 }
 
-/**
- * Resolve a `view` target to a trajectory file path: an explicit path to a
- * `.json` file, or a manifest lookup by `sessionId` / relative `file`.
- */
 export async function resolveSessionFile(
   dir: string,
   target: string,
@@ -54,9 +43,7 @@ export async function resolveSessionFile(
     try {
       await readFile(direct, "utf-8");
       return direct;
-    } catch {
-      // Fall through to manifest lookup (e.g. a manifest-relative file path).
-    }
+    } catch {}
   }
   const manifest = await readManifest(dir);
   const entry = manifest.sessions.find(
@@ -83,7 +70,6 @@ function stamp(timestamp: string | undefined): string {
   return (timestamp ?? "").slice(0, 19);
 }
 
-/** Render one normalized session as a readable conversation transcript. */
 export function renderSession(
   records: NormalizedRecord[],
   options: RenderOptions = {},
@@ -142,7 +128,6 @@ export function renderSession(
 
 export interface SearchOptions extends SessionFilter {
   role?: "user" | "assistant";
-  /** Max matches reported per session (default 5). */
   perSession?: number;
 }
 
@@ -160,10 +145,6 @@ export interface SearchResult {
 const MATCH_SNIPPET_MAX_CHARS = 160;
 const DEFAULT_MATCHES_PER_SESSION = 5;
 
-/**
- * Case-insensitive substring search over user/assistant prose across every
- * session in the export (subject to source/project/role filters).
- */
 export async function searchSessions(
   dir: string,
   keyword: string,

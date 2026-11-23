@@ -1,7 +1,6 @@
 import { parseRetryAfterHeaderMs } from "@/agent/turn-recovery-policy";
 import { isCloudApiShutdownRejection } from "@/utils/cloud-api-shutdown";
 
-/** Retry only fixture requests the draining server explicitly did not accept. */
 export async function createCloudFixture<T>(
   create: () => Promise<T>,
   wait: (ms: number) => Promise<void> = (ms) =>

@@ -42,14 +42,13 @@ function isStringArray(value: unknown): value is string[] {
 function isDefaultPermissionMode(
   value: unknown,
 ): value is SlackDefaultPermissionMode {
-  // Also accepts legacy values that migratePermissionMode will map to current names.
   return (
     value === "standard" ||
     value === "acceptEdits" ||
     value === "unrestricted" ||
-    value === "default" || // legacy → "standard"
-    value === "bypassPermissions" || // legacy → "unrestricted"
-    value === "fullAccess" // legacy → "unrestricted"
+    value === "default" ||
+    value === "bypassPermissions" ||
+    value === "fullAccess"
   );
 }
 

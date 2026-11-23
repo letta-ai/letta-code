@@ -7,7 +7,6 @@ export interface CommandIoReminder {
   input: string;
   output: string;
   success: boolean;
-  /** Extra context appended only in the agent-facing reminder, not shown in the UI. */
   agentHint?: string;
 }
 
@@ -41,9 +40,7 @@ export interface SharedReminderState {
   pendingReflectionTrigger: boolean;
   pendingCommandIoReminders: CommandIoReminder[];
   pendingToolsetChangeReminders: ToolsetChangeReminder[];
-  /** True once the current low-disk episode has been reported. */
   hasNotifiedLowDiskSpace: boolean;
-  /** When set, the next session-context reminder uses this reason for its intro text. */
   pendingSessionContextReason?: SessionContextReason;
 }
 
@@ -73,10 +70,6 @@ export function resetSharedReminderState(state: SharedReminderState): void {
   Object.assign(state, createSharedReminderState());
 }
 
-/**
- * Re-arm one-shot execution-context reminders that compaction can evict.
- * Preserve queued reminders and change-specific refresh state.
- */
 export function markPostCompactionContextRemindersPending(
   state: SharedReminderState,
 ): void {

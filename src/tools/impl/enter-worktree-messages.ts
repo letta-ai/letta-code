@@ -64,9 +64,6 @@ export function buildCreatedWorktreeMessage(params: {
         ]
       : ["", "Provisioning: nothing to copy, symlink, or link."];
 
-  // The dependency directories are SYMLINKED to the primary checkout, so a
-  // package install in this worktree writes through to the primary checkout's
-  // node_modules. Tell the agent how to opt out when it needs its own deps.
   const dependencyStep = params.linkedDependencies
     ? "- Dependencies (e.g. node_modules) are symlinked from the primary checkout and ready to use. Do NOT run a package install here — it would modify the primary checkout's dependencies. If this worktree needs different or isolated packages, recreate it with `symlink_dependencies: false` and install fresh."
     : "- Dependencies were not symlinked. Follow the loaded project instructions for dependency setup. If they define no setup command, use the repository's package manager before building or testing.";

@@ -48,12 +48,10 @@ describe("auto-update ENOTEMPTY handling", () => {
   let testDir: string;
 
   beforeEach(() => {
-    // Create a temp directory for testing
     testDir = fs.mkdtempSync(path.join(os.tmpdir(), "letta-test-"));
   });
 
   afterEach(() => {
-    // Clean up
     if (fs.existsSync(testDir)) {
       fs.rmSync(testDir, { recursive: true, force: true });
     }
@@ -61,23 +59,19 @@ describe("auto-update ENOTEMPTY handling", () => {
 
   describe("cleanupOrphanedDirs logic", () => {
     test("removes directories starting with .letta-code-", async () => {
-      // Create test directories
       const lettaAiDir = path.join(testDir, "lib/node_modules/@letta-ai");
       fs.mkdirSync(lettaAiDir, { recursive: true });
 
-      // Create orphaned temp dirs (should be removed)
       const orphan1 = path.join(lettaAiDir, ".letta-code-abc123");
       const orphan2 = path.join(lettaAiDir, ".letta-code-xyz789");
       fs.mkdirSync(orphan1);
       fs.mkdirSync(orphan2);
 
-      // Create legitimate dirs (should NOT be removed)
       const legitimate = path.join(lettaAiDir, "letta-code");
       const otherPackage = path.join(lettaAiDir, "other-package");
       fs.mkdirSync(legitimate);
       fs.mkdirSync(otherPackage);
 
-      // Simulate cleanup logic
       const { readdir, rm } = await import("node:fs/promises");
       const entries = await readdir(lettaAiDir);
       for (const entry of entries) {
@@ -89,7 +83,6 @@ describe("auto-update ENOTEMPTY handling", () => {
         }
       }
 
-      // Verify
       expect(fs.existsSync(orphan1)).toBe(false);
       expect(fs.existsSync(orphan2)).toBe(false);
       expect(fs.existsSync(legitimate)).toBe(true);
@@ -100,7 +93,6 @@ describe("auto-update ENOTEMPTY handling", () => {
       const nonExistent = path.join(testDir, "does/not/exist");
       const { readdir } = await import("node:fs/promises");
 
-      // This should not throw
       let error: NodeJS.ErrnoException | null = null;
       try {
         await readdir(nonExistent);
@@ -154,22 +146,18 @@ npm error ENOTEMPTY: directory not empty`;
 
   describe("npm global path detection", () => {
     test("path structure for cleanup is correct", () => {
-      // Test that the path we construct is valid
       const globalPrefix = "/Users/test/.npm-global";
       const lettaAiDir = path.join(globalPrefix, "lib/node_modules/@letta-ai");
 
-      // path.join normalizes separators for the current platform
       expect(lettaAiDir).toContain("lib");
       expect(lettaAiDir).toContain("node_modules");
       expect(lettaAiDir).toContain("@letta-ai");
     });
 
     test("path structure works on Windows-style paths", () => {
-      // Windows uses different separators but path.join handles it
       const globalPrefix = "C:\\Users\\test\\AppData\\Roaming\\npm";
       const lettaAiDir = path.join(globalPrefix, "lib/node_modules/@letta-ai");
 
-      // path.join normalizes separators for the current platform
       expect(lettaAiDir).toContain("lib");
       expect(lettaAiDir).toContain("node_modules");
       expect(lettaAiDir).toContain("@letta-ai");
@@ -234,7 +222,6 @@ describe("detectPackageManager", () => {
 
   test("LETTA_PACKAGE_MANAGER override returns specified PM", () => {
     process.env.LETTA_PACKAGE_MANAGER = "bun";
-    // Even with an npm-style path, env var wins
     process.argv[1] =
       "/usr/local/lib/node_modules/@letta-ai/letta-code/dist/index.js";
     expect(detectPackageManager()).toBe("bun");
@@ -508,7 +495,6 @@ describe("checkAndAutoUpdate install guards", () => {
   let originalArgv1: string;
   let testDir: string;
   let lockPath: string;
-  // Far above any real pid limit, so it is never alive.
   const deadPid = 2 ** 30;
 
   const fetchImpl = mock(() =>
@@ -522,7 +508,6 @@ describe("checkAndAutoUpdate install guards", () => {
       savedEnv[key] = process.env[key];
       delete process.env[key];
     }
-    // bun skips the npm-only prefix lookup, so every command is the install.
     process.env.LETTA_PACKAGE_MANAGER = "bun";
     originalArgv1 = process.argv[1] || "";
     process.argv[1] =
@@ -584,7 +569,6 @@ describe("checkAndAutoUpdate install guards", () => {
 
     expect(result).toBeUndefined();
     expect(runCommand).not.toHaveBeenCalled();
-    // The holder's lock is left alone.
     expect(JSON.parse(fs.readFileSync(lockPath, "utf8")).pid).toBe(process.pid);
   });
 
@@ -630,7 +614,6 @@ describe("checkAndAutoUpdate install guards", () => {
     const owner = JSON.parse(fs.readFileSync(lockPath, "utf8"));
     expect(owner.pid).toBe(process.pid);
     expect(owner.createdAt).toBeGreaterThan(Date.now() - 60e3);
-    // The stale lock moved aside during takeover is cleaned up.
     expect(fs.readdirSync(testDir)).toEqual(["auto-update.lock"]);
 
     winners[0]?.();
@@ -638,7 +621,6 @@ describe("checkAndAutoUpdate install guards", () => {
   });
 
   test("an error while acquiring the lock skips the install", async () => {
-    // The lock's parent is a regular file, so the lock can never be created.
     const blocker = path.join(testDir, "not-a-dir");
     fs.writeFileSync(blocker, "");
     const runCommand = installMock();

@@ -1,24 +1,19 @@
 import { DEFAULT_AGENT_NAME } from "@/constants";
 
 export const SUBAGENT_NAMES = [
-  // Prefer distinctive handles, surnames, and titles over ordinary first names.
-  // Blade Runner
   "Deckard",
   "Roy Batty",
   "Pris",
   "Zhora",
   "Gaff",
   "Tyrell",
-  // Blade Runner 2049
   "K",
   "Joi",
   "Luv",
   "Sapper",
   "Freysa",
-  // Ex Machina
   "Ava",
   "Kyoko",
-  // Cyberpunk 2077 (including Phantom Liberty)
   "V",
   "Silverhand",
   "Panam",
@@ -48,7 +43,6 @@ export const SUBAGENT_NAMES = [
   "Songbird",
   "Slider",
   "Aguilar",
-  // Fallout
   "Codsworth",
   "Nick Valentine",
   "Yes Man",
@@ -68,7 +62,6 @@ export const SUBAGENT_NAMES = [
   "Pickman",
   "Butch DeLoria",
   "Fantastic",
-  // Dune
   "Muad'Dib",
   "Stilgar",
   "Chani",
@@ -90,7 +83,6 @@ export const SUBAGENT_NAMES = [
   "Sheeana",
   "Shaddam IV",
   "Count Fenring",
-  // Neuromancer
   "Wintermute",
   "Neuromancer",
   "Dixie Flatline",
@@ -100,32 +92,24 @@ export const SUBAGENT_NAMES = [
   "Maelcum",
   "Ratz",
   "The Finn",
-  // Snow Crash
   "Hiro Protagonist",
   "Y.T.",
   "Raven",
   "Uncle Enzo",
-  // Foundation and Robot novels
   "R. Daneel Olivaw",
   "R. Giskard Reventlov",
   "Hari Seldon",
   "Dors Venabili",
   "The Mule",
-  // 2001: A Space Odyssey
   "HAL 9000",
-  // Accelerando
   "Aineko",
-  // Singularity Sky
   "Eschaton",
-  // Terra Ignota
   "Mycroft Canner",
   "J.E.D.D. Mason",
   "Sniper",
   "Eureka Weeksbooth",
-  // Asimov short fiction
   "Susan Calvin",
   "Multivac",
-  // BioShock (including BioShock 2 and Infinite)
   "Andrew Ryan",
   "Fontaine",
   "Sander Cohen",
@@ -140,19 +124,16 @@ export const SUBAGENT_NAMES = [
   "Booker DeWitt",
   "Lutece",
   "Daisy Fitzroy",
-  // System Shock
   "SHODAN",
   "Xerxes",
   "The Many",
   "Polito",
-  // Deus Ex
   "JC Denton",
   "Gunther Hermann",
   "Tracer Tong",
   "Helios",
   "Adam Jensen",
   "Pritchard",
-  // Mass Effect
   "Shepard",
   "Garrus",
   "Tali'Zorah",
@@ -165,7 +146,6 @@ export const SUBAGENT_NAMES = [
   "Harbinger",
   "Illusive Man",
   "Aria T'Loak",
-  // Half-Life and Portal
   "GLaDOS",
   "Wheatley",
   "Chell",
@@ -174,7 +154,6 @@ export const SUBAGENT_NAMES = [
   "Alyx Vance",
   "G-Man",
   "Dr. Breen",
-  // Halo
   "Master Chief",
   "Cortana",
   "Arbiter",
@@ -182,7 +161,6 @@ export const SUBAGENT_NAMES = [
   "Dr. Halsey",
   "Noble Six",
   "Gravemind",
-  // Metal Gear
   "Solid Snake",
   "Big Boss",
   "Otacon",
@@ -190,32 +168,27 @@ export const SUBAGENT_NAMES = [
   "Raiden",
   "Psycho Mantis",
   "Gray Fox",
-  // NieR: Automata
   "2B",
   "9S",
   "A2",
   "Pod 042",
   "Pascal",
   "Emil",
-  // Horizon Zero Dawn
   "Aloy",
   "Sylens",
   "GAIA",
   "HADES",
   "Sobeck",
-  // Death Stranding
   "Deadman",
   "Heartman",
   "Die-Hardman",
   "Fragile",
   "Higgs",
-  // Outer Wilds
   "Gabbro",
   "Feldspar",
   "Chert",
   "Riebeck",
   "Solanum",
-  // StarCraft
   "Kerrigan",
   "Raynor",
   "Zeratul",
@@ -223,43 +196,33 @@ export const SUBAGENT_NAMES = [
   "Artanis",
   "Abathur",
   "Alarak",
-  // Dead Space
   "Isaac Clarke",
   "The Marker",
-  // SOMA
   "WAU",
-  // Detroit: Become Human
   "RK800",
   "Hank Anderson",
   "Markus",
-  // Doom
   "Doom Slayer",
   "VEGA",
-  // Borderlands
   "Claptrap",
   "Handsome Jack",
   "Moxxi",
   "Zer0",
-  // Destiny
   "Cayde-6",
   "Zavala",
   "Rasputin",
   "Xur",
   "Saint-14",
   "The Drifter",
-  // Prey (2017)
   "January",
   "December",
-  // S.T.A.L.K.E.R.
   "Strelok",
   "Sidorovich",
-  // Knights of the Old Republic
   "HK-47",
   "T3-M4",
   "Revan",
   "Bastila Shan",
   "Kreia",
-  // Star Trek
   "Data",
   "Spock",
   "Seven of Nine",
@@ -268,7 +231,6 @@ export const SUBAGENT_NAMES = [
   "Odo",
   "Garak",
   "Locutus",
-  // The Expanse
   "Naomi Nagata",
   "Amos Burton",
   "Avasarala",
@@ -276,7 +238,6 @@ export const SUBAGENT_NAMES = [
   "Julie Mao",
   "Camina Drummer",
   "Rocinante",
-  // The Culture
   "Sleeper Service",
   "Grey Area",
   "Just Read the Instructions",
@@ -284,34 +245,28 @@ export const SUBAGENT_NAMES = [
   "Mawhrin-Skel",
   "Gurgeh",
   "Zakalwe",
-  // The Hitchhiker's Guide to the Galaxy
   "Marvin",
   "Zaphod Beeblebrox",
   "Ford Prefect",
   "Trillian",
   "Slartibartfast",
   "Deep Thought",
-  // Hyperion Cantos
   "The Shrike",
   "Martin Silenus",
   "Het Masteen",
   "Kassad",
   "Ummon",
-  // Ghost in the Shell
   "Kusanagi",
   "Batou",
   "Tachikoma",
   "Puppet Master",
   "Laughing Man",
-  // Akira
   "Kaneda",
   "Tetsuo",
-  // Neon Genesis Evangelion
   "Rei Ayanami",
   "Misato Katsuragi",
   "Gendo Ikari",
   "MAGI",
-  // The Matrix
   "Neo",
   "Trinity",
   "Morpheus",
@@ -319,55 +274,44 @@ export const SUBAGENT_NAMES = [
   "The Oracle",
   "The Architect",
   "Merovingian",
-  // Alien
   "Ripley",
   "Bishop",
   "MU/TH/UR",
   "David 8",
   "Vasquez",
-  // The Terminator
   "Skynet",
   "T-800",
   "T-1000",
   "Kyle Reese",
-  // Battlestar Galactica
   "Starbuck",
   "Adama",
   "Number Six",
   "Gaius Baltar",
   "Helo",
   "Laura Roslin",
-  // Firefly
   "Mal Reynolds",
   "Wash",
   "Jayne Cobb",
   "River Tam",
   "Serenity",
-  // Ender's Game
   "Ender Wiggin",
   "Bean",
   "Petra Arkanian",
   "Mazer Rackham",
-  // The Murderbot Diaries
   "SecUnit",
   "ART",
   "Dr. Mensah",
-  // Ancillary Justice
   "Breq",
   "Justice of Toren",
   "Seivarden",
-  // The Three-Body Problem
   "Sophon",
   "Luo Ji",
   "Da Shi",
   "Zhang Beihai",
-  // Children of Time
   "Portia",
   "Avrana Kern",
-  // Project Hail Mary
   "Rocky",
   "Ryland Grace",
-  // Film robots and ship minds
   "TARS",
   "CASE",
   "GERTY",
@@ -378,7 +322,6 @@ export const SUBAGENT_NAMES = [
   "Johnny 5",
 ] as const;
 
-/** Each process keeps its own pool; completed and failed launches do not return names. */
 export function createSubagentNameAllocator(
   random: () => number = Math.random,
 ) {
@@ -401,7 +344,6 @@ export function createSubagentNameAllocator(
 
 const nextName = createSubagentNameAllocator();
 
-/** Allocate in the parent before spawning, so sibling CLI processes cannot collide. */
 export function allocateSubagentName(_parentName?: string | null): string {
   return nextName();
 }

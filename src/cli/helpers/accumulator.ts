@@ -1,9 +1,3 @@
-// src/cli/accumulator.ts
-// Minimal, token-aware accumulator for Letta streams.
-// - Single transcript via { order[], byId: Map }.
-// - Tool calls update in-place (same toolCallId for call+return).
-// - Exposes `onChunk` to feed SDK events and `toLines` to render.
-
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import {
@@ -50,34 +44,22 @@ type StreamingChunk =
   | CompactionSummaryMessageChunk
   | CompactionEventMessageChunk;
 
-// Constants for streaming output
 const MAX_TAIL_LINES = 5;
-const MAX_BUFFER_SIZE = 100_000; // 100KB
+const MAX_BUFFER_SIZE = 100_000;
 
-/**
- * A line of streaming output with its source (stdout or stderr).
- */
 export interface StreamingLine {
   text: string;
   isStderr: boolean;
 }
 
-/**
- * Streaming state for bash/shell tools.
- * Tracks a rolling window of output during execution.
- */
 export interface StreamingState {
-  tailLines: StreamingLine[]; // Last 5 complete lines (for rolling display)
-  partialLine: string; // Incomplete line being accumulated
-  partialIsStderr: boolean; // Whether partial line is from stderr
-  totalLineCount: number; // Total lines seen (for "+N more" count)
-  startTime: number; // For elapsed time display
+  tailLines: StreamingLine[];
+  partialLine: string;
+  partialIsStderr: boolean;
+  totalLineCount: number;
+  startTime: number;
 }
 
-/**
- * Append a chunk of output to the streaming state.
- * Maintains a tail buffer of the last N lines and handles partial line accumulation.
- */
 export function appendStreamingOutput(
   state: StreamingState | undefined,
   chunk: string,
@@ -97,34 +79,28 @@ export function appendStreamingOutput(
   let partialLine = current.partialLine;
   const partialIsStderr = current.partialIsStderr;
 
-  // If stream type changed and we have a partial, flush it as a complete line
   if (partialLine && isStderr !== partialIsStderr) {
     tailLines.push({ text: partialLine, isStderr: partialIsStderr });
     totalLineCount++;
     partialLine = "";
   }
 
-  // Append chunk to partial line
   let buffer = partialLine + chunk;
 
-  // Size limit check - slice at line boundary to avoid corrupted lines
   if (buffer.length > MAX_BUFFER_SIZE) {
     const truncated = buffer.slice(-MAX_BUFFER_SIZE);
     const firstNewline = truncated.indexOf("\n");
     buffer = firstNewline >= 0 ? truncated.slice(firstNewline + 1) : truncated;
   }
 
-  // Split into complete lines + remainder
   const lines = buffer.split("\n");
-  const newPartialLine = lines.pop() || ""; // Last element is incomplete
+  const newPartialLine = lines.pop() || "";
 
-  // Convert string lines to StreamingLine objects with current stream's stderr flag
   const newLines: StreamingLine[] = lines.map((text) => ({
     text,
     isStderr,
   }));
 
-  // Update tail with new complete lines (keep empty lines for accurate display)
   const allLines = [...tailLines, ...newLines];
   const finalTailLines = allLines.slice(-MAX_TAIL_LINES);
 
@@ -137,23 +113,21 @@ export function appendStreamingOutput(
   };
 }
 
-// One line per transcript row. Tool calls evolve in-place.
-// For tool call returns, merge into the tool call matching the toolCallId
 export type Line =
   | {
       kind: "user";
       id: string;
       text: string;
-      messageId?: string; // canonical backend message.id when known
-      otid?: string; // client-generated correlation id echoed back by the server
+      messageId?: string;
+      otid?: string;
     }
   | {
       kind: "reasoning";
       id: string;
       text: string;
       phase: "streaming" | "finished";
-      isContinuation?: boolean; // true for split continuation lines (no header)
-      messageId?: string; // canonical backend message.id when known
+      isContinuation?: boolean;
+      messageId?: string;
       startedAtMs?: number;
       durationMs?: number;
     }
@@ -162,24 +136,19 @@ export type Line =
       id: string;
       text: string;
       phase: "streaming" | "finished";
-      isContinuation?: boolean; // true for split continuation lines (no bullet)
-      messageId?: string; // canonical backend message.id when known
+      isContinuation?: boolean;
+      messageId?: string;
     }
   | {
       kind: "tool_call";
       id: string;
-      // from the tool call object
-      // toolCallId and name should come in the very first chunk
       toolCallId?: string;
       name?: string;
       argsText?: string;
       unifiedExecCommandDisplay?: string;
-      // from the tool return object
       resultText?: string;
       resultOk?: boolean;
-      // state that's useful for rendering
       phase: "streaming" | "ready" | "running" | "finished";
-      // streaming output state (for shell tools during execution)
       streaming?: StreamingState;
     }
   | { kind: "error"; id: string; text: string }
@@ -188,7 +157,6 @@ export type Line =
       id: string;
       eventType: string;
       eventData: Record<string, unknown>;
-      // Compaction events have additional fields populated when summary_message arrives
       phase: "running" | "finished";
       summary?: string;
       stats?: {
@@ -217,13 +185,12 @@ export type Line =
       output: string;
       phase?: "running" | "finished";
       success?: boolean;
-      // streaming output state (during execution)
       streaming?: StreamingState;
     }
   | {
       kind: "status";
       id: string;
-      lines: string[]; // Multi-line status message with arrow formatting
+      lines: string[];
     }
   | {
       kind: "trajectory_summary";
@@ -234,40 +201,30 @@ export type Line =
     }
   | { kind: "separator"; id: string };
 
-/**
- * Tracks server-side tool calls for hook triggering.
- * Server-side tools (tool_call_message) are executed by the Letta server,
- * not the client, so we need to trigger hooks when we receive the stream messages.
- */
 export interface ServerToolCallInfo {
   toolName: string;
   toolArgs: string;
   preToolUseTriggered: boolean;
 }
 
-// Top-level state object for all streaming events
 export type Buffers = {
   tokenCount: number;
   order: string[];
   byId: Map<string, Line>;
-  pendingToolByRun: Map<string, string>; // temporary id per run until real id
+  pendingToolByRun: Map<string, string>;
   toolCallIdToLineId: Map<string, string>;
-  // Maps a client-generated user OTID to the optimistic local transcript line id
-  // so the later echoed user_message chunk can backfill the canonical message.id.
   userLineIdByOtid: Map<string, string>;
-  lastOtid: string | null; // Track the last otid to detect transitions
-  // Alias maps to keep assistant deltas on one line when streams mix id/otid.
+  lastOtid: string | null;
   assistantCanonicalByMessageId: Map<string, string>;
   assistantCanonicalByOtid: Map<string, string>;
-  // Alias maps to keep reasoning deltas on one line when streams mix id/otid.
   reasoningCanonicalByMessageId: Map<string, string>;
   reasoningCanonicalByOtid: Map<string, string>;
-  pendingRefresh?: boolean; // Track throttled refresh state
-  interrupted?: boolean; // Track if stream was interrupted by user (skip stale refreshes)
-  commitGeneration?: number; // Incremented when resuming from error to invalidate pending refreshes
-  abortGeneration?: number; // Incremented on each interrupt to detect cancellation across async boundaries
-  lastReasoning?: string; // Track last reasoning content for hooks (PostToolUse, Stop)
-  lastAssistantMessage?: string; // Track last assistant message for hooks (PostToolUse)
+  pendingRefresh?: boolean;
+  interrupted?: boolean;
+  commitGeneration?: number;
+  abortGeneration?: number;
+  lastReasoning?: string;
+  lastAssistantMessage?: string;
   usage: {
     promptTokens: number;
     completionTokens: number;
@@ -278,18 +235,11 @@ export type Buffers = {
     contextTokens?: number;
     stepCount: number;
   };
-  // Aggressive static promotion: split streaming content at paragraph boundaries
   tokenStreamingEnabled?: boolean;
-  splitCounters: Map<string, number>; // tracks split count per original otid
-  // Track server-side tool calls for hook triggering (toolCallId -> info)
+  splitCounters: Map<string, number>;
   serverToolCalls: Map<string, ServerToolCallInfo>;
-  // Maps Codex unified exec session IDs to the original command that created
-  // them. This lets write_stdin render Codex-like "background terminal"
-  // labels without reaching into the ephemeral tool runtime session map.
   unifiedExecSessionCommands: Map<string, string>;
-  // Track if this run has pending approvals (used to gate server tool phases)
   approvalsPending: boolean;
-  // Agent ID for passing to hooks (needed for server-side tools like memory)
   agentId?: string;
 };
 
@@ -378,9 +328,6 @@ function annotateWriteStdinCommandDisplay(
   return updatedLine;
 }
 
-// Guarantees that there's only one line per ID
-// If byId already has that id, returns the Line (for mutation)
-// If not, makes a new line and adds it
 function ensure<T extends Line>(b: Buffers, id: string, make: () => T): T {
   const existing = b.byId.get(id) as T | undefined;
   if (existing) return existing;
@@ -448,7 +395,6 @@ export function upsertStatusLine(
   if (!existing) b.order.push(id);
 }
 
-// Mark a line as finished if it has a phase (immutable update)
 function markAsFinished(b: Buffers, id: string) {
   const line = b.byId.get(id);
   if (line && "phase" in line && line.phase === "streaming") {
@@ -467,7 +413,6 @@ function markAsFinished(b: Buffers, id: string) {
         : { ...line, phase: "finished" as const };
     b.byId.set(id, updatedLine);
 
-    // Track last reasoning content for hooks (PostToolUse and Stop will include it)
     if (
       updatedLine.kind === "reasoning" &&
       "text" in updatedLine &&
@@ -475,7 +420,6 @@ function markAsFinished(b: Buffers, id: string) {
     ) {
       b.lastReasoning = updatedLine.text;
     }
-    // Track last assistant message for hooks (PostToolUse will include it)
     if (
       updatedLine.kind === "assistant" &&
       "text" in updatedLine &&
@@ -486,60 +430,28 @@ function markAsFinished(b: Buffers, id: string) {
   }
 }
 
-// Helper to mark previous otid's line as finished when transitioning to new otid
 function handleOtidTransition(b: Buffers, newOtid: string | undefined) {
-  // console.log(`[OTID_TRANSITION] Called with newOtid=${newOtid}, lastOtid=${b.lastOtid}`);
-
-  // If transitioning to a different otid (including null/undefined), finish only assistant/reasoning lines.
-  // Tool calls should finish exclusively when a tool_return arrives (merged by toolCallId).
   if (b.lastOtid && b.lastOtid !== newOtid) {
     const prev = b.byId.get(b.lastOtid);
-    // console.log(`[OTID_TRANSITION] Found prev line: kind=${prev?.kind}, phase=${(prev as any)?.phase}`);
     if (prev && (prev.kind === "assistant" || prev.kind === "reasoning")) {
-      // console.log(`[OTID_TRANSITION] Marking ${b.lastOtid} as finished (was ${(prev as any).phase})`);
       markAsFinished(b, b.lastOtid);
     }
   }
 
-  // Update last otid (can be null)
   b.lastOtid = newOtid ?? null;
-  // console.log(`[OTID_TRANSITION] Updated lastOtid to ${b.lastOtid}`);
 }
 
-/**
- * Mark the current (last) line as finished when the stream ends.
- * Call this after stream completion to ensure the final line isn't stuck in "streaming" state.
- */
 export function markCurrentLineAsFinished(b: Buffers) {
-  // console.log(`[MARK_CURRENT_FINISHED] Called with lastOtid=${b.lastOtid}`);
   if (!b.lastOtid) {
-    // console.log(`[MARK_CURRENT_FINISHED] No lastOtid, returning`);
     return;
   }
   const prev = b.byId.get(b.lastOtid);
-  // console.log(`[MARK_CURRENT_FINISHED] Found line: kind=${prev?.kind}, phase=${(prev as any)?.phase}`);
   if (prev && (prev.kind === "assistant" || prev.kind === "reasoning")) {
-    // console.log(`[MARK_CURRENT_FINISHED] Marking ${b.lastOtid} as finished`);
     markAsFinished(b, b.lastOtid);
   } else {
-    // console.log(`[MARK_CURRENT_FINISHED] Not marking (not assistant/reasoning or doesn't exist)`);
   }
 }
 
-/**
- * Mark any incomplete tool calls as cancelled when stream is interrupted.
- * This prevents blinking tool calls from staying in progress state.
- * @param b - The buffers object
- * @param setInterruptedFlag - Whether to set the interrupted flag (default true).
- *   Pass false when clearing stale tool calls at stream startup to avoid race conditions
- *   with concurrent processConversation calls reading the flag.
- * @param reason - Why the cancellation is happening.
- * @param skipMarkCurrentLine - When true, do NOT call markCurrentLineAsFinished.
- *   Use this when a stream resume will follow: the resume stream will finalize the
- *   streaming line with its full text, so prematurely marking it finished would
- *   cause it to be committed to static with truncated content.
- * @returns true if any tool calls were marked as cancelled
- */
 export type CancelReason =
   | "user_interrupt"
   | "stream_error"
@@ -559,8 +471,6 @@ export function markIncompleteToolsAsCancelled(
   reason: CancelReason = "internal_cancel",
   skipMarkCurrentLine = false,
 ): boolean {
-  // Mark buffer as interrupted to skip stale throttled refreshes
-  // (only when actually interrupting, not when clearing stale state at startup)
   if (setInterruptedFlag) {
     b.interrupted = true;
   }
@@ -582,20 +492,12 @@ export function markIncompleteToolsAsCancelled(
       anyToolsCancelled = true;
     }
   }
-  // Mark any streaming assistant/reasoning lines as finished, unless a resume
-  // is about to follow (in which case the resume stream will finalize it with
-  // full text — marking it now would freeze truncated content in static).
   if (!skipMarkCurrentLine) {
     markCurrentLineAsFinished(b);
   }
   return anyToolsCancelled;
 }
 
-/**
- * Remove incomplete tool calls from the buffer entirely.
- * Used to clean up orphaned/failed-run tool calls without showing "Cancelled".
- * Returns true if any tools were removed.
- */
 export function removeIncompleteTools(
   b: Buffers,
   reason = "end_turn",
@@ -638,7 +540,6 @@ function diagnoseOrphanedTool(
 
 type ToolCallLine = Extract<Line, { kind: "tool_call" }>;
 
-// Flatten common SDK "parts" → text
 function getStringProp(obj: Record<string, unknown>, key: string) {
   const v = obj[key];
   return typeof v === "string" ? v : undefined;
@@ -672,7 +573,6 @@ function resolveLineIdForKind(
   const existing = b.byId.get(canonicalId);
   if (!existing || existing.kind === kind) return canonicalId;
 
-  // Avoid cross-kind collisions when providers reuse the same id/otid.
   return `${kind}:${canonicalId}`;
 }
 
@@ -707,11 +607,6 @@ function resolveAssistantLineId(
     canonicalFromMessageId || canonicalFromOtid || messageId || otid;
   if (!canonical) return undefined;
 
-  // When a new otid arrives whose messageId maps to an already-finished line,
-  // start a fresh canonical so the new content block gets its own line.
-  // This handles Anthropic responses like [text, thinking, text] where both
-  // text blocks share the same message id but need separate rendering lifecycles
-  // (the first gets committed to static before the second starts streaming).
   if (otid && !canonicalFromOtid && canonicalFromMessageId) {
     const existingLineId = resolveLineIdForKind(
       b,
@@ -734,7 +629,6 @@ function resolveAssistantLineId(
     }
   }
 
-  // If both aliases exist but disagree, prefer the one that already has a line.
   if (
     canonicalFromMessageId &&
     canonicalFromOtid &&
@@ -791,8 +685,6 @@ function resolveReasoningLineId(
     canonicalFromMessageId || canonicalFromOtid || messageId || otid;
   if (!canonical) return undefined;
 
-  // Same fix as resolveAssistantLineId: when a new otid maps to a
-  // finished reasoning line via messageId, start a fresh canonical.
   if (otid && !canonicalFromOtid && canonicalFromMessageId) {
     const existingLineId = resolveLineIdForKind(
       b,
@@ -853,11 +745,6 @@ function resolveReasoningLineId(
   return lineId;
 }
 
-/**
- * Attempts to split content at a paragraph boundary for aggressive static promotion.
- * If split found, creates a committed line for "before" and updates original with "after".
- * Returns true if split occurred, false otherwise.
- */
 function trySplitContent(
   b: Buffers,
   id: string,
@@ -868,17 +755,14 @@ function trySplitContent(
   if (kind === "reasoning") return false;
 
   const splitPoint = findLastSafeSplitPoint(newText);
-  if (splitPoint >= newText.length) return false; // No safe split point
+  if (splitPoint >= newText.length) return false;
 
   const beforeText = newText.substring(0, splitPoint);
   const afterText = newText.substring(splitPoint);
 
-  // Get or initialize split counter for this original ID
   const counter = b.splitCounters.get(id) ?? 0;
   b.splitCounters.set(id, counter + 1);
 
-  // Create committed line for "before" content
-  // Only the first split (counter=0) shows the bullet/header; subsequent splits are continuations
   const commitId = `${id}-split-${counter}`;
   const originalLine = b.byId.get(id);
   const committedLine = {
@@ -886,7 +770,7 @@ function trySplitContent(
     id: commitId,
     text: beforeText,
     phase: "finished" as const,
-    isContinuation: counter > 0, // First split shows bullet, subsequent don't
+    isContinuation: counter > 0,
     messageId:
       originalLine &&
       (originalLine.kind === "assistant" || originalLine.kind === "reasoning")
@@ -895,17 +779,13 @@ function trySplitContent(
   };
   b.byId.set(commitId, committedLine);
 
-  // Insert committed line BEFORE the original in order array
   const originalIndex = b.order.indexOf(id);
   if (originalIndex !== -1) {
     b.order.splice(originalIndex, 0, commitId);
   } else {
-    // Should not happen, but handle gracefully
     b.order.push(commitId);
   }
 
-  // Update original line with just the "after" content (keep streaming)
-  // Mark it as a continuation so it doesn't show bullet/header
   if (
     originalLine &&
     (originalLine.kind === "assistant" || originalLine.kind === "reasoning")
@@ -916,22 +796,17 @@ function trySplitContent(
   return true;
 }
 
-// Restore missing blank lines between adjacent OpenAI reasoning summary headings.
 function normalizeReasoningSectionBoundaries(text: string): string {
   return text
     .replace(/\*\*\*\*/g, "**\n\n**")
     .replace(/([^\n])(\*\*[^*\n]+\*\*\n\n)/g, "$1\n\n$2");
 }
 
-// Feed one SDK chunk; mutate buffers in place.
 export function onChunk(
   b: Buffers,
   chunk: StreamingChunk,
   ctx?: ContextTracker,
 ) {
-  // Skip processing if stream was interrupted mid-turn. handleInterrupt already
-  // rendered the cancellation state, so we should ignore any buffered chunks
-  // that arrive before drainStream exits.
   if (b.interrupted) {
     return;
   }
@@ -947,7 +822,6 @@ export function onChunk(
         break;
       }
 
-      // Handle otid transition (mark previous line as finished)
       handleOtidTransition(b, id);
 
       const delta = chunk.reasoning;
@@ -965,9 +839,7 @@ export function onChunk(
         const newText = normalizeReasoningSectionBoundaries(line.text + delta);
         b.tokenCount += Buffer.byteLength(delta, "utf8");
 
-        // Try to split at paragraph boundary (only if streaming enabled)
         if (!trySplitContent(b, id, "reasoning", newText)) {
-          // No split - normal accumulation
           b.byId.set(id, {
             ...line,
             text: newText,
@@ -985,15 +857,12 @@ export function onChunk(
         id?: string;
         otid?: string;
       };
-      // Resolve to a stable line id across mixed streams where some chunks
-      // have only id, only otid, or both.
       const id = resolveAssistantLineId(b, chunkWithIds);
       if (!id) break;
 
-      // Handle otid transition (mark previous line as finished)
       handleOtidTransition(b, id);
 
-      const delta = extractTextPart(chunk.content); // NOTE: may be list of parts
+      const delta = extractTextPart(chunk.content);
       const messageId =
         typeof chunkWithIds.id === "string" ? chunkWithIds.id : undefined;
       const line = ensure(b, id, () => ({
@@ -1007,9 +876,7 @@ export function onChunk(
         const newText = line.text + delta;
         b.tokenCount += Buffer.byteLength(delta, "utf8");
 
-        // Try to split at paragraph boundary (only if streaming enabled)
         if (!trySplitContent(b, id, "assistant", newText)) {
-          // No split - normal accumulation
           b.byId.set(id, {
             ...line,
             text: newText,
@@ -1032,20 +899,15 @@ export function onChunk(
       const otid =
         typeof chunkWithIds.otid === "string" ? chunkWithIds.otid : undefined;
       const mappedLineId = otid ? b.userLineIdByOtid.get(otid) : undefined;
-      // Prefer the optimistic local line id when we can resolve it from the echoed
-      // OTID. That lets us preserve the already-rendered row and attach the real
-      // backend message.id once the server sends it back.
       const lineId = mappedLineId || otid || messageId;
       if (!lineId) break;
 
-      // Handle otid transition (mark previous line as finished)
       handleOtidTransition(b, lineId);
 
       const rawText = extractTextPart(chunk.content);
       if (!rawText) break;
       const compactionSummary = extractCompactionSummary(rawText);
       if (compactionSummary) {
-        // Render as a finished compaction event
         ensure(b, lineId, () => ({
           kind: "event",
           id: lineId,
@@ -1054,14 +916,9 @@ export function onChunk(
           phase: "finished",
           summary: compactionSummary,
         }));
-        // Legacy servers may emit compaction completion as a user_message
-        // system alert instead of summary_message.
         markCompactionCompleted(ctx);
         break;
       }
-      // User input is rendered optimistically before the request. Only consume
-      // echoed user messages that reconcile one of those existing rows; other
-      // echoes are harness-injected context, not new user-visible input.
       if (!mappedLineId) break;
 
       const line = b.byId.get(mappedLineId);
@@ -1078,10 +935,8 @@ export function onChunk(
 
     case "tool_call_message":
     case "approval_request_message": {
-      // Handle otid transition (mark previous line as finished)
       handleOtidTransition(b, chunk.otid ?? undefined);
 
-      // Use deprecated tool_call or new tool_calls array
       const toolCall =
         chunk.tool_call ||
         (Array.isArray(chunk.tool_calls) && chunk.tool_calls.length > 0
@@ -1093,15 +948,11 @@ export function onChunk(
       const name = toolCall.name;
       const argsText = toolCall.arguments;
 
-      // Use tool_call_id as the stable line id (server guarantees uniqueness).
       const id = b.toolCallIdToLineId.get(toolCallId) ?? toolCallId;
       if (!b.toolCallIdToLineId.has(toolCallId)) {
         b.toolCallIdToLineId.set(toolCallId, id);
       }
 
-      // Tool calls start in "streaming" (static grey) while args stream in.
-      // Approval requests move to "ready" (blinking), server tools move to
-      // "running" once args are complete.
       const desiredPhase = "streaming";
       let line = ensure<ToolCallLine>(b, id, () => ({
         kind: "tool_call",
@@ -1111,7 +962,6 @@ export function onChunk(
         phase: desiredPhase,
       }));
 
-      // If additional metadata arrives later (e.g., name), update the line.
       if ((name && !line.name) || line.toolCallId !== toolCallId) {
         line = {
           ...line,
@@ -1121,7 +971,6 @@ export function onChunk(
         b.byId.set(id, line);
       }
 
-      // If this is an approval request and the line already exists, bump phase to ready
       if (
         chunk.message_type === "approval_request_message" &&
         line.phase !== "finished"
@@ -1130,7 +979,6 @@ export function onChunk(
         line = { ...line, phase: "ready" };
         b.byId.set(id, line);
 
-        // Downgrade any server tools to streaming while approvals are pending.
         for (const [toolCallId] of b.serverToolCalls) {
           const serverLineId = b.toolCallIdToLineId.get(toolCallId);
           if (!serverLineId) continue;
@@ -1145,8 +993,6 @@ export function onChunk(
         }
       }
 
-      // if argsText is not empty, add it to the line (immutable update)
-      // Skip if argsText is undefined or null (backend sometimes sends null)
       if (argsText !== undefined && argsText !== null) {
         const updatedLine = {
           ...line,
@@ -1154,11 +1000,9 @@ export function onChunk(
         };
         line = annotateWriteStdinCommandDisplay(b, updatedLine);
         b.byId.set(id, line);
-        // Count tool call arguments as LLM output tokens
         b.tokenCount += Buffer.byteLength(argsText, "utf8");
       }
 
-      // Track server-side tools and trigger PreToolUse hook (fire-and-forget since execution already started)
       if (chunk.message_type === "tool_call_message" && toolCallId) {
         const existing = b.serverToolCalls.get(toolCallId);
         const toolInfo: ServerToolCallInfo = existing || {
@@ -1178,9 +1022,7 @@ export function onChunk(
             if (toolInfo.toolArgs) {
               parsedArgs = JSON.parse(toolInfo.toolArgs);
             }
-          } catch {
-            // Args may be incomplete JSON
-          }
+          } catch {}
           runPreToolUseHooks(
             toolInfo.toolName,
             parsedArgs,
@@ -1197,10 +1039,6 @@ export function onChunk(
     }
 
     case "tool_return_message": {
-      // Tool return is a special case
-      // It will have a different otid than the tool call, but we want to merge into the tool call
-
-      // Handle parallel tool returns: check tool_returns array first, fallback to singular fields
       const toolReturns =
         Array.isArray(chunk.tool_returns) && chunk.tool_returns.length > 0
           ? chunk.tool_returns
@@ -1216,22 +1054,18 @@ export function onChunk(
 
       for (const toolReturn of toolReturns) {
         const toolCallId = toolReturn.tool_call_id;
-        // Handle both func_response (streaming) and tool_return (SDK) properties
         const rawResult =
           ("func_response" in toolReturn
             ? toolReturn.func_response
             : undefined) ||
           ("tool_return" in toolReturn ? toolReturn.tool_return : undefined);
 
-        // Stringify + clip: cloud returns bypass the tool manager's clamp.
         const resultText = clampRawToolReturn(
           rawResult,
           toolCallId ? b.serverToolCalls.get(toolCallId)?.toolName : undefined,
         );
         const status = toolReturn.status;
 
-        // Look up the line by toolCallId
-        // Keep a mapping of toolCallId to line id (otid)
         const id = toolCallId
           ? b.toolCallIdToLineId.get(toolCallId)
           : undefined;
@@ -1245,7 +1079,6 @@ export function onChunk(
 
         line = annotateWriteStdinCommandDisplay(b, line);
 
-        // Immutable update: create new object with result
         const updatedLine = {
           ...line,
           resultText,
@@ -1264,7 +1097,6 @@ export function onChunk(
           }
         }
 
-        // Trigger PostToolUse hook for server-side tools (fire-and-forget)
         if (toolCallId) {
           const serverToolInfo = b.serverToolCalls.get(toolCallId);
           if (serverToolInfo) {
@@ -1273,11 +1105,8 @@ export function onChunk(
               if (serverToolInfo.toolArgs) {
                 parsedArgs = JSON.parse(serverToolInfo.toolArgs);
               }
-            } catch {
-              // Args parsing failed
-            }
+            } catch {}
 
-            // Get and clear preceding reasoning/message for hook
             const precedingReasoning = b.lastReasoning;
             const precedingAssistantMessage = b.lastAssistantMessage;
             b.lastReasoning = undefined;
@@ -1307,8 +1136,6 @@ export function onChunk(
     }
 
     case "usage_statistics": {
-      // Accumulate usage statistics from the stream
-      // These messages arrive after stop_reason in the stream
       if (chunk.prompt_tokens !== undefined) {
         b.usage.promptTokens += chunk.prompt_tokens;
       }
@@ -1343,17 +1170,14 @@ export function onChunk(
         usageChunk.context_tokens !== undefined &&
         usageChunk.context_tokens !== null
       ) {
-        // context_tokens is a snapshot metric, not additive.
         b.usage.contextTokens = usageChunk.context_tokens;
       }
-      // Use context_tokens from SDK (estimate of tokens in context window)
       if (ctx) {
         if (
           usageChunk.context_tokens !== undefined &&
           usageChunk.context_tokens !== null
         ) {
           ctx.lastContextTokens = usageChunk.context_tokens;
-          // Track history for time-series display
           const compacted = ctx.pendingCompaction;
           if (compacted) ctx.pendingCompaction = false;
           ctx.contextTokensHistory.push({
@@ -1362,7 +1186,6 @@ export function onChunk(
             turnId: ctx.currentTurnId,
             ...(compacted ? { compacted: true } : {}),
           });
-          // Cap history length to avoid unbounded growth
           if (ctx.contextTokensHistory.length > MAX_CONTEXT_HISTORY) {
             ctx.contextTokensHistory = ctx.contextTokensHistory.slice(
               -MAX_CONTEXT_HISTORY,
@@ -1377,12 +1200,9 @@ export function onChunk(
     }
 
     default: {
-      // Handle new compaction message types (when include_compaction_messages=true)
-      // These are not yet in the SDK types, so we handle them via string comparison
       const msgType = chunk.message_type as string | undefined;
 
       if (msgType === "summary_message") {
-        // Use otid if available, fall back to id
         const summaryChunk = chunk as LettaStreamingResponse & {
           id?: string;
           otid?: string;
@@ -1399,7 +1219,6 @@ export function onChunk(
         const summaryText = summaryChunk.summary || "";
         const stats = summaryChunk.compaction_stats;
 
-        // Find the most recent compaction event line and update it with summary and stats
         for (let i = b.order.length - 1; i >= 0; i--) {
           const orderId = b.order[i];
           if (!orderId) continue;
@@ -1421,16 +1240,11 @@ export function onChunk(
           }
         }
 
-        // Flag so the next usage_statistics entry is marked as post-compaction.
-        // Set here (not in event_message) because summary_message arrives after
-        // compaction completes, guaranteeing the next usage_statistics has the
-        // reduced token count.
         markCompactionCompleted(ctx);
         break;
       }
 
       if (msgType === "event_message") {
-        // Use otid if available, fall back to id
         const eventChunk = chunk as LettaStreamingResponse & {
           id?: string;
           otid?: string;
@@ -1449,7 +1263,6 @@ export function onChunk(
             : undefined);
         if (!id) break;
 
-        // Handle otid transition (mark previous line as finished)
         handleOtidTransition(b, id);
 
         if (eventType === "retry") {
@@ -1465,31 +1278,25 @@ export function onChunk(
           phase: eventType === "compaction" ? "running" : "finished",
         }));
 
-        // Fire PreCompact hooks when server-side auto-compaction starts
         if (eventType === "compaction") {
           runPreCompactHooks(
             ctx?.lastContextTokens,
-            undefined, // max_context_length not available here
+            undefined,
             b.agentId,
-            undefined, // conversationId not available here
+            undefined,
           ).catch((error) => {
             debugLog("hooks", "PreCompact hook error (accumulator)", error);
           });
         }
 
-        // Note: pendingCompaction is set in summary_message (not here) because
-        // usage_statistics for the step that triggered compaction can arrive after
-        // this event_message, and we want to mark the first POST-compaction entry.
         break;
       }
 
-      // ignore ping/etc
       break;
     }
   }
 }
 
-// Derive a flat transcript
 export function toLines(b: Buffers): Line[] {
   const out: Line[] = [];
   for (const id of b.order) {
@@ -1499,7 +1306,6 @@ export function toLines(b: Buffers): Line[] {
   return out;
 }
 
-/** Returns the text of the most recent non-empty assistant line, if any. */
 export function findLastAssistantText(lines: Line[]): string | undefined {
   for (let i = lines.length - 1; i >= 0; i -= 1) {
     const line = lines[i];
@@ -1515,10 +1321,6 @@ export function findLastAssistantText(lines: Line[]): string | undefined {
   return undefined;
 }
 
-/**
- * Set tool calls to "running" phase before execution.
- * This updates the UI to show the formatted args instead of ellipsis.
- */
 export function setToolCallsRunning(b: Buffers, toolCallIds: string[]): void {
   for (const toolCallId of toolCallIds) {
     const lineId = b.toolCallIdToLineId.get(toolCallId);
@@ -1547,10 +1349,6 @@ export function setToolCallsRunning(b: Buffers, toolCallIds: string[]): void {
   }
 }
 
-/**
- * Serialize display lines into a plain-text conversation transcript.
- * Used to pass current conversation context to the reflection subagent.
- */
 export function linesToTranscript(lines: Line[]): string {
   const parts: string[] = [];
   for (const line of lines) {
@@ -1579,7 +1377,6 @@ export function linesToTranscript(lines: Line[]): string {
         parts.push(`<error>${line.text}</error>`);
         break;
       default:
-        // Skip status, separator, command, event, trajectory_summary, bash_command lines
         break;
     }
   }

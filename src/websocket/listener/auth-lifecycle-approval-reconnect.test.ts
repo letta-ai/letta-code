@@ -370,9 +370,6 @@ describe("listener approval reconnect timing", () => {
         () => countConnectionsForChannel("control") >= 2,
         "startup ingress overflow did not terminate and reconnect control",
       );
-      // Pre-connection ownership may fail the overflowing attempt before a
-      // ListenerConnectionState exists; either absence or uninitialized is
-      // the required fail-closed state.
       expect(
         getActiveRuntime()?.connections.get("connection-id")?.initialized,
       ).not.toBe(true);

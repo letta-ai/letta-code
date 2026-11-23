@@ -38,15 +38,10 @@ export interface DeepAgentsCheckpointRef {
 
 export interface TrajectoryExportOptions {
   outDir: string;
-  /** Restrict discovery to these sources. Default: every supported source. */
   sources?: string[];
-  /** Per-source store-root overrides (`--root <source>:<path>`). */
   roots?: Record<string, string>;
-  /** Explicit `--transcript <source>:<path>` transcripts to include. */
   transcripts?: ExplicitTranscript[];
-  /** Extra Deep Agents checkpoints (`--deepagents <db>:<thread-id>`). */
   deepagents?: DeepAgentsCheckpointRef[];
-  /** Keep only sessions whose recorded working directory starts with this path. */
   project?: string;
   bounds?: NormalizationBounds;
   onProgress?: (message: string) => void;
@@ -56,18 +51,11 @@ const MANIFEST_NAME = "manifest.json";
 const FIRST_PROMPT_MAX_CHARS = 200;
 const LIST_PAGE_LIMIT = 1000;
 
-/** Filesystem-safe filename stamp from an ISO startedAt (colons stripped). */
 export function fileTimestamp(startedAt: string | undefined): string {
   if (!startedAt) return "unknown-date";
   return startedAt.slice(0, 19).replace(/:/g, "-");
 }
 
-/**
- * Stable session identifier: sha256 of the source-scoped native session id,
- * shortened to 10 hex chars. Unlike a positional index, it does not change
- * when other sessions appear or disappear between exports, so it can be used
- * to track which sessions have already been processed.
- */
 export function sessionHash(source: string, nativeId: string): string {
   return createHash("sha256")
     .update(`${source}:${nativeId}`)
@@ -75,10 +63,6 @@ export function sessionHash(source: string, nativeId: string): string {
     .slice(0, 10);
 }
 
-/**
- * Page through `listTrajectories` and return every session in the source's
- * local store. A missing store yields an empty list rather than an error.
- */
 export async function listAllTrajectories(
   source: string,
   root: string | undefined,
@@ -146,11 +130,6 @@ function collectStats(records: NormalizedRecord[]): SessionStats {
   return stats;
 }
 
-/**
- * Prepare the output directory. Refuses to reuse a non-empty directory that
- * was not produced by a previous export (no manifest), so a typo in `--out`
- * cannot clobber unrelated files; previous export content is replaced.
- */
 async function prepareOutDir(outDir: string): Promise<void> {
   try {
     const existing = await stat(outDir);
@@ -204,11 +183,6 @@ export async function runTrajectoryExport(
     return counts;
   };
 
-  // Filenames are <startedAt>_<sessionId>.json: the timestamp keeps `ls`
-  // chronological within a source folder, and the hashed native id makes the
-  // name stable across re-exports regardless of what other sessions exist.
-  // Collisions (same source, same native id — e.g. two --transcript files
-  // with the same basename) get a numeric suffix.
   const usedFiles = new Set<string>();
   const exportSession = async (
     source: string,

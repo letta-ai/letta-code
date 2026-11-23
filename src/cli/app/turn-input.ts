@@ -11,7 +11,6 @@ import type { QueuedMessage } from "@/utils/message-queue-bridge";
 import { appendOptimisticUserLine, createClientOtid } from "./ids";
 import type { ProcessConversation, ProcessConversationOptions } from "./types";
 
-/** Command and ordinary submits use the origin selected by their caller. */
 export function bindTuiClientPreferences(
   processConversation: ProcessConversation,
   clientPreferences: ProcessConversationOptions["clientPreferences"],
@@ -20,7 +19,6 @@ export function bindTuiClientPreferences(
     processConversation(input, { ...options, clientPreferences });
 }
 
-/** Tool results must precede the new user message, including interrupt recovery. */
 export function buildTuiTurnInput({
   content,
   otid,
@@ -43,7 +41,6 @@ export function buildTuiTurnInput({
   return input;
 }
 
-/** Prepare the same queued continuation for manual and auto-approved tools. */
 export function prepareTuiQueuedTurn(
   items: QueuedMessage[] | null,
   approvals: ApprovalResult[],

@@ -10,15 +10,7 @@ const APPROVAL_COMMENT_PREFIX =
   "The user approved the tool execution with the following comment:";
 
 export type ApprovalNormalizationOptions = {
-  /**
-   * Structured interrupt provenance: tool_call_ids known to have been interrupted.
-   * When provided, these IDs are forced to persist as status=error.
-   */
   interruptedToolCallIds?: Iterable<string>;
-  /**
-   * Temporary fallback guard for legacy drift where tool_return text is the only
-   * interrupt signal. Keep false by default for strict structured behavior.
-   */
   allowInterruptTextFallback?: boolean;
 };
 

@@ -168,7 +168,6 @@ function textFromUnknown(value: unknown): string {
   }
 }
 
-/** Extracts the numeric suffix from a ui-msg-N ID, or returns 0. */
 function numericId(id: string): number {
   const match = id.match(/ui-msg-(\d+)$/);
   return match ? Number(match[1]) : 0;
@@ -238,12 +237,6 @@ function convertLegacyMessage(
 
   if (message.role !== "assistant") return [];
 
-  // Split parts on step-start boundaries. Each step represents a logical LLM
-  // turn within the stored message. The old format used step-start markers to
-  // delimit turns where the agent called a tool, got a result, and continued
-  // generating — all within one stored message. Splitting preserves the
-  // correct turn structure so that tool_use blocks are always at the end of
-  // an assistant message (required by Anthropic's API).
   const parts = Array.isArray(message.parts) ? message.parts : [];
   const steps: Array<Record<string, unknown>[]> = [];
   let currentStep: Record<string, unknown>[] = [];
@@ -261,8 +254,6 @@ function convertLegacyMessage(
     steps.push(currentStep);
   }
 
-  // If no step-start markers were found, treat the whole message as one step
-  // (backward compatibility for messages without step-start markers).
   if (steps.length === 0 && parts.length > 0) {
     const filtered = parts.filter((part): part is Record<string, unknown> =>
       isRecord(part),
@@ -277,8 +268,6 @@ function convertLegacyMessage(
   for (let stepIndex = 0; stepIndex < steps.length; stepIndex++) {
     const step = steps[stepIndex];
     if (!step) continue;
-    // Single-step messages keep the original ID; multi-step messages get
-    // fresh sequential IDs to avoid introducing a new ID format.
     const stepId = steps.length === 1 ? id : `ui-msg-${nextId()}`;
     const content: (LocalMessage & { role: "assistant" })["content"] = [];
     const stepToolResults: LocalMessage[] = [];
@@ -403,8 +392,6 @@ function convertMessages(
     const result = convertLegacyMessage(message, nextId);
     converted.push(...result);
 
-    // If the legacy message's original ID is not in the converted output,
-    // it was split into multiple messages with new IDs. Record the mapping.
     if (isRecord(message) && typeof message.id === "string") {
       const originalId = message.id;
       const hasOriginal = result.some((m) => m.id === originalId);
@@ -473,9 +460,6 @@ export function migrateLocalBackendTranscripts(input: {
     const repairVersioned =
       hasManifest && (hasLegacyUiRows || hasLegacyPiManifest);
 
-    // Compute the max numeric ID across all messages so that step-split
-    // messages get fresh, non-colliding sequential IDs. We check both
-    // legacy and pi-format messages to avoid collisions with preserved IDs.
     const maxId = legacyMessages.reduce<number>((max, msg) => {
       if (isRecord(msg) && typeof msg.id === "string") {
         const n = numericId(msg.id);
@@ -516,8 +500,6 @@ export function migrateLocalBackendTranscripts(input: {
             : undefined,
       });
 
-      // Remap in_context_message_ids in conversation.json for any
-      // legacy assistant messages that were split into multiple messages.
       if (conversation && idRemapping.size > 0) {
         try {
           if (Array.isArray(conversation.in_context_message_ids)) {
@@ -540,9 +522,7 @@ export function migrateLocalBackendTranscripts(input: {
               `${JSON.stringify(conversation, null, 2)}\n`,
             );
           }
-        } catch {
-          // If conversation.json can't be read/parsed, skip remapping
-        }
+        } catch {}
       }
 
       writeFileSync(

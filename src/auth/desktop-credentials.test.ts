@@ -68,7 +68,6 @@ for (const runtime of [process.execPath, "node"]) {
   test(`SDK requests and subagent launches use Desktop IPC credentials under ${runtime}`, async () => {
     const directory = mkdtempSync(join(tmpdir(), "desktop-credentials-"));
     const entry = join(directory, "child.mjs");
-    // Keep the fixture's module graph separate from the test worker's imports.
     const build = spawnSync(
       process.execPath,
       [

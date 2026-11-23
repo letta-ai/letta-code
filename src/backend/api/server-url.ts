@@ -1,10 +1,6 @@
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
 import { settingsManager } from "@/settings-manager";
 
-/**
- * Get the current Letta server URL from environment or settings.
- * Used for cache keys and API operations.
- */
 export function getServerUrl(): string {
   const settings = settingsManager.getSettings();
   return (
@@ -14,17 +10,12 @@ export function getServerUrl(): string {
   );
 }
 
-/**
- * True when the configured server is Letta Cloud (matched by hostname).
- * Cloud-only concepts such as computers/environment routing key off this.
- */
 export function isCloudServerUrl(serverUrl?: string): boolean {
   let resolved = serverUrl;
   if (resolved === undefined) {
     try {
       resolved = getServerUrl();
     } catch {
-      // Settings may not be initialized yet (e.g. early capability reads).
       resolved = process.env.LETTA_BASE_URL || LETTA_CLOUD_API_URL;
     }
   }

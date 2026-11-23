@@ -9,7 +9,10 @@ import {
 import { checkPermission } from "@/permissions/checker";
 import { TOOL_DEFINITIONS } from "@/tools/tool-definitions";
 import { TOOLSET_CATALOG } from "@/tools/toolset-catalog";
-import { setMessageQueueAdder } from "@/utils/message-queue-bridge";
+import {
+  clearPendingMessages,
+  setMessageQueueAdder,
+} from "@/utils/message-queue-bridge";
 import { GitHubPullRequestSnapshotPending } from "./github-pull-request-cloud";
 import type { GitHubPullRequestSnapshot } from "./github-pull-request-types";
 import { backgroundProcesses } from "./process_manager";
@@ -60,12 +63,11 @@ afterEach(() => {
     delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
   else process.env.LETTA_MANAGED_CLOUD_RUNTIME = previousManagedCloud;
   setMessageQueueAdder(null);
+  clearPendingMessages();
   for (const process of backgroundProcesses.values()) {
     try {
       process.process.kill("SIGTERM");
-    } catch {
-      // Already stopped.
-    }
+    } catch {}
     if (process.outputFile && existsSync(process.outputFile)) {
       rmSync(process.outputFile, { force: true });
     }

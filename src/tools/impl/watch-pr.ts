@@ -118,7 +118,6 @@ async function defaultWait(
   await delay(milliseconds, undefined, { signal });
 }
 
-// Cache failures must never prevent a watch from starting or polling.
 function saveSnapshot(
   path: string | undefined,
   snapshot: GitHubPullRequestSnapshot,
@@ -131,7 +130,6 @@ function saveSnapshot(
       return;
     }
     mkdirSync(dirname(path), { recursive: true });
-    // Previous discussion bodies and authors are not needed by the diff.
     const compact = {
       ...snapshot,
       ref: undefined,
@@ -166,13 +164,10 @@ function saveSnapshot(
     );
     renameSync(temporary, path);
   } catch {
-    // Best effort: GitHub remains the source of truth.
   } finally {
     try {
       rmSync(temporary, { force: true });
-    } catch {
-      /* Best effort cleanup. */
-    }
+    } catch {}
   }
 }
 
@@ -192,7 +187,6 @@ function resumedChanges(
       notifyOn,
     ).events;
     if (!changes.length) return "";
-    // Use the same line and notification limits as live monitor events.
     let text = changes
       .map((line) =>
         line.length > MONITOR_EVENT_LINE_CHARS
@@ -279,9 +273,7 @@ export async function watch_pr(
               .digest("hex")}.json`,
           )
         : undefined;
-  } catch {
-    // Invalid config paths disable persistence, not the watch.
-  }
+  } catch {}
   const initial = await fetchSnapshot(ref, { cwd, signal: args.signal });
   args.signal?.throwIfAborted();
   const changesSincePreviousWatch = resumedChanges(

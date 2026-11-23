@@ -150,7 +150,6 @@ test("cloud monitors persist their real lifecycle through the monitor API", asyn
               : "stopped"
             : "failed",
         );
-        // Durable records remain readable after the host discards its handles.
         backgroundProcesses.delete(shutdown.taskId);
         expect((await read(shutdown.taskId)).monitor_id).toBe(shutdown.taskId);
       },

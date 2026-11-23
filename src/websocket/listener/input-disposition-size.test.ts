@@ -54,7 +54,6 @@ test("inline base64 image input of ~5 MB is accepted and replayed intact", () =>
     const identity = ordinaryInputIdentity("cm-photo");
     const admission = reserveInputDisposition(runtime, identity);
     if (admission.kind !== "reserved") throw new Error("expected reservation");
-    // ~5 MB of base64: the shape chat.letta.com sends for a photo attachment.
     const imageData = Buffer.alloc(3_750_000, 7).toString("base64");
     const photo = messageWithContent("cm-photo", [
       { type: "text", text: "what is in this photo?" },

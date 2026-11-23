@@ -72,7 +72,6 @@ test("API runner retries a timed-out catalog warmup before running tests", async
   const preload = join(root, "flaky.ts");
   const fixture = join(root, "noop.test.ts");
   try {
-    // The first catalog request times out; later requests succeed.
     await writeFile(
       preload,
       `let calls = 0;
