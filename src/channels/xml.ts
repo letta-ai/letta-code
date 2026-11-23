@@ -1,10 +1,3 @@
-/**
- * XML formatting for channel notifications.
- *
- * Produces structured XML that the agent receives as message content.
- * Follows the same escaping patterns used in taskNotifications.ts.
- */
-
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ChannelUserMention } from "@/channels/message-references";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
@@ -14,20 +7,13 @@ import type {
   InboundChannelMessage,
 } from "./types";
 
-/**
- * Escape XML text-node content without over-escaping quotes that should remain
- * readable inside the rendered message body.
- */
-function escapeXmlText(text: string): string {
+export function escapeXmlText(text: string): string {
   return text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
 }
 
-/**
- * Escape XML attribute values, including quotes.
- */
 function escapeXmlAttribute(text: string): string {
   return escapeXmlText(text).replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
@@ -344,16 +330,6 @@ function buildThreadContextXml(msg: InboundChannelMessage): string | null {
   return [`<thread-context${attrs}>`, ...parts, "</thread-context>"].join("\n");
 }
 
-/**
- * Format an inbound channel message as XML for the agent.
- *
- * Example output:
- * ```xml
- * <channel-notification source="telegram" chat_id="12345" sender_id="67890" sender_name="John" sent_at="2025-01-09T00:00:00.000Z">
- * Hello from Telegram!
- * </channel-notification>
- * ```
- */
 export function buildChannelNotificationXml(
   msg: InboundChannelMessage,
 ): string {
@@ -415,12 +391,6 @@ export function buildChannelNotificationXml(
   return `<channel-notification ${attrString}>\n${body}\n</channel-notification>`;
 }
 
-/**
- * Format an inbound channel message as structured content parts.
- *
- * Attachment guidance is emitted only when this event contains inspectable
- * local paths. Reply semantics live in the scoped MessageChannel definition.
- */
 export function formatChannelNotification(
   msg: InboundChannelMessage,
 ): MessageCreate["content"] {
