@@ -253,7 +253,7 @@ The `ask_user` and `askUser` helpers in the following snippets stand in for your
 
 > [tab] Approve with changes
 >
-> The user approves but wants to modify the request first. You can change the input before the tool executes. Claude sees the result but isn't told you changed anything. Useful for sanitizing parameters, adding constraints, or scoping access.
+> The user approves but wants to modify the request first. You can change the input before the tool executes. Useful for sanitizing parameters, adding constraints, or scoping access.
 >
 > ```python Python theme={null}
 > async def can_use_tool(tool_name, input_data, context):

@@ -45,6 +45,7 @@
 
 - [Get started with Claude Code in the cloud](https://code.claude.com/docs/en/web-quickstart.md): Run Claude Code in the cloud from your browser or phone. Connect a GitHub repository, submit a task, and review the PR without local setup.
 - [Use Claude Code in the cloud](https://code.claude.com/docs/en/claude-code-on-the-web.md): Run Claude Code sessions in the cloud from your browser, phone, Desktop app, or terminal, move them with `--cloud` and `--teleport`, and auto-fix pull requests.
+- [Share a cloud or Remote Control session](https://code.claude.com/docs/en/share-sessions.md): Check what recipients of a shared Claude Code session can read, choose who can open the link, and stop sharing.
 - [Automate work with scheduled tasks](https://code.claude.com/docs/en/routines.md): Put Claude Code on autopilot. Create scheduled tasks, formerly routines, that run in the cloud on a schedule, on API calls, or on GitHub events.
 
 ##### Claude Code on desktop
@@ -58,8 +59,7 @@
 
 #### Code review and pull requests
 
-- [Review locally with /code-review](https://code.claude.com/docs/en/code-review-local.md): Run `/code-review` in a Claude Code session to find bugs in your branch's changes, point the review at a pull request or path, and have Claude apply the fixes.
-- [Find bugs with ultrareview](https://code.claude.com/docs/en/ultrareview.md): Run a deep, multi-agent code review in the cloud with /code-review ultra to find and verify bugs before you merge.
+- [Claude Ship](https://code.claude.com/docs/en/claude-ship.md): Meet the Claude Ship agents for GitHub pull requests: Code Review, PR Steward, and Claude Approvals
 - [Claude Code with GitHub Enterprise Server](https://code.claude.com/docs/en/github-enterprise-server.md): Connect Claude Code to your self-hosted GitHub Enterprise Server instance for cloud sessions, code review, and plugin marketplaces.
 
 ##### Code Review
@@ -70,6 +70,34 @@
 - [Read and request reviews on a pull request](https://code.claude.com/docs/en/code-review-pull-requests.md): Read Code Review findings on your GitHub pull request, respond to or dismiss them, and request a review with `@claude review`.
 - [Code Review costs and usage](https://code.claude.com/docs/en/code-review-costs.md): Estimate and cap what your organization spends on Claude Code Review: how reviews are billed through usage credits, what drives cost, and where to track usage.
 - [Troubleshoot Code Review](https://code.claude.com/docs/en/code-review-troubleshooting.md): Fix a Code Review that didn't start, failed, or was skipped for budget, find missing findings, and resolve setup and `REVIEW.md` problems.
+
+##### PR Steward
+
+- [PR Steward](https://code.claude.com/docs/en/pr-steward.md): Let PR Steward push fixes to your GitHub pull requests for failing checks, merge conflicts, and review feedback
+- [Set up PR Steward](https://code.claude.com/docs/en/pr-steward-setup.md): Turn on PR Steward for your Claude organization: require reviews, add a repository, set spend limits, and choose when it starts and for which authors
+- [Work with PR Steward on a pull request](https://code.claude.com/docs/en/pr-steward-pull-requests.md): See what PR Steward adds to your GitHub pull request, give it instructions, start or stop it with a comment or a label, and limit what it does for you
+- [What PR Steward can access](https://code.claude.com/docs/en/pr-steward-security.md): Check which GitHub identity, permissions, and repositories PR Steward uses, where its sessions run, and what limits approvals and merges
+- [Troubleshoot PR Steward](https://code.claude.com/docs/en/pr-steward-troubleshooting.md): Fix a PR Steward that didn't start, stopped, or paused on a GitHub pull request, and resolve the messages that an Owner sees while setting it up
+
+##### Claude Approvals
+
+- [Claude Approvals](https://code.claude.com/docs/en/approvals.md): Set how many people a path in your GitHub repository needs, and where Claude may approve, with a policy file and a pull request check
+- [Set up Claude Approvals](https://code.claude.com/docs/en/approvals-setup.md): Turn on Claude Approvals in a GitHub repository: start in observe mode, enforce the policy, require the check, limit what it spends, and turn it off
+- [Work with Claude Approvals on a pull request](https://code.claude.com/docs/en/approvals-pull-requests.md): Find what a Claude Approvals check title means and what to do next, use the comment commands, and handle pull requests from Claude and from forks
+- [Claude Approvals and your GitHub rules](https://code.claude.com/docs/en/approvals-github-rules.md): See how the Claude Approvals check works with required reviews, CODEOWNERS, and merge queues, what can merge with no person, and who can change a policy
+- [Claude Approvals policy file reference](https://code.claude.com/docs/en/approvals-policy.md): Reference for the Claude Approvals policy file, `.claude/approvals.yml`: its keys, how rules combine, how approvals count, and an example policy.
+- [Claude Approvals classifiers](https://code.claude.com/docs/en/approvals-classifiers.md): Let a Claude Approvals rule depend on Code Review's answer or on a question you define. Add a classifier, read its answer, and limit what a run costs.
+- [Troubleshoot Claude Approvals](https://code.claude.com/docs/en/approvals-troubleshooting.md): Fix a Claude Approvals check that didn't appear or doesn't pass, a policy file that Approvals refuses, and a classifier that gives no answer
+
+##### /ship and /steward
+
+- [Get a pull request ready with /ship and /steward](https://code.claude.com/docs/en/ship-command.md): Run `/ship` to open a GitHub pull request, get a review, and have Claude work on feedback and failing checks, or `/steward` to skip the review on an open one.
+- [Troubleshoot /ship and /steward](https://code.claude.com/docs/en/ship-command-troubleshooting.md): Look up a message or a symptom from `/ship` or `/steward`: a missing command, nothing committed or pushed, a watch that didn't start, or one that stopped.
+
+##### On-demand reviews
+
+- [Review locally with /code-review](https://code.claude.com/docs/en/code-review-local.md): Run `/code-review` in a Claude Code session to find bugs in your branch's changes, point the review at a pull request or path, and have Claude apply the fixes.
+- [Find bugs with ultrareview](https://code.claude.com/docs/en/ultrareview.md): Run a deep, multi-agent code review in the cloud with /code-review ultra to find and verify bugs before you merge.
 
 ##### Security scans
 
@@ -190,8 +218,8 @@
 
 #### Reference
 
-- [Plugin manifest reference](https://code.claude.com/docs/en/plugins/manifest-reference.md): Complete reference for plugin.json: fields with types and defaults, accepted path forms, and the userConfig and environment variable schemas.
-- [Marketplace reference](https://code.claude.com/docs/en/plugins/marketplace-reference.md): Complete reference for marketplace.json fields, plugin entries, and the plugin and marketplace source objects, with where each is valid.
+- [Plugin manifest reference](https://code.claude.com/docs/en/plugins/manifest-reference.md): Reference for plugin.json: fields with types and defaults, accepted path forms, and the userConfig and environment variable schemas.
+- [Marketplace reference](https://code.claude.com/docs/en/plugins/marketplace-reference.md): Reference for marketplace.json fields, plugin entries, and the plugin and marketplace source objects, with where each is valid.
 - [Plugin commands reference](https://code.claude.com/docs/en/plugins/cli-reference.md): Reference for the claude plugin shell commands, /plugin and /reload-plugins in a session, and the flags that load a plugin for one session.
 
 ## Administration
@@ -266,7 +294,7 @@
 #### Settings
 
 - [Settings files and precedence](https://code.claude.com/docs/en/settings.md): Change Claude Code settings, pick the scope a key belongs in, verify the change, and learn which value Claude Code uses when a key is set in several places.
-- [All settings](https://code.claude.com/docs/en/settings-reference.md): Complete reference for every Claude Code settings.json key: where each one goes, its type and default, and a paste-ready example, with an index of every key.
+- [All settings](https://code.claude.com/docs/en/settings-reference.md): Reference for Claude Code settings.json keys: where each one goes, its type and default, and a paste-ready example, with an index of keys.
 - [Example settings files](https://code.claude.com/docs/en/settings-example.md): Realistic settings.json files for a developer, a team, and an organization: copy one, keep the keys you want, and change the values.
 
 #### Permissions and sandboxing
@@ -288,7 +316,7 @@
 - [Deploy self-hosted environments to production](https://code.claude.com/docs/en/self-hosted-environments-deploy.md): Run self-hosted runners in production: security hardening, network egress control, git credentials, Kubernetes and Compose recipes, and troubleshooting.
 - [Customize sessions in self-hosted environments](https://code.claude.com/docs/en/self-hosted-environments-configuration.md): Customize self-hosted environment sessions with wrapper scripts for per-session credentials, lifecycle hooks, and on-demand runner spawning.
 - [Test self-hosted environments end to end](https://code.claude.com/docs/en/self-hosted-environments-testing.md): Verify a self-hosted runner image from CI: dispatch a session with the CLI, read Claude's replies through a Stop hook, and script the full loop.
-- [Self-hosted environments reference](https://code.claude.com/docs/en/self-hosted-environments-reference.md): Complete reference for the self-hosted runner and orchestrator: CLI flags, environment variables, and Prometheus metrics.
+- [Self-hosted environments reference](https://code.claude.com/docs/en/self-hosted-environments-reference.md): Reference for the self-hosted runner and orchestrator: CLI flags, environment variables, and Prometheus metrics.
 - [Verify session identity in self-hosted environments](https://code.claude.com/docs/en/self-hosted-environments-identity.md): Verify the CLAUDE_CODE_SESSION_ACCESS_TOKEN JWT so services on your network can trust requests from sessions in your self-hosted environment.
 
 #### Model and responses
@@ -314,11 +342,11 @@
 
 #### Reference
 
-- [CLI reference](https://code.claude.com/docs/en/cli-reference.md): Complete reference for Claude Code command-line interface, including commands and flags.
-- [Commands](https://code.claude.com/docs/en/commands.md): Complete reference for commands available in Claude Code, including built-in commands and bundled skills.
+- [CLI reference](https://code.claude.com/docs/en/cli-reference.md): Reference for the Claude Code command-line interface, including commands and flags.
+- [Commands](https://code.claude.com/docs/en/commands.md): Reference for commands available in Claude Code, including built-in commands and bundled skills.
 - [Environment variables](https://code.claude.com/docs/en/env-vars.md): Reference for environment variables that control Claude Code behavior.
-- [Tools reference](https://code.claude.com/docs/en/tools-reference.md): Complete reference for the tools Claude Code can use, including permission requirements and per-tool behavior.
-- [Interactive mode](https://code.claude.com/docs/en/interactive-mode.md): Complete reference for keyboard shortcuts, input modes, and interactive features in Claude Code sessions.
+- [Tools reference](https://code.claude.com/docs/en/tools-reference.md): Reference for the tools Claude Code can use, including permission requirements and per-tool behavior.
+- [Interactive mode](https://code.claude.com/docs/en/interactive-mode.md): Reference for keyboard shortcuts, input modes, and interactive features in Claude Code sessions.
 - [Checkpointing](https://code.claude.com/docs/en/checkpointing.md): Track, rewind, and summarize Claude's edits and conversation to manage session state.
 - [Hooks reference](https://code.claude.com/docs/en/hooks.md): Reference for Claude Code hook events, configuration schema, JSON input/output formats, exit codes, async hooks, HTTP hooks, prompt hooks, and MCP tool hooks.
 - [Channels reference](https://code.claude.com/docs/en/channels-reference.md): Build an MCP server that pushes webhooks, alerts, and chat messages into a Claude Code session. Reference for the channel contract: capability declaration, notification events, reply tools, sender gating, and permission relay.

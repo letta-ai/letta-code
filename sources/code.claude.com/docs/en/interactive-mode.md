@@ -4,7 +4,7 @@
 
 # Interactive mode
 
-> Complete reference for keyboard shortcuts, input modes, and interactive features in Claude Code sessions.
+> Reference for keyboard shortcuts, input modes, and interactive features in Claude Code sessions.
 
 ## Keyboard shortcuts
 
@@ -687,7 +687,7 @@ Claude answers a side question from what's already in the conversation: your mes
 
 In the [VS Code extension](https://code.claude.com/docs/en/vs-code.md#use-the-prompt-box)'s chat panel, `/btw` opens a panel rather than the overlay this section describes, and you ask follow-up questions right in the panel. The panel's thread survives window reloads, on the retention schedule that page describes. You need the extension at v2.1.227 or later. Earlier extension versions don't offer `/btw`.
 
-* **Available while Claude is working**: you can run `/btw` even while Claude is processing a response. The side question runs independently and doesn't interrupt the main turn. It sees everything in the conversation so far, except the reply Claude is still writing.
+* **Available while Claude is working**: you can run `/btw` while Claude is processing a response. The side question runs independently and doesn't interrupt the main turn. It sees everything in the conversation so far, except the reply Claude is still writing.
 * **No tool access**: side questions answer only from what is already in context. Claude can't read files, run commands, or search when answering a side question. If Claude writes out tool calls as text anyway, the answer ends with a note that nothing was executed.
 * **Single response**: there are no follow-up turns in the overlay. To continue the thread, ask another `/btw` question. To continue with full tool access in a local session, press `f` to fork this question and answer into a [background subagent](https://code.claude.com/docs/en/sub-agents.md#fork-the-current-conversation).
 * **Low cost**: while the conversation's [prompt cache](https://code.claude.com/docs/en/prompt-caching.md) is warm, a side question costs little beyond the answer itself.

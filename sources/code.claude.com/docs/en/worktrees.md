@@ -145,7 +145,7 @@ A subagent in its own worktree takes the instruction files it [starts with](http
 
 Claude Code runs a periodic sweep that removes worktrees that Claude created for subagents and [background sessions](https://code.claude.com/docs/en/agent-view.md#how-file-edits-are-isolated) once they are older than your [`cleanupPeriodDays`](https://code.claude.com/docs/en/settings-reference#cleanupperioddays) setting, following the [retention sweep rules](https://code.claude.com/docs/en/claude-directory.md#cleaned-up-automatically).
 
-When you [background](https://code.claude.com/docs/en/agent-view.md#send-the-session-to-the-background) a `--worktree` session, its worktree becomes a background-session worktree that the sweep can remove. The sweep leaves a worktree in place in these cases:
+When you [background](https://code.claude.com/docs/en/agent-view.md#send-the-session-to-the-background) a `--worktree` session, its worktree becomes a background-session worktree that the sweep can remove. The sweep leaves a worktree in place in cases such as these:
 
 * The worktree still holds work: changed or untracked files, or unpushed commits.
 * A checked-out submodule in the worktree holds changed or untracked files, or Claude Code can't inspect the worktree's submodules. This check requires Claude Code v2.1.274 or later.
@@ -257,7 +257,7 @@ Configure a [`WorktreeCreate` hook](https://code.claude.com/docs/en/hooks#worktr
 A worktree gets its own files and branch, but it shares the following with the main checkout:
 
 * **The repository's `.git` directory**: git commands in a worktree write to the main repository's shared `.git` directory. With the [sandbox](https://code.claude.com/docs/en/sandboxing.md#filesystem-isolation) enabled, commands such as `git commit` work in a session at the worktree's root, which is where `--worktree` starts one. By default, they [fail with an `index.lock` error if you run `claude` in a subdirectory of the worktree](https://code.claude.com/docs/en/sandboxing#git-index-lock).
-* **Plugins**: plugins installed at [project scope](https://code.claude.com/docs/en/plugins/loading.md#find-where-a-plugin-is-enabled) from the main checkout also load in worktrees of the same repository, so you don't need to reinstall them per worktree.
+* **Plugins**: plugins installed at [project scope](https://code.claude.com/docs/en/plugins/loading.md#find-where-a-plugin-is-enabled) from the main checkout also load in worktrees of the same repository.
 * **Permission approvals**: choosing "Yes, and don't ask again" for a Bash command in a worktree session saves the rule to the main checkout's `.claude/settings.local.json`. The rule applies in the main checkout and in every other worktree of the repository, and it survives the worktree's removal.
 
   On Windows and in the other cases where Claude Code [doesn't use the repository root](https://code.claude.com/docs/en/settings.md#where-claude-code-looks-for-each-file), the rule stays with that worktree. See [where approvals are saved](https://code.claude.com/docs/en/permissions.md#permission-system).

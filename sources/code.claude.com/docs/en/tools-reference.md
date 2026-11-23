@@ -4,7 +4,7 @@
 
 # Tools reference
 
-> Complete reference for the tools Claude Code can use, including permission requirements and per-tool behavior.
+> Reference for the tools Claude Code can use, including permission requirements and per-tool behavior.
 
 Claude Code has access to a set of built-in tools that help it understand and modify your codebase. The tool names are the exact strings you use in [permission rules](https://code.claude.com/docs/en/permissions.md#tool-specific-permission-rules), [subagent tool lists](https://code.claude.com/docs/en/sub-agents.md), and [hook matchers](https://code.claude.com/docs/en/hooks.md).
 

@@ -2672,7 +2672,7 @@ Before Python SDK v0.2.169, agents that your subagents started also ran in the b
     "resolvedModel": str | None,  # Model in use at the backgrounding transition
     "modelsUsed": list[str] | None,  # Models used before backgrounding, in order, with consecutive repeats collapsed
     "prompt": str,  # The prompt the agent runs
-    "outputFile": str,  # File path where the agent's output is written
+    "outputFile": str,  # Path to the task output file
     "canReadOutputFile": bool | None,  # Whether the output file can be read directly
 }
 ```
