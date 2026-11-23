@@ -2,23 +2,18 @@ import type {
   AssistantMessage,
   AssistantMessageEvent,
   Context,
-  Message,
   Model,
   SimpleStreamOptions,
-  Tool,
-  TSchema,
 } from "@earendil-works/pi-ai";
-import { isContextOverflow, Type } from "@earendil-works/pi-ai";
+import { isContextOverflow } from "@earendil-works/pi-ai";
 
-import type { LocalCompactionStats } from "@/backend/local/compaction";
 import {
   emptyLocalUsage,
   type LocalAssistantMessage,
+  type LocalCompactionStats,
   type LocalMessage,
 } from "@/backend/local/local-message";
-import { removeOrphanLocalToolResults } from "@/backend/local/local-message-projection";
 import { resolveAvailableLocalModelForTurn } from "@/backend/local/local-model-config";
-import type { ClientTool } from "@/tools/manager";
 import { debugLog } from "@/utils/debug";
 import { isRecord } from "@/utils/type-guards";
 import { isContextWindowOverflowError } from "./context-window-overflow";
@@ -32,10 +27,12 @@ import {
   elideImagePayloadsForProviderRetry,
   isOversizedPayloadTransportFailure,
 } from "./pi-image-elision";
+import { toPiMessages, toPiTools } from "./pi-messages";
 import {
   applyPiEnvOverrides,
   reasoningForSettings,
   resolvePiModelForAgent,
+  samplingOptionsForSettings,
 } from "./pi-model-factory";
 import { LocalPiModelsRuntime } from "./pi-models-runtime";
 import { resolvePiRequestHeaders } from "./pi-request-headers";
@@ -88,12 +85,6 @@ export interface PiStreamAdapterOptions {
   stream?: PiStreamFunction;
   abortSignal?: AbortSignal;
   localProviderAuthStorageDir?: string;
-  /**
-   * Per-backend pi-ai Models runtime used for model resolution and stream
-   * dispatch. A dedicated instance is created when not provided; the local
-   * backend passes its own so /model listing and turn execution share one
-   * provider registry.
-   */
   modelsRuntime?: LocalPiModelsRuntime;
   onContextWindowOverflow?: (
     input: ProviderTurnInput,
@@ -149,135 +140,6 @@ async function sleepWithAbort(
     };
     abortSignal?.addEventListener("abort", onAbort, { once: true });
   });
-}
-
-function isClientTool(value: unknown): value is ClientTool {
-  return isRecord(value) && typeof value.name === "string";
-}
-
-function toPiTools(clientTools: unknown[]): Tool[] | undefined {
-  const tools: Tool[] = [];
-  for (const value of clientTools) {
-    if (!isClientTool(value)) continue;
-    const schema = isRecord(value.parameters)
-      ? (value.parameters as unknown as TSchema)
-      : Type.Object({});
-    tools.push({
-      name: value.name,
-      description: value.description ?? "",
-      parameters: schema,
-    });
-  }
-  return tools.length > 0 ? tools : undefined;
-}
-
-const EMPTY_TOOL_RESULT_PLACEHOLDER = "No result provided";
-
-type LocalUserContent = Extract<LocalMessage, { role: "user" }>["content"];
-type LocalAssistantContent = Extract<
-  LocalMessage,
-  { role: "assistant" }
->["content"];
-type LocalToolResultContent = Extract<
-  LocalMessage,
-  { role: "toolResult" }
->["content"];
-
-function isEmptyTextBlock(block: { type: string; text?: unknown }): boolean {
-  return (
-    block.type === "text" &&
-    typeof block.text === "string" &&
-    block.text.trim().length === 0
-  );
-}
-
-function dropEmptyTextBlocks<T extends { type: string; text?: unknown }>(
-  content: T[],
-): T[] {
-  return content.filter((block) => !isEmptyTextBlock(block));
-}
-
-function normalizeUserContent(
-  content: LocalUserContent,
-): LocalUserContent | undefined {
-  if (typeof content === "string") {
-    return content.trim().length > 0 ? content : undefined;
-  }
-  const normalized = dropEmptyTextBlocks(content);
-  return normalized.length > 0 ? normalized : undefined;
-}
-
-function normalizeAssistantContent(
-  content: LocalAssistantContent,
-): LocalAssistantContent | undefined {
-  const normalized = dropEmptyTextBlocks(content);
-  return normalized.length > 0 ? normalized : undefined;
-}
-
-function normalizeToolResultContent(
-  content: LocalToolResultContent,
-): LocalToolResultContent {
-  const normalized = dropEmptyTextBlocks(content);
-  return normalized.length > 0
-    ? normalized
-    : [{ type: "text", text: EMPTY_TOOL_RESULT_PLACEHOLDER }];
-}
-
-function toPiMessage(message: LocalMessage): Message | undefined {
-  if (message.role === "user") {
-    const content = normalizeUserContent(message.content);
-    if (!content) return undefined;
-    return {
-      role: "user",
-      content,
-      timestamp: message.timestamp,
-    } satisfies Message;
-  }
-  if (message.role === "toolResult") {
-    return {
-      role: "toolResult",
-      toolCallId: message.toolCallId,
-      toolName: message.toolName,
-      content: normalizeToolResultContent(message.content),
-      details: message.details,
-      isError: message.isError,
-      timestamp: message.timestamp,
-    } satisfies Message;
-  }
-  const content = normalizeAssistantContent(message.content);
-  if (!content) return undefined;
-  return {
-    role: "assistant",
-    content,
-    api: message.api,
-    provider: message.provider,
-    model: message.model,
-    ...(message.responseModel ? { responseModel: message.responseModel } : {}),
-    ...(message.responseId ? { responseId: message.responseId } : {}),
-    ...(message.diagnostics ? { diagnostics: message.diagnostics } : {}),
-    usage: message.usage,
-    stopReason: message.stopReason,
-    ...(message.errorMessage ? { errorMessage: message.errorMessage } : {}),
-    timestamp: message.timestamp,
-  } satisfies Message;
-}
-
-function toPiMessages(messages: readonly LocalMessage[]): Message[] {
-  const providerSafeMessages = removeOrphanLocalToolResults(messages).messages;
-  let normalized = providerSafeMessages.flatMap((message) => {
-    const piMessage = toPiMessage(message);
-    return piMessage ? [piMessage] : [];
-  });
-
-  // Strip trailing assistant messages after normalization. Providers like
-  // Anthropic require the conversation to end with a user or tool-result
-  // message, and dropping empty text-only user messages can expose a trailing
-  // partial assistant response from a failed turn.
-  while (normalized.length > 0 && normalized.at(-1)?.role === "assistant") {
-    normalized = normalized.slice(0, -1);
-  }
-
-  return normalized;
 }
 
 function stripOpenAIResponsesReplayItemIds(
@@ -349,15 +211,6 @@ function withAnthropicOutputEffort(
   };
 }
 
-/**
- * Reject a turn whose irreducible prompt cannot fit the serving context window.
- *
- * Local engines truncate oversized prompts silently rather than erroring, so
- * the failure mode is an agent that answers with its memory and persona
- * quietly missing. Compaction cannot help here — the system prompt and tool
- * definitions are not history — so surface it as an actionable error instead of
- * shipping a request we know will be clipped.
- */
 function assertPromptFloorFitsContextWindow(
   input: ProviderTurnInput,
   model: { id: string; provider?: string; contextWindow?: number },
@@ -412,15 +265,6 @@ function anthropicEffortForSettings(
   );
 }
 
-function maxTokensForSettings(
-  modelSettings: Record<string, unknown>,
-): number | undefined {
-  const maxTokens = modelSettings.max_tokens;
-  return typeof maxTokens === "number" && Number.isFinite(maxTokens)
-    ? maxTokens
-    : undefined;
-}
-
 function serviceTierForSettings(
   model: Model<string>,
   modelSettings: Record<string, unknown>,
@@ -442,6 +286,9 @@ function toLocalAssistantMessage(
     model: message.model,
     ...(message.responseModel ? { responseModel: message.responseModel } : {}),
     ...(message.responseId ? { responseId: message.responseId } : {}),
+    ...(message.providerThinkingLevel
+      ? { providerThinkingLevel: message.providerThinkingLevel }
+      : {}),
     ...(message.diagnostics ? { diagnostics: message.diagnostics } : {}),
     usage: message.usage ?? emptyLocalUsage(),
     stopReason: message.stopReason,
@@ -499,8 +346,6 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       new LocalPiModelsRuntime({
         storageDir: options.localProviderAuthStorageDir,
       });
-    // Stream dispatch goes through the pi-ai Models runtime so the provider
-    // that published the model owns the request; no global compat dispatch.
     this.runStream =
       options.stream ??
       ((model, context, streamOptions) =>
@@ -540,9 +385,6 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
     const contextTokens = estimateProviderContextTokens(input);
     if (contextTokens === undefined) return null;
 
-    // Resolve through the same per-backend Models runtime as streamOnce. The
-    // provider-published Model remains the source of truth for contextWindow;
-    // Letta owns only the harness policy deciding when to compact around it.
     const localModel = await resolveAvailableLocalModelForTurn({
       model: input.agent.model,
       modelSettings: input.agent.model_settings,
@@ -613,24 +455,18 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       provider: resolved.model.provider,
       configuredHeaders: resolved.headers,
       conversationId: input.conversationId,
+      requestKind: "turn",
     });
     const options: SimpleStreamOptions & Record<string, unknown> = {
       ...resolved.providerOptions,
       ...(resolved.apiKey ? { apiKey: resolved.apiKey } : {}),
       ...(resolved.timeout !== false ? { timeoutMs: resolved.timeout } : {}),
-      ...(headers ? { headers } : {}),
+      headers,
       ...(this.abortSignal ? { signal: this.abortSignal } : {}),
       maxRetries: 0,
       sessionId: input.conversationId,
-      // streamSimple drops provider-specific named options; samplingParams is
-      // pi-ai's supported pass-through for explicit provider request overrides.
-      ...(isRecord(input.agent.model_settings.sampling_params)
-        ? { samplingParams: input.agent.model_settings.sampling_params }
-        : {}),
+      ...samplingOptionsForSettings(input.agent.model_settings),
       ...(reasoning ? { reasoning } : {}),
-      ...(maxTokensForSettings(input.agent.model_settings)
-        ? { maxTokens: maxTokensForSettings(input.agent.model_settings) }
-        : {}),
       ...(serviceTierForSettings(resolved.model, input.agent.model_settings)
         ? {
             serviceTier: serviceTierForSettings(
@@ -648,21 +484,39 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           }
         : {}),
     };
+    const verbosity = input.agent.model_settings.verbosity;
+    if (
+      (resolved.model.api === "openai-responses" ||
+        resolved.model.api === "openai-codex-responses") &&
+      (verbosity === "low" || verbosity === "medium" || verbosity === "high")
+    ) {
+      const existing = options.onPayload;
+      options.onPayload = async (payload, model) => {
+        const next = (await existing?.(payload, model)) ?? payload;
+        if (!isRecord(next)) return next;
+        return {
+          ...next,
+          text: { ...(isRecord(next.text) ? next.text : {}), verbosity },
+        };
+      };
+    }
     if (resolved.model.api === "openai-responses") {
-      // pi-ai replays OpenAI Responses output items from transcript history.
-      // Those upstream item IDs (rs_*, msg_*, fc_*) are not retrievable when the
-      // request uses store:false, so remove them and replay the full item bodies.
       options.onPayload = withOpenAIResponsesReplayIdSanitizer(
         options.onPayload,
       );
     }
-    if (resolved.model.api === "anthropic-messages") {
+    if (
+      resolved.model.api === "anthropic-messages" &&
+      (
+        resolved.model.compat as
+          | { supportsMidConvoEffort?: boolean }
+          | undefined
+      )?.supportsMidConvoEffort !== true
+    ) {
       if (
         resolved.model.id.includes("claude-fable-5") &&
         anthropicEffortForSettings(input.agent.model_settings) === "max"
       ) {
-        // pi-ai's public ThinkingLevel type currently tops out at xhigh, but
-        // Anthropic accepts Fable's max effort through output_config.effort.
         options.onPayload = withAnthropicOutputEffort(options.onPayload, "max");
       }
     }
@@ -723,7 +577,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           finalLocalMessage = toLocalAssistantMessage(part.message, input);
           yield providerLocalMessage(finalLocalMessage);
         }
-        yield providerStreamPart(part);
+        yield providerStreamPart(part, resolved.model);
       }
 
       if (streamError) throw streamError;
@@ -754,9 +608,6 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           usageContextTokens ??
           estimateProviderContextTokens({
             ...input,
-            // Provider usage includes the completed assistant response. Match
-            // that scope when we fall back to estimation; using the original
-            // pre-response input here would postpone compaction by one turn.
             uiMessages: [
               ...input.uiMessages,
               finalLocalMessage ?? toLocalAssistantMessage(finalMessage, input),
@@ -800,10 +651,6 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
 
     while (true) {
       if (!preflightCompactionChecked) {
-        // Check once per turn. If compaction still cannot make the request fit,
-        // the provider overflow path remains the bounded recovery mechanism.
-        // Reclassifying the eventual output limit itself as overflow would
-        // recreate the behavior deliberately removed in #3355.
         preflightCompactionChecked = true;
         const compaction = await this.compactBeforeProviderCall(activeInput);
         if (compaction) {
@@ -847,10 +694,6 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
 
         const retryableTransportError = isRetryableLocalProviderError(error);
 
-        // Oversized-payload classification: a retryable transport failure on a
-        // payload we can measure as oversized will keep failing — compact
-        // instead of retrying the same bytes. See comment on
-        // isOversizedPayloadTransportFailure.
         if (
           retryableTransportError &&
           !emittedModelOutput &&
@@ -874,11 +717,6 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
             continue;
           }
 
-          // Unlike the provider-reported overflow branch above, the original
-          // error here is retryable. If compaction itself fails (for example
-          // the summarizer model call errors), fall back to the normal
-          // transient retry path instead of replacing a retryable transport
-          // error with a non-retryable compaction error.
           let compaction: Awaited<
             ReturnType<NonNullable<typeof this.onContextWindowOverflow>>
           > = null;
@@ -898,10 +736,6 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           }
         }
 
-        // Adaptive image elision: a fixed byte limit cannot capture a user's
-        // current uplink. If a retryable transport error repeats before any
-        // model output, shed provider-context-only image bytes even when the
-        // request is below the configured classifier threshold.
         if (
           retryableTransportError &&
           !emittedModelOutput &&

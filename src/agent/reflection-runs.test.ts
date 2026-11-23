@@ -117,7 +117,7 @@ describe("manual reflection ownership", () => {
     },
   );
 
-  test.each([403, 404, 500])(
+  test.each([403, 500])(
     "ownership lookup %s fails closed",
     async (configStatus) => {
       const { backend, requests } = fixture(202, {}, {}, configStatus);
@@ -127,6 +127,14 @@ describe("manual reflection ownership", () => {
       expect(requests.map((request) => request.method)).toEqual(["GET"]);
     },
   );
+
+  test("a 404 ownership lookup falls through to the local reflection agent (#4849)", async () => {
+    const { backend, requests } = fixture(202, {}, {}, 404);
+    expect(
+      await requestCloudReflectionRun({ agentId: "agent-404" }, "", backend),
+    ).toBeNull();
+    expect(requests.map((request) => request.method)).toEqual(["GET"]);
+  });
 });
 
 describe("/dream admission command", () => {

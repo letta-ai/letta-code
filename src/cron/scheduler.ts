@@ -1,8 +1,3 @@
-/**
- * In-process cron scheduler: claims a lease, handles due or missed occurrences
- * every 60s, and garbage-collects hourly. Stop releases the lease and timers.
- */
-
 import { isLocalAgentId } from "@/agent/agent-id";
 import { getBackend } from "@/backend";
 import type { ConversationCreateBody } from "@/backend/backend";
@@ -44,7 +39,7 @@ import {
   getIntendedCronOccurrence,
 } from "./prompt";
 import { safeAppendCronRunLogForTask } from "./run-log";
-import { isManagedCloudSandbox } from "./runner";
+import { getLocalCronExecutionError } from "./runner";
 import { SCHEDULE_ORIGIN_TAG } from "./scheduled-task-prompt";
 
 export {
@@ -53,8 +48,6 @@ export {
   formatTimezoneQualifiedIso,
   getIntendedCronOccurrence,
 } from "./prompt";
-
-// ── Types ───────────────────────────────────────────────────────────
 
 type ProcessQueuedTurn = (
   queuedTurn: IncomingMessage,
@@ -69,17 +62,11 @@ interface SchedulerState {
   socket: ListenerTransport;
   opts: StartListenerOptions;
   processQueuedTurn: ProcessQueuedTurn;
-  /** Last mtime of crons.json — skip re-reads when unchanged. */
   lastMtime: number;
-  /** Cached active tasks (refreshed on file change). */
   cachedTasks: CronTask[];
-  /** Latest occurrence claimed per task, including pending jitter fires. */
   firedOccurrences: Map<string, number>;
-  /** Pending jitter-delayed timers — cleared on stop/lease loss. */
   pendingTimers: Set<NodeJS.Timeout>;
-  /** Last live `scheduler_owner` token, used to recognize a sibling tombstone. */
   tombstoneToken: string | undefined;
-  /** Scoped-only heartbeat that restores the mixed-version tombstone. */
   tombstoneInterval: NodeJS.Timeout | null;
 }
 
@@ -103,26 +90,18 @@ export function taskMatchesCronSchedulerScope(
     : !isLocalAgentId(task.agent_id);
 }
 
-/**
- * Listener context stored independently of the scheduler lease.
- * runCronTaskNow ("Send now") only needs an active listener — it doesn't
- * need the tick loop or the lease. This lets it work even when another
- * process holds the scheduler lease (e.g. desktop app vs local dev server).
- */
 let listenerFireContext: {
   socket: ListenerTransport;
   opts: StartListenerOptions;
   processQueuedTurn: ProcessQueuedTurn;
 } | null = null;
 
-// ── Constants ───────────────────────────────────────────────────────
-
 const TICK_INTERVAL_MS = 60_000;
-const GC_INTERVAL_MS = 60 * 60_000; // 1 hour
+const GC_INTERVAL_MS = 60 * 60_000;
 const TOMBSTONE_HEARTBEAT_MS = 1_000;
-const LEASE_RETRY_MS = 30_000; // 30 seconds between lease claim retries
+const LEASE_RETRY_MS = 30_000;
 const MAX_LEASE_RETRIES = 3;
-const SLOW_LEASE_RETRY_MS = 5 * 60_000; // after fast retries, keep trying quietly
+const SLOW_LEASE_RETRY_MS = 5 * 60_000;
 
 let slowLeaseRetryTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -131,8 +110,6 @@ function clearSlowLeaseRetry(): void {
   slowLeaseRetryTimer = null;
 }
 const NEW_CONVERSATION_TARGET = "new";
-
-// ── Helpers ─────────────────────────────────────────────────────────
 
 function logScheduler(opts: StartListenerOptions, message: string): void {
   if (opts.onLog) {
@@ -224,8 +201,6 @@ function emitCronsUpdated(
   );
 }
 
-// ── Core tick logic ─────────────────────────────────────────────────
-
 function refreshTaskCache(state: SchedulerState): void {
   const mtime = getCronFileMtime();
   if (mtime !== state.lastMtime) {
@@ -265,7 +240,6 @@ function setLastRunOutcome(
 }
 
 export function shouldFireTask(task: CronTask, now: Date): boolean {
-  // One-shot: check if scheduled_for is now or past (jitter applied to scheduled time)
   if (!task.recurring && task.scheduled_for) {
     const scheduledMs =
       new Date(task.scheduled_for).getTime() + task.jitter_offset_ms;
@@ -293,11 +267,6 @@ function hasReportedInvalidCron(task: CronTask): boolean {
   );
 }
 
-/**
- * Persist a visible failure for legacy recurring tasks that predate current
- * cron validation. Keep the task active so the user can inspect and replace
- * it instead of silently dropping it or garbage-collecting its definition.
- */
 export function handleInvalidRecurringTask(task: CronTask, now: Date): boolean {
   if (!task.recurring || isValidCron(task.cron)) return false;
 
@@ -385,15 +354,11 @@ async function fireCronTask(
     return false;
   }
 
-  // Ensure the queue runtime is initialized (getOrCreateConversationRuntime
-  // leaves queueRuntime as null — the listener's scoped helper initializes it).
   const conversationRuntime = ensureConversationQueueRuntime(
     listener,
     rawRuntime,
   );
 
-  // Pause can land while a recurring task waits for jitter or while a new
-  // conversation is being created. Recheck immediately before enqueueing.
   if (trigger === "automatic" && getTask(task.id)?.status !== "active") {
     return false;
   }
@@ -429,8 +394,6 @@ async function fireCronTask(
 
   scheduleQueuePump(conversationRuntime, socket, opts, processQueuedTurn);
 
-  // A manual run records an occurrence but does not consume or reschedule the
-  // automatic occurrence. In particular, a one-off remains active or paused.
   const nowIso = timing.schedulerNow.toISOString();
   recordTaskQueued(task.id, trigger, timing.schedulerNow);
 
@@ -449,10 +412,8 @@ async function fireCronTask(
   return true;
 }
 
-/** Returns true if the task was marked as missed (caller should skip firing). */
 export function handleMissedOneShot(task: CronTask, now: Date): boolean {
   if (task.recurring || !task.scheduled_for) return false;
-  // A one-shot is "missed" if it's been more than 5 minutes past scheduled time
   const scheduledMs = new Date(task.scheduled_for).getTime();
   const missThreshold = 5 * 60_000;
   if (now.getTime() > scheduledMs + missThreshold && task.status === "active") {
@@ -487,7 +448,6 @@ export function handleMissedOneShot(task: CronTask, now: Date): boolean {
   return false;
 }
 
-/** Apply scheduler lifecycle checks shared by the WS and TUI tick loops. */
 export function handleTaskPreflight(task: CronTask, now: Date): boolean {
   if (handleInvalidRecurringTask(task, now) || handleMissedOneShot(task, now)) {
     return true;
@@ -519,11 +479,12 @@ export async function runCronTaskNow(taskId: string): Promise<{
   task?: CronTask;
   error?: string;
 }> {
-  if (isManagedCloudSandbox()) {
+  const executionError = getLocalCronExecutionError();
+  if (executionError) {
     return {
       success: false,
       found: false,
-      error: "Local schedules cannot run in a managed Cloud sandbox",
+      error: executionError,
     };
   }
 
@@ -541,8 +502,6 @@ export async function runCronTaskNow(taskId: string): Promise<{
     };
   }
 
-  // Prefer the full scheduler state, but fall back to the listener context.
-  // "Send now" only needs the active listener — not the tick loop or the lease.
   const ctx = schedulerState ?? listenerFireContext;
   if (!ctx) {
     return {
@@ -587,7 +546,6 @@ function tick(
   opts: StartListenerOptions,
   processQueuedTurn: ProcessQueuedTurn,
 ): void {
-  // Verify we still hold the lease and keep the mixed-version tombstone live.
   if (!holdSchedulerLease(state, opts)) {
     return;
   }
@@ -599,8 +557,6 @@ function tick(
     if (task.status !== "active") continue;
     if (!taskMatchesCronSchedulerScope(task, state.scope)) continue;
 
-    // Older clients could persist expressions that the current cron dialect
-    // rejects. Surface that state once rather than silently never firing.
     const invalidCronWasReported = hasReportedInvalidCron(task);
     const invalidCron = task.recurring && !isValidCron(task.cron);
     if (handleTaskPreflight(task, matchedAt)) {
@@ -616,13 +572,9 @@ function tick(
       if (state.firedOccurrences.get(task.id) === occurrenceMs) continue;
       state.firedOccurrences.set(task.id, occurrenceMs);
 
-      // Apply jitter as a real delay for recurring tasks so that tasks with
-      // different jitter values actually fire at different times.
       const jitterMs = task.recurring ? task.jitter_offset_ms : 0;
       const taskId = task.id;
       const doFire = () => {
-        // Revalidate before firing. Catch lock timeouts so a skipped jitter
-        // fire cannot terminate the listener.
         if (!schedulerState) return;
         try {
           if (
@@ -687,30 +639,16 @@ function tick(
   }
 }
 
-// ── Public API ──────────────────────────────────────────────────────
-
-/**
- * Start the cron scheduler. Should be called when the WS listener connects.
- * No-ops if already running.
- *
- * If the lease claim fails (e.g. another process briefly holds it after a
- * crash/restart), the scheduler will retry up to MAX_LEASE_RETRIES times
- * with LEASE_RETRY_MS between attempts, then every SLOW_LEASE_RETRY_MS until
- * the lease frees. The user is warned that cron tasks won't fire until the
- * scheduler starts.
- */
 export function startScheduler(
   socket: ListenerTransport,
   opts: StartListenerOptions,
   processQueuedTurn: ProcessQueuedTurn,
   _retryCount = 0,
 ): void {
-  if (isManagedCloudSandbox()) {
+  if (getLocalCronExecutionError()) {
     return;
   }
 
-  // Always store the listener context so runCronTaskNow ("Send now") works
-  // even when this process doesn't hold the scheduler lease.
   listenerFireContext = { socket, opts, processQueuedTurn };
 
   if (schedulerState) return;
@@ -720,7 +658,6 @@ export function startScheduler(
   try {
     token = claimSchedulerLease(scope);
   } catch (err) {
-    // Slow retry is already armed: stay quiet until the lease frees.
     if (slowLeaseRetryTimer) return;
     if (_retryCount < MAX_LEASE_RETRIES) {
       logScheduler(
@@ -785,12 +722,7 @@ export function startScheduler(
 
   schedulerState = state;
 
-  // Initial tick after the process is recorded as running so zero-jitter
-  // fires are not dropped by the `if (!schedulerState) return` revalidation.
   tick(state, socket, opts, processQueuedTurn);
-  // tick() calls stopScheduler() when an all-agent lease is already gone.
-  // Do not arm intervals on that detached state or the failed scheduler wakes
-  // forever. Scoped lease loss keeps this process recorded so heartbeat can retry.
   if (schedulerState !== state) {
     return;
   }
@@ -803,7 +735,7 @@ export function startScheduler(
     try {
       const removed = garbageCollect();
       if (removed > 0) {
-        state.lastMtime = 0; // Force cache refresh
+        state.lastMtime = 0;
       }
     } catch (err) {
       logScheduler(
@@ -827,9 +759,6 @@ export function startScheduler(
   }
 }
 
-/**
- * Stop the cron scheduler. Should be called when the WS listener disconnects.
- */
 export function stopScheduler(): void {
   listenerFireContext = null;
   clearSlowLeaseRetry();
@@ -845,16 +774,11 @@ export function stopScheduler(): void {
 
   try {
     releaseSchedulerLease(schedulerState.token, schedulerState.scope);
-  } catch {
-    // Best effort
-  }
+  } catch {}
 
   schedulerState = null;
 }
 
-/**
- * Check if the scheduler is running.
- */
 export function isSchedulerRunning(): boolean {
   return schedulerState !== null;
 }

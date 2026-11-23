@@ -101,10 +101,6 @@ function isReflectionTurn(body: HeadlessTurnBody): boolean {
   return JSON.stringify(body).includes("$TRANSCRIPT_PATH");
 }
 
-/**
- * Deterministic test executor that keeps ordinary turns simple while making a
- * reflection prove it opened the transcript before returning success.
- */
 export class DeterministicReflectionExecutor implements HeadlessTurnExecutor {
   private toolCallSeq = 0;
 

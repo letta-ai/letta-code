@@ -52,14 +52,6 @@ export function buildQueuedUserText(queued: QueuedMessage[]): string {
     .join("\n");
 }
 
-/**
- * Convert a QueueItem (message or task_notification) to the QueuedMessage
- * shape used by the TUI display state and callers of consumeQueuedMessages.
- *
- * In the TUI, MessageQueueItem.content is always a plain string (the display
- * text from the input field). The fallback array-flatten path handles any
- * future case where content arrives as content parts.
- */
 export function toQueuedMsg(
   item: MessageQueueItem | TaskNotificationQueueItem,
 ): QueuedMessage {
@@ -81,16 +73,6 @@ export function toQueuedMsg(
   return { kind: "user", text, queueItemId: item.id };
 }
 
-/**
- * Build merged MessageCreate content from a DequeuedBatch.
- *
- * Produces identical output to buildQueuedContentParts() for equivalent
- * inputs — this is enforced by the golden parity test. The difference is
- * that the input is QueueItem[] (from QueueRuntime) instead of QueuedMessage[].
- *
- * Only message and task_notification items contribute to the content batch;
- * barrier items (approval_result, overlay_action) are skipped.
- */
 export function buildContentFromQueueBatch(
   batch: DequeuedBatch,
 ): MessageCreate["content"] {
@@ -113,9 +95,6 @@ export function buildContentFromQueueBatch(
     );
 
   const merged = mergeQueuedTurnInput(queueInput, {
-    // For string content (common TUI case), apply paste-registry resolution
-    // exactly as buildQueuedContentParts does. For already-normalized content
-    // parts, pass through unchanged.
     normalizeUserContent: (content) =>
       typeof content === "string"
         ? buildMessageContentFromDisplay(content)

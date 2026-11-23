@@ -1,48 +1,26 @@
-/**
- * Utilities for writing tool output overflow to files.
- * When tool outputs exceed truncation limits, the full output is written to disk
- * and a pointer is provided in the truncated output.
- */
-
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { scrubSecretsFromString } from "@/tools/secret-substitution";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 
-/**
- * Configuration options for tool output overflow behavior.
- * Can be controlled via environment variables.
- */
 export const OVERFLOW_CONFIG = {
-  /** Whether to write overflow to files (default: true) */
   ENABLED: process.env.LETTA_TOOL_OVERFLOW_TO_FILE?.toLowerCase() !== "false",
-  /** Whether to use middle-truncation instead of post-truncation (default: true) */
   MIDDLE_TRUNCATE:
     process.env.LETTA_TOOL_MIDDLE_TRUNCATE?.toLowerCase() !== "false",
 } as const;
 
-/**
- * Get the overflow directory for the current project.
- * Pattern: ~/.letta/projects/<project-path>/agent-tools/
- *
- * @param workingDirectory - Current working directory (project root)
- * @returns Absolute path to the overflow directory
- */
 export function getOverflowDirectory(workingDirectory: string): string {
-  const homeDir = os.homedir();
-  const lettaDir = path.join(homeDir, ".letta");
+  const configDir = resolveGlobalConfigDir();
 
-  // Normalize and sanitize the working directory path for use in the file system
   const normalizedPath = path.normalize(workingDirectory);
-  // Remove leading slash and replace path separators with underscores
   const sanitizedPath = normalizedPath
-    .replace(/^[/\\]/, "") // Remove leading slash
-    .replace(/[/\\:]/g, "_") // Replace slashes and colons
-    .replace(/\s+/g, "_"); // Replace spaces with underscores
+    .replace(/^[/\\]/, "")
+    .replace(/[/\\:]/g, "_")
+    .replace(/\s+/g, "_");
 
   const overflowDir = path.join(
-    lettaDir,
+    configDir,
     "projects",
     sanitizedPath,
     "agent-tools",
@@ -51,12 +29,6 @@ export function getOverflowDirectory(workingDirectory: string): string {
   return overflowDir;
 }
 
-/**
- * Ensure the overflow directory exists, creating it if necessary.
- *
- * @param workingDirectory - Current working directory (project root)
- * @returns Absolute path to the overflow directory
- */
 export function ensureOverflowDirectory(workingDirectory: string): string {
   const overflowDir = getOverflowDirectory(workingDirectory);
 
@@ -67,18 +39,6 @@ export function ensureOverflowDirectory(workingDirectory: string): string {
   return overflowDir;
 }
 
-/**
- * Write tool output to an overflow file.
- *
- * Secrets available to the current tool invocation are scrubbed before writing:
- * overflow captures tool output before the model-facing scrub in the tool manager
- * runs, so without this the file would persist raw secret values.
- *
- * @param content - Full content to write
- * @param workingDirectory - Current working directory (project root)
- * @param toolName - Name of the tool (optional, for filename)
- * @returns Absolute path to the written file
- */
 export function writeOverflowFile(
   content: string,
   workingDirectory: string,
@@ -87,7 +47,6 @@ export function writeOverflowFile(
 ): string {
   const overflowDir = ensureOverflowDirectory(workingDirectory);
 
-  // Generate a unique filename
   const uuid = randomUUID();
   const filename = toolName
     ? `${toolName.toLowerCase()}-${uuid}.txt`
@@ -100,14 +59,6 @@ export function writeOverflowFile(
   return filePath;
 }
 
-/**
- * Clean up old overflow files to prevent directory bloat.
- * Removes files older than the specified age.
- *
- * @param workingDirectory - Current working directory (project root)
- * @param maxAgeMs - Maximum age in milliseconds (default: 24 hours)
- * @returns Number of files deleted
- */
 export function cleanupOldOverflowFiles(
   workingDirectory: string,
   maxAgeMs: number = 24 * 60 * 60 * 1000,
@@ -122,7 +73,6 @@ export function cleanupOldOverflowFiles(
   try {
     files = fs.readdirSync(overflowDir);
   } catch {
-    // Directory may have been deleted or become inaccessible
     return 0;
   }
 
@@ -134,7 +84,6 @@ export function cleanupOldOverflowFiles(
     try {
       const stats = fs.statSync(filePath);
 
-      // Skip directories (shouldn't exist, but be safe)
       if (stats.isDirectory()) {
         continue;
       }
@@ -143,20 +92,12 @@ export function cleanupOldOverflowFiles(
         fs.unlinkSync(filePath);
         deletedCount++;
       }
-    } catch {
-      // File may have been deleted, or permission error - skip it
-    }
+    } catch {}
   }
 
   return deletedCount;
 }
 
-/**
- * Get overflow file statistics for debugging/monitoring.
- *
- * @param workingDirectory - Current working directory (project root)
- * @returns Statistics object
- */
 export function getOverflowStats(workingDirectory: string): {
   directory: string;
   exists: boolean;

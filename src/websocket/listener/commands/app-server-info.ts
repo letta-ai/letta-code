@@ -39,9 +39,10 @@ export function buildAppServerInfoResponse(
       subagent_message: true,
       runtime_workspace_sandbox: true,
       runtime_external_tools_update: true,
+      runtime_tool_policy: true,
+      runtime_tool_policy_foreground_yield: true,
       structured_outputs: options.backend === "api",
       write_file_base64: true,
-      mcp_originator_queue_isolation: true,
       split_channels: false,
     },
   };

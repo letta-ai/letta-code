@@ -1,12 +1,3 @@
-/**
- * Memory filesystem helpers.
- *
- * With git-backed memory, most sync/hash logic is removed.
- * This module retains: directory helpers, tree rendering, and
- * the shared memfs initialization logic used by both interactive
- * and headless code paths.
- */
-
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -18,10 +9,15 @@ import {
   getLocalBackendStorageDir,
   isLocalBackendEnvEnabled,
 } from "@/backend/local/paths";
+import { debugLog } from "@/utils/debug";
 import {
   DIRECTORY_LIMIT_DEFAULTS,
   getDirectoryLimits,
 } from "@/utils/directory-limits";
+import {
+  hasGlobalConfigDirOverride,
+  resolveGlobalConfigDir,
+} from "@/utils/settings-path";
 import { getCurrentAgentId } from "./context";
 import { DEFAULT_ROOT_MEMORY_BLOCK } from "./create-agent-request";
 import { installMemoryGitHooks } from "./memory-git-hooks";
@@ -41,26 +37,27 @@ export interface MemoryTreeRenderOptions {
   maxChildrenPerDir?: number;
 }
 
-// ----- Directory helpers -----
-
 export function getMemoryFilesystemRoot(
   agentId: string,
-  homeDir: string = homedir(),
+  homeDir?: string,
+  env: NodeJS.ProcessEnv = process.env,
 ): string {
-  return join(
-    homeDir,
-    MEMORY_FS_ROOT,
-    MEMORY_FS_AGENTS_DIR,
-    agentId,
-    MEMORY_FS_MEMORY_DIR,
-  );
+  const configDir =
+    homeDir === undefined || hasGlobalConfigDirOverride(env)
+      ? resolveGlobalConfigDir(env, homeDir)
+      : join(homeDir, MEMORY_FS_ROOT);
+  return join(configDir, MEMORY_FS_AGENTS_DIR, agentId, MEMORY_FS_MEMORY_DIR);
 }
 
 export function getMemorySystemDir(
   agentId: string,
-  homeDir: string = homedir(),
+  homeDir?: string,
+  env: NodeJS.ProcessEnv = process.env,
 ): string {
-  return join(getMemoryFilesystemRoot(agentId, homeDir), MEMORY_SYSTEM_DIR);
+  return join(
+    getMemoryFilesystemRoot(agentId, homeDir, env),
+    MEMORY_SYSTEM_DIR,
+  );
 }
 
 export function getScopedMemoryFilesystemRoot(
@@ -76,10 +73,10 @@ export function getScopedMemoryFilesystemRoot(
     const storageDir =
       options.localBackendStorageDir ??
       env.LETTA_LOCAL_BACKEND_DIR ??
-      getLocalBackendStorageDir(options.homeDir ?? homedir());
+      getLocalBackendStorageDir(options.homeDir, env);
     return getLocalBackendMemoryFilesystemRoot(agentId, storageDir);
   }
-  return getMemoryFilesystemRoot(agentId, options.homeDir ?? homedir());
+  return getMemoryFilesystemRoot(agentId, options.homeDir, env);
 }
 
 export interface ResolveScopedMemoryDirOptions {
@@ -88,15 +85,6 @@ export interface ResolveScopedMemoryDirOptions {
   homeDir?: string;
 }
 
-/**
- * Resolve the active memory directory for the current execution scope.
- *
- * Precedence is intentionally runtime-first:
- * 1. Explicit agent ID (caller-provided scope)
- * 2. In-process runtime/agent context
- * 3. Explicit MEMORY_DIR env fallback
- * 4. AGENT_ID env fallback
- */
 export function resolveScopedMemoryDir(
   options: ResolveScopedMemoryDirOptions = {},
 ): string | null {
@@ -113,9 +101,7 @@ export function resolveScopedMemoryDir(
     if (scopedAgentId) {
       return getScopedMemoryFilesystemRoot(scopedAgentId, { env, homeDir });
     }
-  } catch {
-    // No runtime-scoped agent context; fall back below.
-  }
+  } catch {}
 
   const directMemoryDir = (env.LETTA_MEMORY_DIR || env.MEMORY_DIR || "").trim();
   if (directMemoryDir) {
@@ -132,10 +118,11 @@ export function resolveScopedMemoryDir(
 
 export function ensureMemoryFilesystemDirs(
   agentId: string,
-  homeDir: string = homedir(),
+  homeDir?: string,
+  env: NodeJS.ProcessEnv = process.env,
 ): void {
-  const root = getMemoryFilesystemRoot(agentId, homeDir);
-  const systemDir = getMemorySystemDir(agentId, homeDir);
+  const root = getMemoryFilesystemRoot(agentId, homeDir, env);
+  const systemDir = getMemorySystemDir(agentId, homeDir, env);
 
   if (!existsSync(root)) {
     mkdirSync(root, { recursive: true });
@@ -150,10 +137,6 @@ export interface MemfsCreateBodyLike {
   memory_blocks?: CreateBlock[] | null;
 }
 
-/**
- * Stamp the git-memory-enabled tag onto a create-agent body (pure helper).
- * Returns the body unchanged when the tag is already present.
- */
 export function stampMemfsTagOnCreateBody<T extends MemfsCreateBodyLike>(
   body: T,
   gitMemoryEnabledTag: string,
@@ -163,7 +146,6 @@ export function stampMemfsTagOnCreateBody<T extends MemfsCreateBodyLike>(
   return { ...body, tags: [...tags, gitMemoryEnabledTag] };
 }
 
-/** Add the root marker that requests MemFS v2 repository initialization. */
 export function stampRootMemoryOnCreateBody<T extends MemfsCreateBodyLike>(
   body: T,
 ): T {
@@ -177,22 +159,6 @@ export function stampRootMemoryOnCreateBody<T extends MemfsCreateBodyLike>(
   };
 }
 
-/**
- * Prepare a raw (protocol-forwarded) create-agent body so the created agent
- * is MemFS v2-enabled from birth.
- *
- * Raw protocol paths (listener `agent_create` / `runtime_start.create_agent`)
- * forward client-provided bodies directly to the backend. Without this,
- * agents created on Letta Cloud are born without GIT_MEMORY_ENABLED_TAG and
- * every downstream tag-based check (isMemfsEnabledOnServer, memfs-sync,
- * hydrateMemfsSettingFromAgent) treats them as non-memfs — on every machine,
- * forever. Stamping the tag and the root MEMORY block atomically with
- * creation guarantees the server seeds a v2 repository and lazy sync paths
- * can finish the setup (clone, tool detach) even if this process dies.
- *
- * The local backend stamps the tag itself in LocalBackend.createAgent(), and
- * non-cloud remote backends don't support memfs sync, so both pass through.
- */
 export async function prepareRawCreateAgentBodyForMemfs<
   T extends MemfsCreateBodyLike,
 >(body: T): Promise<T> {
@@ -219,23 +185,12 @@ export async function hydrateMemfsSettingFromAgent(
   return enabled;
 }
 
-/**
- * Returns whether memfs is enabled for the agent on the server.
- *
- * This is a read-only check used by desktop/listener surfaces that need to
- * distinguish "memfs disabled" from "enabled but local checkout missing"
- * without mutating agent configuration.
- */
 export async function isMemfsEnabledOnServer(
   agentId: string,
 ): Promise<boolean> {
   const { getBackend } = await import("@/backend");
   const backend = getBackend();
 
-  // For local backend, memfs support is determined by local capabilities and
-  // env settings rather than a per-agent server-side tag. Agents created via
-  // runtime_start / LocalBackend.createAgent() do not get GIT_MEMORY_ENABLED_TAG
-  // automatically, so using the tag-based check would incorrectly return false.
   if (backend.capabilities.localMemfs) {
     const { isLocalBackendMemfsDisabledForProcess } = await import(
       "@/backend/local/paths"
@@ -261,13 +216,6 @@ export interface EnsureLocalMemfsCheckoutOptions {
   pullOnExistingRepo?: boolean;
 }
 
-/**
- * Ensures the local memfs checkout exists for an already-enabled agent.
- *
- * Unlike applyMemfsFlags(), this helper does not update prompts, tags, or
- * other agent configuration. It materializes the local git checkout when
- * missing and can optionally pull an existing remote-backed repo before use.
- */
 export async function ensureLocalMemfsCheckout(
   agentId: string,
   options: EnsureLocalMemfsCheckoutOptions = {},
@@ -296,19 +244,11 @@ export async function ensureLocalMemfsCheckout(
   await cloneMemoryRepo(agentId);
 }
 
-// ----- Path helpers -----
-
 export function labelFromRelativePath(relativePath: string): string {
   const normalized = relativePath.replace(/\\/g, "/");
   return normalized.replace(/\.md$/, "");
 }
 
-// ----- Tree rendering -----
-
-/**
- * Render a tree visualization of the memory filesystem.
- * Takes system labels (under system/) and detached labels (at root).
- */
 export function renderMemoryFilesystemTree(
   systemLabels: string[],
   detachedLabels: string[],
@@ -341,7 +281,6 @@ export function renderMemoryFilesystemTree(
     insertPath(null, label);
   }
 
-  // Always show system/ directory even if empty
   if (!root.children.has(MEMORY_SYSTEM_DIR)) {
     root.children.set(MEMORY_SYSTEM_DIR, makeNode());
   }
@@ -434,7 +373,7 @@ export function renderMemoryFilesystemTree(
 
   if (!fullyRendered) {
     while (lines.length > 1) {
-      const shownEntries = Math.max(0, lines.length - 1); // Exclude /memory/
+      const shownEntries = Math.max(0, lines.length - 1);
       const omittedEntries = Math.max(1, totalEntries - shownEntries);
       const notice = `[Tree truncated: showing ${shownEntries.toLocaleString()} of ${totalEntries.toLocaleString()} entries. ${omittedEntries.toLocaleString()} omitted.]`;
 
@@ -453,21 +392,16 @@ export function renderMemoryFilesystemTree(
   return lines.join("\n");
 }
 
-// ----- Shared memfs initialization -----
-
 export interface ApplyMemfsFlagsResult {
-  /** Whether memfs was enabled or unchanged */
   action: "enabled" | "unchanged";
-  /** Path to the memory directory (when enabled) */
   memoryDir?: string;
-  /** Summary from git pull (when pullOnExistingRepo is true and repo already existed) */
   pullSummary?: string;
 }
 
 export interface ApplyMemfsFlagsOptions {
+  throwOnPullFailure?: boolean;
   pullOnExistingRepo?: boolean;
   agentTags?: string[];
-  /** Skip the system prompt update (when the agent was created with the correct mode). */
   skipPromptUpdate?: boolean;
 }
 
@@ -488,23 +422,6 @@ async function seedDefaultPersonalityFiles(
   });
 }
 
-/**
- * Apply the --memfs CLI flag (or /memfs enable) to an agent.
- *
- * Shared between interactive (index.ts), headless (headless.ts), and
- * the /memfs enable command (App.tsx) to avoid duplicating the setup logic.
- *
- * MemFS cannot be disabled: agents are memfs-enabled from creation on
- * memfs-capable backends, and this function only enables or syncs.
- *
- * Steps when enabling:
- *   1. Validate MemFS API endpoint support (for explicit enable)
- *   2. Reconcile system prompt to the memfs memory mode
- *   3. Persist memfs setting locally
- *   4. Add git-memory-enabled tag + clone/pull repo
- *
- * @throws {Error} if MemFS endpoint validation fails or git setup fails
- */
 export async function applyMemfsFlags(
   agentId: string,
   memfsFlag: boolean | undefined,
@@ -513,6 +430,17 @@ export async function applyMemfsFlags(
   const { settingsManager } = await import("@/settings-manager");
   const { getBackend } = await import("@/backend");
   const backend = getBackend();
+
+  const { GIT_MEMORY_ENABLED_TAG, isStatelessSubagentTags } = await import(
+    "@/agent/agent-tags"
+  );
+  const tags =
+    options?.agentTags ??
+    (await backend.retrieveAgent(agentId, { include: ["agent.tags"] })).tags;
+  if (isStatelessSubagentTags(tags)) {
+    debugLog("memfs", `Not enabling MemFS for stateless subagent ${agentId}`);
+    return { action: "unchanged" };
+  }
 
   if (backend.capabilities.localMemfs) {
     const memoryDir = getScopedMemoryFilesystemRoot(agentId);
@@ -539,21 +467,17 @@ export async function applyMemfsFlags(
     return { action: "unchanged" };
   }
 
-  // LCD proxies normal API traffic through localhost, while MemFS git sync can
-  // still target api.letta.com through getMemfsServerUrl().
   if (memfsFlag && !(await isLettaMemfsServer())) {
     throw new Error(await getMemfsSyncUnavailableMessage());
   }
 
   const localMemfsEnabled = settingsManager.isMemfsEnabled(agentId);
-  const { GIT_MEMORY_ENABLED_TAG } = await import("@/agent/agent-tags");
   const shouldAutoEnableFromTag =
     !memfsFlag &&
     !localMemfsEnabled &&
     Boolean(options?.agentTags?.includes(GIT_MEMORY_ENABLED_TAG));
   const enabling = Boolean(memfsFlag || shouldAutoEnableFromTag);
 
-  // 2. Reconcile system prompt first, then persist local memfs setting.
   if (enabling) {
     if (!options?.skipPromptUpdate) {
       const { updateAgentSystemPromptMemfs } = await import("@/agent/modify");
@@ -567,7 +491,6 @@ export async function applyMemfsFlags(
 
   const isEnabled = enabling || localMemfsEnabled;
 
-  // 3. Add git tag + clone/pull repo.
   let pullSummary: string | undefined;
   if (isEnabled) {
     const { addGitMemoryTag, isGitRepo, cloneMemoryRepo, pullMemory } =
@@ -579,7 +502,9 @@ export async function applyMemfsFlags(
     if (!isGitRepo(agentId)) {
       await cloneMemoryRepo(agentId);
     } else if (options?.pullOnExistingRepo) {
-      const result = await pullMemory(agentId);
+      const result = await pullMemory(agentId, {
+        throwOnFailure: options?.throwOnPullFailure,
+      });
       pullSummary = result.summary;
     } else {
       installMemoryGitHooks(getScopedMemoryFilesystemRoot(agentId));
@@ -593,20 +518,15 @@ export async function applyMemfsFlags(
     );
 
     if (enabling && !options?.skipPromptUpdate) {
-      // Compile after enabling the git-memory tag so Cloud can select the
-      // inherited prompt for the agent's new memory mode.
       const { getClient } = await import("@/backend/api/client");
       const client = await getClient();
       await client.agents.recompile(agentId, { update_timestamp: false });
     }
 
-    // Fetch secrets from the server so they're available for $SECRET_NAME substitution.
     const { initSecretsFromServer } = await import("@/utils/secrets-store");
     try {
       await initSecretsFromServer(agentId);
-    } catch {
-      // Non-fatal: secrets substitution won't work but agent can still run.
-    }
+    } catch {}
   }
 
   return {
@@ -616,9 +536,6 @@ export async function applyMemfsFlags(
   };
 }
 
-/**
- * Whether the current server is the Letta API (or local memfs testing is enabled).
- */
 export async function isLettaCloud(): Promise<boolean> {
   const { getServerUrl } = await import("@/backend/api/server-url");
   const serverUrl = getServerUrl();
@@ -639,9 +556,6 @@ function getServerHostLabel(serverUrl: string): string {
   }
 }
 
-/**
- * Whether the MemFS sync endpoint is backed by the Letta API.
- */
 export async function isLettaMemfsServer(): Promise<boolean> {
   const { getMemfsServerUrl } = await import("@/backend/api/memfs-git-proxy");
   const memfsServerUrl = getMemfsServerUrl();
@@ -659,13 +573,6 @@ async function getMemfsSyncUnavailableMessage(): Promise<string> {
   return `MemFS sync failed (expected api.letta.com, got ${getServerHostLabel(memfsServerUrl)})`;
 }
 
-/**
- * Enable memfs for a newly created agent if on the Letta API.
- * Non-fatal: logs a warning on failure. Skips on self-hosted.
- *
- * Skips the system prompt update since callers are expected to create
- * the agent with the correct memory mode upfront.
- */
 export interface EnableMemfsIfCloudOptions {
   backend?: Backend;
   agentTags?: string[] | null;

@@ -2,7 +2,7 @@
   description = "Letta Code CLI package and service modules";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs.url = "github:NixOS/nixpkgs/7172431e44aeb4ca24c8e06d58d5ebdf76f54d4d";
     bun2nix.url = "github:nix-community/bun2nix";
     bun2nix.inputs.nixpkgs.follows = "nixpkgs";
   };

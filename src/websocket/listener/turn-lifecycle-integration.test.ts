@@ -25,7 +25,6 @@ import {
   recordedToolResults,
 } from "./interrupted-turn-record";
 import { createRuntime } from "./lifecycle";
-import { shouldProcessInboundMessageDirectly } from "./queue";
 import { finalizeHandledRecoveryTurn } from "./recovery";
 import { clearConversationRuntimeState } from "./runtime";
 import { finishDrainedTeleport, handleTeleportRequest } from "./teleport";
@@ -195,6 +194,7 @@ describe("listener turn lifecycle integration", () => {
           auto_allowed_tool_call_ids: [],
           auto_denied_tool_call_ids: [],
           user_input_tool_call_ids: ["call-1"],
+          permission_mode: "strict",
         }),
       }),
     ]);
@@ -227,15 +227,6 @@ describe("listener turn lifecycle integration", () => {
     expect(runtime.activeRunId).toBeNull();
     expect(runtime.turnLifecycle.currentLease).toBeNull();
     expect(runtime.pendingApprovalResolvers.size).toBe(0);
-
-    expect(
-      shouldProcessInboundMessageDirectly(runtime, {
-        type: "message",
-        agentId: "agent-1",
-        conversationId: "conv-1",
-        messages: [{ role: "user", content: "follow up" }],
-      }),
-    ).toBe(true);
   });
 
   test("an old approval unwind cannot mutate a replacement turn", async () => {
@@ -442,7 +433,6 @@ describe("listener turn lifecycle integration", () => {
                 },
               );
               for await (const _event of stream) {
-                /* Drain the real SDK stream. */
               }
               return {
                 kind: "terminal" as const,
@@ -670,9 +660,6 @@ describe("listener turn lifecycle integration", () => {
       });
 
       await transportWaitEntered;
-      // Simulate a crash/re-registration while terminal delivery is still
-      // blocked: a fresh store instance must recover the executed outcome, not
-      // synthesize the stale-denial fallback from the earlier empty checkpoint.
       const recovered = createInterruptedTurnStore(directory).read(
         "agent-1",
         "conv-1",
@@ -690,9 +677,6 @@ describe("listener turn lifecycle integration", () => {
     }
   });
 
-  // Guards the gate's polarity and its default. A relay turn's results must
-  // reach the client that asked for them, so a closed transport still waits for
-  // reconnect (#3522) — only an explicitly process-owned turn may skip it.
   test("a relay-owned turn waits for reconnect before execution and terminal emission", async () => {
     const runtime = getOrCreateScopedRuntime(
       createRuntime(),
@@ -728,8 +712,6 @@ describe("listener turn lifecycle integration", () => {
       return "open" as const;
     });
 
-    // processOwnedTurn is intentionally omitted: the default must preserve the
-    // relay wait rather than opting every caller into the bypass.
     const result = await startToolApproval(runtime, turnLease, {
       approvals: [approval],
       socket: {

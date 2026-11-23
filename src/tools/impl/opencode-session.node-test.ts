@@ -1,4 +1,3 @@
-// Bundled for Node and run by the OpenCode integration CI job.
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -39,7 +38,6 @@ test(
       assert.equal(first.success, true, first.error);
       assert.match(first.report, /NODE_PROOF_681/);
       assert.ok(first.runtimeSessionId);
-      // Repeat to exercise HTTP pooling when OpenCode reuses the same listen port.
       for (let i = 0; i < 2; i++) {
         await closeOpenCodeSessions();
         const receipt = await sendOpenCodeMessage(

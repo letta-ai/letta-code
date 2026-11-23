@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 
 const RUNTIME_SANDBOX_IMAGE =
-  "node:22.18.0-bookworm@sha256:3266bc9e8bee1acc8a77386eefaf574987d2729b8c5ec35b0dbd6ddbc40b0ce2";
+  "node:22.23.4-bookworm@sha256:63538dfe497cc29dfafdda25ada09b46db68a3f4cc205abf1f5d6bf0913f3384";
 const AUTH_ENV_KEYS = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"] as const;
 
 export interface CommandSpec {
@@ -26,12 +26,6 @@ export interface CommandResult {
 
 export type CommandRunner = (spec: CommandSpec) => Promise<CommandResult>;
 
-/**
- * Runs untrusted package install scripts and the closed-source Claude binary in
- * a container that can see only its disposable probe root. The Docker client
- * receives only the already-minimized command environment; secret values are
- * inherited by name rather than placed in argv.
- */
 export function sandboxClaudeCommand(
   spec: CommandSpec,
   root: string,
@@ -88,7 +82,6 @@ export function sandboxClaudeCommand(
   };
 }
 
-/** Spawn with bounded output and terminate the whole process group on timeout/cap. */
 export const runBoundedCommand: CommandRunner = (spec) =>
   new Promise((resolvePromise, reject) => {
     const child = spawn(spec.command, spec.args, {

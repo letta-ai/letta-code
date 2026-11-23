@@ -1,10 +1,3 @@
-/**
- * Per-task cron run history backed by JSONL files next to crons.json.
- *
- * This mirrors the reference shape: job state stays in one JSON file, while
- * each job/task gets an append-only `runs/<id>.jsonl` history file.
- */
-
 import {
   appendFileSync,
   chmodSync,
@@ -94,17 +87,13 @@ export function getCronRunLogPath(jobId: string): string {
 function setSecureDirMode(dirPath: string): void {
   try {
     chmodSync(dirPath, 0o700);
-  } catch {
-    // Best effort on platforms/filesystems that do not support chmod.
-  }
+  } catch {}
 }
 
 function setSecureFileMode(filePath: string): void {
   try {
     chmodSync(filePath, 0o600);
-  } catch {
-    // Best effort on platforms/filesystems that do not support chmod.
-  }
+  } catch {}
 }
 
 function pruneIfNeeded(
@@ -150,7 +139,11 @@ export function appendCronRunLog(
   });
 }
 
-function parseAllRunLogEntries(raw: string, jobId?: string): CronRunLogEntry[] {
+function parseAllRunLogEntries(
+  raw: string,
+  jobId?: string,
+  runId?: string,
+): CronRunLogEntry[] {
   if (!raw.trim()) {
     return [];
   }
@@ -177,6 +170,9 @@ function parseAllRunLogEntries(raw: string, jobId?: string): CronRunLogEntry[] {
       if (jobId && obj.jobId !== jobId) {
         continue;
       }
+      if (runId && obj.runId !== runId) {
+        continue;
+      }
       entries.push({
         ts: obj.ts,
         jobId: obj.jobId,
@@ -197,16 +193,14 @@ function parseAllRunLogEntries(raw: string, jobId?: string): CronRunLogEntry[] {
         windowStart: obj.windowStart,
         windowEnd: obj.windowEnd,
       });
-    } catch {
-      // Ignore invalid lines.
-    }
+    } catch {}
   }
   return entries;
 }
 
 export function readCronRunLogEntries(
   filePath: string,
-  opts?: { limit?: number; jobId?: string },
+  opts?: { limit?: number; jobId?: string; runId?: string },
 ): CronRunLogEntry[] {
   const limit = Math.max(1, Math.min(5000, Math.floor(opts?.limit ?? 200)));
   let raw = "";
@@ -215,7 +209,7 @@ export function readCronRunLogEntries(
   } catch {
     return [];
   }
-  return parseAllRunLogEntries(raw, opts?.jobId).slice(-limit);
+  return parseAllRunLogEntries(raw, opts?.jobId, opts?.runId).slice(-limit);
 }
 
 export function readCronRunLogEntriesPage(
@@ -227,9 +221,8 @@ export function readCronRunLogEntriesPage(
   const entries = readCronRunLogEntries(filePath, {
     limit: 5000,
     jobId: opts?.jobId,
-  })
-    .filter((entry) => !opts?.runId || entry.runId === opts.runId)
-    .toSorted((a, b) => b.ts - a.ts);
+    runId: opts?.runId,
+  }).toSorted((a, b) => b.ts - a.ts);
   const pageEntries = entries.slice(offset, offset + limit);
   const nextOffset = offset + pageEntries.length;
   return {

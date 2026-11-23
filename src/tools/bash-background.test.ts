@@ -2,36 +2,38 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bash } from "@/tools/impl/bash";
+import { __setShellProcessStarterForTests, bash } from "@/tools/impl/bash";
 import { killBackgroundProcess } from "@/tools/impl/kill-bash";
 import {
   __resetBackgroundRetentionConfigForTests,
   __setBackgroundRetentionConfigForTests,
   backgroundProcesses,
 } from "@/tools/impl/process_manager";
-import { clearPendingMessages } from "@/utils/message-queue-bridge";
+import { startShellProcess } from "@/tools/impl/shell-runner";
+import {
+  clearPendingMessages,
+  setMessageQueueAdder,
+} from "@/utils/message-queue-bridge";
 
 const isWindows = process.platform === "win32";
 
-// These tests use bash-specific syntax (echo with quotes, sleep)
 describe.skipIf(isWindows)("Bash background tools", () => {
   beforeEach(() => {
     __resetBackgroundRetentionConfigForTests();
   });
 
   afterEach(() => {
+    __setShellProcessStarterForTests(null);
+    setMessageQueueAdder(null);
     __resetBackgroundRetentionConfigForTests();
     const outputFiles = Array.from(backgroundProcesses.values())
       .map((proc) => proc.outputFile)
       .filter((filePath): filePath is string => Boolean(filePath));
     for (const proc of backgroundProcesses.values()) {
-      // A killed fixture can settle after the next test installs its listener.
       proc.completionNotificationSuppressed = true;
       try {
         proc.process.kill("SIGTERM");
-      } catch {
-        // Ignore cleanup failures for already-exited processes
-      }
+      } catch {}
     }
     backgroundProcesses.clear();
     clearPendingMessages();
@@ -40,6 +42,63 @@ describe.skipIf(isWindows)("Bash background tools", () => {
         fs.rmSync(outputFile, { recursive: true, force: true });
       }
     }
+  });
+
+  function observeLaunchTimeouts(): number[] {
+    const observedTimeouts: number[] = [];
+    __setShellProcessStarterForTests((launcher, options) => {
+      observedTimeouts.push(options.timeoutMs);
+      return startShellProcess(launcher, options);
+    });
+    return observedTimeouts;
+  }
+
+  test("runs without a timeout when a slow command can yield", async () => {
+    setMessageQueueAdder(() => {});
+    const observedTimeouts = observeLaunchTimeouts();
+
+    await bash({
+      command: "echo background",
+      description: "Test background timeout default",
+      run_in_background: true,
+    });
+    await bash({
+      command: "echo foreground",
+      description: "Test foreground timeout default",
+    });
+    await bash({
+      command: "echo foreground",
+      description: "Test explicit foreground timeout",
+      timeout: 1_234,
+    });
+    await bash({
+      command: "echo foreground",
+      description: "Test clamped foreground timeout",
+      timeout: 700_000,
+    });
+
+    expect(observedTimeouts).toEqual([0, 0, 1_234, 600_000]);
+  });
+
+  test("defaults a foreground timeout when no queue consumer can take a yield", async () => {
+    const observedTimeouts = observeLaunchTimeouts();
+
+    await bash({
+      command: "echo background",
+      description: "Test background timeout default",
+      run_in_background: true,
+    });
+    await bash({
+      command: "echo foreground",
+      description: "Test foreground timeout default",
+    });
+    await bash({
+      command: "echo foreground",
+      description: "Test explicit foreground timeout",
+      timeout: 1_234,
+    });
+
+    expect(observedTimeouts).toEqual([0, 120_000, 1_234]);
   });
 
   test("starts background process and returns ID in text", async () => {
@@ -79,7 +138,6 @@ describe.skipIf(isWindows)("Bash background tools", () => {
   });
 
   test("killBackgroundProcess terminates background process", async () => {
-    // Start long-running process
     const startResult = await bash({
       command: "sleep 10",
       description: "Test kill",
@@ -134,19 +192,15 @@ describe.skipIf(isWindows)("Bash background tools", () => {
       run_in_background: true,
     });
 
-    // Extract bash ID and get the output file path
     const match = startResult.content[0]?.text.match(/bash_(\d+)/);
     expect(match).toBeDefined();
     const bashId = `bash_${match?.[1]}`;
 
-    // Wait for command to complete
     await new Promise((resolve) => setTimeout(resolve, 300));
 
-    // Get the output file path from the background process
     const bgProcess = backgroundProcesses.get(bashId);
     expect(bgProcess?.outputFile).toBeDefined();
 
-    // Read the file and verify content
     const outputFile = bgProcess?.outputFile;
     expect(outputFile).toBeDefined();
     const fileContent = fs.readFileSync(outputFile as string, "utf-8");

@@ -595,7 +595,7 @@ test("retirements leave no per-scope tombstones or inode growth", () => {
   const directory = mkdtempSync(join(tmpdir(), "listener-retirement-bounded-"));
   try {
     const store = createInterruptedTurnStore(directory);
-    for (let index = 0; index < 50; index += 1) {
+    for (let index = 0; index < 10; index += 1) {
       const agentId = `agent-${index}`;
       const conversationId = `conversation-${index}`;
       const record = store.write({

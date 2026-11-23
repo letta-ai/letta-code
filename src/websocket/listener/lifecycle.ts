@@ -62,8 +62,10 @@ import {
   installExternalToolBridge,
   rejectPendingExternalToolCalls,
   rejectPendingExternalToolCallsForConnection,
+  resendPendingExternalToolCallsForConnection,
 } from "./external-tools";
 import { createFileCommandSession } from "./file-commands";
+import { createListenerSocket } from "./handshake-deadline";
 import { recordListenerPong, startListenerPongHeartbeat } from "./heartbeat";
 import {
   getParsedRuntimeScope,
@@ -113,6 +115,8 @@ import {
   preparePairedListenerTransport,
   prepareSplitStreamTransport,
   shouldHandleControlSocketClose,
+  shouldRecoverOrphanedControlClose,
+  trackReconnectInFlight,
 } from "./split-stream-lifecycle";
 import { startListenerStartupDeadline } from "./startup-deadline";
 import { StartupFrameBuffer } from "./startup-frame-buffer";
@@ -251,7 +255,6 @@ export async function startConnectedListenerRuntime(
   if (!startupConnection || startupConnection.writer !== transport) return;
   sealStartupLogs();
   installExternalToolBridge(runtime);
-  // Avoid recurring lease-held messages when another process owns cron.
   const shouldStartCronScheduler =
     options.startCronScheduler !== false &&
     process.env.LETTA_DISABLE_CRON_SCHEDULER !== "1";
@@ -298,7 +301,6 @@ export async function startConnectedListenerRuntime(
       ))
     )
       return;
-    // Establish durable authority before startup ingress can teleport work.
     if (options.startProcessServices !== false) {
       runtime.scheduleRecordedRecovery = () =>
         scheduleRecordedTurnRecovery(runtime, options.recoverRecordedWork);
@@ -311,6 +313,7 @@ export async function startConnectedListenerRuntime(
     startupConnection.ingressReady = true;
     await opts.onConnectionReady?.(startupConnection);
     if (!isExactOpenConnection() || !startupConnection.ingressReady) return;
+    resendPendingExternalToolCallsForConnection(runtime, startupConnection);
     startupComplete = true;
   } finally {
     clearStartupDeadline();
@@ -374,14 +377,6 @@ export async function startConnectedListenerRuntime(
     }
   }
 }
-
-/**
- * Attach an already-open, locally accepted websocket to a listener runtime.
- *
- * Unlike the cloud listener client path, this helper does not reconnect on
- * close. It is intended for local app-server transports where the HTTP server
- * keeps running and the next client connection creates a fresh runtime.
- */
 
 export async function attachOpenListenerSocket(
   runtime: ListenerRuntime,
@@ -550,7 +545,6 @@ export async function attachOpenListenerSocket(
   );
 }
 
-/** Start the listener WebSocket client with automatic retry. */
 export async function startListenerClient(
   opts: StartListenerOptions,
 ): Promise<void> {
@@ -589,10 +583,6 @@ export interface StartLocalChannelListenerOptions {
   onLog?: StartListenerOptions["onLog"];
   onWsEvent?: StartListenerOptions["onWsEvent"];
 }
-/**
- * Start a listener runtime for local channel adapters without environment
- * registration or a remote WebSocket server.
- */
 export async function startLocalChannelListener(
   opts: StartLocalChannelListenerOptions,
 ): Promise<void> {
@@ -655,7 +645,6 @@ async function connectWithRetry(
   const elapsedTime = Date.now() - startTime;
   if (attempt > 0) {
     if (elapsedTime >= MAX_RETRY_DURATION_MS) {
-      // Established sessions re-register after the retry window expires.
       if (runtime.everConnected && opts.onNeedsReregister) {
         rejectPendingExternalToolCallsForConnection(
           runtime,
@@ -700,7 +689,6 @@ async function connectWithRetry(
     return;
   }
   const apiKey = auth.apiKey;
-  // Best effort, cached, never awaited: lets agent shells see LETTA_ORGANIZATION_ID.
   void warmOrganizationId();
 
   const url = new URL(opts.wsUrl);
@@ -718,12 +706,9 @@ async function connectWithRetry(
 
   const streamUrl = supportsSplitStatusChannels ? new URL(url) : null;
   if (streamUrl) streamUrl.searchParams.set("channel", "stream");
-  const headers = { Authorization: `Bearer ${apiKey}` };
-  const socket = new WebSocket(url.toString(), { headers });
+  const socket = createListenerSocket(url, apiKey);
   let streamSocket =
-    streamUrl && !pairIdentity
-      ? new WebSocket(streamUrl.toString(), { headers })
-      : null;
+    streamUrl && !pairIdentity ? createListenerSocket(streamUrl, apiKey) : null;
 
   const lifecycleLog = createListenerLifecycleLog(opts);
   const fileCommandSession = createFileCommandSession({
@@ -736,7 +721,6 @@ async function connectWithRetry(
   runtime.streamSocket = streamSocket;
   const transport = socket;
   const processQueuedTurn = createConnectionTurnProcessor(runtime);
-  // Reserve the lineage before accepting frames.
   const startupOwner = reserveStartupIngressOwner(runtime, opts);
   const handleMessage = createListenerMessageHandler({
     runtime,
@@ -789,7 +773,7 @@ async function connectWithRetry(
             identity: pairIdentity,
             createStreamSocket: () => {
               if (!streamUrl) throw new Error("Paired stream URL is missing");
-              streamSocket = new WebSocket(streamUrl.toString(), { headers });
+              streamSocket = createListenerSocket(streamUrl, apiKey);
               return streamSocket;
             },
             trackListenerError,
@@ -870,31 +854,28 @@ async function connectWithRetry(
   socket.on("close", (code: number, reason: Buffer) => {
     lifecycleLog(formatListenerSocketClose("control", code, reason));
     abortStartupIngress();
-    if (!shouldHandleControlSocketClose(runtime, socket, opts.connectionId)) {
+    if (
+      !shouldHandleControlSocketClose(runtime, socket, opts.connectionId) &&
+      !shouldRecoverOrphanedControlClose(runtime)
+    ) {
       return;
     }
-
     safeEmitWsEvent("recv", "lifecycle", {
       type: "_ws_close",
       code,
       reason: reason.toString(),
     });
-
     fileCommandSession.dispose();
     const reasonText = reason.toString();
-    // Fencing 1008s can supersede us without a prior replacement close.
     const terminalClose =
       runtime.intentionallyClosed ||
       (code === 1008 &&
         reasonText !== CLOUD_ENVIRONMENT_NOT_FOUND_CLOSE_REASON) ||
       (code === 1000 && reasonText === "Replaced by new connection");
-
     if (!terminalClose && runtime.hasSuccessfulConnection) {
       opts.onRetrying?.(0, MAX_RETRY_ATTEMPTS, 0, opts.connectionId);
     }
-
     clearRuntimeTimers(runtime);
-
     if (!terminalClose) {
       for (const conversationRuntime of runtime.conversationRuntimes.values()) {
         rejectPendingApprovalResolversForConnection(
@@ -931,7 +912,6 @@ async function connectWithRetry(
     runtime.streamSocket = null;
     runtime.streamTransport = null;
     if (code === 1008 && !terminalClose && opts.onNeedsReregister) {
-      // Cloud external responses are routed to the old connection generation server-side.
       rejectPendingExternalToolCallsForConnection(
         runtime,
         opts.connectionId,
@@ -949,21 +929,18 @@ async function connectWithRetry(
       else opts.onDisconnected();
       return;
     }
-
-    // If we had connected before, restart backoff from zero for this outage window.
     const nextAttempt = runtime.hasSuccessfulConnection ? 0 : attempt + 1;
     const nextStartTime = runtime.hasSuccessfulConnection
       ? Date.now()
       : startTime;
     runtime.hasSuccessfulConnection = false;
-
-    connectWithRetry(runtime, opts, nextAttempt, nextStartTime).catch(
-      (error) => {
-        opts.onError(error instanceof Error ? error : new Error(String(error)));
-      },
-    );
+    trackReconnectInFlight(
+      runtime,
+      connectWithRetry(runtime, opts, nextAttempt, nextStartTime),
+    ).catch((error) => {
+      opts.onError(error instanceof Error ? error : new Error(String(error)));
+    });
   });
-
   socket.on("error", (error: Error) => {
     if (runtime.socket !== socket) return;
     trackListenerError("listener_websocket_error", error, "listener_socket");
@@ -975,17 +952,14 @@ async function connectWithRetry(
     if (isDebugEnabled()) {
       console.error("[Listen] WebSocket error:", error);
     }
-    // Error triggers close(), which handles retry logic.
   });
 }
 
-/** Check if listener is currently active. */
 export function isListenerActive(): boolean {
   const runtime = getActiveRuntime();
   return runtime !== null && runtime.transport !== null;
 }
 
-/** Stop the active listener connection. */
 export function stopListenerClient(): void {
   const runtime = getActiveRuntime();
   if (!runtime) {

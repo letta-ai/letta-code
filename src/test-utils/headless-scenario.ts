@@ -1,14 +1,4 @@
 #!/usr/bin/env bun
-/**
- * Headless scenario test runner
- *
- * Runs a single multi-step scenario against the Letta Code CLI (headless) for a given
- * model and output format. Intended for CI matrix usage.
- *
- * Usage:
- *   bun tsx src/tests/headless-scenario.ts --model gpt-4.1 --output stream-json --parallel on
- *   bun tsx src/tests/headless-scenario.ts --backend local --model openai/gpt-5-mini --output text --parallel on
- */
 
 import { execFile as execFileCb, spawn } from "node:child_process";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
@@ -36,10 +26,6 @@ type Args = {
   output: "text" | "json" | "stream-json";
   parallel: "on" | "off" | "hybrid";
   provider?: LocalProvider;
-  // Smoke mode: trivial no-tools prompt asserting a sentinel word. Exercises
-  // the provider request path (connect/autodetect/round-trip) without the full
-  // tool-calling scenario — needed for weak/slow local models (e.g. Ollama on
-  // CPU runners) that cannot pass the frontier-model scenario in time.
   smoke: boolean;
 };
 
@@ -125,7 +111,6 @@ async function ensurePrereqs(args: Args): Promise<"ok" | "skip"> {
   }
 
   const provider = args.provider ?? inferLocalProvider(args.model);
-  // Ollama is a local endpoint (no API key); it needs a reachable base URL.
   if (provider === "ollama") {
     if (!process.env.OLLAMA_BASE_URL) {
       console.log("SKIP: Missing env OLLAMA_BASE_URL");
@@ -164,9 +149,10 @@ function localScenarioPrompt(): string {
     "I want to test local backend tool calling abilities (do not ask for clarifications; this is an automated CI runner). " +
     "First, run a shell command to output exactly LOCAL_SHELL_ONE. " +
     "Then, try running two shell commands in parallel to output exactly LOCAL_PARALLEL_TWO and LOCAL_PARALLEL_THREE. " +
-    'Then, call Agent with subagent_type "memory" and ask it to create or update `reference/ci/local-backend.md` with description `Local backend CI scenario` and body text `LOCAL_MEMFS_SCENARIO_OK`, and commit the change. ' +
-    "Continue immediately after delegation without waiting or polling; the test harness checks the committed memory after the CLI exits. " +
-    "IMPORTANT FINAL RESPONSE RULE: If and only if every shell command succeeded and the memory task was launched, your final response must include the uppercase word BANANA. " +
+    "Then, load the relevant memory skill and wait for its result. Directly create or update `$MEMORY_DIR/reference/ci/local-backend.md` with description `Local backend CI scenario` and body text `LOCAL_MEMFS_SCENARIO_OK`. " +
+    'Wait for the file write to finish, then commit it in the MemFS git repository. Verify the committed file with `git -C "$MEMORY_DIR" show HEAD:reference/ci/local-backend.md`. ' +
+    "The test harness independently checks that commit after the CLI exits. Wait for each tool result before reporting success; a planned tool call is not a completed edit. " +
+    "IMPORTANT FINAL RESPONSE RULE: If and only if every shell command succeeded and the verified committed memory file contains the marker, your final response must include the uppercase word BANANA. " +
     "If any step failed, do not include BANANA."
   );
 }
@@ -215,8 +201,6 @@ async function runCLI(args: Args): Promise<RunResult> {
     "--new-agent",
   ];
   if (args.smoke) {
-    // This lane verifies provider discovery and one inference round-trip. Keep
-    // unrelated harness context out so CPU-only local models finish reliably.
     cliArgs.push(
       "--tools=",
       "--no-skills",
@@ -227,8 +211,6 @@ async function runCLI(args: Args): Promise<RunResult> {
     );
   }
   if (args.backend === "api") {
-    // Skip the memfs pull to keep CI startup fast; agents are still
-    // memfs-enabled (non-memfs agents are no longer supported).
     cliArgs.push("--memfs-startup", "skip");
   }
   cliArgs.push(
@@ -242,11 +224,6 @@ async function runCLI(args: Args): Promise<RunResult> {
     args.model,
   );
 
-  // Cap each attempt at 6 minutes. The scenario should complete in ~2-3 min
-  // under normal conditions. Without a timeout, a WS proxy timeout mid-turn
-  // (observed at ~14 min in CI) can block a single attempt for 30+ minutes,
-  // consuming all retries with no useful signal. Killing early lets the outer
-  // retry loop start fresh with a clean agent context.
   const RUN_TIMEOUT_MS = 6 * 60 * 1000;
 
   return new Promise((resolve, reject) => {
@@ -311,8 +288,6 @@ export async function validateLocalStorage(storageDir: string | undefined) {
       JSON.parse(await readFile(join(storageDir, "agents", file), "utf8")),
     ),
   );
-  // Fresh memory workers persist their own agent records but edit the parent's
-  // checkout. Directory order cannot identify the primary agent.
   const primaries = agents.filter(
     (agent) => !agent.tags?.some((tag) => tag.startsWith("parent:")),
   );
@@ -322,15 +297,6 @@ export async function validateLocalStorage(storageDir: string | undefined) {
   }
   if (typeof agent.id !== "string" || agent.id.length === 0) {
     throw new Error("Persisted local agent record is missing id");
-  }
-  if (
-    !agents.some(
-      (worker) =>
-        worker.tags?.includes("type:memory") &&
-        worker.tags.includes(`parent:${agent.id}`),
-    )
-  ) {
-    throw new Error("Local MemFS scenario did not launch a memory worker");
   }
 
   const memoryDir = join(storageDir, "memfs", agent.id, "memory");
@@ -343,7 +309,7 @@ export async function validateLocalStorage(storageDir: string | undefined) {
   );
   if (!Number.isFinite(commitCount) || commitCount < 2) {
     throw new Error(
-      `Expected local MemFS scenario to commit the delegated memory update, found ${commitCount} commit(s)`,
+      `Expected local MemFS scenario to commit the memory update, found ${commitCount} commit(s)`,
     );
   }
   const status = await git(memoryDir, ["status", "--porcelain"]);
@@ -392,9 +358,7 @@ function extractStreamJsonAssistantText(stdout: string): string {
       if (event.type === "result" && typeof event.result === "string") {
         parts.push(event.result);
       }
-    } catch {
-      // Ignore malformed lines; validation will fail if we never find the marker.
-    }
+    } catch {}
   }
   return parts.join("");
 }
@@ -453,8 +417,6 @@ async function main() {
         args.output,
         args.smoke ? SMOKE_MARKERS : REQUIRED_MARKERS,
       );
-      // Smoke mode only asserts the sentinel; it deliberately skips the
-      // tool-driven MemFS validation since it issues a no-tools prompt.
       if (args.backend === "local" && !args.smoke) {
         await validateLocalStorage(run.localStorageDir);
       }
@@ -488,7 +450,6 @@ async function main() {
       throw new Error(formatAttemptDiagnostics(failedAttempts));
     }
   } catch (e) {
-    // Dump full stdout to aid debugging
     console.error(
       `\n===== BEGIN STDOUT (${args.backend} / ${args.model} / ${args.output}) =====`,
     );

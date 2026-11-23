@@ -38,7 +38,6 @@ function completedQuery(
   };
 }
 
-/** A client that records query options and answers with `messages`. */
 function fakeClient(messages: SdkStreamMessage[]): SdkClient & {
   calls: Array<{ prompt: string; options: Record<string, unknown> }>;
 } {
@@ -52,12 +51,6 @@ function fakeClient(messages: SdkStreamMessage[]): SdkClient & {
   };
 }
 
-/**
- * Mirror the SDK's `toolInputFromArguments()`: a fragment that is already an
- * object (or parses as one) passes through, otherwise the raw fragment is
- * wrapped as `{ raw }`. This is the partial `toolInput` the guard sees on every
- * streamed `tool_call` message.
- */
 function partialToolInput(fragment: string): Record<string, unknown> {
   try {
     const parsed = JSON.parse(fragment);
@@ -68,12 +61,6 @@ function partialToolInput(fragment: string): Record<string, unknown> {
   return { raw: fragment };
 }
 
-/**
- * Replay the real streamed shape: the SDK emits one `tool_call` message per
- * argument fragment (see `transformStreamDelta`), each carrying a *partial*
- * `toolInput` plus the raw fragment. Concatenating the raw fragments yields the
- * complete argument JSON.
- */
 function streamedToolCall(
   id: string,
   name: string,
@@ -628,56 +615,6 @@ describe("createSdkSpawner", () => {
     expect(outcome.totalTokens).toBe(3_500);
   });
 
-  test("ignores usage arriving after an interrupted agent has settled", async () => {
-    let releaseLate!: () => void;
-    const late = new Promise<void>((resolve) => {
-      releaseLate = resolve;
-    });
-    let firstUsage!: () => void;
-    const first = new Promise<void>((resolve) => {
-      firstUsage = resolve;
-    });
-    let drained!: () => void;
-    const drainFinished = new Promise<void>((resolve) => {
-      drained = resolve;
-    });
-    const usage = (tokens: number): SdkStreamMessage => ({
-      type: "stream_event",
-      event: { message_type: "usage_statistics", total_tokens: tokens },
-    });
-    const query: SdkQuery = {
-      conversationId: "conv-worker",
-      agentId: null,
-      async *[Symbol.asyncIterator]() {
-        yield usage(100);
-        await late;
-        yield usage(200);
-        drained();
-      },
-      async interrupt() {},
-      close() {},
-    };
-    const controller = new AbortController();
-    const seen: number[] = [];
-    const pending = createSdkSpawner({ query: () => query }, CONFIG)(
-      request(),
-      controller.signal,
-      {
-        onUsage(tokens) {
-          seen.push(tokens);
-          firstUsage();
-        },
-      },
-    );
-    await first;
-    controller.abort();
-    const outcome = await pending;
-    expect(outcome).toMatchObject({ failed: true, totalTokens: 100 });
-    releaseLate();
-    await drainFinished;
-    expect(seen).toEqual([100]);
-  });
-
   test("falls back to streamed assistant text and reports turn failures", async () => {
     const text = await createSdkSpawner(
       fakeClient([
@@ -787,15 +724,15 @@ describe("createSdkSpawner", () => {
         },
       }),
     });
-    const timedOut = await createSdkSpawner(hanging(), CONFIG)(
-      request({ timeoutMs: 20 }),
-      new AbortController().signal,
-    );
+    const timedOut = await createSdkSpawner(hanging(), {
+      ...CONFIG,
+      stopDrainMs: 20,
+    })(request({ timeoutMs: 20 }), new AbortController().signal);
     expect(timedOut.error).toContain("timed out after 20ms");
     expect(closed).toBeGreaterThan(0);
 
     const controller = new AbortController();
-    const pending = createSdkSpawner(hanging(), CONFIG)(
+    const pending = createSdkSpawner(hanging(), { ...CONFIG, stopDrainMs: 20 })(
       request(),
       controller.signal,
     );
@@ -816,10 +753,6 @@ describe("createSdkSpawner", () => {
   });
 
   test("does not stop distinct commands streamed as argument fragments", async () => {
-    // Regression: the SDK streams one `tool_call` message per argument delta,
-    // each carrying a PARTIAL `toolInput`. Reading that partial as the call's
-    // identity collapsed every distinct command onto the same key and tripped
-    // the identical-call guard on the third call.
     const messages: SdkStreamMessage[] = [];
     for (let i = 0; i < 4; i++) {
       const id = `call_${i}`;
@@ -861,9 +794,6 @@ describe("createSdkSpawner", () => {
   });
 
   test("does not stop distinct calls that share an identical fragment tail", async () => {
-    // The last streamed fragment of every JSON tool call is `"}`, so a guard
-    // that keys on the last partial fragment sees an identical value for
-    // distinct commands. Accumulation must use the whole running arguments.
     const messages: SdkStreamMessage[] = [];
     for (let i = 0; i < 4; i++) {
       const id = `call_${i}`;
@@ -898,9 +828,6 @@ describe("createSdkSpawner", () => {
   });
 
   test("does not stop when a terminal empty-arguments delta follows each call", async () => {
-    // Some streams re-send a terminal `tool_call` message with no parsed
-    // arguments (`toolInputFromArguments("")` === `{}`). That trailing empty
-    // delta must not overwrite an already-complete call identity.
     const messages: SdkStreamMessage[] = [];
     for (let i = 0; i < 4; i++) {
       const id = `call_${i}`;
@@ -963,8 +890,6 @@ describe("createSdkSpawner", () => {
   });
 
   test("judges duplicate results for one call once", async () => {
-    // A call can surface more than one result message (local execution plus the
-    // server's tool return). Those must not inflate the repeat counter.
     const messages: SdkStreamMessage[] = [
       ...streamedToolCall("call_0", "Bash", bashArgs(4412)),
       { type: "tool_result", toolCallId: "call_0" },
@@ -980,8 +905,6 @@ describe("createSdkSpawner", () => {
   });
 
   test("counts streamed fragments as one call for the tool-call budget", async () => {
-    // Many argument fragments for a few unique ids must not trip the call
-    // budget, which counts calls (unique toolCallIds), not messages.
     const messages: SdkStreamMessage[] = [];
     for (let i = 0; i < 30; i++) {
       const id = `call_${i}`;

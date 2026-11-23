@@ -1,10 +1,12 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import * as childProcess from "node:child_process";
 import { once } from "node:events";
 import {
   chmodSync,
   existsSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -29,6 +31,23 @@ async function waitForProcessExit(pid: number): Promise<void> {
 }
 
 describe.skipIf(process.platform === "win32")("subagent process", () => {
+  test("hides the Windows console window for subagent processes", async () => {
+    const spawnSpy = spyOn(childProcess, "spawn");
+    try {
+      const running = spawnSubagentProcess(
+        process.execPath,
+        ["-e", "process.exit(0)"],
+        { cwd: process.cwd(), env: process.env },
+      );
+      await running.completion;
+
+      expect(spawnSpy).toHaveBeenCalledTimes(1);
+      expect(spawnSpy.mock.calls[0]?.[2]).toMatchObject({ windowsHide: true });
+    } finally {
+      spawnSpy.mockRestore();
+    }
+  });
+
   test("stops the launcher and a descendant that outlives graceful cancellation", async () => {
     const descendantScript = [
       'process.on("SIGINT", () => {});',
@@ -70,8 +89,6 @@ describe.skipIf(process.platform === "win32")("subagent process", () => {
 describe.skipIf(process.platform !== "linux")(
   "managed workload process",
   () => {
-    // Stand-in for systemd-run: records its options, then execs the command
-    // after `--` in place, as `systemd-run --scope` does.
     function installFakeSystemdRun(): { binDir: string; argsFile: string } {
       const binDir = mkdtempSync(join(tmpdir(), "fake-systemd-run-"));
       const argsFile = join(binDir, "args");
@@ -92,7 +109,6 @@ describe.skipIf(process.platform !== "linux")(
       return { binDir, argsFile };
     }
 
-    // Reports its own PID, then echoes one stream-json line from stdin.
     const echoScript = [
       'process.stdout.write(JSON.stringify({ pid: process.pid }) + "\\n");',
       'process.stdin.once("data", (d) => { process.stdout.write(d); process.exit(0); });',
@@ -150,4 +166,45 @@ describe.skipIf(process.platform !== "linux")(
       expect(existsSync(argsFile)).toBe(false);
     }, 10_000);
   },
+);
+
+test.skipIf(process.platform !== "win32")(
+  "managed cancellation kills a Windows cmd wrapper and its descendant",
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), "managed-cmd-tree-"));
+    const launcher = join(dir, "launcher.cjs");
+    const shim = join(dir, "codex.cmd");
+    writeFileSync(
+      launcher,
+      [
+        'const { spawn } = require("node:child_process");',
+        'const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });',
+        'child.once("spawn", () => process.stdout.write(String(child.pid) + "\\n"));',
+        "setInterval(() => {}, 1000);",
+      ].join("\n"),
+    );
+    writeFileSync(shim, `@echo off\r\n"${process.execPath}" "${launcher}"\r\n`);
+    const controller = new AbortController();
+    const running = spawnManagedWorkloadProcess(shim, [], {
+      cwd: dir,
+      env: process.env,
+      signal: controller.signal,
+    });
+    try {
+      const [chunk] = await once(running.process.stdout, "data");
+      const descendantPid = Number(String(chunk).trim());
+      expect(descendantPid).toBeGreaterThan(0);
+      expect(() => process.kill(descendantPid, 0)).not.toThrow();
+      controller.abort();
+      await running.completion;
+      expect(running.wasAborted()).toBe(true);
+      await waitForProcessExit(descendantPid);
+      if (running.process.pid) await waitForProcessExit(running.process.pid);
+    } finally {
+      controller.abort();
+      await running.completion;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+  10_000,
 );

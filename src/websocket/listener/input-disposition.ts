@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { dirname } from "node:path";
 import { getServerUrl } from "@/backend/api/server-url";
+import { withDiskReserveRetry } from "@/utils/disk-reserve";
 import { renameSyncWithRetry } from "@/utils/rename-sync-with-retry";
 import {
   acquireDurableFileLock,
@@ -32,6 +33,7 @@ import { expireDispositionEntries } from "./input-disposition-expiry";
 import { inputDispositionPersistentPath } from "./input-disposition-path";
 import {
   buildLegacyAuthorityReferenceIndex,
+  buildPreparedTerminalAliasIndex,
   settleExpiredQuarantineJournals,
   shouldRetainDisposition,
 } from "./input-disposition-retention";
@@ -47,27 +49,17 @@ import type {
   InputIdentity,
   ListenerRuntime,
 } from "./types";
-
 export const ACCEPTED_INPUT_DISPOSITION_TTL_MS = 60 * 60 * 1000;
 export const MAX_ACCEPTED_INPUT_DISPOSITIONS_PER_SCOPE = 4096;
 export const MAX_ACCEPTED_INPUT_DISPOSITIONS = 65_536;
-// Web clients send image attachments inline as base64, so an accepted input can
-// be as large as the web enqueue body cap (letta-cloud
-// MAX_ENQUEUE_MESSAGE_BODY_BYTES = 20 MiB). Allow 1 MiB of headroom for the
-// listener envelope (scope, identity, acting user) so a body Cloud accepted is
-// never dropped here.
 export const MAX_DURABLE_QUEUED_INPUT_BYTES = 21 * 1024 * 1024;
-// Bounds the full-file read/rewrite done by every durable transaction while
-// leaving room for several maximum-size inputs in flight at once.
 export const MAX_INPUT_DISPOSITION_STORE_BYTES = 128 * 1024 * 1024;
 const LOCK_WAIT_MS = 2_000;
-
 export function ordinaryInputIdentity(
   clientMessageId: string | undefined,
 ): InputIdentity | undefined {
   return clientMessageId ? { domain: "input", id: clientMessageId } : undefined;
 }
-
 export function teleportInputIdentity(teleportId: string): InputIdentity {
   return { domain: "teleport", id: teleportId };
 }
@@ -226,7 +218,6 @@ function validateDurableStore(value: unknown): DurableStore {
     ) {
       throw new Error("Invalid accepted-input disposition entry");
     }
-    // Upgrade v2 namespace-free tombstones; v4 requires replay or completion.
     if (value.version === 2) {
       if (
         rawEntry.queuedInput !== undefined &&
@@ -290,10 +281,19 @@ function validateDurableStore(value: unknown): DurableStore {
         (prepared.preparationSequence !== undefined &&
           (!Number.isSafeInteger(prepared.preparationSequence) ||
             (prepared.preparationSequence as number) < 0)) ||
+        (prepared.inputDispositionKeys !== undefined &&
+          (!Array.isArray(prepared.inputDispositionKeys) ||
+            prepared.inputDispositionKeys.length >
+              MAX_ACCEPTED_INPUT_DISPOSITIONS_PER_SCOPE ||
+            !prepared.inputDispositionKeys.every(
+              (key) => typeof key === "string",
+            ))) ||
         (prepared.publicationClaimed !== undefined &&
           prepared.publicationClaimed !== true) ||
         (prepared.persistWithoutConsumers !== undefined &&
           prepared.persistWithoutConsumers !== true) ||
+        (prepared.suppressConsumerPublication !== undefined &&
+          prepared.suppressConsumerPublication !== true) ||
         !isRecord(prepared.scope) ||
         (prepared.scope.agentId !== null &&
           typeof prepared.scope.agentId !== "string") ||
@@ -409,7 +409,6 @@ function writeDurableStore(path: string, store: DurableStore): void {
   const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
   try {
     writeFileSync(temporaryPath, serialized, { mode: 0o600, flag: "wx" });
-    // FlushFileBuffers rejects read-only handles on Windows.
     const fd = openSync(temporaryPath, "r+");
     try {
       fsyncSync(fd);
@@ -451,9 +450,15 @@ function pruneDurableStore(store: DurableStore, now: number): boolean {
   const references = buildLegacyAuthorityReferenceIndex(
     Object.values(store.entries),
   );
+  const preparedAliasKeys = buildPreparedTerminalAliasIndex(
+    Object.values(store.entries),
+  );
   for (const [key, entry] of Object.entries(store.entries)) {
     if (entry.expiresAt <= now) {
-      if (shouldRetainDisposition(entry, () => references)) {
+      if (
+        preparedAliasKeys.has(key) ||
+        shouldRetainDisposition(entry, () => references)
+      ) {
         entry.expiresAt = now + ACCEPTED_INPUT_DISPOSITION_TTL_MS;
       } else {
         delete store.entries[key];
@@ -474,16 +479,18 @@ export function durableTransaction<T>(
   path: string,
   transaction: (store: DurableStore) => { result: T; changed: boolean },
 ): T {
-  const release = acquireLock(path);
-  try {
-    const store = readDurableStore(path);
-    const pruned = pruneDurableStore(store, Date.now());
-    const { result, changed } = transaction(store);
-    if (pruned || changed) writeDurableStore(path, store);
-    return result;
-  } finally {
-    release();
-  }
+  return withDiskReserveRetry(path, () => {
+    const release = acquireLock(path);
+    try {
+      const store = readDurableStore(path);
+      const pruned = pruneDurableStore(store, Date.now());
+      const { result, changed } = transaction(store);
+      if (pruned || changed) writeDurableStore(path, store);
+      return result;
+    } finally {
+      release();
+    }
+  });
 }
 
 export function syncMemoryFromDurable(
@@ -520,18 +527,17 @@ export type InputDispositionAdmission =
   | { kind: "untracked" }
   | { kind: "duplicate"; disposition: AcceptedInputDisposition }
   | { kind: "reserved"; reservation: InputDispositionReservation }
-  | { kind: "full" };
+  | { kind: "full"; reason?: string };
 
 function reserveDurably(
   ledger: AcceptedInputDispositionLedger,
   runtimeKey: string,
   key: string,
 ): InputDispositionAdmission {
-  const path = ledger.persistentPath;
-  if (!path) return { kind: "full" };
   try {
+    if (!ledger.persistentPath) throw new Error("Missing persistent path");
     const result = durableTransaction<InputDispositionAdmission>(
-      path,
+      ledger.persistentPath,
       (store) => {
         syncMemoryFromDurable(ledger, store);
         const existing = store.entries[key];
@@ -594,8 +600,9 @@ function reserveDurably(
     );
     if (result.kind === "reserved") ledger.abandonedReservations.delete(key);
     return result;
-  } catch {
-    return { kind: "full" };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { kind: "full", reason: `Input ledger unavailable: ${message}` };
   }
 }
 
@@ -673,8 +680,6 @@ export function commitInputDisposition(
   queuedInput?: Omit<DurableQueuedInput, "scope" | "identity">,
 ): boolean {
   if (!reservation) {
-    // A queued acknowledgement is final to Cloud. Without a stable identity it
-    // cannot be represented in the durable store or restored exactly once.
     return !(
       disposition === "queued" && getLedger(runtime.listener).persistentPath
     );
@@ -797,7 +802,6 @@ export function forgetQueuedInputDisposition(
   return forgetQueuedInputDispositions(runtime, identity ? [identity] : []);
 }
 
-/** Atomically discard a queue mutation's complete set of durable payloads. */
 export function forgetQueuedInputDispositions(
   runtime: ConversationRuntime,
   identities: readonly InputIdentity[],
@@ -850,7 +854,6 @@ export function forgetQueuedInputDispositions(
   return true;
 }
 
-/** Atomically transition queued dispositions while retaining crash-replay payloads. */
 export function markQueuedInputDispositionsStarted(
   runtime: ConversationRuntime,
   identities: readonly InputIdentity[],
@@ -895,7 +898,6 @@ export function markQueuedInputDispositionsStarted(
   return true;
 }
 
-/** Return a destructively dequeued input to durable queued ownership. */
 export function requeueStartedInputDispositions(
   runtime: ConversationRuntime,
   identities: readonly InputIdentity[],
@@ -937,7 +939,6 @@ export function requeueStartedInputDispositions(
   return true;
 }
 
-/** Read every replay payload under the store lock for startup restore. */
 export function loadDurableQueuedInputs(
   listener: ListenerRuntime,
 ): DurableQueuedInput[] {

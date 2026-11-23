@@ -48,8 +48,6 @@ function installBackend(overrides: Partial<Backend> = {}) {
       return conversation;
     },
   );
-  // Keep final error persistence unavailable for the entire test. Recovery
-  // must use the stream, not win a race against a timer or another API read.
   const retrieveRun = mock(async () => ({
     id: RUN_ID,
     status: "running",
@@ -77,8 +75,6 @@ function installBackend(overrides: Partial<Backend> = {}) {
   return { conversation, updateConversation };
 }
 
-// Another suite may have populated the process-wide model cache before the
-// first case. Its rows must not override this suite's backend fixture.
 beforeEach(clearAvailableModelsCache);
 
 afterEach(() => {

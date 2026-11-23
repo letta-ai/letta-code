@@ -1,6 +1,3 @@
-// src/permissions/checker.ts
-// Main permission checking logic
-
 import { posix, resolve, win32 } from "node:path";
 import { getCurrentAgentId } from "@/agent/context";
 import { runPermissionRequestHooks } from "@/hooks";
@@ -24,6 +21,7 @@ import {
 } from "./canonical";
 import { cliPermissions } from "./cli-permissions-instance";
 import { evaluateCrossAgentGuard, extractFilePath } from "./cross-agent-guard";
+import { expandPathArgs } from "./file-path-args";
 import {
   type MatcherOptions,
   matchesBashPattern,
@@ -44,9 +42,6 @@ import type {
 } from "./types";
 import { evaluateWorkspaceSandboxGuard } from "./workspace-sandbox";
 
-/**
- * Tools that don't require approval within working directory
- */
 const WORKING_DIRECTORY_TOOLS = [
   "Read",
   "Glob",
@@ -92,30 +87,6 @@ function shouldAttachTrace(result: PermissionCheckResult): boolean {
   );
 }
 
-/**
- * Check permission for a tool execution.
- *
- * Decision logic:
- * 0. Cross-agent guard (enabled by default and unbypassable when enabled) →
- *    DENY any in-process file-tool call targeting another agent's memory dir
- *    unless it targets the current agent, targets an explicit parent agent for
- *    a subagent process, or the parent process passed --disable-memory-guard.
- * 1. Check deny rules from settings (first match wins) → DENY
- * 2. Check CLI disallowedTools (--disallowedTools flag) → DENY
- * 3. Check alwaysAsk rules and mod tool alwaysAsk policy → ALWAYS_ASK
- * 4. Check permission mode (--permission-mode flag) → ALLOW or DENY
- * 5. Check CLI allowedTools (--allowedTools flag) → ALLOW
- * 6. For Read/Glob/Grep within working directory → ALLOW
- * 7. Check session allow rules (first match wins) → ALLOW
- * 8. Check allow rules from settings (first match wins) → ALLOW
- * 9. Check ask rules from settings (first match wins) → ASK
- * 10. Fall back to default behavior for tool → ASK or ALLOW
- *
- * @param toolName - Name of the tool (e.g., "Read", "Bash", "Write")
- * @param toolArgs - Tool arguments (contains file paths, commands, etc.)
- * @param permissions - Loaded permission rules
- * @param workingDirectory - Current working directory
- */
 export function checkPermission(
   toolName: string,
   toolArgs: ToolArgs,
@@ -125,6 +96,7 @@ export function checkPermission(
   agentId?: string,
   modTools: Map<string, ModToolDefinition> = getAvailableModToolsRegistry(),
 ): PermissionCheckResult {
+  toolArgs = expandPathArgs(toolName, toolArgs, workingDirectory);
   const engine: PermissionEngine = isPermissionsV2Enabled() ? "v2" : "v1";
   const primary = checkPermissionForEngine(
     engine,
@@ -293,9 +265,6 @@ function checkPermissionForEngine(
     };
   }
 
-  // Cross-agent guard — when enabled, denies any tool call targeting another
-  // agent's memory unless that agent is in the allowed set. Unbypassable by
-  // any mode, rule, or flag.
   const guardResult = evaluateCrossAgentGuard(
     permissionToolName,
     toolArgs,
@@ -397,8 +366,6 @@ function checkPermissionForEngine(
     };
   }
 
-  // Use the scoped permission mode state when available (listener/remote mode),
-  // otherwise fall back to the global singleton (local/CLI mode).
   const effectiveMode = modeState?.mode ?? permissionMode.getMode();
   const modeOverride = permissionMode.checkModeOverride(
     permissionToolName,
@@ -433,8 +400,6 @@ function checkPermissionForEngine(
     }
   }
 
-  // Strict mode skips all auto-allow paths; every tool goes through the
-  // approval callback (or defaults to "ask" if no callback is registered).
   const isStrictMode = effectiveMode === "strict";
 
   if (toolName === "Skill" && !isStrictMode) {
@@ -448,7 +413,6 @@ function checkPermissionForEngine(
     };
   }
 
-  // Memory() only reads the scoped agent's own memory directory.
   if (toolName === "Memory" && !isStrictMode) {
     traceEvent(trace, "memory-auto-allow", "Memory tool is always allowed");
     return {
@@ -503,7 +467,6 @@ function checkPermissionForEngine(
     }
   }
 
-  // File-tool counterpart of the memory-dir shell allowance above.
   if (
     !isStrictMode &&
     isOwnMemoryWrite(canonicalTool, toolArgs, workingDirectory, agentId)
@@ -610,12 +573,6 @@ function checkPermissionForEngine(
   };
 }
 
-/**
- * Check whether `child` is `root` or a path nested under it, comparing whole
- * path segments rather than string prefixes (so `/x/project2` is NOT within
- * `/x/project`). Handles trailing separators, drive letters and UNC paths via
- * the platform path implementation; Windows comparisons are case-insensitive.
- */
 export function isPathWithin(
   child: string,
   root: string,
@@ -635,10 +592,6 @@ export function isPathWithin(
   );
 }
 
-/**
- * Check if file path is within allowed directories
- * (working directory + additionalDirectories)
- */
 function isWithinAllowedDirectories(
   filePath: string,
   permissions: PermissionRules,
@@ -646,12 +599,10 @@ function isWithinAllowedDirectories(
 ): boolean {
   const absolutePath = resolve(workingDirectory, filePath);
 
-  // Check if within working directory
   if (isPathWithin(absolutePath, resolve(workingDirectory))) {
     return true;
   }
 
-  // Check additionalDirectories
   if (permissions.additionalDirectories) {
     for (const dir of permissions.additionalDirectories) {
       const resolvedDir = resolve(workingDirectory, dir);
@@ -679,12 +630,8 @@ function getAllowedShellPathRoots(
   return roots;
 }
 
-/**
- * Build permission query string for a tool execution
- */
 function buildPermissionQuery(toolName: string, toolArgs: ToolArgs): string {
   switch (toolName) {
-    // File tools: "ToolName(path/to/file)"
     case "Read":
     case "Write":
     case "Edit":
@@ -697,7 +644,6 @@ function buildPermissionQuery(toolName: string, toolArgs: ToolArgs): string {
 
     case "Bash":
     case "exec_command": {
-      // Both shell tools: "Bash(command with args)"
       const command =
         typeof toolArgs.cmd === "string"
           ? toolArgs.cmd
@@ -712,7 +658,6 @@ function buildPermissionQuery(toolName: string, toolArgs: ToolArgs): string {
       return "Bash(write_stdin)";
 
     default:
-      // Other tools: just the tool name
       return toolName;
   }
 }
@@ -729,9 +674,6 @@ function extractShellCommand(toolArgs: ToolArgs): string | string[] | null {
   return null;
 }
 
-/**
- * Check if query matches a permission pattern
- */
 function matchesPattern(
   toolName: string,
   query: string,
@@ -744,45 +686,32 @@ function matchesPattern(
       ? { canonicalizeToolNames: true, allowBareToolFallback: true }
       : { canonicalizeToolNames: false, allowBareToolFallback: false };
   const toolForMatch = engine === "v2" ? canonicalToolName(toolName) : toolName;
-  // File tools use glob matching
   if (FILE_TOOLS.includes(toolForMatch)) {
     return matchesFilePattern(query, pattern, workingDirectory, matcherOptions);
   }
 
-  // Bash uses prefix matching
   const v2ShellTool = engine === "v2" && isShellToolName(toolName);
   if (toolForMatch === "Bash" || v2ShellTool) {
     return matchesBashPattern(query, pattern, matcherOptions);
   }
 
-  // Other tools use simple name matching
   return matchesToolPattern(toolForMatch, pattern, matcherOptions);
 }
 
-/**
- * Subagent types that are safe to auto-approve by default.
- * Some are read-only explorers; others are memory-rooted writers whose
- * mutations are constrained by the memory-subagent sandbox.
- */
 const SAFE_AUTO_APPROVE_SUBAGENT_TYPES = new Set([
-  "recall", // Conversation history search - Skill, Bash, Read
+  "recall",
   "Recall",
-  "reflection", // Memory reflection - writes constrained by memory-subagent sandbox
+  "reflection",
   "Reflection",
-  "memory", // Memory worker - edits its private memory worktree under the same sandbox
+  "memory",
 ]);
 
-/**
- * Get default decision for a tool (when no rules match)
- */
 function getDefaultDecision(
   toolName: string,
   toolArgs?: ToolArgs,
   modTools: Map<string, ModToolDefinition> = getAvailableModToolsRegistry(),
   mode?: string,
 ): PermissionDecision {
-  // Strict mode: every tool defaults to "ask" so the approval callback
-  // (or user) must explicitly allow it.
   if (mode === "strict") {
     return "ask";
   }
@@ -794,7 +723,6 @@ function getDefaultDecision(
     return "ask";
   }
 
-  // Tools that run without asking in standard and acceptEdits modes.
   const autoAllowTools = [
     "Read",
     "Glob",
@@ -802,10 +730,7 @@ function getDefaultDecision(
     "LS",
     "write_stdin",
     "UpdatePlan",
-    // Channel sends are scoped by routing + parentScope checks in the tool.
     "MessageChannel",
-    // These only touch agent-owned state: the session task list, the
-    // ~/.letta/artifacts store, and prompts scheduled back to this agent.
     "TaskCreate",
     "TaskGet",
     "TaskList",
@@ -822,31 +747,18 @@ function getDefaultDecision(
     return "allow";
   }
 
-  // Task tool: auto-approve safe subagent types
   if (canonicalToolName(toolName) === "Task") {
     const subagentType =
       typeof toolArgs?.subagent_type === "string" ? toolArgs.subagent_type : "";
     if (SAFE_AUTO_APPROVE_SUBAGENT_TYPES.has(subagentType)) {
       return "allow";
     }
-    // Other subagent types require approval
     return "ask";
   }
 
-  // Everything else defaults to ask
   return "ask";
 }
 
-/**
- * Check permission for a tool execution with hook support.
- * When the decision would be "ask" (show permission dialog), runs PermissionRequest hooks
- * which can auto-allow (exit 0) or auto-deny (exit 2) without showing UI.
- *
- * @param toolName - Name of the tool
- * @param toolArgs - Tool arguments
- * @param permissions - Loaded permission rules
- * @param workingDirectory - Current working directory
- */
 export async function checkPermissionWithHooks(
   toolName: string,
   toolArgs: ToolArgs,
@@ -861,7 +773,7 @@ export async function checkPermissionWithHooks(
   modTools: Map<string, ModToolDefinition> = getAvailableModToolsRegistry(),
   modPermissionOptions: ModPermissionCheckOptions = {},
 ): Promise<PermissionCheckResult> {
-  // First, check permission using normal rules
+  toolArgs = expandPathArgs(toolName, toolArgs, workingDirectory);
   let result = checkPermission(
     toolName,
     toolArgs,
@@ -899,7 +811,6 @@ export async function checkPermissionWithHooks(
     }
   }
 
-  // If decision is "ask", run PermissionRequest hooks to see if they auto-allow/deny
   if (result.decision === "ask") {
     const hookResult = await runPermissionRequestHooks(
       toolName,
@@ -910,7 +821,6 @@ export async function checkPermissionWithHooks(
       agentId,
     );
 
-    // If hook blocked (exit code 2), deny the permission
     if (hookResult.blocked) {
       const feedback = hookResult.feedback.join("\n") || "Denied by hook";
       return {
@@ -920,8 +830,6 @@ export async function checkPermissionWithHooks(
       };
     }
 
-    // If hook succeeded (exit code 0 from any hook), allow the permission
-    // Check if any hook ran and returned success
     const anyHookAllowed = hookResult.results.some(
       (r) => r.exitCode === 0 && !r.timedOut && !r.error,
     );

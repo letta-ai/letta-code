@@ -1,16 +1,3 @@
-/**
- * File logger for letta server sessions.
- * Writes lifecycle/status lines to ~/.letta/logs/remote/{timestamp}.log.
- * WS frame logging is optional and controlled by the caller.
- *
- * Disk usage is bounded two ways: the directory is pruned to the newest
- * MAX_LOG_FILES files, and each file rotates to a fresh timestamped file once
- * it exceeds MAX_LOG_BYTES. Rotation also prunes, so worst-case directory size
- * is roughly MAX_LOG_FILES * MAX_LOG_BYTES. Without the size cap, one
- * long-running listener session (e.g. a Cloud managed sandbox with `--debug`,
- * which logs every WS frame) can grow a single file until the disk fills.
- */
-
 import {
   appendFileSync,
   existsSync,
@@ -18,15 +5,15 @@ import {
   readdirSync,
   unlinkSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 import { redactWsEventForLogging } from "./ws-event-redaction";
 
-const REMOTE_LOG_DIR = join(homedir(), ".letta", "logs", "remote");
+const REMOTE_LOG_DIR = join(resolveGlobalConfigDir(), "logs", "remote");
 const MAX_LOG_FILES = 10;
-const MAX_LOG_BYTES = 10 * 1024 * 1024; // 10 MB per session file
+const MAX_LOG_BYTES = 10 * 1024 * 1024;
 
-function formatTimestamp(): string {
+export function formatTimestamp(): string {
   const now = new Date();
   const h = String(now.getHours()).padStart(2, "0");
   const m = String(now.getMinutes()).padStart(2, "0");
@@ -50,22 +37,15 @@ function pruneOldLogs(dir: string, maxFiles: number): void {
       for (const file of toDelete) {
         try {
           unlinkSync(join(dir, file));
-        } catch {
-          // best-effort cleanup
-        }
+        } catch {}
       }
     }
-  } catch {
-    // best-effort cleanup
-  }
+  } catch {}
 }
 
 interface RemoteSessionLogOptions {
-  /** Override the log directory (tests). Defaults to ~/.letta/logs/remote. */
   dir?: string;
-  /** Override the per-file size cap in bytes (tests). */
   maxBytes?: number;
-  /** Override the retained file count (tests). */
   maxFiles?: number;
 }
 
@@ -85,19 +65,16 @@ export class RemoteSessionLog {
     this.path = this.freshPath();
   }
 
-  /** Must be called once at startup to create the directory and prune old logs. */
   init(): void {
     this.ensureDir();
     pruneOldLogs(this.dir, this.maxFiles);
   }
 
-  /** Log a line to the file (best-effort, sync). */
   log(message: string): void {
     const line = `[${formatTimestamp()}] ${message}\n`;
     this.appendLine(line);
   }
 
-  /** Log a WS event in the same format as debugWsLogger. */
   wsEvent(
     direction: "send" | "recv",
     label: "client" | "protocol" | "control" | "lifecycle",
@@ -115,12 +92,10 @@ export class RemoteSessionLog {
     return join(this.dir, `${stamp}${suffix}.log`);
   }
 
-  /** Start a new timestamped file once the current one exceeds the size cap. */
   private rotate(): void {
     const previous = this.path;
     this.rotation += 1;
     this.path = this.freshPath();
-    // Same-millisecond rotations can collide; bump the suffix until unique.
     while (existsSync(this.path)) {
       this.rotation += 1;
       this.path = this.freshPath();
@@ -141,9 +116,7 @@ export class RemoteSessionLog {
     try {
       appendFileSync(this.path, line, { encoding: "utf8" });
       this.bytesWritten += Buffer.byteLength(line, "utf8");
-    } catch {
-      // best-effort
-    }
+    } catch {}
   }
 
   private ensureDir(): void {
@@ -153,8 +126,6 @@ export class RemoteSessionLog {
         mkdirSync(this.dir, { recursive: true });
       }
       this.dirCreated = true;
-    } catch {
-      // silently ignore
-    }
+    } catch {}
   }
 }

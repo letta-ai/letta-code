@@ -1,28 +1,19 @@
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { SYSTEM_REMINDER_OPEN } from "@/constants";
 import { getRuntimeContext } from "@/runtime-context";
+import type { QueuedMessage } from "@/utils/message-queue-bridge";
 import { subagentScopeMatches } from "@/utils/subagent-scope";
-
-/**
- * Task Notification Formatting
- *
- * Formats background task completion notifications as XML.
- * The actual queueing is handled by messageQueueBridge.ts.
- */
-
-// ============================================================================
-// Types
-// ============================================================================
 
 export interface NotificationScope {
   agentId: string;
   conversationId: string;
   actingUserId?: string | null;
+  clientMessageIds?: string[];
 }
 
 export interface TaskNotification {
   taskId: string;
-  status: "completed" | "failed";
+  status: "completed" | "failed" | "running";
   summary: string;
   result: string;
   outputFile?: string;
@@ -33,13 +24,6 @@ export interface TaskNotification {
   };
 }
 
-// ============================================================================
-// XML Escaping
-// ============================================================================
-
-/**
- * Escape special XML characters to prevent breaking the XML structure.
- */
 function escapeXml(str: string): string {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -48,20 +32,6 @@ function unescapeXml(str: string): string {
   return str.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 }
 
-// ============================================================================
-// Public API
-// ============================================================================
-
-/**
- * Capture the conversation and initiating sender when background work starts.
- *
- * Prefers the scope injected by executeTool, which is the only correct source
- * in listener/desktop mode where several agent scopes share one process, and
- * falls back to the process-global agent context for plain CLI sessions.
- * Returns undefined when neither is available, in which case the caller should
- * still queue the notification unscoped rather than drop it.
- * Keep this snapshot until delivery; a later turn may belong to another user.
- */
 export function resolveNotificationScope(parentScope?: {
   agentId: string;
   conversationId: string;
@@ -70,11 +40,14 @@ export function resolveNotificationScope(parentScope?: {
   const actingUserId = runtime?.suppressActingUserFallback
     ? null
     : runtime?.actingUserId;
+  const clientMessageIds = runtime?.resolveClientMessageIds?.() ?? [];
+  const correlation = clientMessageIds.length > 0 ? { clientMessageIds } : {};
   if (parentScope?.agentId) {
     return {
       agentId: parentScope.agentId,
       conversationId: parentScope.conversationId || "default",
       actingUserId,
+      ...correlation,
     };
   }
 
@@ -83,17 +56,14 @@ export function resolveNotificationScope(parentScope?: {
       agentId: getCurrentAgentId(),
       conversationId: getConversationId() ?? "default",
       actingUserId,
+      ...correlation,
     };
   } catch {
     return undefined;
   }
 }
 
-/**
- * Format a single notification as XML string for queueing.
- */
 export function formatTaskNotification(notification: TaskNotification): string {
-  // Escape summary and result to prevent XML injection
   const escapedSummary = escapeXml(notification.summary);
   const escapedResult = escapeXml(notification.result);
 
@@ -111,21 +81,42 @@ export function formatTaskNotification(notification: TaskNotification): string {
     ? `\n<usage>${usageLines.join("\n")}</usage>`
     : "";
 
+  const transcriptBlock = notification.outputFile
+    ? `\n<transcript>${escapeXml(notification.outputFile)}</transcript>`
+    : "";
+
   return `<task-notification>
 <task-id>${notification.taskId}</task-id>
 <status>${notification.status}</status>
 <summary>${escapedSummary}</summary>
-<result>${escapedResult}</result>${usageBlock}
-</task-notification>${notification.outputFile ? `\nFull transcript available at: ${notification.outputFile}` : ""}`;
+<result>${escapedResult}</result>${usageBlock}${transcriptBlock}
+</task-notification>`;
+}
+
+export function subagentResultReminder(): string {
+  const reminder = process.env.LETTA_SUBAGENT_RESULT_REMINDER;
+  return reminder
+    ? `\n\n<system-reminder>\n${reminder}\n</system-reminder>`
+    : "";
+}
+
+export function taskNotificationMessage(
+  text: string,
+): Pick<QueuedMessage, "text" | "content"> {
+  const parts = [{ type: "text" as const, text }];
+  const reminder = subagentResultReminder();
+  if (reminder) parts.push({ type: "text", text: reminder.trimStart() });
+  return { text, content: parts };
 }
 
 export function formatMonitorEventNotification(notification: {
   taskId: string;
   event: string;
+  description?: string;
 }): string {
   return `<task-notification>
 <task-id>${escapeXml(notification.taskId)}</task-id>
-<summary>${escapeXml(`Monitor event: "${notification.event}"`)}</summary>
+<summary>${escapeXml(notification.description?.trim() ? `Monitor: ${notification.description}` : "Monitor event")}</summary>
 <result>
 <event>${escapeXml(notification.event)}</event>
 </result>
@@ -173,19 +164,6 @@ export function extractTaskNotificationsForDisplay(message: string): {
   return { notifications, cleanedText };
 }
 
-// ============================================================================
-// Buffer Helpers
-// ============================================================================
-
-/**
- * Append task-notification events to a transcript buffer and flush.
- *
- * This is the pure-function core of App.tsx's `appendTaskNotificationEvents`
- * useCallback. Extracting it here makes the behavioral contract testable:
- * buffer writes MUST be followed by a flush so that notifications from
- * background subagent onComplete callbacks (which run outside React's render
- * cycle) appear immediately instead of waiting for the next unrelated render.
- */
 export type NotificationBuffer = Pick<
   import("@/cli/helpers/accumulator").Buffers,
   "byId" | "order"
@@ -215,34 +193,10 @@ export function appendTaskNotificationEventsToBuffer(
 }
 
 export interface StopFailedNotificationSelection {
-  /** New stop-failure messages for rows entering the surfaced state. */
   failures: string[];
-  /** Stop-landed messages for retries the user dispatched from this view. */
   stops: string[];
 }
 
-/**
- * Select transcript notifications for subagent rows whose user-requested stop
- * failed (the remote run is still live), and for retries that later landed.
- *
- * Scope: rows are matched with the same matcher the interrupt paths use
- * (subagentScopeMatches), so a notification's "Press Esc to retry" hint is
- * only ever written for rows an Esc can actually reach, and a failure never
- * lands in — or is consumed by — the wrong agent's transcript.
- *
- * Dedup is attempt-qualified via the caller-owned seen set, keyed
- * `${rowId}:${stopAttempt}`: correctness never depends on a render observing
- * the transient in-flight state, so a stop whose dispatch and settlement
- * both land between two renders still re-notifies on failure and still
- * corrects on success. Entries survive scope switches (returning to a scope
- * never replays its failure) and are retired only once the row leaves the
- * snapshot entirely.
- *
- * A "stopped" correction fires only for an outcome the abort hook recorded
- * as a genuine stop (a cancel that killed a still-live run) and only when
- * a failure for an earlier attempt was surfaced, so a normal first-stop
- * and a run that settled on its own mid-retry are never reported as stops.
- */
 export function selectStopFailedNotifications(
   rows: Array<{
     id: string;
@@ -299,10 +253,6 @@ export function selectStopFailedNotifications(
     }
   }
 
-  // Retire entries only for rows that left the snapshot entirely: entries
-  // for live rows persist across scope switches so returning to a scope
-  // never replays its failure, and terminal rows keep their keys so their
-  // correction can never re-fire.
   const present = new Set(rows.map((row) => row.id));
   for (const key of seenIds) {
     const rowId = key.slice(0, key.lastIndexOf(":"));

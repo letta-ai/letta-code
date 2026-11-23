@@ -182,8 +182,6 @@ describe("listener message router ownership handoff", () => {
 
       await connect();
       expect(original.socket.readyState).toBe(WebSocket.CLOSED);
-      // This is the predicate used by the approval reconnect gate. A captured
-      // raw socket stays closed; the turn's transport must follow the replacement.
       expect(isListenerTransportOpen(transport)).toBe(true);
     } finally {
       finishTurn();
@@ -406,14 +404,14 @@ describe("listener message router ownership handoff", () => {
     );
   });
 
-  test("preserves the acting user on a directly-owned input and deduplicates retries", async () => {
+  test("preserves the acting user on a queued input and deduplicates retries", async () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
     const socket = new MockSocket();
     initializeMockConnection(listener, socket);
     const sent: unknown[] = [];
     let receivedActingUserId: string | undefined;
-    const processIncomingMessage = mock(async (incoming: IncomingMessage) => {
+    const processQueuedTurn = mock(async (incoming: IncomingMessage) => {
       receivedActingUserId = incoming.actingUserId;
     });
     setActiveRuntime(listener);
@@ -421,7 +419,7 @@ describe("listener message router ownership handoff", () => {
       runtime: listener,
       socket: socket as unknown as WebSocket,
       opts: makeListenerOptions(),
-      processQueuedTurn: async () => {},
+      processIncomingMessage: async () => {},
       fileCommandSession: { handle: () => false },
       getParsedRuntimeScope: () => null,
       replaySyncStateForRuntime: async () => {},
@@ -436,7 +434,7 @@ describe("listener message router ownership handoff", () => {
       },
       runDetachedListenerTask: () => {},
       trackListenerError: () => {},
-      processIncomingMessage,
+      processQueuedTurn,
     });
 
     await handleMessage(
@@ -489,14 +487,14 @@ describe("listener message router ownership handoff", () => {
     );
     await runtime.messageQueue;
 
-    expect(processIncomingMessage).toHaveBeenCalledTimes(1);
+    expect(processQueuedTurn).toHaveBeenCalledTimes(1);
     expect(receivedActingUserId).toBe("cloud-user-1");
     expect(sent).toContainEqual(
       expect.objectContaining({
         type: "input_accepted",
         request_id: "input-direct",
         accepted: true,
-        disposition: "started",
+        disposition: "queued",
       }),
     );
     expect(sent).toContainEqual(
@@ -594,8 +592,6 @@ describe("listener message router ownership handoff", () => {
       processIncomingMessage: async () => {},
     });
 
-    // A queued item exists locally, but the removal targets a DIFFERENT id —
-    // the stale-consumer case: the requested item already drained into a turn.
     expect(
       enqueueInboundUserMessage(runtime, {
         type: "message",
@@ -610,8 +606,6 @@ describe("listener message router ownership handoff", () => {
         ],
       }),
     ).toBe(true);
-    // Flush the enqueue's own scheduled broadcast so the assertion below
-    // isolates the removal handler's emit.
     await Promise.resolve();
     socket.sentPayloads.length = 0;
 
@@ -634,8 +628,6 @@ describe("listener message router ownership handoff", () => {
         item_id: "item-already-drained",
       }),
     );
-    // The authoritative snapshot must still broadcast so a consumer holding
-    // a stale queue copy is repaired. (LET-11174)
     const updates = socket.sentPayloads
       .map((payload) => JSON.parse(payload) as { type: string })
       .filter((payload) => payload.type === "update_queue");
@@ -647,7 +639,6 @@ describe("listener message router ownership handoff", () => {
       ],
       removed: [],
     });
-    // Local queue state is untouched.
     expect(runtime.queueRuntime.length).toBe(1);
   });
 
@@ -698,8 +689,6 @@ describe("listener message router ownership handoff", () => {
     ).toBe(true);
     const enqueued = runtime.queueRuntime.peek()[0];
     expect(enqueued).toBeDefined();
-    // Let the enqueue callback's initial snapshot flush before isolating the
-    // removal snapshots asserted below.
     await Promise.resolve();
     socket.sentPayloads.length = 0;
 
@@ -713,7 +702,6 @@ describe("listener message router ownership handoff", () => {
         }),
       ),
     );
-    // The onRemoved callback schedules its own emit on a microtask.
     await Promise.resolve();
 
     expect(sent).toContainEqual(
@@ -730,7 +718,6 @@ describe("listener message router ownership handoff", () => {
       )
       .filter((payload) => payload.type === "update_queue");
     expect(updates.length).toBeGreaterThanOrEqual(1);
-    // Every broadcast snapshot reflects the post-removal queue.
     for (const update of updates) {
       expect(update.queue).toEqual([]);
     }

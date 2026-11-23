@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { removeTestDir } from "@/test-utils/test-fs";
 import {
   flushRemoteSettingsWrites,
   getRemoteSettingsPath,
@@ -24,6 +25,7 @@ import {
 
 describe("remote settings cwd repair", () => {
   const originalHome = process.env.HOME;
+  const originalConfigDir = process.env.LETTA_CONFIG_DIR;
   let tempRoot: string | null = null;
 
   afterEach(async () => {
@@ -34,8 +36,10 @@ describe("remote settings cwd repair", () => {
     } else {
       process.env.HOME = originalHome;
     }
+    if (originalConfigDir === undefined) delete process.env.LETTA_CONFIG_DIR;
+    else process.env.LETTA_CONFIG_DIR = originalConfigDir;
     if (tempRoot) {
-      await rm(tempRoot, { recursive: true, force: true });
+      await removeTestDir(tempRoot);
       tempRoot = null;
     }
   });
@@ -79,7 +83,6 @@ describe("remote settings cwd repair", () => {
       "conversation:live": liveDirectory,
     });
 
-    // Reusing the deleted filesystem path must not resurrect its old scope.
     await mkdir(deletedDirectory);
     resetRemoteSettingsCache();
     expect(loadRemoteSettings().cwdMap).toEqual({
@@ -108,6 +111,29 @@ describe("remote settings cwd repair", () => {
     await mkdir(deletedDirectory);
     resetRemoteSettingsCache();
     expect(loadRemoteSettings().cwdMap).toEqual({});
+  });
+
+  test("product override does not import legacy HOME listener state", async () => {
+    tempRoot = await mkdtemp(path.join(tmpdir(), "letta-remote-product-"));
+    const fakeHome = path.join(tempRoot, "home");
+    const productRoot = path.join(fakeHome, ".dream");
+    const liveDirectory = path.join(tempRoot, "legacy-project");
+    process.env.HOME = fakeHome;
+    process.env.LETTA_CONFIG_DIR = productRoot;
+    await mkdir(liveDirectory, { recursive: true });
+    await mkdir(path.join(fakeHome, ".letta"), { recursive: true });
+    await writeFile(
+      path.join(fakeHome, ".letta", "cwd-cache.json"),
+      JSON.stringify({ "conversation:legacy": liveDirectory }),
+    );
+
+    expect(getRemoteSettingsPath()).toBe(
+      path.join(productRoot, "remote-settings.json"),
+    );
+    expect(loadRemoteSettings().cwdMap).toEqual({});
+    expect(
+      JSON.parse(await readFile(getRemoteSettingsPath(), "utf-8")),
+    ).toEqual({ cwdMap: {} });
   });
 
   test("coalesces asynchronous updates while preserving merged settings", async () => {
@@ -362,7 +388,6 @@ describe("remote settings cwd repair", () => {
     );
     loadRemoteSettings();
 
-    // Writer A journals a repair but cannot acquire the settings lock.
     await mkdir(`${settingsPath}.lock`);
     saveRemoteSettingsSync({ cwdMap: {} });
     const journalName = (await readdir(path.dirname(settingsPath))).find(
@@ -377,8 +402,6 @@ describe("remote settings cwd repair", () => {
       ),
     ) as { id: string };
 
-    // A real second process applies that journal and then commits an explicit
-    // assignment to the same path before Writer A gets the lock.
     await rm(`${settingsPath}.lock`, { recursive: true });
     const moduleUrl = pathToFileURL(
       path.join(import.meta.dir, "remote-settings.ts"),
@@ -469,8 +492,6 @@ describe("remote settings cwd repair", () => {
     );
     loadRemoteSettings();
 
-    // Simulate another listener publishing after this process populated its
-    // cache. Its unrelated map entry and permission update must survive.
     await writeFile(
       getRemoteSettingsPath(),
       JSON.stringify({
@@ -503,8 +524,6 @@ describe("remote settings cwd repair", () => {
       },
     });
 
-    // A stale deletion must not remove a same-key reassignment published by
-    // another listener after this process last saw the entry.
     await writeFile(
       getRemoteSettingsPath(),
       JSON.stringify({

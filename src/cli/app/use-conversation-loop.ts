@@ -1,5 +1,3 @@
-// src/cli/app/useConversationLoop.ts
-
 import { randomUUID } from "node:crypto";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type {
@@ -23,7 +21,9 @@ import {
   overlayPartialResults,
 } from "@/agent/approval-execution";
 import {
+  CONVERSATION_BUSY_WAIT_TIMEOUT_MS,
   extractConflictDetail,
+  extractConversationBusyRunId,
   fetchRunErrorInfo,
   getPreStreamErrorAction,
   getRetryDelayMs,
@@ -34,8 +34,11 @@ import {
   parseRetryAfterHeaderMs,
   rebuildInputWithFreshDenials,
   refreshInputOtidsForNewRequest,
+  reportBusyRetryExhausted,
+  resumeConversationBusyRequest,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldAttemptApprovalRecovery,
+  waitForConversationBusyRunOrThrow,
 } from "@/agent/approval-recovery";
 import { getAvailableModelHandles } from "@/agent/available-models";
 import {
@@ -52,7 +55,7 @@ import {
   clearCompletedSubagents,
   hasActiveSubagents,
 } from "@/agent/subagent-state";
-import { type ConversationMessageStreamBody, getBackend } from "@/backend";
+import { getBackend } from "@/backend";
 import {
   type Buffers,
   type Line,
@@ -74,6 +77,7 @@ import {
   getRetryStatusMessage,
   isEncryptedContentError,
   isProviderStreamDisconnectErrorText,
+  KEY_OR_CREDITS_REQUIRED_MESSAGE,
 } from "@/cli/helpers/error-formatter";
 import { parsePatchOperations } from "@/cli/helpers/format-args-display";
 import {
@@ -87,8 +91,6 @@ import { safeJsonParseOr } from "@/cli/helpers/safe-json-parse";
 import {
   type ApprovalRequest,
   advanceStreamSequenceCursor,
-  type DrainResult,
-  drainStream,
   drainStreamWithResume,
   recordEmptyApprovalTelemetry,
   type StreamSequenceCursor,
@@ -127,7 +129,6 @@ import {
   ERROR_FEEDBACK_HINT,
   INTERRUPT_MESSAGE,
   LLM_API_ERROR_MAX_RETRIES,
-  TEMP_QUOTA_OVERRIDE_MODEL,
 } from "./constants";
 import { extractErrorMeta } from "./errors";
 import { uid } from "./ids";
@@ -235,11 +236,9 @@ type ConversationLoopContext = {
     overrideModel?: string | null,
   ) => Promise<PreparedScopeToolContext>;
   processingConversationRef: MutableRefObject<number>;
-  /** Read side of the approval-results queue, for abort partial-result overlays. */
   queuedApprovalResultsRef: MutableRefObject<ApprovalResult[] | null>;
   queueApprovalResults: QueueApprovalResults;
   queueSnapshotRef: MutableRefObject<QueuedMessage[]>;
-  quotaAutoSwapAttemptedRef: MutableRefObject<boolean>;
   refreshDerived: () => void;
   refreshDerivedThrottled: () => void;
   resetTrajectoryBases: () => void;
@@ -336,7 +335,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     queuedApprovalResultsRef,
     queueApprovalResults,
     queueSnapshotRef,
-    quotaAutoSwapAttemptedRef,
     refreshDerived,
     refreshDerivedThrottled,
     resetTrajectoryBases,
@@ -364,7 +362,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     setRestoredInput,
     setStreaming,
     setConversationSummary,
-    setTempModelOverride,
     setThinkingMessage,
     setTrajectoryElapsedBaseMs,
     setTrajectoryTokenBase,
@@ -481,15 +478,12 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     ],
   );
 
-  // Core streaming function - iterative loop that processes conversation turns
   // biome-ignore lint/correctness/useExhaustiveDependencies: blanket suppression — this callback has ~16 omitted deps (refs, stable functions, etc.). Refs are safe (read .current dynamically), but the blanket ignore also hides any genuinely missing reactive deps. If stale-closure bugs appear in processConversation, audit the dep array here first.
   const processConversation = useCallback(
     async (
       initialInput: Array<MessageCreate | ApprovalCreate>,
       options?: import("./types").ProcessConversationOptions,
     ): Promise<void> => {
-      // Pre-stream retries can yield for seconds: pin the user's permission
-      // mode so auto-approvals don't regress after a retry.
       const pinnedPermissionMode = uiPermissionModeRef.current;
       const restorePinnedPermissionMode = () => {
         if (permissionMode.getMode() !== pinnedPermissionMode) {
@@ -500,7 +494,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         }
       };
 
-      // Reset per-run approval tracking used by streaming UI.
       buffersRef.current.approvalsPending = false;
       if (buffersRef.current.serverToolCalls.size > 0) {
         let didPromote = false;
@@ -521,9 +514,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             try {
               JSON.parse(argsCandidate);
               argsComplete = true;
-            } catch {
-              // Args still incomplete.
-            }
+            } catch {}
           }
           if (argsComplete && line.phase !== "running") {
             const nextLine = {
@@ -539,23 +530,17 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           refreshDerived();
         }
       }
-      // Copy so we can safely mutate for retry recovery flows
       const inputList = Array.isArray(initialInput) ? initialInput : [];
       let currentInput = [...inputList];
       const allowReentry = options?.allowReentry ?? false;
 
-      // Use provided generation or capture current: detects ESC during async work
       const myGeneration =
         options?.submissionGeneration ?? conversationGenerationRef.current;
 
-      // Already stale (ESC while queued in onSubmit): check early to avoid
-      // setting state (streaming, etc.) for stale conversations.
       if (myGeneration !== conversationGenerationRef.current) {
         return;
       }
 
-      // Guard against concurrent calls (two quick submissions). Dedicated ref,
-      // not streamingRef: streaming is set early for UI responsiveness.
       if (processingConversationRef.current > 0 && !allowReentry) {
         return;
       }
@@ -587,7 +572,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           turnStartCancelReason =
             getTurnStartCancel(turnStartEvent)?.reason ?? null;
         } catch {
-          // Mod turn_start handlers should not block sending the turn.
           currentInput = originalInput;
           turnStartCancelReason = null;
         }
@@ -609,12 +593,10 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           ? pendingTranscriptStartLineIndexRef.current
           : null;
 
-      // Reset retry counters for new conversation turns (fresh budget per user message)
       if (!allowReentry) {
         llmApiErrorRetriesRef.current = 0;
         emptyResponseRetriesRef.current = 0;
         conversationBusyRetriesRef.current = 0;
-        quotaAutoSwapAttemptedRef.current = false;
         chatgptPlanSwapsRef.current = 0;
         chatgptExhaustedProvidersRef.current.clear();
       }
@@ -622,6 +604,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
       let currentRunId: string | undefined;
       let preserveTranscriptStartForApproval = false;
       let turnAbortController: AbortController | null = null;
+      let conversationBusyDeadlineMs: number | null = null;
       try {
         if (turnStartCancelReason) {
           const statusId = uid("status");
@@ -636,13 +619,11 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           return;
         }
 
-        // Check if user hit escape before we started
         if (userCancelledRef.current) {
-          userCancelledRef.current = false; // Reset for next time
+          userCancelledRef.current = false;
           return;
         }
 
-        // Double-check we haven't become stale between entry and try block
         if (myGeneration !== conversationGenerationRef.current) {
           return;
         }
@@ -664,9 +645,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           return;
         }
 
-        // Recover interrupted message only after explicit user interrupt: if
-        // cache holds ONLY user messages, prepend them (type="message" is a
-        // local discriminator, not in SDK types).
         const originalInput = currentInput;
         const cacheIsAllUserMsgs = lastSentInputRef.current?.every(
           (m: MessageCreate | ApprovalCreate) =>
@@ -682,7 +660,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           canInjectInterruptRecovery
         ) {
           currentInput = [
-            // Refresh OTIDs — this is a new request, not a retry of the interrupted one
             ...lastSentInputRef.current.map(
               (m: MessageCreate | ApprovalCreate) => ({
                 ...m,
@@ -707,7 +684,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             ),
           ];
           pendingInterruptRecoveryConversationIdRef.current = null;
-          // Cache old + new for chained recovery
           lastSentInputRef.current = [
             ...lastSentInputRef.current,
             ...originalInput,
@@ -717,9 +693,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           lastSentInputRef.current = originalInput;
         }
 
-        // Clear stale pending tool calls (false: avoid racing interrupted=true
-        // with a concurrent call). Skip when allowReentry=true — server-side
-        // tool results still arrive in this stream.
         if (!allowReentry) {
           markIncompleteToolsAsCancelled(
             buffersRef.current,
@@ -727,10 +700,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             "internal_cancel",
           );
         }
-        // Reset interrupted flag since we're starting a fresh stream
         buffersRef.current.interrupted = false;
 
-        // Clear completed subagents only on true new turns.
         if (
           shouldClearCompletedSubagentsOnTurnStart(
             allowReentry,
@@ -745,20 +716,15 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         while (true) {
           const signal = abortControllerRef.current?.signal;
 
-          // Check if cancelled before starting new stream
           if (signal?.aborted) {
             const isStaleAtAbort =
               myGeneration !== conversationGenerationRef.current;
-            // streaming=false only for the current generation: a newer call
-            // may be running and we shouldn't affect its UI.
             if (!isStaleAtAbort) {
               setStreaming(false);
             }
             return;
           }
 
-          // Inject queued skill content as user message parts (LET-7353), so
-          // all approval-send paths get SKILL.md alongside tool results.
           const { consumeQueuedSkillContent } = await import(
             "@/tools/impl/skill-content-registry"
           );
@@ -777,11 +743,9 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             ];
           }
 
-          // Stream one turn; try-catch covers pre-stream throws (desync).
           let stream: Awaited<ReturnType<typeof sendMessageStream>> | null =
             null;
           let turnToolContextId: string | null = null;
-          let preStreamResumeResult: DrainResult | null = null;
           let prefetchedAgent: AgentState | null = null;
           try {
             const preparedToolContext = await prepareScopedToolExecutionContext(
@@ -798,7 +762,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 allowResponseStateReuse:
                   options?.allowResponseStateReuse === true,
               },
-              // Abort the initial POST with the turn so Esc is immediate.
               { maxRetries: 0, signal },
             );
             stream = nextStream;
@@ -815,10 +778,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 : "none",
             );
 
-            // Extract error detail using shared helper (handles nested/direct/message shapes)
             const errorDetail = extractConflictDetail(preStreamError);
 
-            // Route through shared pre-stream conflict classifier (parity with headless.ts)
             const preStreamAction = getPreStreamErrorAction(
               errorDetail,
               conversationBusyRetriesRef.current,
@@ -833,8 +794,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               },
             );
 
-            // Stale approval conflict: fetch real pending approvals, auto-deny,
-            // retry. Shares llmApiErrorRetriesRef budget (max 3 per turn).
             if (
               shouldAttemptApprovalRecovery({
                 approvalPendingDetected:
@@ -859,7 +818,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
                 );
               } catch {
-                // Fetch failed — strip stale payload and retry plain message
                 currentInput = rebuildInputWithFreshDenials(
                   currentInput,
                   [],
@@ -870,15 +828,11 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               continue;
             }
 
-            // Check for 409 "conversation busy" error - retry with exponential backoff
-            if (preStreamAction === "retry_conversation_busy") {
-              conversationBusyRetriesRef.current += 1;
-              const retryDelayMs = getRetryDelayMs({
-                category: "conversation_busy",
-                attempt: conversationBusyRetriesRef.current,
-              });
-
-              // Log the conversation-busy error
+            const blockingRunId = extractConversationBusyRunId(errorDetail);
+            if (
+              preStreamAction === "retry_conversation_busy" ||
+              blockingRunId
+            ) {
               telemetry.trackError(
                 "retry_conversation_busy",
                 formatTelemetryErrorMessage(
@@ -893,132 +847,101 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   modelId: currentModelId || undefined,
                 },
               );
-
-              // Resume the in-flight run via the conversation stream endpoint (otid lookup, active-run fallback)
-              try {
-                const backend = getBackend();
-                const messageOtid = currentInput
-                  .map((item) => (item as Record<string, unknown>).otid)
-                  .find((v): v is string => typeof v === "string");
-                debugLog(
-                  "stream",
-                  "Conversation busy: resuming via stream endpoint (otid=%s)",
-                  messageOtid ?? "none",
-                );
-
-                if (signal?.aborted || userCancelledRef.current) {
-                  const isStaleAtAbort =
-                    myGeneration !== conversationGenerationRef.current;
-                  if (!isStaleAtAbort) {
-                    setStreaming(false);
-                  }
-                  return;
-                }
-
-                const conversationId = conversationIdRef.current ?? "default";
-                const resumeStream = await backend.streamConversationMessages(
-                  conversationId,
-                  // Cast needed until SDK MessageStreamParams includes otid field
-                  {
-                    agent_id:
-                      conversationId === "default"
-                        ? (agentIdRef.current ?? undefined)
-                        : undefined,
-                    otid: messageOtid ?? undefined,
-                    starting_after: 0,
-                    batch_size: 1000,
-                  } as unknown as ConversationMessageStreamBody,
-                );
-
-                // Only reset buffer state after confirming stream is available
+              const resumeStream = await resumeConversationBusyRequest(
+                conversationIdRef.current ?? "default",
+                agentIdRef.current ?? undefined,
+                currentInput,
+                signal,
+              );
+              if (resumeStream) {
                 buffersRef.current.interrupted = false;
-                buffersRef.current.commitGeneration =
-                  (buffersRef.current.commitGeneration || 0) + 1;
-
-                preStreamResumeResult = await drainStream(
-                  resumeStream,
-                  buffersRef.current,
-                  refreshDerivedThrottled,
-                  signal,
-                  undefined, // no handleFirstMessage on resume
-                  makeExecutionPhaseHook(setExecutionPhase),
-                  contextTrackerRef.current,
-                  streamSequenceCursor,
-                );
+                stream = resumeStream as Awaited<
+                  ReturnType<typeof sendMessageStream>
+                >;
+                turnToolContextId = getStreamToolContextId(stream);
+              } else {
                 debugLog(
                   "stream",
-                  "Pre-stream resume succeeded (stopReason=%s)",
-                  preStreamResumeResult.stopReason,
+                  "Pre-stream OTID resume unavailable; falling back to blocker wait or retry",
                 );
-                // Fall through — preStreamResumeResult will short-circuit drainStreamWithResume
-              } catch (resumeError) {
-                if (signal?.aborted || userCancelledRef.current) {
-                  const isStaleAtAbort =
-                    myGeneration !== conversationGenerationRef.current;
-                  if (!isStaleAtAbort) {
-                    setStreaming(false);
-                  }
-                  return;
-                }
-
-                debugLog(
-                  "stream",
-                  "Pre-stream resume failed, falling back to wait/retry: %s",
-                  resumeError instanceof Error
-                    ? resumeError.message
-                    : String(resumeError),
-                );
-                // Fall through to existing wait/retry behavior
               }
-
-              // If resume succeeded, skip the wait/retry loop
-              if (!preStreamResumeResult) {
-                // Show status message
+              if (!stream) {
                 const statusId = uid("status");
                 buffersRef.current.byId.set(statusId, {
                   kind: "status",
                   id: statusId,
-                  lines: ["Conversation is busy, waiting and retrying…"],
+                  lines: [
+                    blockingRunId
+                      ? `Conversation is busy; waiting for run ${blockingRunId} to finish…`
+                      : "Conversation is busy, waiting and retrying…",
+                  ],
                 });
                 buffersRef.current.order.push(statusId);
                 refreshDerived();
-
-                // Wait with abort checking (same pattern as LLM API error retry)
-                let cancelled = false;
-                const startTime = Date.now();
-                while (Date.now() - startTime < retryDelayMs) {
-                  if (
-                    abortControllerRef.current?.signal.aborted ||
-                    userCancelledRef.current
-                  ) {
-                    cancelled = true;
-                    break;
+                if (blockingRunId) {
+                  conversationBusyDeadlineMs ??=
+                    Date.now() + CONVERSATION_BUSY_WAIT_TIMEOUT_MS;
+                  let settled: boolean;
+                  try {
+                    settled = await waitForConversationBusyRunOrThrow(
+                      blockingRunId,
+                      signal,
+                      conversationBusyDeadlineMs,
+                    );
+                  } finally {
+                    buffersRef.current.byId.delete(statusId);
+                    buffersRef.current.order = buffersRef.current.order.filter(
+                      (id: string) => id !== statusId,
+                    );
+                    refreshDerived();
                   }
-                  await new Promise((resolve) => setTimeout(resolve, 100));
+                  if (settled) {
+                    if (
+                      myGeneration !== conversationGenerationRef.current ||
+                      userCancelledRef.current
+                    )
+                      return;
+                    buffersRef.current.interrupted = false;
+                    restorePinnedPermissionMode();
+                    continue;
+                  }
                 }
-
-                // Remove status message
-                buffersRef.current.byId.delete(statusId);
-                buffersRef.current.order = buffersRef.current.order.filter(
-                  (id: string) => id !== statusId,
-                );
-                refreshDerived();
-
-                if (!cancelled) {
-                  // Reset interrupted flag so retry stream chunks are processed
-                  buffersRef.current.interrupted = false;
-                  restorePinnedPermissionMode();
-                  continue;
+                if (preStreamAction === "retry_conversation_busy") {
+                  conversationBusyRetriesRef.current += 1;
+                  const retryDelayMs = getRetryDelayMs({
+                    category: "conversation_busy",
+                    attempt: conversationBusyRetriesRef.current,
+                  });
+                  let cancelled = false;
+                  const startTime = Date.now();
+                  while (Date.now() - startTime < retryDelayMs) {
+                    if (
+                      abortControllerRef.current?.signal.aborted ||
+                      userCancelledRef.current
+                    ) {
+                      cancelled = true;
+                      break;
+                    }
+                    await new Promise((resolve) => setTimeout(resolve, 100));
+                  }
+                  if (!blockingRunId) {
+                    buffersRef.current.byId.delete(statusId);
+                    buffersRef.current.order = buffersRef.current.order.filter(
+                      (id: string) => id !== statusId,
+                    );
+                    refreshDerived();
+                  }
+                  if (!cancelled) {
+                    buffersRef.current.interrupted = false;
+                    restorePinnedPermissionMode();
+                    continue;
+                  }
                 }
               }
-              // User pressed ESC - fall through to error handling
             }
-
-            // Retry pre-stream transient errors (429/5xx/network) with shared LLM retry budget
             if (preStreamAction === "retry_transient") {
               llmApiErrorRetriesRef.current += 1;
               const attempt = llmApiErrorRetriesRef.current;
-
               const retryAfterMs =
                 preStreamError instanceof APIError
                   ? parseRetryAfterHeaderMs(
@@ -1032,7 +955,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 retryAfterMs,
               });
 
-              // Log the error that triggered the retry
               telemetry.trackError(
                 "retry_pre_stream_transient",
                 formatTelemetryErrorMessage(
@@ -1088,20 +1010,15 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 restorePinnedPermissionMode();
                 continue;
               }
-              // User pressed ESC - fall through to error handling
             }
 
-            // Reset conversation busy retry counter on non-busy error
             conversationBusyRetriesRef.current = 0;
 
-            // Check if this is a pre-stream approval desync error
             const hasApprovalInPayload = currentInput.some(
               (item) => item?.type === "approval",
             );
 
             if (hasApprovalInPayload) {
-              // "Invalid tool call IDs": server HAS differently-IDed pending approvals
-              // — fetch the real pending approvals and show them.
               if (isInvalidToolCallIdsError(errorDetail)) {
                 try {
                   const agent = await getBackend().retrieveAgent(
@@ -1114,21 +1031,17 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                     );
 
                   if (serverApprovals && serverApprovals.length > 0) {
-                    // Preserve user message (filter system reminders to avoid re-inject)
                     const textToRestore = getRestorableUserText(currentInput);
                     if (textToRestore) setRestoredInput(textToRestore);
 
-                    // Clear all stale approval state before setting new approvals
                     setApprovalResults([]);
                     setAutoHandledResults([]);
                     setAutoDeniedApprovals([]);
                     setApprovalContexts([]);
                     queueApprovalResults(null);
 
-                    // Set up approval UI with fetched approvals
                     setPendingApprovals(serverApprovals);
 
-                    // Analyze approval contexts (same logic as /resume)
                     try {
                       const contexts = await Promise.all(
                         serverApprovals.map(async (approval) => {
@@ -1142,18 +1055,12 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                         }),
                       );
                       setApprovalContexts(contexts);
-                    } catch {
-                      // If analysis fails, contexts remain empty (will show basic options)
-                    }
+                    } catch {}
 
-                    // Stop streaming: user needs to approve/deny (finally decrements)
                     setStreaming(false);
                     sendDesktopNotification("Approval needed");
                     return;
                   }
-                  // Nothing is pending anymore (e.g. another client already
-                  // resolved these calls): drop our approval payload and
-                  // retry the plain message instead of failing the turn.
                   const plainInput = rebuildInputWithFreshDenials(
                     currentInput,
                     [],
@@ -1168,40 +1075,36 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                     buffersRef.current.interrupted = false;
                     continue;
                   }
-                  // Otherwise fall through to error handling below
-                } catch {
-                  // Fetch failed - fall through to error handling below
-                }
+                } catch {}
               }
             }
 
-            // Not a recoverable desync - re-throw to outer catch
-            throw preStreamError;
+            if (!stream) {
+              reportBusyRetryExhausted(
+                errorDetail,
+                conversationBusyRetriesRef.current,
+                CONVERSATION_BUSY_MAX_RETRIES,
+              );
+              throw preStreamError;
+            }
           }
 
-          // Check again after network call - user may have pressed Escape during sendMessageStream
+          conversationBusyDeadlineMs = null;
           if (signal?.aborted) {
             const isStaleAtAbort =
               myGeneration !== conversationGenerationRef.current;
-            // streaming=false only for the current generation: a newer call
-            // may be running and we shouldn't affect its UI.
             if (!isStaleAtAbort) {
               setStreaming(false);
             }
             return;
           }
 
-          // Sync agent state on first chunk so the UI shows the correct model early.
           const syncAgentState = async () => {
             try {
-              // Reuse the agent from prepareToolExecutionContextForScope (no redundant retrieve).
               const agent =
                 prefetchedAgent ??
                 (await getBackend().retrieveAgent(agentIdRef.current));
 
-              // Keep model UI in sync with the agent configuration.
-              // Note: many tiers share the same handle (e.g. gpt-5.2-none/high), so we
-              // must also treat reasoning settings as model-affecting.
               const currentModel = llmConfigRef.current?.model;
               const currentEndpoint = llmConfigRef.current?.model_endpoint_type;
               const currentEffort = llmConfigRef.current?.reasoning_effort;
@@ -1227,10 +1130,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 currentEnableReasoner !== agentEnableReasoner
               ) {
                 if (!hasConversationModelOverrideRef.current) {
-                  // Model has changed at the agent level - update local state.
                   setLlmConfig(agent.llm_config);
 
-                  // Derive model ID from the configured model handle for ModelSelector.
                   const agentModelHandle = getPreferredAgentModelHandle(agent);
 
                   const modelInfo = getModelInfoForLlmConfig(
@@ -1243,13 +1144,11 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   if (modelInfo) {
                     setCurrentModelId(modelInfo.id);
                   } else {
-                    // Model not in the runtime catalog (e.g., BYOK model) - use handle as ID
                     setCurrentModelId(agentModelHandle || null);
                   }
                   setCurrentModelHandle(agentModelHandle || null);
                 }
 
-                // Always keep base agent state fresh.
                 setAgentState(agent);
                 setAgentDescription(agent.description ?? null);
                 const lastRunCompletion = (
@@ -1258,7 +1157,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 setAgentLastRunAt(lastRunCompletion ?? null);
               }
             } catch (error) {
-              // Silently fail - don't interrupt the conversation flow
               debugLog("sync-agent", "Failed to sync agent state: %O", error);
             }
           };
@@ -1269,8 +1167,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           );
           const handleFirstMessage = () => {
             setNetworkPhase("download");
-            // Sync agent state only on user messages or manual approval mode;
-            // in bypass mode continuations are instant — no time for model changes.
             if (isUserInitiated || !isAutoApprovalMode) {
               void syncAgentState();
             }
@@ -1280,8 +1176,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           trajectoryRunTokenStartRef.current = runTokenStart;
           sessionStatsRef.current.startTrajectory();
 
-          // Only bump turn counter for actual user messages, not approval continuations.
-          // This ensures all LLM steps within one user "turn" are counted as one.
           const hasUserMessage = currentInput.some(
             (item) => item.type === "message",
           );
@@ -1289,25 +1183,17 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             contextTrackerRef.current.currentTurnId++;
           }
 
-          const drainResult: Promise<DrainResult> = preStreamResumeResult
-            ? preStreamResumeResult
-            : (() => {
-                if (!stream) {
-                  throw new Error(
-                    "Expected stream when pre-stream resume did not succeed",
-                  );
-                }
-                return drainStreamWithResume(
-                  stream,
-                  buffersRef.current,
-                  refreshDerivedThrottled,
-                  signal, // Use captured signal, not ref (which may be nulled by handleInterrupt)
-                  handleFirstMessage,
-                  makeExecutionPhaseHook(setExecutionPhase),
-                  contextTrackerRef.current,
-                  streamSequenceCursor,
-                );
-              })();
+          if (!stream) throw new Error("Expected a stream after recovery");
+          const drainResult = drainStreamWithResume(
+            stream,
+            buffersRef.current,
+            refreshDerivedThrottled,
+            signal,
+            handleFirstMessage,
+            makeExecutionPhaseHook(setExecutionPhase),
+            contextTrackerRef.current,
+            streamSequenceCursor,
+          );
 
           const {
             stopReason,
@@ -1326,12 +1212,9 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             lastSeqId,
           );
 
-          // Update currentRunId for error reporting in catch block
           currentRunId = lastRunId ?? undefined;
-          // Expose to statusline
           if (lastRunId) lastRunIdRef.current = lastRunId;
 
-          // Track API duration and trajectory deltas
           sessionStatsRef.current.endTurn(apiDurationMs);
           const usageDelta = sessionStatsRef.current.updateUsageFromBuffers(
             buffersRef.current,
@@ -1354,21 +1237,14 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           const isStaleAfterDrain =
             myGeneration !== conversationGenerationRef.current;
 
-          // If this conversation is stale, exit without modifying UI state.
-          // A newer conversation is running and should control the UI.
           if (isStaleAfterDrain) {
             return;
           }
 
-          // Immediate refresh after stream completes to show final state unless
-          // the user already cancelled (handleInterrupt rendered the UI).
           if (!wasInterrupted) {
             refreshDerived();
           }
 
-          // If the turn was interrupted client-side but the backend had already emitted
-          // requires_approval, treat it as a cancel. This avoids re-entering approval flow
-          // and keeps queue-cancel flags consistent with the normal cancel branch below.
           if (wasInterrupted && stopReasonToHandle === "requires_approval") {
             stopReasonToHandle = "cancelled";
           }
@@ -1397,10 +1273,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             stopReasonToHandle = "requires_approval";
           }
 
-          // Record the final stop reason so the dequeue gate can check it.
           lastStopReasonRef.current = stopReasonToHandle;
 
-          // Case 1: Turn ended normally
           if (stopReasonToHandle === "end_turn") {
             clearApprovalToolContext();
             setStreaming(false);
@@ -1414,11 +1288,11 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               return base + (performance.now() - segmentStart);
             })();
             closeTrajectorySegment();
-            llmApiErrorRetriesRef.current = 0; // Reset retry counter on success
+            llmApiErrorRetriesRef.current = 0;
             emptyResponseRetriesRef.current = 0;
             conversationBusyRetriesRef.current = 0;
-            lastDequeuedMessageRef.current = null; // Clear - message was processed successfully
-            lastSentInputRef.current = null; // Clear - no recovery needed
+            lastDequeuedMessageRef.current = null;
+            lastSentInputRef.current = null;
             pendingInterruptRecoveryConversationIdRef.current = null;
 
             if (transcriptTurnStartLineIndex !== null) {
@@ -1444,11 +1318,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             }
             pendingTranscriptStartLineIndexRef.current = null;
 
-            // Evaluate reflection triggers now that the turn's transcript
-            // delta is on disk, so step counts include this turn.
             await maybeRunPostTurnReflection();
 
-            // Get last assistant message, user message, and reasoning for Stop hook
             const bufferedLines = Array.from(
               buffersRef.current.byId.values(),
             ) as Line[];
@@ -1465,20 +1336,18 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             const userMessage =
               lastUser && "text" in lastUser ? lastUser.text : undefined;
             const precedingReasoning = buffersRef.current.lastReasoning;
-            buffersRef.current.lastReasoning = undefined; // Clear after use
+            buffersRef.current.lastReasoning = undefined;
 
-            // Run Stop hooks - if blocked/errored, continue the conversation with feedback
             const stopHookResult = await runStopHooks(
               stopReasonToHandle,
               buffersRef.current.order.length,
               bufferedLines.filter((item) => item.kind === "tool_call").length,
-              undefined, // workingDirectory (uses default)
+              undefined,
               precedingReasoning,
               assistantMessage,
               userMessage,
             );
 
-            // If hook blocked (exit 2), inject stderr feedback and continue conversation
             if (stopHookResult.blocked) {
               const stderrOutput = stopHookResult.results
                 .map((r) => r.stderr)
@@ -1487,7 +1356,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               const feedback = stderrOutput || "Stop hook blocked";
               const hookMessage = `<stop-hook>\n${feedback}\n</stop-hook>`;
 
-              // Add status to transcript so user sees what's happening
               const statusId = uid("status");
               buffersRef.current.byId.set(statusId, {
                 kind: "status",
@@ -1497,7 +1365,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               buffersRef.current.order.push(statusId);
               refreshDerived();
 
-              // Continue conversation with the hook feedback
               const hookMessageOtid = randomUUID();
               setTimeout(() => {
                 processConversation(
@@ -1515,8 +1382,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               return;
             }
 
-            // Emit turn_end mod event. A mod may return { continue: "..." } to
-            // append a follow-up user message and start another turn.
             const turnEndEvent: {
               agentId: string | null;
               conversationId: string | null;
@@ -1541,7 +1406,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   ? turnEndEvent.continue
                   : undefined;
             } catch {
-              // turn_end handlers are best-effort; never block turn completion.
               turnEndContinue = undefined;
             }
 
@@ -1563,13 +1427,10 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               return;
             }
 
-            // Disable eager approval check after first successful message (LET-7101)
-            // Any new approvals from here on are from our own turn, not orphaned
             if (needsEagerApprovalCheck) {
               setNeedsEagerApprovalCheck(false);
             }
 
-            // Derive an auto title client-side once the first assistant turn completes.
             if (
               shouldAutoGenerateConversationTitleRef.current &&
               !isAutoConversationTitleInFlightRef.current &&
@@ -1595,7 +1456,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                     setConversationSummary(conversationTitle);
                   })
                   .catch((err) => {
-                    // Silently ignore - not critical.
                     if (isDebugEnabled()) {
                       console.error(
                         "[DEBUG] Failed to update conversation title:",
@@ -1646,17 +1506,11 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               }
             }
 
-            // Send desktop notification when turn completes
-            // and we're not about to auto-send another queued message
             if (!waitingForQueueCancelRef.current) {
               sendDesktopNotification("Turn completed, awaiting your input");
             }
 
-            // Check if we were waiting for cancel but stream finished naturally
             if (waitingForQueueCancelRef.current) {
-              // Queue-cancel completed - let dequeue effect handle the messages
-              // We don't call onSubmit here because isAgentBusy() would return true
-              // (abortControllerRef is still set until finally block), causing re-queue
               debugLog(
                 "queue",
                 "Queue-cancel completed (end_turn): messages will be processed by dequeue effect",
@@ -1665,7 +1519,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 setRestoreQueueOnCancel(false);
               }
 
-              // Reset flags - dequeue effect will fire when streaming=false commits
               waitingForQueueCancelRef.current = false;
               queueSnapshotRef.current = [];
             }
@@ -1673,7 +1526,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             return;
           }
 
-          // Case 1.5: Stream was cancelled by user
           if (stopReasonToHandle === "cancelled") {
             clearApprovalToolContext();
             pendingTranscriptStartLineIndexRef.current = null;
@@ -1681,11 +1533,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             closeTrajectorySegment();
             syncTrajectoryElapsedBase();
 
-            // Check if this cancel was triggered by queue threshold
             if (waitingForQueueCancelRef.current) {
-              // Queue-cancel completed - let dequeue effect handle the messages
-              // We don't call onSubmit here because isAgentBusy() would return true
-              // (abortControllerRef is still set until finally block), causing re-queue
               debugLog(
                 "queue",
                 "Queue-cancel completed (cancelled): messages will be processed by dequeue effect",
@@ -1694,11 +1542,9 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 setRestoreQueueOnCancel(false);
               }
 
-              // Reset flags - dequeue effect will fire when streaming=false commits
               waitingForQueueCancelRef.current = false;
               queueSnapshotRef.current = [];
             } else {
-              // Regular user cancellation - show error
               if (!EAGER_CANCEL) {
                 appendError(INTERRUPT_MESSAGE, true);
               }
@@ -1707,14 +1553,13 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             return;
           }
 
-          // Case 2: Requires approval
           if (stopReasonToHandle === "requires_approval") {
             clearApprovalToolContext();
             preserveTranscriptStartForApproval = true;
             approvalToolContextIdRef.current = turnToolContextId;
             setAutoHandledResults([]);
             setAutoDeniedApprovals([]);
-            lastSentInputRef.current = null; // Clear - message was received by server
+            lastSentInputRef.current = null;
             pendingInterruptRecoveryConversationIdRef.current = null;
 
             const approvalsToProcess = approvalsFromStream;
@@ -1731,11 +1576,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               return;
             }
 
-            // If in quietCancel mode (user queued messages), auto-reject all approvals
-            // and send denials + queued messages together
             if (waitingForQueueCancelRef.current) {
               clearApprovalToolContext();
-              // Create denial results for all approvals
               const denialResults = approvalsToProcess.map((approvalItem) => ({
                 type: "approval" as const,
                 tool_call_id: approvalItem.toolCallId,
@@ -1743,7 +1585,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 reason: "User cancelled - new message queued",
               }));
 
-              // Update buffers to show tools as cancelled
               for (const approvalItem of approvalsToProcess) {
                 onChunk(buffersRef.current, {
                   message_type: "tool_return_message",
@@ -1756,7 +1597,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               }
               refreshDerived();
 
-              // Queue denial results - dequeue effect will pick them up via onSubmit
               queueApprovalResults(denialResults);
 
               debugLog(
@@ -1768,7 +1608,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 setRestoreQueueOnCancel(false);
               }
 
-              // Reset flags - dequeue effect will fire when streaming=false commits
               waitingForQueueCancelRef.current = false;
               queueSnapshotRef.current = [];
               setStreaming(false);
@@ -1777,7 +1616,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               return;
             }
 
-            // Check if user cancelled before starting permission checks
             if (
               userCancelledRef.current ||
               abortControllerRef.current?.signal.aborted
@@ -1795,10 +1633,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               return;
             }
 
-            // Check permissions for all approvals (including fancy UI tools)
-            // Ensure the singleton permission mode matches what the UI shows.
-            // This prevents rare races where the footer shows YOLO but approvals still
-            // get classified using the default mode.
             const desiredMode = uiPermissionModeRef.current;
             if (permissionMode.getMode() !== desiredMode) {
               permissionMode.setMode(desiredMode);
@@ -1813,8 +1647,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 toolContextId: approvalToolContextIdRef.current,
               });
 
-            // Precompute diffs for file edit tools before execution (both auto-allowed and needs-user-input)
-            // This is needed for inline approval UI to show diffs, and for post-approval rendering
             for (const ac of [...autoAllowed, ...needsUserInput]) {
               const toolName = ac.approval.toolName;
               const toolCallId = ac.approval.toolCallId;
@@ -1848,7 +1680,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                     }
                   }
                 } else if (isPatchTool(toolName) && args.input) {
-                  // Patch tools - parse hunks directly (patches ARE diffs)
                   const operations = parsePatchOperations(args.input as string);
                   for (const op of operations) {
                     const key = `${toolCallId}:${op.path}`;
@@ -1861,12 +1692,9 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                         precomputedDiffsRef.current.set(key, result);
                       }
                     }
-                    // Delete operations don't need diffs
                   }
                 }
-              } catch {
-                // Ignore errors in diff computation for auto-allowed tools
-              }
+              } catch {}
             }
 
             const autoAllowedToolCallIds = autoAllowed.map(
@@ -1879,10 +1707,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               toolCallId: string;
               result: ToolExecutionResult;
             }> = [];
-            // Denial decisions are built before execution: a grace-expiry
-            // rejection must still carry them (via appendAbortPartials) so
-            // the server's approval batch stays complete — denials are
-            // decisions, not tool executions.
             const autoDeniedResults: Array<{
               approval: ApprovalRequest;
               reason: string;
@@ -1907,12 +1731,10 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
 
             try {
               if (autoAllowedToolCallIds.length > 0) {
-                // Set phase to "running" for auto-allowed tools
                 setToolCallsRunning(buffersRef.current, autoAllowedToolCallIds);
                 refreshDerived();
               }
 
-              // Execute auto-allowed tools (sequential for writes, parallel for reads)
               try {
                 const approvalToolContextId =
                   approvalToolContextIdRef.current ??
@@ -1934,25 +1756,16 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                       )
                     : [];
               } catch (error) {
-                // Orphan guard on the rejection path too (covers context
-                // preparation and execution alike): a stale batch's
-                // rejection must not cancel a newer owner (mirrors below).
                 if (
                   shouldTrackAutoAllowed &&
                   toolAbortControllerRef.current !== autoAllowedAbortController
                 ) {
                   return;
                 }
-                // Grace-expiry still owes the server every auto-denied
-                // decision: attach the pre-built denials so the recovery
-                // queue carries a complete batch.
                 appendAbortPartials(error, prebuiltDeniedApprovalResults);
                 throw error;
               }
 
-              // Orphan guard: if the refs were replaced or cleared while the
-              // auto-allowed batch was executing, do not write continuation
-              // results or re-enter the stream from this stale batch.
               if (
                 shouldTrackAutoAllowed &&
                 toolAbortControllerRef.current !== autoAllowedAbortController
@@ -1960,8 +1773,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 return;
               }
 
-              // Update buffers with tool rejection for UI (denial results
-              // were pre-built before execution)
               for (const ad of autoDeniedResults) {
                 onChunk(buffersRef.current, {
                   message_type: "tool_return_message",
@@ -1998,9 +1809,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   }
                 : undefined;
 
-              // If all are auto-handled, continue immediately without showing dialog
               if (needsUserInput.length === 0) {
-                // Check if user cancelled before continuing
                 if (
                   userCancelledRef.current ||
                   abortControllerRef.current?.signal.aborted ||
@@ -2021,9 +1830,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   return;
                 }
 
-                // Append queued messages if any (from 15s append mode).
-                // In defer mode, skip mid-run bundling — let the dequeue gate
-                // handle dispatch after the agent is fully done (end_turn).
                 const queuedItemsToAppend =
                   queueModeRef.current === "immediate"
                     ? consumeQueuedMessages()
@@ -2049,9 +1855,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   return;
                 }
 
-                // Cancel mode - queue results and let dequeue effect handle
                 if (waitingForQueueCancelRef.current) {
-                  // Queue results - dequeue effect will pick them up via onSubmit
                   if (allResults.length > 0) {
                     queueApprovalResults(allResults, autoAllowedMetadata);
                   }
@@ -2065,7 +1869,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                     setRestoreQueueOnCancel(false);
                   }
 
-                  // Reset flags - dequeue effect will fire when streaming=false commits
                   waitingForQueueCancelRef.current = false;
                   queueSnapshotRef.current = [];
                   setStreaming(false);
@@ -2095,9 +1898,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 return;
               }
 
-              // Check again if user queued messages during auto-allowed tool execution
               if (waitingForQueueCancelRef.current) {
-                // Create denial results for tools that need user input
                 const denialResults = needsUserInput.map((ac) => ({
                   type: "approval" as const,
                   tool_call_id: ac.approval.toolCallId,
@@ -2105,7 +1906,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   reason: "User cancelled - new message queued",
                 }));
 
-                // Update buffers to show tools as cancelled
                 for (const ac of needsUserInput) {
                   onChunk(buffersRef.current, {
                     message_type: "tool_return_message",
@@ -2118,7 +1918,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 }
                 refreshDerived();
 
-                // Combine with auto-handled results and queue for sending
                 const queuedResults = [...allResults, ...denialResults];
                 if (queuedResults.length > 0) {
                   queueApprovalResults(queuedResults, autoAllowedMetadata);
@@ -2133,7 +1932,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   setRestoreQueueOnCancel(false);
                 }
 
-                // Reset flags - dequeue effect will fire when streaming=false commits
                 waitingForQueueCancelRef.current = false;
                 queueSnapshotRef.current = [];
                 setStreaming(false);
@@ -2142,8 +1940,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 return;
               }
             } finally {
-              // Skip cleanup when a newer batch took over the refs while
-              // this await unwound (orphaned-batch guard, use-approval-flow).
               if (
                 shouldTrackAutoAllowed &&
                 toolAbortControllerRef.current === autoAllowedAbortController
@@ -2156,7 +1952,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               }
             }
 
-            // Check if user cancelled before showing dialog
             if (
               userCancelledRef.current ||
               abortControllerRef.current?.signal.aborted
@@ -2173,7 +1968,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               return;
             }
 
-            // Show approval dialog for tools that need user input
             setPendingApprovals(needsUserInput.map((ac) => ac.approval));
             setApprovalContexts(
               needsUserInput
@@ -2185,19 +1979,14 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             setStreaming(false);
             closeTrajectorySegment();
             syncTrajectoryElapsedBase();
-            // Notify user that approval is needed
             sendDesktopNotification("Approval needed");
             return;
           }
 
-          // Unexpected stop reason (error, llm_api_error, etc.)
-          // Cache desync detection and last failure for consistent handling
-          // Check if payload contains approvals (could be approval-only or mixed with user message)
           const hasApprovalInPayload = currentInput.some(
             (item) => item?.type === "approval",
           );
 
-          // Capture the most recent error text in this turn (if any)
           let latestErrorText: string | null = null;
           for (let i = buffersRef.current.order.length - 1; i >= 0; i -= 1) {
             const id = buffersRef.current.order[i];
@@ -2227,21 +2016,17 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 );
 
               if (serverApprovals && serverApprovals.length > 0) {
-                // Preserve user message (filter system reminders to avoid re-inject)
                 const textToRestore = getRestorableUserText(currentInput);
                 if (textToRestore) setRestoredInput(textToRestore);
 
-                // Clear all stale approval state before setting new approvals
                 setApprovalResults([]);
                 setAutoHandledResults([]);
                 setAutoDeniedApprovals([]);
                 setApprovalContexts([]);
                 queueApprovalResults(null);
 
-                // Set up approval UI with fetched approvals
                 setPendingApprovals(serverApprovals);
 
-                // Analyze approval contexts
                 try {
                   const contexts = await Promise.all(
                     serverApprovals.map(async (approval) => {
@@ -2255,18 +2040,12 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                     }),
                   );
                   setApprovalContexts(contexts);
-                } catch {
-                  // If analysis fails, contexts remain empty (will show basic options)
-                }
+                } catch {}
 
-                // Stop streaming: user needs to approve/deny (finally decrements)
                 setStreaming(false);
                 sendDesktopNotification("Approval needed");
                 return;
               }
-              // Nothing is pending anymore (e.g. another client already
-              // resolved these calls): drop our approval payload and retry
-              // the plain message instead of failing the turn.
               const plainInput = rebuildInputWithFreshDenials(
                 currentInput,
                 [],
@@ -2281,16 +2060,9 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 buffersRef.current.interrupted = false;
                 continue;
               }
-              // Otherwise fall through to error handling below
-            } catch {
-              // Fetch failed - fall through to error handling below
-            }
+            } catch {}
           }
 
-          // Check for approval pending error (sent user message while approval waiting).
-          // This is the lazy recovery path: fetch real pending approvals, auto-deny, retry.
-          // Works regardless of hasApprovalInPayload — stale queued approvals from an
-          // interrupt may have been rejected by the backend.
           const approvalPendingDetected =
             isApprovalPendingError(detailFromRun) ||
             isApprovalPendingError(latestErrorText);
@@ -2305,7 +2077,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             llmApiErrorRetriesRef.current += 1;
 
             try {
-              // Fetch pending approvals and auto-deny them
               const agent = await getBackend().retrieveAgent(
                 agentIdRef.current,
               );
@@ -2320,11 +2091,9 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 STALE_APPROVAL_RECOVERY_DENIAL_REASON,
               );
             } catch {
-              // Fetch failed — strip stale payload and retry plain message
               currentInput = rebuildInputWithFreshDenials(currentInput, [], "");
             }
 
-            // Reset interrupted flag so retry stream chunks are processed
             buffersRef.current.interrupted = false;
             continue;
           }
@@ -2356,64 +2125,15 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               buffersRef.current.interrupted = false;
               continue;
             }
-            // No sibling plan available; try the hosted Auto fallback below.
           }
 
-          // Quota-limit fallback: hosted Letta API can recover by switching to
-          // Auto. Local/embedded mode has no hosted Auto router, so surface the
-          // provider quota error and let the user choose/connect a local model.
-          const autoSwapOnQuotaLimitEnabled =
-            settingsManager.getSetting("autoSwapOnQuotaLimit") !== false;
-          const supportsHostedAutoQuotaFallback =
-            !getBackend().capabilities.localModelCatalog;
-          const isQuotaLimit = isQuotaLimitErrorDetail(
-            detailFromRun ?? fallbackError,
-          );
-          const alreadyOnTempAuto =
-            tempModelOverrideRef.current === TEMP_QUOTA_OVERRIDE_MODEL;
-          const canAttemptQuotaAutoSwap =
-            autoSwapOnQuotaLimitEnabled &&
-            supportsHostedAutoQuotaFallback &&
-            isQuotaLimit &&
-            !alreadyOnTempAuto &&
-            !quotaAutoSwapAttemptedRef.current;
-
-          if (canAttemptQuotaAutoSwap) {
-            quotaAutoSwapAttemptedRef.current = true;
-            setTempModelOverride(TEMP_QUOTA_OVERRIDE_MODEL);
-
-            const statusId = uid("status");
-            buffersRef.current.byId.set(statusId, {
-              kind: "status",
-              id: statusId,
-              lines: [
-                "Quota limit reached; temporarily switching to Auto and continuing...",
-              ],
-            });
-            buffersRef.current.order.push(statusId);
-            refreshDerived();
-
-            currentInput = [
-              ...currentInput,
-              {
-                type: "message",
-                role: "user",
-                content: "Keep going.",
-              },
-            ];
-
-            buffersRef.current.byId.delete(statusId);
-            buffersRef.current.order = buffersRef.current.order.filter(
-              (id: string) => id !== statusId,
-            );
-            refreshDerived();
-
-            buffersRef.current.interrupted = false;
-            continue;
+          if (
+            !getBackend().capabilities.localModelCatalog &&
+            isQuotaLimitErrorDetail(detailFromRun ?? fallbackError)
+          ) {
+            appendError(KEY_OR_CREDITS_REQUIRED_MESSAGE, true);
           }
 
-          // Empty LLM response retry (e.g. Opus 4.6 occasionally returns no content).
-          // Retry 1: same input unchanged. Retry 2: append system reminder nudging the model.
           if (
             isEmptyResponseRetryable(
               stopReasonToHandle === "llm_api_error" ? "llm_error" : undefined,
@@ -2429,7 +2149,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               attempt,
             });
 
-            // Only append a nudge on the last attempt
             if (attempt >= EMPTY_RESPONSE_MAX_RETRIES) {
               currentInput = [
                 ...currentInput,
@@ -2461,13 +2180,11 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             );
             refreshDerived();
 
-            // Empty-response retry starts a new request/run, so refresh OTIDs.
             currentInput = refreshInputOtidsForNewRequest(currentInput);
             buffersRef.current.interrupted = false;
             continue;
           }
 
-          // Check if this is a retriable error (transient LLM API error)
           const retriable = await isRetriableError(
             stopReasonToHandle,
             lastRunId,
@@ -2478,9 +2195,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             retriable &&
             llmApiErrorRetriesRef.current < LLM_API_ERROR_MAX_RETRIES
           ) {
-            // Do NOT replay the same run for terminal post-stream errors
-            // (e.g. llm_api_error). A retry should create a new run.
-
             llmApiErrorRetriesRef.current += 1;
             const attempt = llmApiErrorRetriesRef.current;
 
@@ -2490,7 +2204,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               detail: detailFromRun ?? fallbackError,
             });
 
-            // Log the error that triggered the retry
             telemetry.trackError(
               "retry_post_stream_error",
               formatTelemetryErrorMessage(
@@ -2505,7 +2218,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               },
             );
 
-            // Show subtle grey status message (skip for silently-retried errors)
             debugLog(
               "retry",
               "Post-stream retry (run=%s, stop=%s): %s",
@@ -2525,7 +2237,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               refreshDerived();
             }
 
-            // Wait before retry (check abort signal periodically for ESC cancellation)
             let cancelled = false;
             const startTime = Date.now();
             while (Date.now() - startTime < delayMs) {
@@ -2536,10 +2247,9 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 cancelled = true;
                 break;
               }
-              await new Promise((resolve) => setTimeout(resolve, 100)); // Check every 100ms
+              await new Promise((resolve) => setTimeout(resolve, 100));
             }
 
-            // Remove status message
             if (retryStatusId) {
               buffersRef.current.byId.delete(retryStatusId);
               buffersRef.current.order = buffersRef.current.order.filter(
@@ -2553,36 +2263,25 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               const retryFromPersistedLocalState =
                 backendCapabilities.localModelCatalog &&
                 !backendCapabilities.remoteMemfs;
-              // Local already appended the turn input before the failed run.
-              // Continue from persisted conversation state instead of duplicating
-              // user/approval messages into the retry run.
               currentInput = retryFromPersistedLocalState
                 ? []
                 : refreshInputOtidsForNewRequest(currentInput);
-              // Reset seq_id threshold — new run starts from seq_id 1, not a resume.
               streamSequenceCursor = null;
-              // Reset interrupted flag so retry stream chunks are processed
               buffersRef.current.interrupted = false;
-              // Retry by continuing the while loop with fresh OTIDs.
               continue;
             }
-            // User pressed ESC - fall through to error handling
           }
 
-          // Reset retry counters on non-retriable error (or max retries exceeded)
           llmApiErrorRetriesRef.current = 0;
           emptyResponseRetriesRef.current = 0;
           conversationBusyRetriesRef.current = 0;
 
-          // Mark incomplete tool calls as finished to prevent stuck blinking UI
           markIncompleteToolsAsCancelled(
             buffersRef.current,
             true,
             "stream_error",
           );
 
-          // If we have a client-side stream error with no run_id, show it directly.
-          // When lastRunId is present, prefer the richer server-side error details below.
           if (fallbackError && !lastRunId) {
             setNetworkPhase("error");
             setExecutionPhase(null);
@@ -2598,36 +2297,29 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             });
             appendError(ERROR_FEEDBACK_HINT, true);
 
-            // Restore dequeued message to input on error
             if (lastDequeuedMessageRef.current) {
               setRestoredInput(lastDequeuedMessageRef.current);
               lastDequeuedMessageRef.current = null;
             }
-            // Clear any remaining queue on error
             tuiQueueRef.current?.clear("error");
 
             setStreaming(false);
-            sendDesktopNotification("Stream error", "error"); // Notify user of error
+            sendDesktopNotification("Stream error", "error");
             refreshDerived();
             resetTrajectoryBases();
             return;
           }
 
-          // Shared telemetry options for the primary error appendError call.
-          // The first appendError in each branch carries the telemetry event;
-          // subsequent hint lines pass `true` to skip duplicate tracking.
           const errorTelemetryBase = {
             errorType: stopReasonToHandle || "unknown_stop_reason",
             context: "message_stream" as const,
             runId: lastRunId ?? undefined,
           };
 
-          // Fetch error details from the run if available (server-side errors)
           if (lastRunId) {
             try {
               const run = await getBackend().retrieveRun(lastRunId);
 
-              // Check if run has error information in metadata
               if (run.metadata?.error) {
                 const errorData = run.metadata.error as {
                   type?: string;
@@ -2638,7 +2330,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 const serverErrorDetail =
                   errorData.detail || errorData.message || null;
 
-                // Pass structured error data to our formatter
                 const errorObject = {
                   error: {
                     error: errorData,
@@ -2650,8 +2341,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   agentIdRef.current,
                 );
 
-                // Encrypted content errors are self-explanatory (include /clear advice)
-                // — skip the generic "Something went wrong?" hint
                 appendError(errorDetails, {
                   ...errorTelemetryBase,
                   errorMessage: formatTelemetryErrorMessage(
@@ -2667,7 +2356,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                     isProviderStreamDisconnectErrorText(serverErrorDetail)
                   )
                 ) {
-                  // Show appropriate error hint based on stop reason
                   appendError(
                     getErrorHintForStopReason(
                       stopReasonToHandle,
@@ -2678,7 +2366,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   );
                 }
               } else {
-                // No error metadata, show generic error with run info
                 appendError(
                   `An error occurred during agent execution\n(run_id: ${lastRunId}, stop_reason: ${stopReason})`,
                   {
@@ -2687,7 +2374,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   },
                 );
 
-                // Show appropriate error hint based on stop reason
                 appendError(
                   getErrorHintForStopReason(
                     stopReasonToHandle,
@@ -2698,7 +2384,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 );
               }
             } catch (_e) {
-              // If we can't fetch error details, show generic error
               appendError(
                 `An error occurred during agent execution\n(run_id: ${lastRunId}, stop_reason: ${stopReason})\n(Unable to fetch additional error details from server)`,
                 {
@@ -2707,7 +2392,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 },
               );
 
-              // Show appropriate error hint based on stop reason
               appendError(
                 getErrorHintForStopReason(
                   stopReasonToHandle,
@@ -2717,12 +2401,10 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 true,
               );
 
-              // Restore dequeued message to input on error
               if (lastDequeuedMessageRef.current) {
                 setRestoredInput(lastDequeuedMessageRef.current);
                 lastDequeuedMessageRef.current = null;
               }
-              // Clear any remaining queue on error
               tuiQueueRef.current?.clear("error");
 
               setStreaming(false);
@@ -2732,7 +2414,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               return;
             }
           } else {
-            // No run_id available - but this is unusual since errors should have run_ids
             appendError(
               `An error occurred during agent execution\n(stop_reason: ${stopReason})`,
               {
@@ -2741,7 +2422,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               },
             );
 
-            // Show appropriate error hint based on stop reason
             appendError(
               getErrorHintForStopReason(
                 stopReasonToHandle,
@@ -2752,16 +2432,14 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             );
           }
 
-          // Restore dequeued message to input on error
           if (lastDequeuedMessageRef.current) {
             setRestoredInput(lastDequeuedMessageRef.current);
             lastDequeuedMessageRef.current = null;
           }
-          // Clear any remaining queue on error
           tuiQueueRef.current?.clear("error");
 
           setStreaming(false);
-          sendDesktopNotification("Execution error", "error"); // Notify user of error
+          sendDesktopNotification("Execution error", "error");
           refreshDerived();
           resetTrajectoryBases();
           return;
@@ -2773,28 +2451,17 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           e instanceof Error ? (e.stack ?? e.message) : String(e),
         );
 
-        // Turn-ownership guard (same witness as finishTuiTurn): a
-        // replacement turn overwrites abortControllerRef with its own
-        // controller, so a mismatch means this turn was superseded — its
-        // late rejection must not cancel the replacement's tool lines,
-        // overlay stale partials into its approval queue, or stop its
-        // streaming indicator.
         if (abortControllerRef.current !== turnAbortController) {
           return;
         }
 
-        // Mark incomplete tool calls as cancelled to prevent stuck blinking UI
         markIncompleteToolsAsCancelled(
           buffersRef.current,
           true,
           isUserAbortError(e) ? "user_interrupt" : "stream_error",
         );
 
-        // If using eager cancel and this is an abort error, silently ignore it
-        // The user already got "Stream interrupted by user" feedback from handleInterrupt
         if (EAGER_CANCEL && isUserAbortError(e)) {
-          // Overlay real partial results over Esc's synthetics so completed
-          // side effects are reported as completed, not interrupted.
           const partials = (e as { partialResults?: ApprovalResult[] })
             .partialResults;
           const overlaid = partials
@@ -2808,7 +2475,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           return;
         }
 
-        // Use comprehensive error formatting
         const errorDetails = formatErrorDetails(e, agentIdRef.current);
         appendError(errorDetails, {
           ...extractErrorMeta(e),
@@ -2818,16 +2484,14 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         });
         appendError(ERROR_FEEDBACK_HINT, true);
 
-        // Restore dequeued message to input on error (Input component will only use if empty)
         if (lastDequeuedMessageRef.current) {
           setRestoredInput(lastDequeuedMessageRef.current);
           lastDequeuedMessageRef.current = null;
         }
-        // Clear any remaining queue on error
         tuiQueueRef.current?.clear("error");
 
         setStreaming(false);
-        sendDesktopNotification("Processing error", "error"); // Notify user of error
+        sendDesktopNotification("Processing error", "error");
         refreshDerived();
         resetTrajectoryBases();
       } finally {
@@ -2835,8 +2499,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           pendingTranscriptStartLineIndexRef.current = null;
         }
 
-        // Wakes dequeue on a normal completion; when superseded by an ESC
-        // interrupt, settles the interrupt (cancelling -> idle) instead.
         finishTuiTurn({
           isStale: myGeneration !== conversationGenerationRef.current,
           turnAbortController,

@@ -1,20 +1,3 @@
-/**
- * Workflow tool: launches a workflow script that orchestrates multiple
- * subagents deterministically. The engine lives in @/tools/workflow; each
- * agent() call in the script runs in an agent-free ephemeral conversation via
- * @letta-ai/letta-agent-sdk (loaded lazily — see @/tools/workflow/sdk-loader).
- *
- * The run happens in the background: the tool validates the script, registers
- * a background task, and returns at once with the task id. Progress lines go
- * to the task's output file. Completion queues a task
- * notification through the message-queue bridge, exactly like background
- * Bash, Monitor, and background subagents, so all three host paths (TUI,
- * headless, listener) wake the model the same way.
- *
- * Listed in STREAMING_SHELL_TOOLS, so `signal`, `onOutput`, and `parentScope`
- * are injected into args (not part of the model-facing JSON schema).
- */
-
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { getConversationId } from "@/agent/context";
@@ -82,10 +65,10 @@ interface WorkflowArgs {
   scriptPath?: string;
   args?: unknown;
   maxConcurrent?: number;
+  maxCostUsd?: number;
   model?: string;
   allowedTools?: string[];
   wait?: boolean;
-  // Injected by the tool manager; not in the JSON schema.
   signal?: AbortSignal;
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
   parentScope?: { agentId: string; conversationId: string };
@@ -96,14 +79,12 @@ interface WorkflowResult {
   status: "success" | "error";
 }
 
-/** What the tool needs from a subagent backend; the SDK spawner in production. */
 export interface WorkflowSpawnerHandle {
   spawner: SubagentSpawner;
-  /** Backs the script's `tools.*()` calls with the invoking turn's built-ins and agent MCP tools. */
   callTool?: WorkflowToolCaller;
   builtinToolNames?: readonly string[];
   listTools?: () => Promise<WorkflowToolInfo[]>;
-  /** TaskStop controller for background runs; absent for foreground runs. */
+  env?: Readonly<Record<string, string>>;
   backgroundStopController?: AbortController;
   cleanup(): Promise<void>;
 }
@@ -182,7 +163,6 @@ export async function createSdkSpawnerHandle(
   setStage("creating SDK client and spawner");
   const runtime = getRuntimeContext();
   const toolContextId = runtime?.toolContextId ?? null;
-  // Lazy: tool impls are loaded by the manager, so a static import cycles.
   const manager = await import("@/tools/manager");
   const executionContext = toolContextId
     ? manager.getExecutionContextById(toolContextId)
@@ -214,11 +194,6 @@ export async function createSdkSpawnerHandle(
     void client[Symbol.asyncDispose]?.().catch(() => undefined);
     throw error;
   }
-  // Foreground workflows are turn-scoped: their script tool calls must honor
-  // the turn's abort signal. Background workflows run past turn interrupts
-  // by design; TaskStop aborts them via engine cut points, so their script
-  // tool calls honor the TaskStop controller created here — without it, a
-  // hanging MCP call inside the script would outlive TaskStop.
   const backgroundStopController = args.wait
     ? undefined
     : new AbortController();
@@ -244,12 +219,12 @@ function toolOptions(handle: WorkflowSpawnerHandle) {
       ? { builtinToolNames: handle.builtinToolNames }
       : {}),
     ...(handle.listTools ? { listTools: handle.listTools } : {}),
+    ...(handle.env ? { env: handle.env } : {}),
   };
 }
 
 let spawnerFactory: SpawnerFactory = createSdkSpawnerHandle;
 
-/** Swap the subagent backend (tests inject a fake spawner). */
 export function __setWorkflowSpawnerFactoryForTests(
   factory: SpawnerFactory | null,
 ): void {
@@ -273,7 +248,6 @@ export function formatWorkflowProgressLine(
     case "decision_usage":
       return null;
     case "agent": {
-      // Only status transitions worth a line; "queued" would be noise.
       if (event.status === "queued") return null;
       const icon =
         event.status === "running" ? "▶" : event.status === "done" ? "✓" : "✗";
@@ -290,12 +264,6 @@ function truncateResult(text: string): string {
   return `${text.slice(0, MAX_NOTIFICATION_RESULT_CHARS - notice.length)}${notice}`;
 }
 
-/**
- * Models routinely pass `args` as a JSON-encoded string despite the schema
- * asking for a real value, and the script then dies on `args.files.length`.
- * A string that is itself a JSON object or array is unambiguous: decode it.
- * Any other string stays a string.
- */
 export function normalizeWorkflowArgs(value: unknown): unknown {
   if (typeof value !== "string") return value;
   const trimmed = value.trim();
@@ -307,10 +275,6 @@ export function normalizeWorkflowArgs(value: unknown): unknown {
   }
 }
 
-/**
- * Scripts can return anything (BigInt, circular graphs, functions); the
- * notification must never throw over it.
- */
 function jsonSafe(value: unknown): unknown {
   try {
     return JSON.parse(JSON.stringify(value) ?? "null");
@@ -319,10 +283,6 @@ function jsonSafe(value: unknown): unknown {
   }
 }
 
-/**
- * A failure late in a run (e.g. the final synthesis agent) must not read as
- * if everything was lost: completed calls are already in the journal.
- */
 export function formatFailureResult(
   error: string | undefined,
   agentsDone: number,
@@ -346,6 +306,7 @@ function formatCompletionResult(
       result: jsonSafe(run.result),
       agentsSpawned: run.agentsSpawned,
       totalTokens: run.totalTokens,
+      ...(run.totalCostUsd !== null ? { totalCostUsd: run.totalCostUsd } : {}),
     },
     null,
     2,
@@ -389,8 +350,17 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
     };
   }
 
-  // Validate up front so authoring mistakes surface in the tool result
-  // instead of as a failed background task.
+  if (
+    args.maxCostUsd !== undefined &&
+    (typeof args.maxCostUsd !== "number" ||
+      !Number.isFinite(args.maxCostUsd) ||
+      args.maxCostUsd <= 0)
+  ) {
+    return {
+      toolReturn: "maxCostUsd must be a positive number of US dollars.",
+      status: "error",
+    };
+  }
   let meta: WorkflowMeta;
   try {
     meta = parseWorkflowMeta(script);
@@ -402,9 +372,6 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
     };
   }
 
-  // Only the foreground setup is bounded. Once registered, a workflow can run
-  // for as long as its script needs. A timed-out factory may still finish later;
-  // it must never cross the registration/worker-spawn boundary.
   let stage = "setting up spawner";
   let abandoned = false;
   let stopReason: string | undefined;
@@ -450,8 +417,6 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
         else args.signal?.addEventListener("abort", onAbort, { once: true });
       }),
     ]);
-    // The race may have fulfilled before an abort was delivered, while this
-    // continuation was still queued. Do not transfer that handle to a run.
     if (abandoned || args.signal?.aborted) {
       abandoned = true;
       disposeAbandonedHandle(handle);
@@ -480,12 +445,14 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
   );
 
   if (args.wait) {
-    // Foreground: the call's signal aborts the run, and the value is the result.
     try {
       const run = await executeWorkflow(handle.spawner, {
         script,
         args: scriptArgs,
         maxConcurrent: args.maxConcurrent ?? DEFAULT_MAX_CONCURRENT,
+        ...(args.maxCostUsd !== undefined
+          ? { maxCostUsd: args.maxCostUsd }
+          : {}),
         journalPath,
         ...(args.signal ? { signal: args.signal } : {}),
         ...toolOptions(handle),
@@ -507,9 +474,6 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
   const taskId = getNextWorkflowId();
   const outputFile = createBackgroundOutputFile(taskId);
   const scope = resolveNotificationScope(args.parentScope);
-  // Use the TaskStop controller the spawner handle created so the script's
-  // tools.*() calls share the same abort signal the engine cut points use.
-  // Custom test factories may not provide one; fall back to a fresh signal.
   const abortController =
     handle.backgroundStopController ?? new AbortController();
 
@@ -538,8 +502,6 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
   });
   notifyBackgroundProcessStateChanged(scope);
 
-  // Coalesce bursts of queued workers and usage updates; publish even when
-  // the parent turn is idle. Launch and finish remain immediate.
   let progressTimer: ReturnType<typeof setTimeout> | undefined;
   const publishProgress = () => {
     if (progressTimer || processState.status !== "running") return;
@@ -562,7 +524,6 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
     clearTimeout(progressTimer);
     progressTimer = undefined;
     if (backgroundProcesses.get(taskId) !== processState) return;
-    // A TaskStop already marked the entry failed and suppressed notification.
     if (processState.status === "running") {
       processState.status = outcome.run ? "completed" : "failed";
       processState.exitCode = outcome.run ? 0 : 1;
@@ -586,14 +547,13 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
     scheduleBackgroundProcessCleanup(taskId);
     if (processState.completionNotificationSuppressed) return;
     const durationMs = Date.now() - (processState.startTime?.getTime() ?? 0);
-    // The summary is what the transcript shows for the notification, so it
-    // carries the same numbers as /workflows.
     const summary = outcome.run
       ? `Workflow "${meta.description}" completed · ${formatWorkflowSummary({
           durationMs,
           agentsDone: outcome.run.agentsSpawned,
           agentsTotal: outcome.run.agentsSpawned,
           totalTokens: outcome.run.totalTokens,
+          totalCostUsd: outcome.run.totalCostUsd,
         })}`
       : `Workflow "${meta.description}" failed after ${formatWorkflowDuration(durationMs)}`;
     addToMessageQueue({
@@ -612,24 +572,21 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
       agentId: scope?.agentId,
       conversationId: scope?.conversationId,
       actingUserId: scope?.actingUserId,
+      clientMessageIds: scope?.clientMessageIds,
     });
   };
 
-  // Runs detached from this tool call; the abort signal of the *call* is
-  // deliberately not wired in — interrupting the turn must not kill a run the
-  // model was told would continue in the background. TaskStop aborts it.
   void executeWorkflow(handle.spawner, {
     script,
     args: scriptArgs,
     maxConcurrent: args.maxConcurrent ?? DEFAULT_MAX_CONCURRENT,
+    ...(args.maxCostUsd !== undefined ? { maxCostUsd: args.maxCostUsd } : {}),
     journalPath,
     signal: abortController.signal,
     ...toolOptions(handle),
     onProgress: (event) => {
       recordWorkflowProgress(taskId, event);
       if (event.kind !== "log") publishProgress();
-      // Usage callbacks update the registry, but only the initial transition
-      // to running belongs in the append-only TaskOutput progress log.
       if (
         event.kind === "agent" &&
         event.status === "running" &&
@@ -653,8 +610,6 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
         }),
     )
     .catch((error: unknown) => {
-      // finish() itself failed (e.g. the output file vanished). Never let a
-      // background run surface as an unhandled rejection.
       appendToOutputFile(outputFile, `\n[error] ${String(error)}\n`);
     })
     .finally(() => handle.cleanup().catch(() => {}));

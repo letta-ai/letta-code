@@ -1,14 +1,4 @@
 #!/usr/bin/env node
-/**
- * Enforces kebab-case filenames for .ts files in src/.
- * .tsx files are exempt — PascalCase is the React component convention.
- * .d.ts files are exempt.
- *
- * A filename is a violation if its stem (before the first dot) contains
- * any uppercase letter, e.g. bootstrapHandler.ts or LocalStore.ts.
- *
- * Pass --staged to check only git-staged files (used in pre-commit hook).
- */
 
 import { execSync } from "node:child_process";
 import { readdirSync, statSync } from "node:fs";

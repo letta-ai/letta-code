@@ -1,31 +1,13 @@
-/**
- * Secret handling for shell tool arguments and output.
- */
-
 import stripAnsi from "strip-ansi";
 import { getDesktopAccessToken } from "@/auth/desktop-credentials";
 import { peekOrgAccessToken } from "@/auth/org-credentials-session";
 import { getMcpScopeAgentId, lookupParentAgent } from "@/mcp-scope";
 import { settingsManager } from "@/settings-manager";
 import { ensureSecretsLoaded, loadSecrets } from "@/utils/secrets-store";
+import { ensureVariablesLoaded, loadVariables } from "@/utils/variables-store";
 
-/**
- * Pattern to match $SECRET_NAME references where SECRET_NAME is uppercase with
- * underscores, including braced shell forms.
- * Examples: $API_KEY, ${API_KEY}, ${API_KEY:-}, ${#API_KEY}, ${!API_KEY}
- *
- * Braced forms matter: `${NAME}` and the set -u safe `"${NAME:-}"` are
- * standard shell, and an agent that writes them would otherwise get an empty
- * value and conclude the secret is unset even though it exists.
- */
 const SECRET_PATTERN = /\$(?:\{[#!]?)?([A-Z_][A-Z0-9_]*)/g;
 
-/**
- * Scan a command string or command-argument array for `$SECRET_NAME`
- * references and build an env map of matching secrets from the store.
- * The shell will expand these vars natively, so secret values never get
- * injected into the command string itself.
- */
 export function extractSecretEnvFromCommand(
   command: string | readonly string[],
   agentId?: string,
@@ -56,8 +38,6 @@ export function extractSecretEnvFromCommand(
   return env;
 }
 
-// Parent tags are persisted at subagent creation, so memoize lookups to keep
-// ordinary `$PATH`-style references from costing a roundtrip per command.
 const parentLookups = new Map<string, Promise<string | undefined>>();
 function cachedLookupParentAgent(agentId: string) {
   let lookup = parentLookups.get(agentId);
@@ -69,12 +49,6 @@ function cachedLookupParentAgent(agentId: string) {
   return lookup;
 }
 
-/**
- * Like extractSecretEnvFromCommand, but a subagent falls back to the vault of
- * the agent it inherits MCP from (same parent linkage and trust boundary as
- * getMcpScopeAgentId). The subagent's own secrets win; non-subagents are
- * unchanged.
- */
 export async function resolveSecretEnvFromCommand(
   command: string | readonly string[],
   agentId?: string,
@@ -97,25 +71,73 @@ export async function resolveSecretEnvFromCommand(
     await ensureSecretsLoaded(scopeAgentId);
     return { ...extractSecretEnvFromCommand(command, scopeAgentId), ...own };
   } catch {
-    // Unresolvable parent linkage never widens access; keep own secrets only.
     return own;
   }
 }
 
-/**
- * Ambient values shorter than this are not redacted. Real runtime credentials
- * are long high-entropy strings; short placeholder values (common in dev and
- * test environments, e.g. LETTA_API_KEY=test) would otherwise redact ordinary
- * words out of tool output.
- */
+export async function resolveShellEnvironment(
+  command: unknown,
+  agentId?: string,
+): Promise<{
+  secretEnv: Record<string, string>;
+  variableEnv: Record<string, string>;
+}> {
+  if (
+    typeof command !== "string" &&
+    !(
+      Array.isArray(command) &&
+      command.every((part) => typeof part === "string")
+    )
+  )
+    return { secretEnv: {}, variableEnv: {} };
+  return {
+    secretEnv: await resolveSecretEnvFromCommand(command, agentId),
+    variableEnv: await resolveVariableEnvFromCommand(command, agentId),
+  };
+}
+
+export async function resolveVariableEnvFromCommand(
+  command: string | readonly string[],
+  agentId?: string,
+): Promise<Record<string, string>> {
+  const parts = typeof command === "string" ? [command] : command;
+  if (!parts.some((part) => [...part.matchAll(SECRET_PATTERN)].length > 0))
+    return {};
+  try {
+    await ensureVariablesLoaded(agentId);
+  } catch {}
+  let values: Record<string, string>;
+  try {
+    values = loadVariables(agentId);
+  } catch {
+    return {};
+  }
+  if (agentId) {
+    try {
+      const parent = await getMcpScopeAgentId(
+        agentId,
+        undefined,
+        cachedLookupParentAgent,
+      );
+      if (parent !== agentId) {
+        await ensureVariablesLoaded(parent);
+        values = { ...loadVariables(parent), ...values };
+      }
+    } catch {}
+  }
+  const env: Record<string, string> = {};
+  for (const part of typeof command === "string" ? [command] : command) {
+    for (const match of part.matchAll(SECRET_PATTERN)) {
+      const key = match[1];
+      if (key !== undefined && values[key] !== undefined)
+        env[key] = values[key];
+    }
+  }
+  return env;
+}
+
 const MIN_AMBIENT_SECRET_LENGTH = 8;
 
-/**
- * Vault values shorter than this are not redacted from tool output. Real
- * credentials are long high-entropy strings; short values (common in dev and
- * test environments, e.g. MY_KEY=abc123) would otherwise redact ordinary words
- * out of tool output. Matches the ambient guard above.
- */
 const MIN_VAULT_SECRET_LENGTH = 8;
 
 interface AmbientSecretValue {
@@ -123,18 +145,6 @@ interface AmbientSecretValue {
   value: string;
 }
 
-/**
- * Runtime auth values exposed to every shell child through getShellEnv(),
- * whether or not the command text references them. A subprocess that fails —
- * for example an env-file parser that echoes its environment on a parse error —
- * can print these even when the agent never mentioned them, so output
- * scrubbing must always cover them.
- *
- * Sources mirror getShellEnv()'s LETTA_API_KEY resolution: the inherited
- * process env, the persisted settings env, and the Desktop access token
- * (including the base64 git-credential encoding getShellEnv() places in
- * GIT_CONFIG_VALUE_* variables).
- */
 function collectAmbientSecretValues(): AmbientSecretValue[] {
   const candidates: AmbientSecretValue[] = [];
   const seen = new Set<string>();
@@ -149,16 +159,12 @@ function collectAmbientSecretValues(): AmbientSecretValue[] {
   add("LETTA_API_KEY", process.env.LETTA_API_KEY);
   try {
     add("LETTA_API_KEY", settingsManager.getSettings().env?.LETTA_API_KEY);
-  } catch {
-    // Settings not initialized (startup/tests); other sources still apply.
-  }
+  } catch {}
 
   let desktopAccessToken: string | undefined;
   try {
     desktopAccessToken = getDesktopAccessToken();
-  } catch {
-    // Desktop session exists but its token is unavailable; other sources apply.
-  }
+  } catch {}
   add("LETTA_API_KEY", desktopAccessToken);
   const orgAccessToken = peekOrgAccessToken();
   add("LETTA_API_KEY", orgAccessToken);
@@ -173,12 +179,6 @@ function collectAmbientSecretValues(): AmbientSecretValue[] {
   return candidates;
 }
 
-/**
- * The current agent's vault secrets, always included in the redaction set.
- * A vault value can reach tool output through paths that never reference its
- * `$SECRET_NAME` — e.g. `cat .env`, Read/Grep on a file that contains it — so
- * redaction must not depend on the command text mentioning the name.
- */
 function collectVaultSecretValues(
   scopedAgentId?: string | null,
 ): AmbientSecretValue[] {
@@ -186,7 +186,6 @@ function collectVaultSecretValues(
   try {
     vault = loadSecrets(scopedAgentId ?? undefined);
   } catch {
-    // Vault not initialized (startup/tests); ambient sources still apply.
     return [];
   }
   const candidates: AmbientSecretValue[] = [];
@@ -198,11 +197,6 @@ function collectVaultSecretValues(
   return candidates;
 }
 
-/**
- * Merge ambient runtime auth values into an invocation's secret map. Names
- * colliding with invocation secrets are suffixed so a same-named agent secret
- * can never shadow the runtime credential out of the redaction set.
- */
 function mergeAmbientSecrets(
   secrets: Readonly<Record<string, string>>,
   scopedAgentId?: string | null,
@@ -214,8 +208,6 @@ function mergeAmbientSecrets(
     ...collectVaultSecretValues(scopedAgentId),
   ];
   for (const { name, value } of ambient) {
-    // A launch-time snapshot may already contain this value. Keep its original
-    // placeholder name instead of adding a second, suffixed copy.
     if (knownValues.has(value)) continue;
     knownValues.add(value);
     let finalName = name;
@@ -229,11 +221,6 @@ function mergeAmbientSecrets(
   return { ...merged, ...secrets };
 }
 
-/**
- * Capture the ambient credentials visible when a tool or child process starts.
- * Keep this map with the invocation: ambient auth may rotate before its output
- * is returned, saved to a file, or sent in a completion notification.
- */
 export function captureSecretRedactions(
   scopedAgentId?: string | null,
   secrets: Readonly<Record<string, string>> = {},
@@ -241,11 +228,6 @@ export function captureSecretRedactions(
   return mergeAmbientSecrets(secrets, scopedAgentId);
 }
 
-/**
- * The ambient runtime auth values as a name → value record, for redaction
- * systems (e.g. mod tool output) that keep their own secret maps instead of
- * calling scrubSecretsFromString.
- */
 export function getAmbientRedactionSecrets(
   scopedAgentId?: string,
 ): Record<string, string> {
@@ -256,10 +238,15 @@ function scrubWithEntries(
   input: string,
   entries: ReadonlyArray<readonly [string, string]>,
 ): string {
+  const forms = entries.flatMap(([name, value]) => {
+    const escaped = JSON.stringify(value).slice(1, -1);
+    return escaped === value
+      ? [[name, value] as const]
+      : [[name, value] as const, [name, escaped] as const];
+  });
   let result = input;
-  // Replace longer values first to avoid partial matches
-  const sorted = [...entries].sort(([, a], [, b]) => b.length - a.length);
-  for (const [name, value] of sorted) {
+  forms.sort(([, a], [, b]) => b.length - a.length);
+  for (const [name, value] of forms) {
     if (value.length > 0) {
       result = result.replaceAll(value, `${name}=<REDACTED>`);
     }
@@ -267,13 +254,25 @@ function scrubWithEntries(
   return result;
 }
 
-/**
- * Scrub the supplied secret values from a string, replacing them with an
- * explicit placeholder that makes it unambiguous to the LLM that the value is
- * hidden. Ambient runtime auth values (at minimum the effective LETTA_API_KEY)
- * and the current agent's vault secrets are always scrubbed as well, even
- * when the caller passes no secrets.
- */
+export function scrubSecretsDeep<T>(
+  value: T,
+  secrets: Readonly<Record<string, string>>,
+): T {
+  const entries = Object.entries(secrets);
+  if (entries.length === 0) return value;
+  const walk = (node: unknown): unknown => {
+    if (typeof node === "string") return scrubWithEntries(node, entries);
+    if (Array.isArray(node)) return node.map(walk);
+    if (node && typeof node === "object") {
+      return Object.fromEntries(
+        Object.entries(node).map(([key, child]) => [key, walk(child)]),
+      );
+    }
+    return node;
+  };
+  return walk(value) as T;
+}
+
 export function scrubSecretsFromString(
   input: string,
   secrets: Readonly<Record<string, string>>,
@@ -285,22 +284,10 @@ export function scrubSecretsFromString(
   );
 }
 
-/**
- * Scrub only the ambient runtime auth values from a string. For text produced
- * by hook or mod code — user-configured commands whose children inherit the
- * runtime environment — rather than by a shell tool invocation.
- */
 export function scrubAmbientSecrets(text: string): string {
   return scrubSecretsFromString(text, {});
 }
 
-/**
- * Scrub secret values from an outgoing message's content before it is sent to
- * the model. Covers the ambient runtime auth values and the agent's vault
- * secrets, so a pasted or echoed credential never enters the conversation
- * transcript. Only rewrites text content; images and other content types pass
- * through unchanged.
- */
 export function scrubOutgoingMessageContent<
   T extends { type?: string; text?: unknown },
 >(content: string | T[], scopedAgentId?: string): string | T[] {
@@ -318,18 +305,10 @@ export function scrubOutgoingMessageContent<
 }
 
 export interface SecretStreamScrubber {
-  /** Scrub one chunk; may return "" while holding back a potential partial match. */
   push(chunk: string): string;
-  /** Scrub and return any held-back remainder at end of stream. */
   flush(): string;
 }
 
-/**
- * Length of the longest suffix of `text` that is a prefix (proper or complete)
- * of any secret value. Such a suffix could be part of a secret occurrence that
- * ends at or beyond the buffer boundary, so it must be held back rather than
- * emitted partially scrubbed.
- */
 function secretPrefixSuffixLength(
   text: string,
   values: readonly string[],
@@ -347,12 +326,6 @@ function secretPrefixSuffixLength(
   return 0;
 }
 
-/**
- * Stream-safe secret scrubber. Plain per-chunk replacement misses a credential
- * split across two stream chunks; this scrubber holds back any trailing bytes
- * that could be the beginning of a secret and emits them once later chunks
- * (or flush()) prove whether the match completes.
- */
 export function createSecretStreamScrubber(
   secrets: Readonly<Record<string, string>> = {},
 ): SecretStreamScrubber {
@@ -399,10 +372,6 @@ export interface ScrubbedOutputStreamer {
   flush: () => void;
 }
 
-/**
- * Wrap a streaming output callback with chunk-boundary-safe secret scrubbing.
- * flush() emits any held-back tail once the producer has finished.
- */
 export function createScrubbedOutputStreamer(
   secrets: Readonly<Record<string, string>>,
   emit: (chunk: string, stream: "stdout" | "stderr") => void,
@@ -437,10 +406,6 @@ function sanitizeText(
   return stripAnsiEscapes ? stripAnsi(scrubbed) : scrubbed;
 }
 
-/**
- * Scrub secret values from a tool's model-facing return content. Always covers
- * the ambient runtime auth values, even when `secrets` is empty.
- */
 export function sanitizeToolReturnContent<
   T extends string | Array<{ type?: string; text?: unknown }>,
 >(
@@ -458,7 +423,6 @@ export function sanitizeToolReturnContent<
   ) as T;
 }
 
-/** Scrub secret values from captured stdout/stderr lines, in place. */
 export function sanitizeOutputLines(
   lines: string[],
   secrets: Readonly<Record<string, string>>,
@@ -474,11 +438,6 @@ export function sanitizeOutputLines(
 
 export type InvocationSecretRedactions = Map<string, string>;
 
-/**
- * Scrub a string against a mod invocation's redaction map. Mirrors
- * scrubWithEntries but over the Map shape mod tools accumulate dynamically
- * (ambient + vault + resolver-added entries).
- */
 export function scrubInvocationSecretRedactions(
   input: string,
   redactions: InvocationSecretRedactions,

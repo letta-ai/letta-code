@@ -68,6 +68,7 @@ import {
   resolveScopedConversationId,
 } from "./scope";
 import { notifyStreamObservers } from "./stream-observers";
+import { shouldEmitSubagentSnapshot } from "./subagent-state-cache";
 import { isListenerTransportOpen, type ListenerTransport } from "./transport";
 import { buildTurnCorrelationSnapshot } from "./turn-correlation";
 import type {
@@ -83,16 +84,8 @@ type PartialRuntimeScope = {
   conversation_id?: string | null;
 };
 
-/**
- * Frozen copy of the supported commands list. Avoids allocating it for every
- * device-status update. (LET-8948)
- */
 const FROZEN_SUPPORTED_COMMANDS: string[] = [...SUPPORTED_REMOTE_COMMANDS];
 
-/**
- * Mod-contributed commands for the device status, omitted entirely when no mods
- * register commands so the common case adds no field.
- */
 function buildModCommandsField(
   listener: ListenerRuntime,
   agentId?: string | null,
@@ -324,8 +317,6 @@ export function buildLoopStatus(
       scopedAgentId,
       scopedConversationId,
     ),
-    // Gate on the *reported* status so downgrades (interrupted cache) also clear
-    // the executing set and stale state never leaks into non-executing frames.
     executing_tool_call_ids:
       status === "EXECUTING_CLIENT_SIDE_TOOL" && conversationRuntime
         ? [...conversationRuntime.turnLifecycle.executingToolCallIds]
@@ -669,7 +660,6 @@ export function emitDequeuedUserMessage(
   incoming: IncomingMessage,
   batch: DequeuedBatch,
 ): void {
-  // Mod-only continuations do not render optimistic user messages.
   if (
     batch.items.length > 0 &&
     batch.items.every((item) => item.kind === "mod_continue")
@@ -705,7 +695,6 @@ export function emitDequeuedUserMessage(
         ? content.length > 0
         : Array.isArray(content) && content.length > 0;
     if (!hasContent) continue;
-    // The outgoing request shares this payload; retain the echo's identity.
     payload.otid ??= payload.client_message_id ?? crypto.randomUUID();
     const otid = payload.otid;
 
@@ -795,8 +784,6 @@ export function emitStateSync(
   emitSubagentStateUpdate(socket, runtime, scope, routing);
 }
 
-// Subagent state
-
 function resolveSubagentScopeForSnapshot(
   runtime: RuntimeCarrier,
   scope?: {
@@ -819,8 +806,6 @@ export function buildSubagentSnapshot(
 
   return getSubagents()
     .filter((a) => {
-      // Include every status so the web UI gets the final state, tool calls
-      // and agent URL before the subagent is cleaned up from the store.
       if (a.silent && a.isBackground !== true) {
         return false;
       }
@@ -829,9 +814,6 @@ export function buildSubagentSnapshot(
         return true;
       }
 
-      // Scope listener-mode snapshots to the parent runtime that launched
-      // the subagent so active reflection/task state does not bleed across
-      // other agent/conversation tabs.
       if (!a.parentAgentId || a.parentAgentId !== runtimeScope.agent_id) {
         return false;
       }
@@ -857,6 +839,8 @@ export function buildSubagentSnapshot(
       parent_conversation_id: a.parentConversationId,
       start_time: a.startTime,
       tool_calls: a.toolCalls,
+      ...(a.progressTexts?.length ? { progress_texts: a.progressTexts } : {}),
+      ...(a.eventSeq !== undefined ? { event_seq: a.eventSeq } : {}),
       total_tokens: a.totalTokens,
       duration_ms: a.durationMs,
       error: a.error,
@@ -872,29 +856,18 @@ export function emitSubagentStateUpdate(
     conversation_id?: string | null;
   },
   routing: ListenerMessageRouting = TO_SUBSCRIBERS,
+  options?: { onlyIfChanged?: boolean },
 ): void {
+  const subagents = buildSubagentSnapshot(runtime, scope);
+  const cacheScope = resolveSubagentScopeForSnapshot(runtime, scope);
+  const cacheOwner = getListenerRuntime(runtime) ?? socket;
+  if (!shouldEmitSubagentSnapshot(cacheOwner, cacheScope, subagents, options))
+    return;
   const message: Omit<
     SubagentStateUpdateMessage,
     "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
-  > = {
-    type: "update_subagent_state",
-    subagents: buildSubagentSnapshot(runtime, scope),
-  };
+  > = { type: "update_subagent_state", subagents };
   emitProtocolV2Message(socket, runtime, message, scope, routing);
-}
-
-export function emitSubagentStateIfOpen(
-  runtime: RuntimeCarrier,
-  scope?: {
-    agent_id?: string | null;
-    conversation_id?: string | null;
-  },
-): void {
-  const listener = getListenerRuntime(runtime);
-  const transport = listener?.transport ?? listener?.socket;
-  if (transport && isListenerTransportOpen(transport)) {
-    emitSubagentStateUpdate(transport, runtime, scope);
-  }
 }
 
 export function emitCanonicalMessageDelta(

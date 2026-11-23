@@ -80,12 +80,13 @@ When exact keywords miss, try alternate terms, abbreviations, filenames, issue I
 
 ### Accessing the Underlying Files
 
-Prefer `letta messages search` first. If local full-text search misses or you need custom inspection, local backend transcripts are JSONL files on disk. The storage root is `$LETTA_LOCAL_BACKEND_DIR`, or `~/.letta/lc-local-backend` by default. Conversation directories live under `conversations/` and contain `conversation.json`, `manifest.json`, and `messages.jsonl`.
+Prefer `letta messages search` first. If local full-text search misses or you need custom inspection, local backend transcripts are JSONL files on disk. The storage root is `$LETTA_LOCAL_BACKEND_DIR`, or `${LETTA_CONFIG_DIR:-$HOME/.letta}/lc-local-backend` by default. Conversation directories live under `conversations/` and contain `conversation.json`, `manifest.json`, and `messages.jsonl`.
 
 Use read-only Bash tools such as `find`, `grep`, `rg` if installed, or small scripts for custom searches, for example:
 
 ```bash
-ROOT="${LETTA_LOCAL_BACKEND_DIR:-$HOME/.letta/lc-local-backend}"
+CONFIG_ROOT="${LETTA_CONFIG_DIR:-$HOME/.letta}"
+ROOT="${LETTA_LOCAL_BACKEND_DIR:-$CONFIG_ROOT/lc-local-backend}"
 find "$ROOT/conversations" -name messages.jsonl -print
 grep -R -n --include='messages.jsonl' "needle" "$ROOT/conversations"
 ```

@@ -1,4 +1,3 @@
-// Native CLI + real provider tests. Run by the OpenCode integration CI job.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -35,7 +34,6 @@ beforeAll(async () => {
   ])
     process.env[key] = join(root, key);
   process.env.HOME = root;
-  // Isolated project configuration proves default-agent/model and skill discovery.
   await writeFile(
     join(cwd, "opencode.json"),
     JSON.stringify({
@@ -172,7 +170,8 @@ test("Agent launch returns an early native ID and TaskStop stops its background 
     },
     async () => {
       const launch = await launchSubagent({
-        subagent_type: "opencode",
+        harness: "opencode",
+        fork_context: false,
         description: "Cancellation proof",
         prompt: "Run sleep 30 in the shell, then reply done.",
         mcp: { inherit: false },

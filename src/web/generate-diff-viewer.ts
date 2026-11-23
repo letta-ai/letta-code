@@ -1,22 +1,14 @@
-/**
- * Browser diff viewer for git worktrees.
- *
- * Collects a git diff for the current worktree, renders each file with
- * @pierre/diffs, writes a self-contained HTML file to ~/.letta/viewers/, and
- * opens it in the user's browser.
- */
-
 import { execFile as execFileCb } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { FileDiffMetadata } from "@pierre/diffs";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 import diffViewerTemplate from "./diff-viewer-template.txt";
 
 const execFile = promisify(execFileCb);
 
-const VIEWERS_DIR = join(homedir(), ".letta", "viewers");
+const VIEWERS_DIR = join(resolveGlobalConfigDir(), "viewers");
 const GIT_TIMEOUT_MS = 60_000;
 const GIT_MAX_BUFFER = 50 * 1024 * 1024;
 const MAX_RENDERED_FILES = 100;
@@ -277,8 +269,6 @@ async function renderDiffFiles(
 ): Promise<RenderedDiffFiles> {
   if (!patch.trim()) return { files: [], insertions: 0, deletions: 0 };
 
-  // @pierre/diffs is external to the letta.js bundle (see build.js); import it
-  // dynamically so its shiki highlighter only loads when a diff is rendered.
   const [{ parsePatchFiles }, { preloadFileDiff }] = await Promise.all([
     import("@pierre/diffs"),
     import("@pierre/diffs/ssr"),

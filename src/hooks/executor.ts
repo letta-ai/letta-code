@@ -1,7 +1,3 @@
-// src/hooks/executor.ts
-// Executes hook commands with JSON input via stdin
-// Cross-platform: uses platform-appropriate shell (PowerShell on Windows, sh/bash/zsh on Unix)
-
 import { type ChildProcess, spawn } from "node:child_process";
 import { buildShellLaunchers } from "@/tools/impl/shell-launchers";
 import { LIMITS, truncateByChars } from "@/tools/impl/truncation";
@@ -22,17 +18,8 @@ import {
   isPromptHook,
 } from "./types";
 
-/** Default timeout for hook execution (60 seconds) */
 const DEFAULT_TIMEOUT_MS = 60000;
 
-/**
- * Cap a model-facing hook string. Oversized text is saved to a file and
- * replaced with a short prefix plus the file path.
- *
- * Scrubbed for ambient runtime auth values first: hook children inherit the
- * runtime environment, and the overflow file path is shown to the model, so
- * both the excerpt and the persisted file must be credential-free.
- */
 export function truncateHookFeedback(
   text: string,
   workingDirectory: string,
@@ -48,24 +35,16 @@ export function truncateHookFeedback(
   ).content;
 }
 
-/**
- * Get a display identifier for a hook (for logging and feedback)
- */
 function getHookIdentifier(hook: HookCommand): string {
   if (isCommandHook(hook)) {
     return hook.command;
   }
   if (isPromptHook(hook)) {
-    // Use first 50 chars of prompt as identifier
     return `prompt:${hook.prompt.slice(0, 50)}${hook.prompt.length > 50 ? "..." : ""}`;
   }
   return "unknown";
 }
 
-/**
- * Try to spawn a hook command with a specific launcher
- * Returns the child process or throws an error
- */
 function trySpawnWithLauncher(
   launcher: string[],
   workingDirectory: string,
@@ -76,11 +55,8 @@ function trySpawnWithLauncher(
     throw new Error("Empty launcher");
   }
 
-  // Extract agent_id if present (available on many hook input types)
   const agentId = "agent_id" in input ? input.agent_id : undefined;
 
-  // Build environment: start with parent env but strip execution-scoped vars so
-  // hooks only inherit the scoped values we set explicitly for this run.
   const {
     LETTA_AGENT_ID: _lettaAgentId,
     AGENT_ID: _agentId,
@@ -97,7 +73,6 @@ function trySpawnWithLauncher(
     cwd: workingDirectory,
     env: {
       ...parentEnv,
-      // Add hook-specific environment variables
       LETTA_HOOK_EVENT: input.event_type,
       LETTA_WORKING_DIR: workingDirectory,
       USER_CWD: workingDirectory,
@@ -107,21 +82,15 @@ function trySpawnWithLauncher(
       }),
     },
     stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true,
   });
 }
 
-/**
- * Execute a single hook with JSON input
- * Dispatches to appropriate executor based on hook type:
- * - "command": executes shell command with JSON via stdin
- * - "prompt": sends to LLM for evaluation
- */
 export async function executeHookCommand(
   hook: HookCommand,
   input: HookInput,
   workingDirectory: string = process.cwd(),
 ): Promise<HookResult> {
-  // Dispatch based on hook type
   if (isPromptHook(hook)) {
     return executePromptHook(hook, input, workingDirectory);
   }
@@ -130,7 +99,6 @@ export async function executeHookCommand(
     return executeCommandHook(hook, input, workingDirectory);
   }
 
-  // Unknown hook type
   return {
     exitCode: HookExitCode.ERROR,
     stdout: "",
@@ -141,10 +109,6 @@ export async function executeHookCommand(
   };
 }
 
-/**
- * Execute a command hook with JSON input via stdin
- * Uses cross-platform shell launchers with fallback support
- */
 export async function executeCommandHook(
   hook: CommandHookConfig,
   input: HookInput,
@@ -168,7 +132,6 @@ export async function executeCommandHook(
     };
   }
 
-  // Try each launcher until one works
   let lastError: Error | null = null;
 
   for (const launcher of launchers) {
@@ -185,7 +148,6 @@ export async function executeCommandHook(
       );
       return result;
     } catch (error) {
-      // If ENOENT (executable not found), try the next launcher
       if (
         error instanceof Error &&
         "code" in error &&
@@ -194,12 +156,10 @@ export async function executeCommandHook(
         lastError = error;
         continue;
       }
-      // For other errors, fail immediately
       throw error;
     }
   }
 
-  // All launchers failed
   return {
     exitCode: HookExitCode.ERROR,
     stdout: "",
@@ -210,9 +170,6 @@ export async function executeCommandHook(
   };
 }
 
-/**
- * Execute a hook with a specific launcher
- */
 function executeWithLauncher(
   launcher: string[],
   inputJson: string,
@@ -223,8 +180,6 @@ function executeWithLauncher(
   startTime: number,
   quiet?: boolean,
 ): Promise<HookResult> {
-  // The child inherits the credential present at launch, which may rotate
-  // before the hook exits or its feedback is written to an overflow file.
   const redactions = captureSecretRedactions(
     "agent_id" in input ? input.agent_id : undefined,
   );
@@ -245,8 +200,6 @@ function executeWithLauncher(
             error: scrubSecretsFromString(rawResult.error, redactions),
           }),
         };
-        // Log hook completion with command for context
-        // Show exit code with color: green for 0, red for 2, yellow for errors
         const exitCode =
           result.exitCode === HookExitCode.ALLOW
             ? 0
@@ -296,11 +249,9 @@ function executeWithLauncher(
       return;
     }
 
-    // Set up timeout
     const timeoutId = setTimeout(() => {
       timedOut = true;
       child.kill("SIGTERM");
-      // Give process time to clean up, then force kill
       setTimeout(() => {
         if (!resolved) {
           child.kill("SIGKILL");
@@ -308,36 +259,28 @@ function executeWithLauncher(
       }, 1000);
     }, timeout);
 
-    // Write JSON input to stdin
     if (child.stdin) {
-      // Handle stdin errors (e.g., EPIPE if process exits before reading)
-      child.stdin.on("error", () => {
-        // Silently ignore - process may have exited before reading stdin
-      });
+      child.stdin.on("error", () => {});
       child.stdin.write(inputJson);
       child.stdin.end();
     }
 
-    // Collect stdout
     if (child.stdout) {
       child.stdout.on("data", (data: Buffer) => {
         stdout += data.toString();
       });
     }
 
-    // Collect stderr
     if (child.stderr) {
       child.stderr.on("data", (data: Buffer) => {
         stderr += data.toString();
       });
     }
 
-    // Handle process exit
     child.on("close", (code: number | null) => {
       clearTimeout(timeoutId);
       const durationMs = Date.now() - startTime;
 
-      // Map exit code to our enum
       let exitCode: HookExitCode;
       if (timedOut) {
         exitCode = HookExitCode.ERROR;
@@ -361,17 +304,14 @@ function executeWithLauncher(
       });
     });
 
-    // Handle spawn error - reject to try next launcher
     child.on("error", (error: NodeJS.ErrnoException) => {
       clearTimeout(timeoutId);
 
-      // For ENOENT, reject so we can try the next launcher
       if (error.code === "ENOENT") {
         reject(error);
         return;
       }
 
-      // For other errors, resolve with error result
       const durationMs = Date.now() - startTime;
       safeResolve({
         exitCode: HookExitCode.ERROR,
@@ -385,10 +325,6 @@ function executeWithLauncher(
   });
 }
 
-/**
- * Execute multiple hooks sequentially and aggregate results
- * Stops early if any hook returns BLOCK (exit code 2)
- */
 export async function executeHooks(
   hooks: HookCommand[],
   input: HookInput,
@@ -404,12 +340,8 @@ export async function executeHooks(
     const result = await executeHookCommand(hook, input, workingDirectory);
     results.push(result);
 
-    // Collect feedback from stdout when hook succeeds (exit 0)
-    // Only for UserPromptSubmit hooks; runSessionStartHooks collects
-    // SessionStart stdout itself, regardless of exit code
     if (result.exitCode === HookExitCode.ALLOW) {
       if (result.stdout?.trim()) {
-        // Try to parse updatedInput from hook output (PreToolUse rewrite protocol)
         if (input.event_type === "PreToolUse" && !updatedInput) {
           try {
             const json = JSON.parse(result.stdout.trim());
@@ -421,9 +353,7 @@ export async function executeHooks(
             ) {
               updatedInput = rewritten as Record<string, unknown>;
             }
-          } catch {
-            // Not JSON or no updatedInput — ignore
-          }
+          } catch {}
         }
 
         if (input.event_type === "UserPromptSubmit") {
@@ -433,17 +363,14 @@ export async function executeHooks(
       continue;
     }
 
-    // Collect feedback from stderr when hook blocks
     if (result.exitCode === HookExitCode.BLOCK) {
       blocked = true;
       if (result.stderr) {
         feedback.push(`[${getHookIdentifier(hook)}]: ${result.stderr}`);
       }
-      // Stop processing more hooks after a block
       break;
     }
 
-    // Track errors but continue processing
     if (result.exitCode === HookExitCode.ERROR) {
       errored = true;
       if (result.stderr) {
@@ -457,8 +384,6 @@ export async function executeHooks(
   return {
     blocked,
     errored,
-    // runSessionStartHooks discards this feedback and caps the stdout it
-    // rebuilds, so capping here would save a file nobody is pointed to.
     feedback:
       input.event_type === "SessionStart"
         ? feedback
@@ -468,9 +393,6 @@ export async function executeHooks(
   };
 }
 
-/**
- * Execute hooks in parallel (for non-blocking hooks like PostToolUse)
- */
 export async function executeHooksParallel(
   hooks: HookCommand[],
   input: HookInput,
@@ -484,13 +406,11 @@ export async function executeHooksParallel(
   let blocked = false;
   let errored = false;
 
-  // Zip hooks with results to access command for formatting
   for (let i = 0; i < results.length; i++) {
     const result = results[i];
     const hook = hooks[i];
     if (!result || !hook) continue;
 
-    // For exit 0, try to parse JSON for additionalContext
     if (result.exitCode === HookExitCode.ALLOW && result.stdout?.trim()) {
       try {
         const json = JSON.parse(result.stdout.trim());
@@ -500,12 +420,9 @@ export async function executeHooksParallel(
         if (typeof additionalContext === "string" && additionalContext) {
           feedback.push(additionalContext);
         }
-      } catch {
-        // Not JSON, ignore
-      }
+      } catch {}
     }
 
-    // Collect feedback from stderr when hook blocks
     if (result.exitCode === HookExitCode.BLOCK) {
       blocked = true;
       if (result.stderr) {

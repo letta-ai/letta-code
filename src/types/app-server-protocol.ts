@@ -1,6 +1,7 @@
-/** Public app-server websocket protocol export. */
 import type { WsProtocolCommand, WsProtocolMessage } from "./protocol_v2";
 import type {
+  ReadSubagentEventsCommand,
+  ReadSubagentEventsResponse,
   SubagentMessageCommand,
   SubagentMessageResponse,
   SubagentStopCommand,
@@ -15,9 +16,11 @@ export * from "./queue-update-protocol";
 export type AppServerProtocolCommand =
   | WsProtocolCommand
   | SubagentMessageCommand
-  | SubagentStopCommand;
+  | SubagentStopCommand
+  | ReadSubagentEventsCommand;
 
 export type AppServerProtocolMessage =
   | WsProtocolMessage
   | SubagentMessageResponse
-  | SubagentStopResponse;
+  | SubagentStopResponse
+  | ReadSubagentEventsResponse;

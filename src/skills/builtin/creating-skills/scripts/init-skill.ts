@@ -1,14 +1,4 @@
 #!/usr/bin/env -S npx tsx
-/**
- * Skill Initializer - Creates a new skill from template
- *
- * Usage:
- *   npx tsx init-skill.ts <skill-name> --path <path>
- *
- * Examples:
- *   npx tsx init-skill.ts my-new-skill --path .skills
- *   npx tsx init-skill.ts my-api-helper --path ~/.letta/skills
- */
 
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -165,13 +155,11 @@ function titleCaseSkillName(skillName: string): string {
 function initSkill(skillName: string, path: string): string | null {
   const skillDir = resolve(path, skillName);
 
-  // Check if directory already exists
   if (existsSync(skillDir)) {
     console.error(`Error: Skill directory already exists: ${skillDir}`);
     return null;
   }
 
-  // Create skill directory
   try {
     mkdirSync(skillDir, { recursive: true });
     console.log(`Created skill directory: ${skillDir}`);
@@ -184,7 +172,6 @@ function initSkill(skillName: string, path: string): string | null {
 
   const skillTitle = titleCaseSkillName(skillName);
 
-  // Create SKILL.md from template
   const skillContent = SKILL_TEMPLATE.replace(
     /{skill_name}/g,
     skillName,
@@ -200,9 +187,7 @@ function initSkill(skillName: string, path: string): string | null {
     return null;
   }
 
-  // Create resource directories with example files
   try {
-    // Create scripts/ directory with example script
     const scriptsDir = join(skillDir, "scripts");
     mkdirSync(scriptsDir, { recursive: true });
     const exampleScriptPath = join(scriptsDir, "example.ts");
@@ -213,7 +198,6 @@ function initSkill(skillName: string, path: string): string | null {
     chmodSync(exampleScriptPath, 0o755);
     console.log("Created scripts/example.ts");
 
-    // Create references/ directory with example reference doc
     const referencesDir = join(skillDir, "references");
     mkdirSync(referencesDir, { recursive: true });
     writeFileSync(
@@ -222,7 +206,6 @@ function initSkill(skillName: string, path: string): string | null {
     );
     console.log("Created references/api-reference.md");
 
-    // Create assets/ directory with example asset placeholder
     const assetsDir = join(skillDir, "assets");
     mkdirSync(assetsDir, { recursive: true });
     writeFileSync(join(assetsDir, "example-asset.txt"), EXAMPLE_ASSET);
@@ -234,7 +217,6 @@ function initSkill(skillName: string, path: string): string | null {
     return null;
   }
 
-  // Print next steps
   console.log(`\nSkill '${skillName}' initialized successfully at ${skillDir}`);
   console.log("\nNext steps:");
   console.log(
@@ -255,7 +237,6 @@ function isMainModule(): boolean {
     : false;
 }
 
-// CLI entry point
 if (isMainModule()) {
   const args = process.argv.slice(2);
 
@@ -268,7 +249,9 @@ if (isMainModule()) {
     console.log("  - Must match directory name exactly");
     console.log("\nExamples:");
     console.log("  npx tsx init-skill.ts my-new-skill --path .skills");
-    console.log("  npx tsx init-skill.ts my-api-helper --path ~/.letta/skills");
+    console.log(
+      `  npx tsx init-skill.ts my-api-helper --path "\${LETTA_CONFIG_DIR:-$HOME/.letta}/skills"`,
+    );
     process.exit(1);
   }
 

@@ -12,9 +12,7 @@ export {
 } from "./scheduled-task-prompt";
 
 export interface CronPromptTiming {
-  /** The schedule occurrence that caused this turn to fire. */
   intendedOccurrence: Date;
-  /** Authoritative time captured by the scheduler when the turn is enqueued. */
   schedulerNow: Date;
 }
 

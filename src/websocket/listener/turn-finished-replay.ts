@@ -10,12 +10,12 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { getServerUrl } from "@/backend/api/server-url";
 import type { TurnFinishedMessage } from "@/types/protocol_v2";
 import { debugWarn } from "@/utils/debug";
 import { renameSyncWithRetry } from "@/utils/rename-sync-with-retry";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 import { toListenerConnection } from "./connection";
 import { acquireDurableFileLock } from "./durable-file-lock";
 import { createInterruptedTurnStore } from "./interrupted-turn-record";
@@ -25,7 +25,10 @@ import {
 } from "./protocol-outbound";
 import { getConversationRuntimeKey } from "./runtime";
 import type { ListenerTransport } from "./transport";
-import type { ConversationRuntime } from "./types";
+import type {
+  ConversationRuntime,
+  InterruptedTerminalAuthority,
+} from "./types";
 
 export type ReplayableTurnFinished = Omit<
   TurnFinishedMessage,
@@ -33,20 +36,13 @@ export type ReplayableTurnFinished = Omit<
 >;
 
 export type TurnFinishedOwner = {
-  /** Exact connection which owned the turn. Null denotes process-owned work. */
   connectionId: string | null;
-  /** Only rotating clients may hand terminal ownership to another subscriber. */
   canRotate: boolean;
-  /** Explicit startup lineage, retained for same-lineage replacement checks. */
   lineageId: string | null;
   terminalIdentity?: string;
-  /** Exact interrupted-work revision superseded by this terminal. */
   interruptedRevision?: string;
-  /** Independent recovery lineage whose mutable authority was observed. */
   recoveryLineageId?: string;
-  /** Exact mutable main/sidecar generation validated by this terminal. */
   interruptedAuthorityRevision?: string;
-  /** Durable journal generation retained across promotion and crash recovery. */
   preparationSequence?: number;
 };
 
@@ -128,6 +124,47 @@ function terminalAuthorityStatus(
   }
 }
 
+export function isInterruptedTerminalAuthorityCurrent(
+  runtime: ConversationRuntime,
+  authority: InterruptedTerminalAuthority,
+): "current" | "stale" | "unknown" {
+  if (!authority.recoveryLineageId) return "current";
+  if (!runtime.agentId) return "unknown";
+  try {
+    const store = createInterruptedTurnStore();
+    const snapshot = store.readRecoverySnapshot(
+      runtime.agentId,
+      runtime.conversationId,
+      authority.recoveryLineageId,
+    );
+    if (snapshot) {
+      return snapshot.record.revision ===
+        (authority.recoveryAuthorityBaseRevision ??
+          authority.interruptedRevision) &&
+        snapshot.revisionToken === authority.authorityRevision
+        ? "current"
+        : snapshot.record.recoveryClaimCompletion?.state === "pending"
+          ? "unknown"
+          : "stale";
+    }
+    const retired = store.readRetiredRecoveryAuthority(
+      runtime.agentId,
+      runtime.conversationId,
+      authority.recoveryLineageId,
+    );
+    return retired?.interruptedRevision ===
+      (authority.recoveryAuthorityBaseRevision ??
+        authority.interruptedRevision) &&
+      retired.authorityRevision === authority.authorityRevision
+      ? "current"
+      : retired
+        ? "stale"
+        : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
 type DeliveryClaim = {
   token: string;
   pid: number;
@@ -136,7 +173,6 @@ type DeliveryClaim = {
 };
 
 export type PersistedTurnFinished = {
-  /** Stable application-level idempotency identity, reused for every replay. */
   id: string;
   createdAt: number;
   message: ReplayableTurnFinished;
@@ -154,31 +190,22 @@ export type PersistedTurnFinishedRecord = {
 
 const MAX_PENDING_TERMINALS_PER_CONVERSATION = 64;
 const DELIVERY_CLAIM_MS = 30_000;
-/**
- * Sender replay lifetime, matched to Cloud's completion-identity dedupe retention.
- * Cloud's 24-hour receiver retention must deploy before this sender horizon.
- */
 export const TURN_FINISHED_REPLAY_TTL_MS = 24 * 60 * 60 * 1000;
 
-function defaultDirectory(): string {
+export function defaultTurnFinishedDirectory(): string {
   let serverUrl: string;
   try {
     serverUrl = getServerUrl();
   } catch {
-    // Startup state replay can run before settings initialization (notably the
-    // local App Server). Keep that namespace deterministic rather than failing
-    // connection initialization.
     serverUrl = process.env.LETTA_BASE_URL ?? "uninitialized";
   }
   return join(
-    homedir(),
-    ".letta",
+    resolveGlobalConfigDir(),
     "listener-terminal-state",
     Buffer.from(serverUrl).toString("base64url"),
   );
 }
 
-/** A reversible tuple encoding; unlike delimiter-based names it cannot alias. */
 export function encodeTurnFinishedScope(
   agentId: string | null,
   conversationId: string,
@@ -211,8 +238,6 @@ function decodeTurnFinishedScope(
 }
 
 function fsyncDirectory(directory: string): void {
-  // Windows has no fsync-able directory handle. File data is still flushed by
-  // writeFileSync(..., { flush: true }); POSIX keeps the rename/unlink barrier.
   if (process.platform === "win32") return;
   const fd = openSync(directory, "r");
   try {
@@ -223,7 +248,7 @@ function fsyncDirectory(directory: string): void {
 }
 
 export function createTurnFinishedStore(
-  directory = defaultDirectory(),
+  directory = defaultTurnFinishedDirectory(),
   options: { lockAttempts?: number } = {},
 ) {
   const claimantToken = randomUUID();
@@ -354,14 +379,12 @@ export function createTurnFinishedStore(
     for (const entry of entries) {
       if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
       const scope = decodeTurnFinishedScope(entry.name.slice(0, -5));
-      if (!scope) continue; // Unknown/corrupt names are never deleted.
+      if (!scope) continue;
       try {
         withRecordLock(scope[0], scope[1], () => {
           readPrunedRecord(scope[0], scope[1]);
         });
       } catch (error) {
-        // A validated filename with corrupt/mismatched contents also fails
-        // closed. Other scopes must still receive their exact-horizon sweep.
         debugWarn(
           "recovery",
           "Ignoring unreadable turn-finished record",
@@ -371,8 +394,6 @@ export function createTurnFinishedStore(
     }
   };
 
-  // Sweep every reversible record namespace at construction, not merely scopes
-  // whose runtimes happen to be recreated after an offline restart.
   sweepExpiredRecords();
 
   return {
@@ -579,8 +600,6 @@ export function getTurnFinishedOwner(
   runtime: ConversationRuntime,
   interruptedRevision?: string,
 ): TurnFinishedOwner {
-  // Only a connection which actually owns the turn may own its terminal.
-  // A service-level listener connection is not provenance for cron/task work.
   const connectionId = runtime.activeConnectionId;
   const connection = connectionId
     ? runtime.listener.connections.get(connectionId)
@@ -594,7 +613,6 @@ export function getTurnFinishedOwner(
   };
 }
 
-/** Persist the authoritative terminal before its lease is finalized. */
 export function prepareTurnFinished(
   runtime: ConversationRuntime,
   message: ReplayableTurnFinished,
@@ -603,12 +621,6 @@ export function prepareTurnFinished(
   persistWithoutConsumers = false,
 ): PreparedTurnFinished {
   const owner = providedOwner ?? getTurnFinishedOwner(runtime);
-  // Process-owned work and rotating App Server clients have no peer that
-  // implements the Cloud terminal acknowledgement contract. Keep those paths
-  // explicitly ephemeral rather than accumulating records that can never be
-  // retired. Tests may opt into bounded unattended persistence with a store.
-  // Agent-free App Server scopes likewise have no Cloud application consumer;
-  // their terminal is intentionally best-effort even on a stable connection.
   if (
     runtime.agentId === null ||
     (!persistWithoutConsumers &&
@@ -652,9 +664,6 @@ function isEligibleOwner(
   if (!terminal.owner.canRotate) return false;
   if (runtime.activeConnectionId === connectionId) return true;
   if (runtime.activeConnectionId !== null) return false;
-  // Rotating App Server clients cannot preserve physical ids. The first scoped
-  // subscriber after the previous owner disappears becomes the authoritative
-  // replacement, matching live terminal handoff behavior.
   runtime.activeConnectionId = connectionId;
   return true;
 }
@@ -792,8 +801,6 @@ export function replayPendingTurnFinishedToConnection(
     runtime.agentId,
     runtime.conversationId,
   );
-  // Generic initialized observers must not even open the owner durability
-  // namespace. Only an explicitly scoped subscriber can be considered.
   if (!connection?.initialized || !connection.subscriptions.has(runtimeKey)) {
     return;
   }
@@ -843,7 +850,6 @@ export function replayPendingTurnFinishedToConnection(
   }
 }
 
-/** Retire only after the exact peer which received the stable identity acks it. */
 export function acknowledgeTurnFinished(params: {
   runtime?: ConversationRuntime;
   agentId?: string | null;

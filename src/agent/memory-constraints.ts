@@ -1,25 +1,3 @@
-/**
- * Self-contained validator installed beside the MemFS pre-commit hook.
- *
- * It runs under Node because Letta Code requires Node 22.19 or newer. Keeping
- * the validator dependency-free lets Git execute it from agent and shared
- * memory repositories without resolving the Letta Code package at commit time.
- *
- * The optional tracked `.memfs.config.json` file accepts:
- * - `version`: the required config format version (currently 1)
- * - `maxFileCharacters`: a default cap for each projected memory Markdown file
- * - `maxCoreMemoryCharacters`: a cap for all root Markdown loaded into a v2
- *   agent's system prompt
- * - `fileCharacterLimits`: ordered glob overrides; the first match wins, and a
- *   null limit leaves matching files uncapped
- * - `maxDepth`: the number of directories allowed between the repo root and a
- *   projected memory file
- * - `readOnlyFiles`: repo-relative globs protecting any matching file's contents,
- *   path and Git mode against changes relative to HEAD
- *
- * File limits count the complete staged file, including frontmatter.
- */
-
 import {
   DEFAULT_MEMORY_CONSTRAINTS_CONFIG,
   MEMORY_CONSTRAINTS_CONFIG_PATH,
@@ -90,6 +68,16 @@ function readLayoutPolicy() {
   }
 }
 
+let scopedToChanges = false;
+
+function warn(warnings) {
+  if (warnings.length === 0) return;
+  console.error("Memory validation warnings (existing problems this commit does not change):");
+  for (const warning of warnings) console.error("  " + warning);
+  console.error("A later commit that changes these files must also fix these problems.");
+  console.error("");
+}
+
 function report(errors) {
   if (errors.length === 0) return;
   if (AUDIT_MODE) {
@@ -98,7 +86,9 @@ function report(errors) {
     console.error("Memory validation blocked this commit.");
     console.error("No files were committed. Your staged changes are still present.");
     console.error(
-      "Validation checks the complete repository, so these problems may predate your staged changes.",
+      scopedToChanges
+        ? "These problems are in files this commit adds, changes or removes."
+        : "Validation checks the complete repository, so these problems may predate your staged changes.",
     );
     console.error("");
     console.error("Fix these problems:");
@@ -171,6 +161,14 @@ async function main() {
         : parsedConfig;
   }
 
+  // Block only problems this commit introduces, matching server-side push
+  // validation. Pre-existing problems elsewhere are reported as warnings.
+  // Audits, first commits and approved policy changes check the whole tree.
+  const changedPaths = !AUDIT_MODE && acceptedRevision && !configChanged
+    ? runGit(["diff", "--cached", "--name-only", "--no-renames", "-z", acceptedRevision, "--"]).split("\0").filter(Boolean)
+    : undefined;
+  scopedToChanges = changedPaths !== undefined;
+  const warnings = [];
   errors.push(...await validateMemoryTreeConstraints({
     async countCharacters(path) {
       return new Promise((resolveCount, reject) => {
@@ -205,6 +203,8 @@ async function main() {
     config,
     layout: layoutPolicy,
     requireRootMarker: AUDIT_MODE || gitSucceeds(["cat-file", "-e", "HEAD:MEMORY.md"]),
+    changedPaths,
+    warnings,
     acceptedTree: {
       async listFiles() {
         if (!acceptedRevision) return [];
@@ -220,6 +220,7 @@ async function main() {
     },
   }));
 
+  warn(warnings);
   report(errors);
 }
 

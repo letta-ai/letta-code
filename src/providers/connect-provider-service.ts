@@ -15,7 +15,7 @@ import {
   type ProviderConnectionOptions,
   type ProviderField,
   type ProviderStorageTarget,
-  removeProviderByName,
+  removeProviderById,
 } from "@/providers/byok-providers";
 import {
   createOrUpdateOpenAICodexProvider,
@@ -132,11 +132,6 @@ export function resolveChatGPTOAuthConnection(
   };
 }
 
-/**
- * Accept tokens a client obtained from the provider's own subscription login.
- * Only the local provider store holds raw OAuth tokens; Cloud rows carry the
- * credential bundle in an encrypted `api_key` written through the Cloud API.
- */
 export function resolveProviderOAuthTokensConnection(
   provider: ByokProvider,
   input: { providerName?: string; oauthConfig: ProviderOAuthTokensConfig },
@@ -478,7 +473,7 @@ export async function disconnectProvider<TTarget extends ProviderStorageTarget>(
     ? connectedRecords.find((record) => record.name === input.providerName)
     : connectedRecords[0];
   if (connected) {
-    await removeProviderByName(connected.name, { target: input.target });
+    await removeProviderById(connected.id, { target: input.target });
   }
 
   return listConnectProviders(input.target);

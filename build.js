@@ -1,10 +1,5 @@
 #!/usr/bin/env bun
 
-/**
- * Build script for Letta Code CLI
- * Bundles TypeScript source into a single JavaScript file
- */
-
 import {
   cpSync,
   existsSync,
@@ -61,7 +56,6 @@ function rewriteDeclarationAliases(typesRoot) {
   }
 }
 
-// Read version from package.json
 const pkg = JSON.parse(readFileSync(join(__dirname, "package.json"), "utf-8"));
 const version = pkg.version;
 const useMagick = Bun.env.USE_MAGICK;
@@ -78,7 +72,7 @@ await Bun.build({
   outdir: ".",
   target: "node",
   format: "esm",
-  minify: false, // Keep readable for debugging
+  minify: false,
   sourcemap: "external",
   naming: {
     entry: "letta.js",
@@ -88,26 +82,11 @@ await Bun.build({
     BUILD_TIME: JSON.stringify(new Date().toISOString()),
     __USE_MAGICK__: useMagick ? "true" : "false",
   },
-  // Load text files as strings (for markdown, etc.)
   loader: {
     ".md": "text",
     ".mdx": "text",
     ".txt": "text",
   },
-  // Keep most native Node.js modules external to avoid bundling issues.
-  // grammY must stay external too: bundling its node-fetch/abort-controller
-  // stack into letta.js breaks Telegram startup because node-fetch rejects the
-  // bundled AbortSignal class during bot.init().
-  // But don't make `sharp` external, causes issues with global Bun-based installs
-  // ref: #745, #1200
-  // @pierre/diffs stays external so the diff viewer's shiki highlighter (its
-  // own nested shiki v3 with the full @shikijs/langs set, ~10 MB of source)
-  // loads from node_modules on demand instead of adding a second inlined copy
-  // to the bundle's resident source string. The diff viewer is only reachable
-  // through dynamic imports, so this costs no startup time.
-  // @shikijs/langs stays external so lazily-imported grammars (LET-13149)
-  // resolve from node_modules on demand instead of being inlined eagerly into
-  // the single-file bundle.
   external: [
     "ws",
     "@vscode/ripgrep",
@@ -131,23 +110,41 @@ await Bun.build({
   naming: {
     entry: "image-resize-worker.js",
   },
-  // Both Sharp variants load native bindings from their installed packages.
-  // Keep their JS and native bindings together in the worker: bundling one
-  // version's JS can otherwise resolve another version's @img binding from
-  // an ancestor node_modules directory at runtime.
-  external: ["sharp", "@janhapke/sharp-electron"],
+  external: ["sharp"],
 });
 
-// Add shebang to output file
+await Bun.build({
+  entrypoints: ["./src/image-resize-public.ts"],
+  outdir: ".",
+  target: "node",
+  format: "esm",
+  minify: false,
+  sourcemap: "external",
+  naming: {
+    entry: "image-resize.js",
+  },
+  define: {
+    __USE_MAGICK__: "false",
+  },
+  external: ["sharp"],
+});
+
+await Bun.build({
+  entrypoints: ["./src/tools/impl/cursor-worker.ts"],
+  outdir: ".",
+  target: "node",
+  format: "esm",
+  naming: { entry: "cursor-worker.js" },
+  external: ["@cursor/sdk"],
+});
+
 const outputPath = join(__dirname, "letta.js");
 let content = readFileSync(outputPath, "utf-8");
 
-// Remove any existing shebang first
 if (content.startsWith("#!")) {
   content = content.slice(content.indexOf("\n") + 1);
 }
 
-// Patch secrets requirement back in for node build
 content = content.replace(
   `(()=>{throw new Error("Cannot require module "+"bun");})().secrets`,
   `globalThis.Bun.secrets`,
@@ -157,7 +154,6 @@ const withShebang = `#!/usr/bin/env node
 ${content}`;
 await Bun.write(outputPath, withShebang);
 
-// Make executable
 if (process.platform !== "win32") {
   await Bun.$`chmod +x letta.js`;
 }
@@ -240,8 +236,6 @@ await Bun.build({
   },
 });
 
-// Browser-safe agent creation presets (personalities, prompts, tags) for
-// surfaces that create Letta Code agents through Core (e.g. the chat web app).
 for (const output of readdirSync(join(__dirname, "dist"))) {
   if (/^agent-presets-.+\.js(?:\.map)?$/.test(output)) {
     rmSync(join(__dirname, "dist", output));
@@ -269,7 +263,6 @@ await Bun.build({
   },
 });
 
-// Pure async question contract for browser and CommonJS consumers.
 for (const format of ["esm", "cjs"]) {
   await Bun.build({
     entrypoints: ["./src/ask-user-question.ts"],
@@ -282,8 +275,6 @@ for (const format of ["esm", "cjs"]) {
   });
 }
 
-// Pure scheduled-turn envelope contract shared by scheduler producers and
-// transcript consumers.
 await Bun.build({
   entrypoints: ["./src/schedules.ts"],
   outdir: "./dist",
@@ -347,12 +338,10 @@ await Bun.build({
   },
 });
 
-// Copy bundled skills to skills/ directory for shipping
 const bundledSkillsSrc = join(__dirname, "src/skills/builtin");
 const bundledSkillsDst = join(__dirname, "skills");
 
 if (existsSync(bundledSkillsSrc)) {
-  // Clean and copy
   if (existsSync(bundledSkillsDst)) {
     rmSync(bundledSkillsDst, { recursive: true });
   }
@@ -360,7 +349,6 @@ if (existsSync(bundledSkillsSrc)) {
   console.log("📂 Copied bundled skills to skills/");
 }
 
-// Generate type declarations for wire types export
 console.log("📝 Generating type declarations...");
 await Bun.$`bunx tsc -p tsconfig.types.json`;
 rewriteDeclarationAliases(join(__dirname, "dist/types"));

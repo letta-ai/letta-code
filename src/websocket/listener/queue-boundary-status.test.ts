@@ -93,8 +93,6 @@ test("a queued input drains once after its scheduled socket is replaced", async 
     conversation_id: "conv-1",
   });
 
-  // An active direct turn owns messageQueue. The input is accepted and the
-  // pump is scheduled behind that turn, while its socket is still open.
   let finishDirectTurn!: () => void;
   runtime.messageQueue = new Promise<void>((resolve) => {
     finishDirectTurn = resolve;
@@ -108,8 +106,6 @@ test("a queued input drains once after its scheduled socket is replaced", async 
   };
   scheduleQueuePump(runtime, oldTransport, options, processQueuedTurn);
 
-  // Reconnect recovery observes the queued item and requests a pump with the
-  // stable process transport, but the old scheduled pump already owns the slot.
   oldSocket.readyState = WebSocket.CLOSED;
   suspendListenerConnection(listener, options.connectionId);
   openListenerConnection({
@@ -125,7 +121,6 @@ test("a queued input drains once after its scheduled socket is replaced", async 
     options,
     processQueuedTurn,
   );
-  // Direct-turn cleanup may also request the old socket before it settles.
   scheduleQueuePump(runtime, oldTransport, options, processQueuedTurn);
   finishDirectTurn();
   await runtime.messageQueue;
@@ -186,8 +181,6 @@ test("an unrelated connection cannot drain a disconnected conversation", async (
   });
   const processTransport = getOrCreateProcessTransport(listener);
   expect(isListenerTransportOpen(processTransport)).toBe(true);
-  // Reconnect recovery schedules queued scopes even when the new connection
-  // belongs to a different conversation.
   scheduleQueuePump(runtime, processTransport, optionsB, processQueuedTurn);
   await runtime.messageQueue;
   expect(processed).toEqual([]);
@@ -379,6 +372,56 @@ test("a local listener runs queued work without a remote subscriber", async () =
   expect(runtime.queueRuntime.length).toBe(0);
 });
 
+test.each([false, true])(
+  "an HTTP-owned turn drains without a subscriber (unrelated connection: %s)",
+  async (withConnection) => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const options = makeListenerOptions();
+    setActiveRuntime(listener);
+    if (withConnection) {
+      openListenerConnection({
+        runtime: listener,
+        connectionId: options.connectionId,
+        writer: new MockSocket() as unknown as WebSocket,
+        options,
+      });
+      markListenerConnectionInitialized(listener, options.connectionId);
+      subscribeListenerConnection(listener, options.connectionId, {
+        agent_id: "agent-1",
+        conversation_id: "conv-other",
+      });
+    }
+    expect(
+      enqueueInboundUserMessage(runtime, {
+        ...queuedMessage("http"),
+        noCoalesce: true,
+        processOwnedTurn: true,
+      }),
+    ).toBe(true);
+    expect(enqueueInboundUserMessage(runtime, queuedMessage("ws"))).toBe(true);
+    const processed: IncomingMessage[] = [];
+    scheduleQueuePump(
+      runtime,
+      getOrCreateProcessTransport(listener),
+      options,
+      async (turn) => {
+        processed.push(turn);
+      },
+    );
+    await runtime.messageQueue;
+    expect(processed).toHaveLength(1);
+    expect(processed[0]?.processOwnedTurn).toBe(true);
+    expect(processed[0]?.messages).toMatchObject(
+      queuedMessage("http").messages,
+    );
+    expect(runtime.queueRuntime.length).toBe(1);
+    expect([...runtime.queuedMessagesByItemId.values()]).toEqual([
+      queuedMessage("ws"),
+    ]);
+  },
+);
+
 test("process-originated work drains without a subscriber to its conversation", async () => {
   const listener = createRuntime();
   const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
@@ -485,12 +528,7 @@ test("an active pump switches transport after reconnect without replaying its tu
   expect(newSocket.sentPayloads.length).toBeGreaterThan(0);
 });
 
-// Queue frames are otherwise emitted only on change and loop frames only on
-// transition, so a single lost frame leaves downstream status consumers stale
-// until the next change happens to land (LET-11174). These tests pin the
-// repair: every turn produces unconditional queue + loop snapshots at turn
-// start and turn end, even when nothing about the queue changed in between.
-test("a turn emits queue and loop snapshots at both boundaries even when the queue is unchanged", async () => {
+test("the pump snapshots the queue at dequeue and the loop only after the turn", async () => {
   const listener = createRuntime();
   const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
   const socket = new MockSocket();
@@ -508,16 +546,11 @@ test("a turn emits queue and loop snapshots at both boundaries even when the que
     socket as unknown as WebSocket,
     makeListenerOptions(),
     async () => {
-      // Snapshot what was already emitted when the turn body begins. The
-      // queue is unchanged from here to turn end: the end-boundary frames
-      // must be new emissions, not leftovers of the dequeue transition.
       turnStartFrameCount = socket.sentPayloads.length;
       processedTurns += 1;
     },
   );
   await waitFor(() => processedTurns === 1 && !runtime.queuePumpActive);
-  // The dequeue-transition frame rides a microtask; let it flush so the
-  // assertion below counts every frame belonging to this turn.
   await Bun.sleep(5);
 
   const parsed = socket.sentPayloads.map(
@@ -526,9 +559,6 @@ test("a turn emits queue and loop snapshots at both boundaries even when the que
   const framesBeforeTurnBody = parsed.slice(0, turnStartFrameCount);
   const framesAfterTurnBody = parsed.slice(turnStartFrameCount);
 
-  // Turn start boundary: an unconditional queue snapshot (empty queue, no
-  // removal transitions — distinct from the dequeue-transition frame) and a
-  // loop status frame were emitted before the turn body ran.
   expect(
     framesBeforeTurnBody.some(
       (frame) =>
@@ -541,10 +571,8 @@ test("a turn emits queue and loop snapshots at both boundaries even when the que
   ).toBe(true);
   expect(
     framesBeforeTurnBody.some((frame) => frame.type === "update_loop_status"),
-  ).toBe(true);
+  ).toBe(false);
 
-  // Turn end boundary: the same unconditional snapshots fire again after the
-  // turn body, despite zero queue changes since turn start.
   expect(
     framesAfterTurnBody.some(
       (frame) =>

@@ -1,11 +1,7 @@
 /// <reference types="bun-types" />
-// src/utils/secrets.ts
-// Secure storage utilities for tokens using Bun's secrets API with Node.js fallback
 
 import { debugWarn } from "./debug.js";
 
-// Access the runtime global directly so Node-targeted bundles do not rewrite a
-// dynamic `require("bun")` into a stub that also breaks when run under Bun.
 const secrets = globalThis.Bun?.secrets;
 
 function scopeServiceName(name: string): string {
@@ -13,7 +9,7 @@ function scopeServiceName(name: string): string {
   return testPrefix ? `${testPrefix}:${name}` : name;
 }
 
-let SERVICE_NAME = scopeServiceName("letta-code");
+let serviceNameOverride: string | undefined;
 const API_KEY_NAME = "letta-api-key";
 const REFRESH_TOKEN_NAME = "letta-refresh-token";
 
@@ -24,6 +20,14 @@ let secretGetOverrideForTests:
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function getServiceName(): string {
+  const configured =
+    serviceNameOverride ??
+    process.env.LETTA_SECRETS_SERVICE_NAME?.trim() ??
+    "letta-code";
+  return scopeServiceName(configured || "letta-code");
 }
 
 function isDuplicateKeychainItemError(error: unknown): boolean {
@@ -44,7 +48,7 @@ export async function getSecretValue(
 
   try {
     const options = {
-      service: SERVICE_NAME,
+      service: getServiceName(),
       name,
     };
     const value = secretGetOverrideForTests
@@ -74,7 +78,7 @@ export async function setSecretValue(
 
   try {
     await secrets.set({
-      service: SERVICE_NAME,
+      service: getServiceName(),
       name,
       value,
     });
@@ -85,18 +89,15 @@ export async function setSecretValue(
     }
   }
 
-  // Replace existing keychain item and retry once.
   try {
     await secrets.delete({
-      service: SERVICE_NAME,
+      service: getServiceName(),
       name,
     });
-  } catch {
-    // Ignore delete errors and retry set below.
-  }
+  } catch {}
 
   await secrets.set({
-    service: SERVICE_NAME,
+    service: getServiceName(),
     name,
     value,
   });
@@ -109,7 +110,7 @@ export async function deleteSecretValue(name: string): Promise<boolean> {
 
   try {
     return await secrets.delete({
-      service: SERVICE_NAME,
+      service: getServiceName(),
       name,
     });
   } catch (error) {
@@ -118,63 +119,39 @@ export async function deleteSecretValue(name: string): Promise<boolean> {
   }
 }
 
-/**
- * Override the keychain service name (useful for tests to avoid touching real credentials)
- */
-export function setServiceName(name: string): void {
-  SERVICE_NAME = scopeServiceName(name);
+export function setServiceName(name?: string): void {
+  serviceNameOverride = name;
 }
-
-// Note: When secrets API is unavailable (Node.js), tokens will be managed
-// by the settings manager which falls back to storing in the settings file
-// This provides persistence across restarts
 
 export interface SecureTokens {
   apiKey?: string;
   refreshToken?: string;
 }
 
-/**
- * Store API key in system secrets
- */
 export async function setApiKey(apiKey: string): Promise<void> {
   if (!secrets) {
-    // When secrets unavailable, let the settings manager handle fallback
     throw new Error("Secrets API unavailable");
   }
 
   await setSecretValue(API_KEY_NAME, apiKey);
 }
 
-/**
- * Retrieve API key from system secrets
- */
 export async function getApiKey(): Promise<string | null> {
   return getSecretValue(API_KEY_NAME, "API key");
 }
 
-/**
- * Store refresh token in system secrets
- */
 export async function setRefreshToken(refreshToken: string): Promise<void> {
   if (!secrets) {
-    // When secrets unavailable, let the settings manager handle fallback
     throw new Error("Secrets API unavailable");
   }
 
   await setSecretValue(REFRESH_TOKEN_NAME, refreshToken);
 }
 
-/**
- * Retrieve refresh token from system secrets
- */
 export async function getRefreshToken(): Promise<string | null> {
   return getSecretValue(REFRESH_TOKEN_NAME, "refresh token");
 }
 
-/**
- * Get both tokens from secrets
- */
 export async function getSecureTokens(): Promise<SecureTokens> {
   const [apiKey, refreshToken] = await Promise.allSettled([
     getApiKey(),
@@ -191,9 +168,6 @@ export async function getSecureTokens(): Promise<SecureTokens> {
   };
 }
 
-/**
- * Store both tokens in secrets
- */
 export async function setSecureTokens(tokens: SecureTokens): Promise<void> {
   const promises: Promise<void>[] = [];
 
@@ -210,14 +184,11 @@ export async function setSecureTokens(tokens: SecureTokens): Promise<void> {
   }
 }
 
-/**
- * Remove API key from system secrets
- */
 export async function deleteApiKey(): Promise<void> {
   if (secrets) {
     try {
       await secrets.delete({
-        service: SERVICE_NAME,
+        service: getServiceName(),
         name: API_KEY_NAME,
       });
       return;
@@ -225,19 +196,13 @@ export async function deleteApiKey(): Promise<void> {
       console.warn(`Failed to delete API key from secrets: ${error}`);
     }
   }
-
-  // When secrets unavailable, deletion is handled by settings manager
-  // No action needed here
 }
 
-/**
- * Remove refresh token from system secrets
- */
 export async function deleteRefreshToken(): Promise<void> {
   if (secrets) {
     try {
       await secrets.delete({
-        service: SERVICE_NAME,
+        service: getServiceName(),
         name: REFRESH_TOKEN_NAME,
       });
       return;
@@ -245,30 +210,17 @@ export async function deleteRefreshToken(): Promise<void> {
       console.warn(`Failed to delete refresh token from secrets: ${error}`);
     }
   }
-
-  // When secrets unavailable, deletion is handled by settings manager
-  // No action needed here
 }
 
-/**
- * Remove all tokens from system secrets
- */
 export async function deleteSecureTokens(): Promise<void> {
   await Promise.allSettled([deleteApiKey(), deleteRefreshToken()]);
 }
 
-/**
- * Check if secrets API is available
- * Set LETTA_SKIP_KEYCHAIN_CHECK=1 to skip the check (useful in CI/test environments)
- */
 export async function isKeychainAvailable(): Promise<boolean> {
-  // Skip keychain check in test/CI environments to avoid error dialogs
   if (process.env.LETTA_SKIP_KEYCHAIN_CHECK === "1") {
     return false;
   }
 
-  // Headless Linux environments frequently lack a session bus, so avoid
-  // probing the keychain when Secret Service cannot work.
   if (
     process.platform === "linux" &&
     !process.env.DBUS_SESSION_BUS_ADDRESS?.trim()
@@ -281,9 +233,8 @@ export async function isKeychainAvailable(): Promise<boolean> {
   }
 
   try {
-    // Non-mutating probe: if this call succeeds (even with null), keychain is usable.
     await secrets.get({
-      service: SERVICE_NAME,
+      service: getServiceName(),
       name: API_KEY_NAME,
     });
     return true;

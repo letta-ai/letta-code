@@ -1,9 +1,3 @@
-/**
- * Pre-commit originator admission gate tests for the listener message router
- * (evil-shub round-8 P1). Split out of message-router.test.ts so both files
- * stay under the source-file size limit.
- */
-
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -32,7 +26,7 @@ import { safeSocketSend } from "./socket-send";
 import type { ListenerRuntime, StartListenerOptions } from "./types";
 
 class MockSocket {
-  readyState = 1; // WebSocket.OPEN
+  readyState = 1;
   sentPayloads: string[] = [];
 
   send(payload: string): void {
@@ -107,7 +101,9 @@ describe("pre-commit originator admission gate (evil-shub round-8 P1)", () => {
       runtime: listener,
       socket: socket as unknown as WebSocket,
       opts,
-      processQueuedTurn: async () => {},
+      processQueuedTurn: async () => {
+        onProcess();
+      },
       fileCommandSession: { handle: () => false },
       getParsedRuntimeScope: () => null,
       replaySyncStateForRuntime: async () => {},
@@ -145,13 +141,9 @@ describe("pre-commit originator admission gate (evil-shub round-8 P1)", () => {
       });
       await handleMessage(makeOriginatorInputFrame("req-r8-1", "run-r8-1"));
 
-      // No ack of any kind: the admission could not be evaluated, so Cloud
-      // must treat the frame as undeliverable and redeliver it.
       expect(socket.sentPayloads).toEqual([]);
       expect(processed).toBe(0);
       expect(getMcpOriginatorToken("run-r8-1")).toBeUndefined();
-      // And nothing was durably committed: the ledger has no reservation
-      // for this input, so a redelivery after healing is admitted cleanly.
       writeFileSync(path, JSON.stringify({ version: 1, records: {} }));
       await handleMessage(makeOriginatorInputFrame("req-r8-1", "run-r8-1"));
       const frames = socket.sentPayloads.map(
@@ -189,9 +181,6 @@ describe("pre-commit originator admission gate (evil-shub round-8 P1)", () => {
     expect(frames).toHaveLength(1);
     expect(frames[0]?.type).toBe("input_accepted");
     expect(frames[0]?.accepted).toBe(false);
-    // The non-retryable marker rides the wire so Cloud short-circuits its
-    // retryable remint/retry loop instead of churning the same bytes
-    // (evil-shub round-9 P2; Cloud reads it once the pairing lands).
     expect(frames[0]).toMatchObject({
       abortReason: "mcp_originator_denied_permanent",
     });
@@ -208,14 +197,16 @@ describe("pre-commit originator admission gate (evil-shub round-8 P1)", () => {
     });
     await handleMessage(makeOriginatorInputFrame("req-r9-1", "run-r9-1"));
 
-    const frames = socket.sentPayloads.map(
-      (p) =>
-        JSON.parse(p) as {
-          type?: string;
-          accepted?: boolean;
-          abortReason?: string;
-        },
-    );
+    const frames = socket.sentPayloads
+      .map(
+        (p) =>
+          JSON.parse(p) as {
+            type?: string;
+            accepted?: boolean;
+            abortReason?: string;
+          },
+      )
+      .filter((frame) => frame.type === "input_accepted");
     expect(frames).toHaveLength(1);
     expect(frames[0]?.accepted).toBe(true);
     expect(frames[0]?.abortReason).toBeUndefined();

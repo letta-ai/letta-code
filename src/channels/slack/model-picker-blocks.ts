@@ -89,11 +89,6 @@ function buildSlackModelOption(
   return option;
 }
 
-/**
- * Renders generic channel model-picker data as Slack Block Kit blocks.
- * Slack-specific rendering lives here so the shared channel/listener layers
- * stay vendor-neutral.
- */
 export function buildSlackModelPickerBlocks(
   params: ChannelModelPickerData,
 ): unknown[] | undefined {
@@ -177,8 +172,6 @@ export function buildSlackModelPickerBlocks(
             text: "Select a model",
             emoji: true,
           },
-          // A flat select stops at 100 models, which can hide every BYOK
-          // option after hosted rows. Slack permits 100 groups of 100 options.
           ...(options.length <= SLACK_MODEL_PICKER_OPTION_LIMIT
             ? { options }
             : {

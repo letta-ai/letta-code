@@ -167,8 +167,6 @@ describe("startup frame buffering", () => {
     staleBuffer.abort();
     closeListenerConnection(runtime, staleConnection.id);
 
-    // App Server may have unrelated B/C connections starting concurrently. They
-    // cannot claim A's requestless input or its output/approval ownership.
     for (const connectionId of ["connection-b", "connection-c"]) {
       const unrelated = openListenerConnection({
         runtime,
@@ -194,6 +192,7 @@ describe("startup frame buffering", () => {
     markListenerConnectionInitialized(runtime, replacement.id, replacement);
     setActiveRuntime(runtime);
     const executeTurn = mock(async (_incoming: IncomingMessage) => {});
+    const executeQueuedTurn = mock(async (_incoming: IncomingMessage) => {});
     const dispatchedRuntime = getOrCreateScopedRuntime(
       runtime,
       "agent-1",
@@ -204,7 +203,7 @@ describe("startup frame buffering", () => {
       socket: socket as unknown as WebSocket,
       connectionId: replacement.id,
       opts: options,
-      processQueuedTurn: async () => {},
+      processQueuedTurn: executeQueuedTurn,
       fileCommandSession: { handle: () => false },
       getParsedRuntimeScope: () => null,
       replaySyncStateForRuntime: async () => {},
@@ -232,7 +231,13 @@ describe("startup frame buffering", () => {
     ).resolves.toBe(true);
     await dispatchedRuntime.messageQueue;
 
-    expect(executeTurn).toHaveBeenCalledTimes(2);
+    expect(executeTurn).not.toHaveBeenCalled();
+    expect(
+      executeQueuedTurn.mock.calls.flatMap(([incoming]) => incoming.messages),
+    ).toMatchObject([
+      { role: "user", content: "legacy pre-ready" },
+      { role: "user", content: "v2 pre-ready" },
+    ]);
     expect(
       claimRequestlessStartupFrameHandoff(runtime, replacement.startupOwner)
         .handoff,
@@ -282,8 +287,6 @@ describe("startup frame buffering", () => {
       },
     });
 
-    // The control socket is already buffering while the stream channel is
-    // being prepared, so no ListenerConnectionState exists yet.
     const owner = reserveStartupIngressOwner(runtime, options);
     const buffer = new StartupFrameBuffer();
     for (const frame of [legacyFrame, requestlessV2Frame, ackCapableFrame]) {
@@ -292,9 +295,6 @@ describe("startup frame buffering", () => {
       });
     }
 
-    // The attempt dies in that window. Both the open-handler catch and the
-    // socket close handler abort the same ingress; the frames must be parked
-    // once, not twice and not never.
     expect(handoffRequestlessStartupFrames(runtime, owner, buffer)).toBe(true);
     buffer.abort();
     expect(handoffRequestlessStartupFrames(runtime, owner, buffer)).toBe(false);
@@ -321,7 +321,6 @@ describe("startup frame buffering", () => {
       legacyFrame.toString(),
       requestlessV2Frame.toString(),
     ]);
-    // Claiming is non-destructive until the successor accepts the payload.
     expect(runtime.pendingStartupFramesByLineage.has(owner.lineageId)).toBe(
       true,
     );
@@ -364,8 +363,6 @@ describe("startup frame buffering", () => {
         runtime.pendingStartupFramesByLineage.get(owner.lineageId),
       ).toEqual({ kind: "overflow", capacity: expectedCapacity });
 
-      // The close path runs after overflow cleared local data. It must not
-      // replace durable poison with an apparently healthy empty handoff.
       expect(handoffRequestlessStartupFrames(runtime, owner, buffer)).toBe(
         false,
       );

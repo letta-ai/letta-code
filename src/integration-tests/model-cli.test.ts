@@ -15,7 +15,7 @@ async function verifyCloudModelCli(verifyInference: boolean) {
   const agent = await client.agents.create({
     name: "CLI set-model integration",
     agent_type: "letta_v1_agent",
-    model: "letta/auto",
+    model: "anthropic/claude-sonnet-4-6",
     system: "Reply concisely. Do not call tools.",
     include_base_tools: false,
     include_base_tool_rules: false,
@@ -63,7 +63,7 @@ async function verifyCloudModelCli(verifyInference: boolean) {
     const changed = await cli(["set", model, "--reasoning", "high"]);
     expect(changed.code, changed.stderr).toBe(0);
     expect(JSON.parse(changed.stdout)).toMatchObject({
-      agent: { id: agent.id, model: "letta/auto" },
+      agent: { id: agent.id, model: "anthropic/claude-sonnet-4-6" },
       conversation: { id: conversationId, agent_id: agent.id, model },
       effective: { scope: "conversation", model },
     });
@@ -132,7 +132,6 @@ async function verifyCloudModelCli(verifyInference: boolean) {
 
     if (!verifyInference) return;
 
-    // No override_model: the request must resolve the persisted CLI change.
     const stream = await client.conversations.messages.create(conversationId, {
       messages: [{ role: "user", content: "Reply with exactly OK." }],
     });
@@ -164,13 +163,9 @@ async function verifyCloudModelCli(verifyInference: boolean) {
   }
 }
 
-// Both run in the existing API CI job; configuration can also be verified
-// independently when the test account cannot pay for a provider inference.
 test.skipIf(!process.env.LETTA_API_KEY)(
   "CLI model configuration and reasoning persist in Cloud",
   () => verifyCloudModelCli(false),
-  // This runs the same six CLI launches and Cloud updates as the inference
-  // test below. Give both the same budget on slower CI runners.
   180000,
 );
 test.skipIf(!process.env.LETTA_API_KEY)(
@@ -226,7 +221,6 @@ test.skipIf(!process.env.LETTA_API_KEY)(
       listings.push(JSON.parse(stdout));
     }
     const [all = [], byok = [], hosted = []] = listings;
-    // Keep account-specific provider handles out of failure output.
     expect(new Set(byok.map((entry) => entry.handle)).size).toBe(
       expectedByok.size,
     );

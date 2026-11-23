@@ -1,9 +1,3 @@
-/**
- * Local transcript file helpers — JSONL row IO, session-entry types, manifest
- * validation, timestamp repair, and bounded tail-window reads for the local
- * backend store. Pure functions only; message residency policy lives in
- * local-store.ts.
- */
 import { randomUUID } from "node:crypto";
 import {
   closeSync,
@@ -16,8 +10,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { isRecord } from "@/utils/type-guards";
-import type { LocalCompactionStats } from "./compaction";
-import type { LocalMessage } from "./local-message";
+import type { LocalCompactionStats, LocalMessage } from "./local-message";
 import { removeOrphanLocalToolResults } from "./local-message-projection";
 import type { StoredConversation } from "./local-types";
 
@@ -177,9 +170,6 @@ function setLatestLocalMessage(
   messagesById: Map<string, LocalMessage>,
   message: LocalMessage,
 ): void {
-  // Map#set does not move an existing key to the insertion tail. Delete first so
-  // append-only replacement snapshots preserve latest-message order when a
-  // conversation has no explicit in-context id list.
   if (messagesById.has(message.id)) messagesById.delete(message.id);
   messagesById.set(message.id, message);
 }
@@ -223,7 +213,7 @@ function isLocalTranscriptCompactionEntry(
   );
 }
 
-function isLocalTranscriptAppendEntry(
+export function isLocalTranscriptAppendEntry(
   value: unknown,
 ): value is LocalTranscriptAppendEntry {
   return (
@@ -358,9 +348,19 @@ export function readJsonFile<T>(path: string): T | undefined {
 }
 
 export function readJsonlFile<T>(path: string): T[] {
-  if (!existsSync(path)) return [];
-
   const items: T[] = [];
+  forEachJsonlRow<T>(path, (item) => {
+    items.push(item);
+  });
+  return items;
+}
+
+export function forEachJsonlRow<T>(
+  path: string,
+  onRow: (item: T) => void,
+): void {
+  if (!existsSync(path)) return;
+
   const buffer = Buffer.alloc(64 * 1024);
   const pending: Buffer[] = [];
   const fd = openSync(path, "r");
@@ -377,7 +377,7 @@ export function readJsonlFile<T>(path: string): T[] {
           : suffix;
         pending.length = 0;
         const text = line.toString("utf8");
-        if (text.trim().length > 0) items.push(JSON.parse(text) as T);
+        if (text.trim().length > 0) onRow(JSON.parse(text) as T);
         lineStart = index + 1;
       }
       if (lineStart < bytesRead) {
@@ -390,9 +390,8 @@ export function readJsonlFile<T>(path: string): T[] {
 
   if (pending.length > 0) {
     const text = Buffer.concat(pending).toString("utf8");
-    if (text.trim().length > 0) items.push(JSON.parse(text) as T);
+    if (text.trim().length > 0) onRow(JSON.parse(text) as T);
   }
-  return items;
 }
 
 export function readJsonlFileSuffix<T>(
@@ -426,7 +425,6 @@ export function readJsonlFileSuffix<T>(
     const firstNewline = text.indexOf("\n");
     text = firstNewline >= 0 ? text.slice(firstNewline + 1) : "";
   }
-  // Byte offset of the first parsed row (the partial first line is skipped).
   const firstNewlineByte = reachedStart ? -1 : buffer.indexOf(0x0a);
 
   return {
@@ -680,13 +678,6 @@ export function localTranscriptTailByteBudget(
   );
 }
 
-/**
- * Shared parse pipeline for bounded transcript tail reads: rows already read
- * from a messages.jsonl suffix are converted to the normalized active-message
- * view (orphan tool results dropped) without applying the full-load repair
- * passes (timestamp interpolation, oversized tool-result clipping), which
- * remain owned by the full-read path in local-store.ts.
- */
 export function localTranscriptTailMessages(
   rows: readonly unknown[],
   messageFormat: LocalTranscriptMessageFormat,
@@ -706,17 +697,6 @@ export function localTranscriptTailMessages(
   return { transcript, messages };
 }
 
-/**
- * Read the smallest messages.jsonl suffix that holds the newest resident
- * message budget, starting at a 64 KB window and capped by `maxTailBytes`. Older
- * in-context ids are evicted: the persisted list can be stale or much larger
- * than any model context, and must never turn a resume into a full-file read.
- *
- * `liveInContextIds` is the in-context list minus ids the returned messages
- * lack: ids with no row once the whole file was scanned (an in-flight
- * assistant id left by a killed process) and orphan tool results the repair
- * dropped. The returned window covers every live id.
- */
 export function readLocalTranscriptTailWindow(
   messagesPath: string,
   messageFormat: LocalTranscriptMessageFormat,
@@ -746,8 +726,6 @@ export function readLocalTranscriptTailWindow(
     );
     const found = result.transcript.messages.length;
     if (found >= targetCount || tail.reachedStart || maxBytes >= byteBudget) {
-      // An empty list historically meant "all rows". Give it explicit,
-      // bounded semantics after the suffix has been selected.
       if (
         activeMessageIds.length === 0 &&
         result.messages.length > minMessages
@@ -768,8 +746,6 @@ export function readLocalTranscriptTailWindow(
         ...result,
         reachedStart: tail.reachedStart,
         bytesRead: tail.bytesRead,
-        // Everything before the first parsed row, including the partial line
-        // the suffix skipped.
         headBytes: tail.startOffset,
         liveInContextIds:
           activeMessageIds.length > 0
@@ -777,7 +753,6 @@ export function readLocalTranscriptTailWindow(
             : result.messages.map((message) => message.id),
       };
     }
-    // Grow toward the window the rows found so far imply (at least double).
     maxBytes = Math.min(
       byteBudget,
       Math.max(
@@ -788,11 +763,6 @@ export function readLocalTranscriptTailWindow(
   }
 }
 
-/**
- * Evict resident messages that left the in-context set, oldest first, while
- * the window holds more than `floor` messages. In-context messages and the
- * newest message (appended but not yet recorded as in context) always stay.
- */
 export function spliceOutOfContextMessages(
   messages: LocalMessage[],
   inContextIds: readonly string[],
@@ -812,7 +782,6 @@ export function spliceOutOfContextMessages(
   return evicted;
 }
 
-/** Messages of a replaced window whose ids the new window no longer holds. */
 export function messagesMissingFrom(
   replaced: readonly LocalMessage[] | undefined,
   next: readonly LocalMessage[],
@@ -821,10 +790,6 @@ export function messagesMissingFrom(
   return (replaced ?? []).filter((message) => !nextIds.has(message.id));
 }
 
-/**
- * Whether a resident window holds every active id, so readers can serve the
- * logical list from it without touching disk.
- */
 export function residentCoversIds(
   resident: readonly LocalMessage[],
   activeMessageIds: readonly string[],
@@ -834,13 +799,6 @@ export function residentCoversIds(
   return activeMessageIds.every((id) => residentIds.has(id));
 }
 
-/**
- * One-time validation of the transcript head a bounded tail read never
- * parsed, before the first append mutates anything. Parses each head line
- * and applies the legacy-row check to raw rows and to the in-context
- * messages the head holds, so a corrupt head blocks writes like the full
- * read it replaces.
- */
 export function validateUnreadTranscriptHead(
   messagesPath: string,
   headBytes: number,
@@ -869,7 +827,6 @@ export function validateUnreadTranscriptHead(
     if (line.trim().length > 0) rows.push(JSON.parse(line));
   }
   assertNoLegacyUiMessageRows(rows, storageDir, conversationDir);
-  // Session entries wrap their message; check the in-context ones.
   assertNoLegacyUiMessageRows(
     localTranscriptRowsResult(
       rows,
@@ -881,11 +838,6 @@ export function validateUnreadTranscriptHead(
   );
 }
 
-/**
- * Session-entry bookkeeping for a resident/active tail. The suffix parse may
- * contain historical JSONL rows (especially after compaction, which appends
- * rather than rewriting); persist and session maps must not pin those.
- */
 export function restrictLocalTranscriptToResidentMessages(
   transcript: LocalTranscriptRowsResult,
   residentMessages: readonly LocalMessage[],
@@ -914,14 +866,6 @@ export function restrictLocalTranscriptToResidentMessages(
   };
 }
 
-/**
- * Merge the authoritative on-disk message list with the resident tail window.
- * The resident window is a suffix of the logical message list: disk rows not
- * in the window come first, then the window in its own order (resident entries
- * win by id — they may carry newer in-progress content, and a resident-only
- * id is a trailing message not yet persisted). Order-preserving merge: the
- * model must never see history resequenced.
- */
 export function overlayResidentLocalMessageTail(
   diskMessages: readonly LocalMessage[],
   residentTail: readonly LocalMessage[],
@@ -931,9 +875,6 @@ export function overlayResidentLocalMessageTail(
   const merged: LocalMessage[] = [];
   let residentIndex = 0;
   for (const message of diskMessages) {
-    // Emit resident-only entries that precede this disk row in the window's
-    // own order. A resident entry whose id has a (later) disk row is held
-    // until that row arrives.
     while (residentIndex < residentTail.length) {
       const resident = residentTail[residentIndex];
       if (resident === undefined) break;
@@ -957,13 +898,6 @@ export function overlayResidentLocalMessageTail(
   return merged;
 }
 
-/**
- * Overlay a resident tail onto a disk *suffix* (not the full transcript).
- * Older resident-only ids belong before this suffix and must not be appended
- * (that would disorder the page). Trailing unpersisted messages — the
- * in-flight assistant that streams with `transcript: "skip"` — still trail.
- * Overlapping ids take the resident snapshot.
- */
 export function overlayResidentLocalMessageSuffix(
   diskSuffix: readonly LocalMessage[],
   residentTail: readonly LocalMessage[],

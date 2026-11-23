@@ -212,14 +212,20 @@ async function selectCandidate(
   state: ClaudeWatchStateSnapshot | null,
   args: Args,
 ): Promise<ClaudeReleaseCandidate> {
+  const previousVersion =
+    args.previousVersion ?? state?.package_version ?? null;
   const [githubReleases, npmMetadata] = await Promise.all([
-    fetchClaudeGitHubReleases(),
+    fetchClaudeGitHubReleases({
+      currentVersion: args.currentVersion,
+      previousVersion,
+      allowNpmOnlyExactVersions: args.validationOnly,
+    }),
     fetchClaudeNpmMetadata(),
   ]);
   const selected = selectClaudeReleaseCandidate({
     githubReleases,
     npmMetadata,
-    previousVersion: args.previousVersion ?? state?.package_version ?? null,
+    previousVersion,
     currentVersion: args.currentVersion,
     allowNpmOnlyExactVersions: args.validationOnly,
   });

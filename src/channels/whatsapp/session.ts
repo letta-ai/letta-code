@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { getChannelDir } from "@/channels/config";
 import type { QrCodeTerminalModule } from "./runtime";
 import { loadQrCodeTerminalModule, loadWhatsAppModule } from "./runtime";
 import { setWhatsAppConnectionState } from "./state";
@@ -65,7 +65,7 @@ export function installWhatsAppConsoleFilters(): void {
 }
 
 export function getWhatsAppAuthDir(accountId: string): string {
-  return join(homedir(), ".letta", "channels", "whatsapp", "auth", accountId);
+  return join(getChannelDir("whatsapp"), "auth", accountId);
 }
 
 type WhatsAppSocket = {

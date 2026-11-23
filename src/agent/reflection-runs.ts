@@ -1,4 +1,6 @@
+import { APIError } from "@letta-ai/letta-client/core/error";
 import { type Backend, getBackend } from "@/backend";
+import type { CloudReflectionConfig } from "@/backend/api/reflection";
 import {
   formatReflectionReceipt,
   REFLECTION_UNSUPPORTED,
@@ -11,7 +13,6 @@ export interface DreamCommandScope {
   actingUserId?: string;
 }
 
-/** Null authorizes the existing Code-managed path, never an error fallback. */
 export async function requestCloudReflectionRun(
   scope: DreamCommandScope,
   args = "",
@@ -26,10 +27,16 @@ export async function requestCloudReflectionRun(
       "Unable to determine reflection ownership on this backend.",
     );
   }
-  const config = await backend.retrieveReflectionConfig(
-    capturedScope.agentId,
-    actingUserRequestOptions(capturedScope.actingUserId),
-  );
+  let config: CloudReflectionConfig | null;
+  try {
+    config = await backend.retrieveReflectionConfig(
+      capturedScope.agentId,
+      actingUserRequestOptions(capturedScope.actingUserId),
+    );
+  } catch (error) {
+    if (error instanceof APIError && error.status === 404) return null;
+    throw error;
+  }
   if (config === null || config.cutover === false) return null;
   if (config.cutover !== true) {
     throw new Error(
@@ -44,7 +51,6 @@ export async function requestCloudReflectionRun(
   return requestReflectionRun(capturedScope, "", backend);
 }
 
-/** One explicit command invocation, with immutable scope and no model turn. */
 export async function requestReflectionRun(
   scope: DreamCommandScope,
   args = "",

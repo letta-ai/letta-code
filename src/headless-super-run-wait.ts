@@ -5,6 +5,10 @@ import type {
   Run,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import {
+  type AgentRuntimeStatusEntry,
+  getAgentRuntimeStatus,
+} from "@/backend/api/agents";
+import {
   type EnqueueReceipt,
   type ExactSuperRun,
   getEnqueueAgentId,
@@ -20,11 +24,39 @@ export interface SuperRunWaitDeps {
   ) => Promise<ExactSuperRun>;
   run: (runId: string, signal: AbortSignal) => Promise<Run>;
   messages: (runId: string, signal: AbortSignal) => Promise<Message[]>;
+  onProgress?: (runIds: string[], signal: AbortSignal) => Promise<void>;
+  runtimeStatus?: (
+    agentId: string,
+    conversationId: string,
+    signal: AbortSignal,
+  ) => Promise<AgentRuntimeStatusEntry | null>;
+  onIdle?: (text: string, backgroundCount: number) => void;
+  progressMs?: number;
   pollMs?: number;
+  runLinkGraceMs?: number;
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
 
 class RemoteExecutionFailed extends Error {}
+
+const DEFAULT_RUN_LINK_GRACE_MS = 60_000;
+
+export async function readConversationRuntimeStatus(
+  agentId: string,
+  conversationId: string,
+  signal: AbortSignal,
+): Promise<AgentRuntimeStatusEntry | null> {
+  const snapshot = await getAgentRuntimeStatus(
+    agentId,
+    [conversationId],
+    signal,
+  );
+  return (
+    snapshot.statuses.find(
+      (entry) => entry.conversation_id === conversationId,
+    ) ?? null
+  );
+}
 
 function isTransientReadError(error: unknown): boolean {
   if (error instanceof ApiRequestError || error instanceof APIError) {
@@ -97,17 +129,81 @@ function noReplyMessage(receipt: EnqueueReceipt): string {
   return `Remote task finished. Its reply was not collected. Read the conversation with: letta messages list --agent ${getEnqueueAgentId(receipt)} --conversation ${receipt.conversation_id}. Do not launch the task again to retrieve its result.`;
 }
 
-/** Follow the exact accepted send. Reads may retry; the task is never resubmitted. */
 export async function waitForAcceptedSuperRun(
   receipt: EnqueueReceipt,
   signal: AbortSignal,
   deps: SuperRunWaitDeps,
 ): Promise<EnqueuedReply> {
   const pollMs = deps.pollMs ?? 1_000;
+  const runLinkGraceMs = deps.runLinkGraceMs ?? DEFAULT_RUN_LINK_GRACE_MS;
+  let completedWithoutRunSince: number | undefined;
+  const progressMs = deps.progressMs ?? 3_000;
+  let lastProgressAt: number | undefined;
+  const reportProgress = async (runIds: string[], force: boolean) => {
+    if (!deps.onProgress || runIds.length === 0) return;
+    const now = Date.now();
+    if (
+      !force &&
+      lastProgressAt !== undefined &&
+      now - lastProgressAt < progressMs
+    ) {
+      return;
+    }
+    lastProgressAt = now;
+    try {
+      await deps.onProgress(
+        runIds,
+        AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
+      );
+    } catch {
+      signal.throwIfAborted();
+    }
+  };
   const sleep =
     deps.sleep ??
     ((ms: number, waitSignal: AbortSignal) =>
       delay(ms, undefined, { signal: waitSignal }));
+
+  let newestRunId: string | undefined;
+  let idleNotified = false;
+  const reportIdle = async (exact: ExactSuperRun) => {
+    if (!deps.runtimeStatus || !deps.onIdle) return;
+    const runId = exact.run_ids[0];
+    if (runId !== newestRunId) {
+      newestRunId = runId;
+      idleNotified = false;
+    }
+    if (!runId) return;
+    try {
+      const readSignal = AbortSignal.any([signal, AbortSignal.timeout(10_000)]);
+      const status = await deps.runtimeStatus(
+        getEnqueueAgentId(receipt),
+        receipt.conversation_id,
+        readSignal,
+      );
+      if (!status) return;
+      if (status.active_run_ids.some((id) => exact.run_ids.includes(id))) {
+        idleNotified = false;
+        return;
+      }
+      const count = status.active_bash_count ?? 0;
+      if (
+        idleNotified ||
+        status.loop_state?.status !== "WAITING_ON_INPUT" ||
+        count <= 0
+      )
+        return;
+      const run = await deps.run(runId, readSignal);
+      if (run.status !== "completed" || run.stop_reason === "requires_approval")
+        return;
+      const text = assistantText(await deps.messages(runId, readSignal));
+      if (!text) return;
+      deps.onIdle(text, count);
+      idleNotified = true;
+    } catch {
+      signal.throwIfAborted();
+    }
+  };
 
   while (true) {
     signal.throwIfAborted();
@@ -130,12 +226,19 @@ export async function waitForAcceptedSuperRun(
     throwIfSuperRunFailed(exact);
     const terminal = exact.status === "COM" || exact.completed_at !== null;
     if (!terminal) {
+      await reportProgress(exact.run_ids, false);
+      await reportIdle(exact);
       await sleep(pollMs, signal);
       continue;
     }
 
     const runId = exact.run_ids[0];
     if (!runId) {
+      completedWithoutRunSince ??= Date.now();
+      if (Date.now() - completedWithoutRunSince < runLinkGraceMs) {
+        await sleep(pollMs, signal);
+        continue;
+      }
       throw new RemoteExecutionFailed(
         `Remote Super Run ${exact.id} completed without a correlated child run.`,
       );
@@ -152,15 +255,12 @@ export async function waitForAcceptedSuperRun(
         `Remote child run ${runId} ${run.status}${run.stop_reason ? ` (${run.stop_reason})` : ""}.`,
       );
     }
-    // The Super Run is already terminal here. A requires_approval child is the
-    // normal mid-turn boundary; it can be the newest linked run when the
-    // listener's later loop frames were lost (e.g. a socket drop), so it must
-    // not hold the wait open after Cloud has closed the send.
     if (run.status !== "completed") {
       await sleep(pollMs, signal);
       continue;
     }
 
+    await reportProgress(exact.run_ids, true);
     let messages: Message[] = [];
     try {
       messages = await deps.messages(

@@ -8,7 +8,6 @@ import { ApiRequestError, apiFetch, apiRequest } from "./request";
 const SHUTDOWN_MAX_RETRIES = 3;
 const SHUTDOWN_DEFAULT_DELAY_MS = 1000;
 
-/** Only the server's explicit pre-admission rejection proves a POST was not accepted. */
 export function isProvenCloudApiShutdownRejection(
   error: unknown,
 ): error is ApiRequestError {
@@ -63,11 +62,8 @@ export interface EnqueueReceipt {
   client_message_id: string;
   workflow_id: string;
   super_run_id: string;
-  /** Listener selected for a managed Agent launch, used only for cancellation. */
   connection_id?: string;
-  /** Parent used for Cloud status and cancellation, never for history ownership. */
   parent_agent_id?: string;
-  /** Original enqueue attribution; preserve null so cancellation suppresses fallback. */
   acting_user_id?: string | null;
 }
 
@@ -78,7 +74,7 @@ export function getEnqueueAgentId(receipt: EnqueueReceipt): string {
 }
 
 export interface EnqueueConversationInput {
-  agentId: string;
+  agentId?: string;
   conversationId: string;
   clientMessageId: string;
   content: MessageCreate["content"];
@@ -86,14 +82,13 @@ export interface EnqueueConversationInput {
   actingUserId?: string | null;
 }
 
-/** Cloud owns delivery after this request returns 202. Never retry by executing locally. */
 export async function enqueueConversationMessage(
   input: EnqueueConversationInput,
   signal?: AbortSignal,
   request = apiRequest,
 ): Promise<EnqueueReceipt> {
   const body = {
-    agent_id: input.agentId,
+    ...(input.agentId !== undefined ? { agent_id: input.agentId } : {}),
     client_message_id: input.clientMessageId,
     ...(input.computer !== undefined ? { computer: input.computer } : {}),
     messages: [
@@ -107,7 +102,7 @@ export async function enqueueConversationMessage(
   let accepted: Pick<
     EnqueueReceipt,
     "client_message_id" | "workflow_id" | "super_run_id"
-  >;
+  > & { agent_id?: string | null };
   let retries = 0;
   while (true) {
     try {
@@ -141,18 +136,17 @@ export async function enqueueConversationMessage(
   return {
     ...accepted,
     status: "queued",
-    agent_id: input.agentId,
+    agent_id: accepted.agent_id ?? input.agentId ?? null,
     conversation_id: input.conversationId,
     acting_user_id: input.actingUserId,
   };
 }
 
-/** Remove this input from either the Cloud delivery queue or listener queue. */
 export async function dequeueConversationMessage(
   input: Pick<
     EnqueueConversationInput,
-    "agentId" | "conversationId" | "clientMessageId" | "actingUserId"
-  >,
+    "conversationId" | "clientMessageId" | "actingUserId"
+  > & { agentId: string },
   signal?: AbortSignal,
   request = apiRequest,
 ): Promise<{
@@ -173,7 +167,6 @@ export async function dequeueConversationMessage(
   );
 }
 
-/** Relevant fields from the existing Cloud conversation Super Run feed. */
 export interface ConversationSendStatus {
   conversation_id: string;
   active_super_runs: Array<{ id: string; status: string }>;
@@ -244,11 +237,9 @@ export interface ExactSuperRun extends LatestConversationSuperRun {
     code: string;
     message: string;
   } | null;
-  /** Associated child runs, newest first. */
   run_ids: string[];
 }
 
-/** Read the accepted Super Run and its server-owned result correlation. */
 export async function getExactSuperRun(
   agentId: string,
   superRunId: string,

@@ -11,7 +11,6 @@ export interface FinalizeStateBranchOptions {
   repoPath: string;
   snapshot: ClaudeWatchStateSnapshot;
   files?: Readonly<Record<string, string>>;
-  /** The SHA observed when analysis started; null means no state branch existed. */
   expectedBaseSha: string | null;
   remote?: string;
   branch?: string;
@@ -24,11 +23,6 @@ export interface FinalizeStateBranchResult {
   parentSha: string | null;
 }
 
-/**
- * Produces the complete, deterministic file set for a state commit. This is
- * intentionally pure so callers can inspect or test a snapshot before git is
- * involved.
- */
 export function materializeStateFiles(
   snapshot: ClaudeWatchStateSnapshot,
   files: Readonly<Record<string, string>> = {},
@@ -43,7 +37,6 @@ export function materializeStateFiles(
   return result;
 }
 
-/** Safely loads the canonical snapshot from an already materialized file map. */
 export function loadStateSnapshot(
   files: Readonly<Record<string, string>>,
 ): ClaudeWatchStateSnapshot | null {
@@ -57,7 +50,6 @@ export function loadStateSnapshot(
   }
 }
 
-/** Reads a snapshot at a commit without checking out or changing any branch. */
 export function loadStateSnapshotAtCommit(
   repoPath: string,
   commitSha: string,
@@ -71,7 +63,6 @@ export function loadStateSnapshotAtCommit(
   return loadStateSnapshot({ [CLAUDE_WATCH_STATE_FILE]: result.stdout });
 }
 
-/** Reads the complete sanitized state tree at a commit without checking it out. */
 export function loadStateFilesAtCommit(
   repoPath: string,
   commitSha: string,
@@ -91,7 +82,6 @@ export function loadStateFilesAtCommit(
   return files;
 }
 
-/** Returns the remote state tip, or null when the branch has not been created. */
 export function resolveStateBranchTip(
   repoPath: string,
   remote = "origin",
@@ -113,7 +103,6 @@ export function resolveStateBranchTip(
   return sha;
 }
 
-/** Fetches the current state tip into a remote-tracking ref without checkout. */
 export function fetchStateBranchTip(
   repoPath: string,
   remote = "origin",
@@ -131,12 +120,6 @@ export function fetchStateBranchTip(
   return tip;
 }
 
-/**
- * Commits and pushes a snapshot using git plumbing only. No branch is checked
- * out, so the caller's current branch (especially main) is never touched.
- * Pushes have no force refspec and therefore receive normal fast-forward
- * protection from git.
- */
 export function finalizeStateBranch(
   options: FinalizeStateBranchOptions,
 ): FinalizeStateBranchResult {
@@ -150,8 +133,6 @@ export function finalizeStateBranch(
     ? loadStateSnapshotAtCommit(options.repoPath, currentTip)
     : null;
 
-  // A retry after a successful push is a no-op, even if its remembered base is
-  // now stale. This check is what makes partial workflow reconciliation safe.
   if (
     currentTip &&
     currentSnapshot?.candidate_id === options.snapshot.candidate_id
@@ -217,7 +198,6 @@ export function finalizeStateBranch(
       env,
     ).stdout.trim();
 
-    // No leading '+' and no --force: the remote enforces normal FF updates.
     git(options.repoPath, [
       "push",
       remote,

@@ -12,6 +12,7 @@ import { activateOrgCredentials } from "@/auth/org-credentials-session";
 import { settingsManager } from "@/settings-manager";
 import { debugLog } from "@/utils/debug";
 import {
+  type CredentialBootstrap,
   deriveListenerInstanceId,
   type RegisterOptions,
 } from "@/websocket/listen-register";
@@ -23,18 +24,12 @@ import {
 import type { StartListenerOptions } from "@/websocket/listener/types";
 
 const LISTENER_TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
-// A connect token is already approved, so the exchange only retries on
-// transient failures; this bounds those retries, not a wait for approval.
 const CONNECT_TOKEN_EXCHANGE_TIMEOUT_SECONDS = 60;
 
 type ListenerSettings = Awaited<
   ReturnType<typeof settingsManager.getSettingsWithSecureTokens>
 >;
 
-/**
- * Where a listener's cloud credentials live. The global slot is the sign-in
- * shared with `letta`; an organization slot belongs to one `--org` listener.
- */
 type CredentialSlot = {
   read(): Promise<OrgCredentials>;
   write(credentials: OrgCredentials & { apiKey: string }): Promise<void>;
@@ -78,16 +73,7 @@ type ListenerOAuthDeps = {
 
 type ListenerAuthOptions = {
   allowInteractiveOAuth?: boolean;
-  /**
-   * Sign in to this organization specifically. Credentials live in a slot
-   * keyed by the organization, so the global sign-in is neither used nor
-   * replaced.
-   */
   organizationId?: string;
-  /**
-   * A pre-approved device code minted by an agent (`letta server --token`).
-   * Exchanged once for credentials; the browser sign-in is skipped.
-   */
   connectToken?: string;
 };
 
@@ -95,21 +81,19 @@ type ListenerRegistrationOptions = ListenerAuthOptions & {
   surface?: "server" | "listen";
 };
 
-/**
- * Best-effort: open the device-auth page so a first-time user does not have
- * to copy the URL out of the terminal. The URL is always printed as fallback.
- */
+interface ResolvedListenerAuth {
+  serverUrl: string;
+  apiKey: string;
+  onCredentialBootstrap?: (bootstrap: CredentialBootstrap) => Promise<void>;
+}
+
 function openInBrowser(url: string): void {
   import("open")
     .then(({ default: open }) => open(url, { wait: false }))
     .then((subprocess) => {
-      subprocess.on("error", () => {
-        // User can visit the printed URL manually.
-      });
+      subprocess.on("error", () => {});
     })
-    .catch(() => {
-      // User can visit the printed URL manually.
-    });
+    .catch(() => {});
 }
 
 const defaultListenerOAuthDeps: ListenerOAuthDeps = {
@@ -269,10 +253,6 @@ async function runListenerOAuthLogin(
   return tokens.access_token;
 }
 
-/**
- * Exchange a pre-approved device code for credentials. The code was approved
- * server-side when it was minted, so the first exchange succeeds; no browser.
- */
 async function redeemConnectToken(
   slot: CredentialSlot,
   deviceId: string,
@@ -291,8 +271,6 @@ async function redeemConnectToken(
       connectionName,
     );
   } catch (error) {
-    // Single-use and short-lived by design: a restart of the same command
-    // needs a fresh token from the agent, not the one in shell history.
     const message = errorMessage(error);
     let reason: string | null = null;
     if (/expired/i.test(message)) reason = "expired";
@@ -304,9 +282,6 @@ async function redeemConnectToken(
     }
     throw error;
   }
-  // The token acts in the organization it was minted for regardless of the
-  // flag; refuse rather than file it under the wrong slot and register the
-  // computer somewhere the user did not expect.
   if (tokens.organization_id && tokens.organization_id !== organizationId) {
     throw new Error(
       `This connect token belongs to organization ${tokens.organization_id}, not ${organizationId}. Run the letta server command your agent gave you as is.`,
@@ -328,41 +303,50 @@ async function resolveListenerAuth(
   deviceId: string,
   connectionName: string,
   options: ListenerAuthOptions,
-): Promise<{ serverUrl: string; apiKey: string }> {
+): Promise<ResolvedListenerAuth> {
   const allowInteractiveOAuth = options.allowInteractiveOAuth ?? true;
   const settings = await settingsManager.getSettingsWithSecureTokens();
   const serverUrl = getListenerServerUrl(settings);
 
-  // An organization listener signs in on its own; ambient keys and the
-  // global sign-in belong to whichever organization the user picked there.
-  if (options.organizationId) {
+  const organizationId = options.organizationId;
+  if (organizationId) {
     if (!isCloudListenerServerUrl(serverUrl)) {
       throw new Error("--org is only supported with Letta Cloud");
     }
-    const slot = orgCredentialSlot(options.organizationId);
+    const slot = orgCredentialSlot(organizationId);
     const apiKey = options.connectToken
       ? await redeemConnectToken(
           slot,
           deviceId,
           connectionName,
           options.connectToken,
-          options.organizationId,
+          organizationId,
         )
       : await resolveCloudCredentials(
           slot,
           deviceId,
           connectionName,
           allowInteractiveOAuth,
-          options.organizationId,
+          organizationId,
         );
-    // Turns, memfs, and subagents in this process read the organization
-    // sign-in from here, so they act as the organization the computer joined.
     const credentials = await slot.read();
-    activateOrgCredentials(options.organizationId, deviceId, {
+    activateOrgCredentials(organizationId, deviceId, {
       ...credentials,
       apiKey,
     });
-    return { serverUrl, apiKey };
+    if (credentials.refreshToken) return { serverUrl, apiKey };
+    const onCredentialBootstrap = async (
+      bootstrap: CredentialBootstrap,
+    ): Promise<void> => {
+      const nextCredentials = {
+        apiKey,
+        refreshToken: bootstrap.refreshToken,
+        tokenExpiresAt: Date.now() + bootstrap.expiresIn * 1000,
+      };
+      await slot.write(nextCredentials);
+      activateOrgCredentials(organizationId, deviceId, nextCredentials);
+    };
+    return { serverUrl, apiKey, onCredentialBootstrap };
   }
 
   if (options.connectToken) {
@@ -453,17 +437,12 @@ export async function resolveListenerRegistrationOptions(
   connectionName: string,
   options: ListenerRegistrationOptions = {},
 ): Promise<RegisterOptions> {
-  // Consume the startup transport variable before the first await so no
-  // authentication hook or concurrently-spawned descendant can inherit it.
-  // Re-registration reads the same process-local cache.
   const spawnerListenerInstanceId = getSpawnerListenerInstanceId();
   const auth = await resolveListenerAuth(deviceId, connectionName, options);
   return {
     ...auth,
     deviceId,
     connectionName,
-    // A spawner-assigned identity (Desktop slots, LET-10085) wins; manual
-    // listeners keep their legacy name-derived identity unchanged.
     listenerInstanceId:
       spawnerListenerInstanceId ??
       deriveListenerInstanceId(options.surface ?? "server", connectionName),

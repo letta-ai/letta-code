@@ -2,10 +2,13 @@ export function resolvePiRequestHeaders(input: {
   provider: string;
   configuredHeaders: Record<string, string> | undefined;
   conversationId: string;
-}): Record<string, string> | undefined {
-  if (input.provider !== "opencode-go") return input.configuredHeaders;
+  requestKind: "turn" | "compaction";
+}): Record<string, string> {
   return {
     ...input.configuredHeaders,
-    "x-opencode-session": input.conversationId,
+    "x-letta-request-kind": input.requestKind,
+    ...(input.provider === "opencode-go"
+      ? { "x-opencode-session": input.conversationId }
+      : {}),
   };
 }

@@ -1,6 +1,5 @@
 import { isRecord } from "@/utils/type-guards";
 
-/** Structural API surface used only by the unified `letta mcp` command. */
 export interface UnifiedMcpClient {
   get(path: string): Promise<unknown>;
   post(
@@ -12,13 +11,7 @@ export interface UnifiedMcpClient {
   };
 }
 
-/**
- * Header that carries a super run's MCP originator token on tool-run calls
- * (USER_SCOPED_MCP_CONNECTIONS). Sent only when a token is held for the run.
- */
 const MCP_ORIGINATOR_TOKEN_HEADER = "x-letta-mcp-originator-token";
-// Compatibility negotiation, not principal authority. Emitted by the same
-// process that holds the bearer and isolates listener queues by originator.
 const MCP_ORIGINATOR_ISOLATION_HEADER = "x-letta-mcp-originator-isolation";
 
 export interface UnifiedMcpServer {
@@ -29,6 +22,7 @@ export interface UnifiedMcpServer {
   command?: string;
   args?: string[];
   serverUrl?: string;
+  cachedNumTools?: number | null;
 }
 
 export interface UnifiedMcpTool {
@@ -110,6 +104,10 @@ function parseServer(
     serverName,
     serverType,
     target,
+    ...(typeof value.cached_num_tools === "number" ||
+    value.cached_num_tools === null
+      ? { cachedNumTools: value.cached_num_tools }
+      : {}),
     ...(serverUrl ? { serverUrl } : {}),
     ...(command ? { command, args } : {}),
   };
@@ -184,6 +182,7 @@ async function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
   operation: string,
+  timeoutMessage?: string,
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -192,7 +191,11 @@ async function withTimeout<T>(
       new Promise<never>((_resolve, reject) => {
         timer = setTimeout(
           () =>
-            reject(new Error(`${operation} timed out after ${timeoutMs}ms`)),
+            reject(
+              new Error(
+                timeoutMessage ?? `${operation} timed out after ${timeoutMs}ms`,
+              ),
+            ),
           timeoutMs,
         );
       }),
@@ -229,10 +232,7 @@ export async function listUnifiedMcpServers(
         const id = stringField(item, "id");
         if (id) registeredById.set(id, item);
       }
-    } catch {
-      // The association id/name still owns tool listing and execution. Keep it
-      // with unknown transport when optional connection metadata is unavailable.
-    }
+    } catch {}
   }
   return value
     .map((item) => {
@@ -302,11 +302,6 @@ export async function runUnifiedMcpTool(params: {
   toolId: string;
   args: Record<string, unknown>;
   timeoutMs?: number;
-  /**
-   * Originator token held for the active super run. Sent verbatim as the
-   * `x-letta-mcp-originator-token` header; when absent the call proceeds
-   * unattributed and the header is omitted entirely. Never logged here.
-   */
   originatorToken?: string;
 }): Promise<UnifiedMcpRunResult> {
   const value = await withTimeout(
@@ -326,6 +321,7 @@ export async function runUnifiedMcpTool(params: {
     ),
     params.timeoutMs ?? 60_000,
     "Running agent MCP tool",
+    `MCP tool call hit the cloud server's ${(params.timeoutMs ?? 60_000) / 1000}-second limit; the MCP server may still be processing the request. Retry with a smaller or more selective request, or set the tool's own timeout argument below ${(params.timeoutMs ?? 60_000) / 1000} seconds if it has one.`,
   );
   return parseRunResult(value);
 }

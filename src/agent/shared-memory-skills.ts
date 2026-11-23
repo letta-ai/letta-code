@@ -11,11 +11,15 @@ import {
   type SkillDiscoveryResult,
   type SkillSource,
 } from "./skills";
+import { resolveEffectiveAgentId } from "./subagents/ephemeral-subagent";
 
 const ATTACHED_REPOSITORIES_CACHE_KEY = Symbol.for(
   "@letta/attachedRepositoriesCache",
 );
 const ATTACHED_REPOSITORIES_CACHE_TTL_MS = 5_000;
+const LAST_GOOD_ATTACHED_REPOSITORIES_KEY = Symbol.for(
+  "@letta/lastGoodAttachedRepositories",
+);
 
 interface AttachedRepositoriesCacheEntry {
   expiresAt: number;
@@ -26,7 +30,22 @@ type AttachedRepositoriesCache = Map<string, AttachedRepositoriesCacheEntry>;
 
 type GlobalWithAttachedRepositories = typeof globalThis & {
   [ATTACHED_REPOSITORIES_CACHE_KEY]?: AttachedRepositoriesCache;
+  [LAST_GOOD_ATTACHED_REPOSITORIES_KEY]?: Map<
+    string,
+    AttachedAgentRepository[]
+  >;
 };
+
+function getLastGoodAttachedRepositories(): Map<
+  string,
+  AttachedAgentRepository[]
+> {
+  const global = globalThis as GlobalWithAttachedRepositories;
+  if (!global[LAST_GOOD_ATTACHED_REPOSITORIES_KEY]) {
+    global[LAST_GOOD_ATTACHED_REPOSITORIES_KEY] = new Map();
+  }
+  return global[LAST_GOOD_ATTACHED_REPOSITORIES_KEY];
+}
 
 function getAttachedRepositoriesCache(): AttachedRepositoriesCache {
   const global = globalThis as GlobalWithAttachedRepositories;
@@ -55,7 +74,9 @@ async function getAttachedRepositories(
 
   const promise = import("./attached-repositories").then(
     async ({ listAttachedAgentRepositories }) =>
-      (await listAttachedAgentRepositories(agentId)).sort(
+      (
+        await listAttachedAgentRepositories(resolveEffectiveAgentId(agentId))
+      ).sort(
         (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
       ),
   );
@@ -66,7 +87,14 @@ async function getAttachedRepositories(
   cache.set(agentId, entry);
 
   try {
-    return (await promise).map((repository) => ({ ...repository }));
+    const repositories = await promise;
+    if (cache.get(agentId) === entry) {
+      getLastGoodAttachedRepositories().set(
+        agentId,
+        repositories.map((repository) => ({ ...repository })),
+      );
+    }
+    return repositories.map((repository) => ({ ...repository }));
   } catch (error) {
     if (cache.get(agentId) === entry) {
       cache.delete(agentId);
@@ -80,10 +108,6 @@ export interface SharedMemorySkillsContext {
   errors: SkillDiscoveryError[];
 }
 
-/**
- * Resolve only server-attached repository mounts. Local sibling directories are
- * deliberately ignored because detach leaves their checkouts on disk.
- */
 export async function resolveSharedMemorySkillsContext(options: {
   agentId?: string;
   skillSources: SkillSource[];
@@ -99,6 +123,7 @@ export async function resolveSharedMemorySkillsContext(options: {
   }
 
   let repositories: AttachedAgentRepository[];
+  let fetchError: SkillDiscoveryError | undefined;
   if (options.attachedRepositories) {
     repositories = options.attachedRepositories.map((repository) => ({
       ...repository,
@@ -110,25 +135,24 @@ export async function resolveSharedMemorySkillsContext(options: {
         return { skillsDirs: [], errors: [] };
       }
     } catch {
-      // This can run before settings initialization in tests and early startup.
       return { skillsDirs: [], errors: [] };
     }
     try {
       repositories = await getAttachedRepositories(agentId);
     } catch (error) {
-      return {
-        skillsDirs: [],
-        errors: [
-          {
-            path: `shared-memory:${agentId}`,
-            message: `Failed to list attached repositories: ${error instanceof Error ? error.message : String(error)}`,
-          },
-        ],
+      fetchError = {
+        path: `shared-memory:${agentId}`,
+        message: `Failed to list attached repositories: ${error instanceof Error ? error.message : String(error)}`,
       };
+      const lastGood = getLastGoodAttachedRepositories().get(agentId);
+      if (!lastGood) {
+        return { skillsDirs: [], errors: [fetchError] };
+      }
+      repositories = lastGood.map((repository) => ({ ...repository }));
     }
   }
 
-  const errors: SkillDiscoveryError[] = [];
+  const errors: SkillDiscoveryError[] = fetchError ? [fetchError] : [];
   const skillsDirs: string[] = [];
   const { getRepositoryMountDir, validateAgentRepositoryName } = await import(
     "./memory-git"

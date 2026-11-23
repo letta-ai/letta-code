@@ -12,12 +12,15 @@ import {
   RESTORE_ENABLED_CHANNELS_AGENT_SCOPE_ENV,
 } from "@/channels/restore-scope";
 import { ListenerStatusUI } from "@/cli/components/ListenerStatusUI";
+import type { AppServerCliOptions } from "@/cli/subcommands/app-server";
 import {
   createServerLifecycleOutput,
   hasJsonlLifecycleIntent,
   resolveServerLifecycleOutput,
 } from "@/cli/subcommands/lifecycle-output";
+import { createListenerAppServer } from "@/cli/subcommands/listen-app-server";
 import { printFirstRunWelcome } from "@/cli/subcommands/listen-first-run-welcome";
+import { shouldUseNonInteractiveListenerOutput } from "@/cli/subcommands/listen-output-mode";
 import { createListenerProcessAnchorPromise } from "@/cli/subcommands/listen-process-anchor";
 import { printListenUsage } from "@/cli/subcommands/listen-usage";
 import {
@@ -30,11 +33,12 @@ import { applyStartupPermissionMode } from "@/permissions/startup";
 import { settingsManager } from "@/settings-manager";
 import { getListenerTelemetrySurface, telemetry } from "@/telemetry";
 import { cancelBackgroundMemoryTasks } from "@/tools/impl/memory-task-lifecycle";
+import { shutdownMonitors } from "@/tools/impl/monitor";
 import { CHANNEL_SERVICE_COMMAND_TYPES } from "@/types/service-protocol";
 import { isDebugEnabled } from "@/utils/debug";
 import { suppressStartupLogMarker } from "@/utils/startup-log-boundary";
 import type { AppServerHandle } from "@/websocket/app-server";
-import { RemoteSessionLog } from "@/websocket/listen-log";
+import { formatTimestamp, RemoteSessionLog } from "@/websocket/listen-log";
 import {
   type RegisterOptions,
   type RegisterResult,
@@ -64,22 +68,11 @@ import type {
   ListenerRuntime,
 } from "@/websocket/listener/types";
 
-function formatTimestamp(): string {
-  const now = new Date();
-  const h = String(now.getHours()).padStart(2, "0");
-  const m = String(now.getMinutes()).padStart(2, "0");
-  const s = String(now.getSeconds()).padStart(2, "0");
-  const ms = String(now.getMilliseconds()).padStart(3, "0");
-  return `${h}:${m}:${s}.${ms}`;
-}
-
 async function flushListenerTelemetryEnd(exitReason: string): Promise<void> {
   try {
     telemetry.trackSessionEnd(undefined, exitReason);
     await telemetry.flush();
-  } catch {
-    // Best-effort only.
-  }
+  } catch {}
 }
 
 type ListenerStartupMode =
@@ -98,10 +91,6 @@ async function resolveListenerStartupMode(
   const settings = await settingsManager.getSettingsWithSecureTokens();
   const serverUrl = getListenerServerUrl(settings);
 
-  // When running under the desktop app (which sets LETTA_DESKTOP_MODE),
-  // the local proxy has a full environment server that expects device
-  // registration. Treat it as "remote" so the listener registers and connects
-  // via WebSocket, even when channels are active.
   if (process.env.LETTA_DESKTOP_MODE === "1") {
     return { kind: "remote", serverUrl };
   }
@@ -176,7 +165,11 @@ const LISTEN_OPTIONS = {
   "lifecycle-output": { type: "string" },
 } as const;
 
-export async function runListenSubcommand(argv: string[]): Promise<number> {
+export async function runListenSubcommand(
+  argv: string[],
+  appServer?: AppServerCliOptions,
+): Promise<number> {
+  process.env.LETTA_RUNTIME_SESSION_SOURCE = "listen";
   const lifecycleRequested = hasJsonlLifecycleIntent(argv);
   if (lifecycleRequested) suppressStartupLogMarker();
   let values: ReturnType<
@@ -232,10 +225,6 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   telemetry.setSurface(getListenerTelemetrySurface());
   telemetry.init({ handleSigint: false });
 
-  // Register signal handlers so the listener can clean up child processes
-  // (subagents, bash commands, PTY sessions) before exiting. Without these,
-  // SIGTERM from the desktop app only kills the listener process itself,
-  // orphaning its descendants which accumulate over time.
   let isShuttingDown = false;
   let manualListenerLock: ManualListenerLockHandle | null = null;
   let channelGatewaySupervisor: ChannelGatewaySupervisor | null = null;
@@ -278,10 +267,9 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       if (isListenerActive()) {
         stopListenerClient();
       }
-    } catch {
-      // Best-effort cleanup — don't block exit
-    }
+    } catch {}
     await cancelBackgroundMemoryTasks();
+    await shutdownMonitors();
     await flushRemoteSettingsWrites();
     await releaseManualListenerLock();
     await flushListenerTelemetryEnd(`listener_${signal.toLowerCase()}`);
@@ -298,10 +286,9 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   ): Promise<never> => {
     try {
       await closeChannelGateway();
-    } catch {
-      // Best effort — don't block exit on channel cleanup failure
-    }
+    } catch {}
     await cancelBackgroundMemoryTasks();
+    await shutdownMonitors();
     await flushRemoteSettingsWrites();
     await releaseManualListenerLock();
     await flushListenerTelemetryEnd(exitReason);
@@ -310,8 +297,6 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
 
   await settingsManager.loadLocalProjectSettings();
 
-  // Initialize channels if explicitly requested, or restore persisted enabled
-  // channels when a desktop wrapper opts into boot-time channel restore.
   const scopedRestoreAgentScope = getScopedChannelRestoreAgentScope();
   const restoreEnabledChannels =
     !values.channels &&
@@ -359,8 +344,6 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     if (savedName) {
       connectionName = savedName;
     } else {
-      // No saved name - default to hostname so a first run (e.g. pasted from
-      // onboarding) registers without an interactive prompt.
       connectionName = hostname() || "my-computer";
       settingsManager.setListenerEnvName(connectionName);
       if (!lifecycleOutput) printFirstRunWelcome(connectionName);
@@ -370,6 +353,11 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
 
   const sessionLog = new RemoteSessionLog();
   sessionLog.init();
+  const listenerAppServer = createListenerAppServer(
+    appServer,
+    connectionName,
+    sessionLog,
+  );
   if (!lifecycleOutput) console.log(`Log file: ${sessionLog.path}`);
   const logListenerMessage = (message: string): void => {
     sessionLog.log(message);
@@ -399,8 +387,6 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       startupMode.kind === "remote" &&
       isCloudListenerServerUrl(startupMode.serverUrl)
     ) {
-      // Cloud handoffs carry API agent IDs, regardless of this computer's
-      // saved preference. Keep local App Server and channel listeners local.
       configureBackendMode("api");
     }
 
@@ -449,9 +435,6 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         return 1;
       }
 
-      // A spawner owns Desktop child lifecycle. Standalone `letta server`
-      // and its `letta remote` alias instead claim their exact local
-      // registration slot before starting channel adapters or registering.
       if (shouldAcquireStandaloneListenerLock()) {
         const listenerInstanceId = registerOptions.listenerInstanceId;
         if (!listenerInstanceId) {
@@ -500,6 +483,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     );
     let startRuntimeChannelGateway: (() => Promise<void>) | null = null;
     const startChannelGateway = async (): Promise<void> => {
+      await listenerAppServer?.start();
       if (channelNames.length === 0 && !restoreEnabledChannels) return;
       if (!startRuntimeChannelGateway) {
         const { getActiveRuntime } = await import(
@@ -711,8 +695,6 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
 
     const reregister = async (): Promise<RegisterResult> => {
       sessionLog.log("Re-registering with retry...");
-      // The connect token was redeemed at startup; reconnects use the
-      // credentials it wrote to the organization slot.
       const nextRegisterOptions = await resolveListenerRegistrationOptions(
         deviceId,
         connectionName,
@@ -766,7 +748,8 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       }
     };
 
-    if (debugMode || lifecycleOutput) {
+    if (shouldUseNonInteractiveListenerOutput(debugMode, !!lifecycleOutput)) {
+      const printPlainLines = debugMode || !lifecycleOutput;
       const startNonInteractiveClient = async (
         connId: string,
         url: string,
@@ -789,7 +772,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           onStatusChange: (status) => {
             sessionLog.log(`status: ${status}`);
             readiness.setStatus(status);
-            if (debugMode) {
+            if (printPlainLines) {
               console.log(`[${formatTimestamp()}] status: ${status}`);
             }
           },
@@ -805,7 +788,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             );
             if (!ready) return;
             sessionLog.log("Connected. Awaiting instructions.");
-            if (debugMode) {
+            if (printPlainLines) {
               console.log(
                 `[${formatTimestamp()}] Connected. Awaiting instructions.`,
               );
@@ -817,7 +800,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             sessionLog.log(
               `Reconnecting (attempt ${attempt}, retry in ${Math.round(nextRetryIn / 1000)}s)`,
             );
-            if (debugMode) {
+            if (printPlainLines) {
               console.log(
                 `[${formatTimestamp()}] Reconnecting (attempt ${attempt}, retry in ${Math.round(nextRetryIn / 1000)}s)`,
               );
@@ -825,7 +808,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           },
           onNeedsReregister: async (replacement) => {
             readiness.setCloudReconnecting();
-            if (debugMode) {
+            if (printPlainLines) {
               console.log(
                 `[${formatTimestamp()}] Computer connection expired, re-registering...`,
               );

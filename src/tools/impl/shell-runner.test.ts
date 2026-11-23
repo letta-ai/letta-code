@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import * as childProcess from "node:child_process";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import {
@@ -42,8 +43,6 @@ function isProcessStillRunning(pid: number): boolean {
       const endCommand = stat.lastIndexOf(")");
       const state =
         endCommand === -1 ? "" : stat.slice(endCommand + 2, endCommand + 3);
-      // kill(pid, 0) succeeds for a zombie until it is reaped, but the
-      // process has exited and can no longer keep inherited stdio open.
       return state !== "Z" && state !== "X";
     } catch {
       return false;
@@ -91,6 +90,28 @@ describe("shared shell process", () => {
       stderr: "",
       exitCode: 0,
     });
+  });
+
+  test("hides the Windows console window for pipe-mode processes", async () => {
+    const spawnSpy = spyOn(childProcess, "spawn");
+    try {
+      const running = startShellProcess(
+        [process.execPath, "-e", 'process.stdout.write("hidden")'],
+        {
+          cwd: process.cwd(),
+          env: process.env,
+          timeoutMs: 0,
+        },
+      );
+      await running.completion;
+
+      expect(spawnSpy).toHaveBeenCalled();
+      for (const [, , options] of spawnSpy.mock.calls) {
+        expect(options).toMatchObject({ windowsHide: true });
+      }
+    } finally {
+      spawnSpy.mockRestore();
+    }
   });
 
   test.skipIf(process.platform === "win32")(
@@ -222,6 +243,64 @@ describe("shared shell process", () => {
     await running.completion;
     expect(streamed).toBe("😀");
   });
+
+  test("finishes forced termination when an exited launcher leaves inherited pipes open", async () => {
+    let descendantPid = 0;
+    let ready!: () => void;
+    const inheritedPipes = new Promise<void>((resolve) => {
+      ready = resolve;
+    });
+    const running = startShellProcess(
+      [
+        process.execPath,
+        "-e",
+        [
+          'const { spawn } = require("node:child_process");',
+          'const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "inherit" });',
+          'process.stdout.write("descendant:" + child.pid + "\\n");',
+          "child.unref();",
+        ].join(""),
+      ],
+      {
+        cwd: process.cwd(),
+        env: process.env,
+        timeoutMs: 0,
+        onOutput(chunk) {
+          const match = chunk.match(/descendant:(\d+)/);
+          if (match) {
+            descendantPid = Number(match[1]);
+            ready();
+          }
+        },
+      },
+    );
+    let completionTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await inheritedPipes;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(isProcessStillRunning(descendantPid)).toBe(true);
+      running.process.kill("SIGKILL");
+      await Promise.race([
+        running.completion,
+        new Promise((_, reject) => {
+          completionTimer = setTimeout(
+            () =>
+              reject(
+                new Error("Forced termination waited for inherited pipes"),
+              ),
+            1000,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(completionTimer);
+      if (descendantPid) {
+        try {
+          process.kill(descendantPid, "SIGKILL");
+        } catch {}
+      }
+    }
+  }, 3000);
 
   test("force-kills a timed-out process tree that ignores graceful termination", async () => {
     let output = "";

@@ -1,12 +1,43 @@
-import { spawn as nodeSpawn } from "node:child_process";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
+import { setTimeout as sleep } from "node:timers/promises";
+import { PROJECT_SKILLS_DIR } from "@/agent/skills";
 import type { SubagentResult } from "@/agent/subagents";
-import { wrapManagedWorkloadLauncher } from "@/utils/systemd-workload-scope";
+import { spawnManagedWorkloadProcess } from "@/agent/subagents/subagent-process";
+import { cloudRepositoryRoots } from "@/utils/cloud-repository-roots";
+import { confirmProcessExit } from "@/utils/confirm-process-exit";
+import { withNativeCliPath } from "@/utils/native-cli-env";
 import {
-  type ExternalToolCall,
+  asRecord,
+  CAPACITY_RETRY_DELAYS_MS,
+  capacityResult,
+  codexReasoningText,
+  describeCodexToolItem,
+  describeCodexToolResult,
+  errorMessage,
+  isCapacityError,
+  readString,
+  TOOL_ITEM_TYPES,
+  textInput,
+  turnFailureMessage,
+  turnReport,
+} from "./codex-app-server-payloads";
+import {
+  waitForRejectedCodexSteer,
+  withCodexSteerReceipt,
+  withSessionLock,
+} from "./codex-steer-receipt";
+import { traceCodexLaunch } from "./external-llm-trace-launch";
+import {
+  type ExternalTraceContext,
+  updateExternalTraceTask,
+} from "./external-llm-trace-session";
+import {
+  type ExternalTextListener,
   type ExternalToolCallListener,
-  formatExternalToolCallArgs,
+  type ExternalWorkerListeners,
+  emitProgress,
 } from "./external-tool-call";
 
 declare const LETTA_VERSION: string | undefined;
@@ -18,7 +49,6 @@ interface JsonRpcMessage {
   result?: Record<string, unknown>;
   error?: { code?: number; message?: string; data?: unknown };
 }
-
 export interface CodexAppServerTransport {
   stdout: Readable;
   stderr?: Readable;
@@ -26,20 +56,37 @@ export interface CodexAppServerTransport {
   kill?: () => void;
   exited?: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
 }
-
 interface PendingRequest {
   resolve: (value: Record<string, unknown>) => void;
   reject: (error: Error) => void;
 }
-
+interface TurnOutcome {
+  result: SubagentResult;
+  capacityFailure: boolean;
+  ranTool: boolean;
+  steered: boolean;
+}
 interface TurnWaiter {
   turnId: string;
-  resolve: (value: SubagentResult) => void;
+  resolve: (value: TurnOutcome) => void;
   startedAt: number;
   model?: string;
   latestAgentMessage?: string;
   onToolCall?: ExternalToolCallListener;
   seenToolCallIds: Set<string>;
+  onText?: ExternalTextListener;
+  onToolResult?: ExternalWorkerListeners["onToolResult"];
+  onReasoning?: ExternalWorkerListeners["onReasoning"];
+  reportedText: ReportedText;
+  textFromEarlierAttempts: ReadonlySet<string>;
+  ranTool: boolean;
+  steered: boolean;
+  errors: Array<Record<string, unknown>>;
+}
+
+interface ReportedText {
+  itemIds: Set<string>;
+  texts: Set<string>;
 }
 
 interface CodexSession {
@@ -54,19 +101,24 @@ interface CodexSession {
   pendingNotifications: JsonRpcMessage[];
   idleTimer?: ReturnType<typeof setTimeout>;
   idleTimeoutMs: number;
+  sleep: (ms: number) => Promise<unknown>;
 }
 
-export interface CodexTurnOptions {
+export interface CodexTurnOptions
+  extends Pick<ExternalWorkerListeners, "onToolResult" | "onReasoning"> {
+  traceContext?: ExternalTraceContext;
   prompt: string;
   parentAgentId: string;
   cwd: string;
+  cloudSkillRepositories?: string[];
   model?: string;
   mcpReminder?: string;
   signal?: AbortSignal;
   resumeThreadId?: string;
+  threadName?: string;
   onStarted?: (threadId: string, turnId: string) => void;
-  /** Called once per tool-like thread item (command, patch, MCP, search). */
   onToolCall?: ExternalToolCallListener;
+  onText?: ExternalTextListener;
   beforeStart?: (threadId: string) => Promise<void>;
 }
 
@@ -74,10 +126,12 @@ export interface CodexTurnHandle {
   threadId: string;
   turnId: string;
   completion: Promise<SubagentResult>;
+  interrupt: () => Promise<void>;
 }
 
 export interface CodexMessageReceipt {
   mode: "steered" | "new_turn";
+  queued?: boolean;
   threadId: string;
   turnId: string;
   completion?: Promise<SubagentResult>;
@@ -91,76 +145,104 @@ export interface CodexAppServerDependencies {
   }) => CodexAppServerTransport;
   env?: NodeJS.ProcessEnv;
   idleTimeoutMs?: number;
+  sleep?: (ms: number) => Promise<unknown>;
 }
 
 const sessions = new Map<string, CodexSession>();
 const sessionCreations = new Map<string, Promise<CodexSession>>();
 const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60_000;
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function textInput(text: string): Array<{ type: "text"; text: string }> {
-  return [{ type: "text", text }];
+export async function listCodexModels(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+): Promise<unknown[]> {
+  const controller = new AbortController();
+  const running = spawnManagedWorkloadProcess(
+    "codex",
+    ["app-server", "--stdio"],
+    {
+      cwd,
+      env,
+      signal: controller.signal,
+    },
+  );
+  running.process.stdin.on("error", () => {});
+  const transport: CodexAppServerTransport = {
+    stdin: running.process.stdin,
+    stdout: running.process.stdout,
+    stderr: running.process.stderr,
+    kill: () => controller.abort(),
+    exited: running.completion.then(({ exitCode, exitSignal }) => ({
+      code: exitCode,
+      signal: exitSignal,
+    })),
+  };
+  const client = new CodexAppServerClient(
+    transport,
+    () => {},
+    () => {},
+  );
+  let startError: Error | undefined;
+  running.process.once("error", (error: NodeJS.ErrnoException) => {
+    startError =
+      error.code === "ENOENT"
+        ? new Error("Required executable 'codex' was not found on PATH")
+        : error;
+    client.dispose();
+  });
+  const timer = setTimeout(() => client.dispose(), 30_000);
+  try {
+    await client.initialize();
+    const models: unknown[] = [];
+    const cursors = new Set<string>();
+    let cursor: string | undefined;
+    do {
+      const page = await client.request("model/list", { cursor, limit: 100 });
+      if (!Array.isArray(page.data))
+        throw new Error("Codex did not return a model catalog");
+      models.push(...page.data);
+      cursor =
+        typeof page.nextCursor === "string" ? page.nextCursor : undefined;
+      if (cursor && cursors.has(cursor))
+        throw new Error("Codex repeated a model catalog cursor");
+      if (cursor) cursors.add(cursor);
+    } while (cursor);
+    return models;
+  } catch (error) {
+    client.dispose();
+    await running.completion;
+    throw startError ?? error;
+  } finally {
+    clearTimeout(timer);
+    client.dispose();
+    await running.completion;
+  }
 }
 
 function spawnTransport(options: {
+  configArgs?: string[];
   cwd: string;
   env: NodeJS.ProcessEnv;
 }): CodexAppServerTransport {
-  const [command = "codex", ...args] = wrapManagedWorkloadLauncher(
-    ["codex", "app-server", "--stdio"],
-    { env: options.env },
+  const controller = new AbortController();
+  const { process: child, completion } = spawnManagedWorkloadProcess(
+    "codex",
+    [...(options.configArgs ?? []), "app-server", "--stdio"],
+    {
+      ...options,
+      signal: controller.signal,
+    },
   );
-  const child = nodeSpawn(command, args, {
-    cwd: options.cwd,
-    env: options.env,
-    stdio: ["pipe", "pipe", "pipe"],
-    windowsHide: true,
-  });
   return {
     stdin: child.stdin,
     stdout: child.stdout,
     stderr: child.stderr,
-    kill: () => child.kill(),
-    exited: new Promise((resolve) => {
-      child.once("close", (code, signal) => resolve({ code, signal }));
-    }),
+    kill: () => controller.abort(),
+    exited: completion.then((exit) => ({
+      code: exit.exitCode,
+      signal: exit.exitSignal,
+    })),
   };
 }
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object"
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function readString(value: unknown, key: string): string | undefined {
-  const record = asRecord(value);
-  return typeof record?.[key] === "string"
-    ? (record[key] as string)
-    : undefined;
-}
-
-function turnError(params: Record<string, unknown>): string | undefined {
-  const turn = asRecord(params.turn);
-  const error = asRecord(turn?.error);
-  return typeof error?.message === "string" ? error.message : undefined;
-}
-
-function turnReport(params: Record<string, unknown>): string {
-  const turn = asRecord(params.turn);
-  const items = Array.isArray(turn?.items) ? turn.items : [];
-  for (let index = items.length - 1; index >= 0; index--) {
-    const item = asRecord(items[index]);
-    if (item?.type === "agentMessage" && typeof item.text === "string") {
-      return item.text;
-    }
-  }
-  return "";
-}
-
 class CodexAppServerClient {
   private readonly pending = new Map<number, PendingRequest>();
   private nextRequestId = 1;
@@ -243,6 +325,14 @@ class CodexAppServerClient {
     }
   }
 
+  async stop(): Promise<void> {
+    if (!this.transport.exited)
+      throw new Error("Codex process exit cannot be confirmed");
+    this.transport.kill?.();
+    await confirmProcessExit(this.transport.exited, "Codex");
+    await this.close();
+  }
+
   dispose(): void {
     this.transport.kill?.();
     void this.close();
@@ -284,63 +374,50 @@ function failSession(session: CodexSession, error: Error): void {
   session.activeWaiter = undefined;
   if (!waiter) return;
   waiter.resolve({
-    agentId: `codex_${session.threadId}`,
-    runtimeSessionId: session.threadId,
-    model: waiter.model,
-    report: waiter.latestAgentMessage ?? "",
-    success: false,
-    error: error.message,
-    durationMs: Date.now() - waiter.startedAt,
+    result: {
+      agentId: `codex_${session.threadId}`,
+      runtimeSessionId: session.threadId,
+      model: waiter.model,
+      report: waiter.latestAgentMessage ?? "",
+      success: false,
+      error: error.message,
+      durationMs: Date.now() - waiter.startedAt,
+    },
+    capacityFailure: false,
+    ranTool: waiter.ranTool,
+    steered: waiter.steered,
   });
-}
-
-/** Map a tool-like app-server ThreadItem to a display tool call. */
-export function describeCodexToolItem(
-  item: Record<string, unknown> | undefined,
-): ExternalToolCall | undefined {
-  const id = readString(item, "id");
-  if (!item || !id) return undefined;
-  const call = (name: string, args: unknown) => ({
-    id,
-    name,
-    args: formatExternalToolCallArgs(args),
-  });
-  switch (item.type) {
-    case "commandExecution":
-      return call("Bash", { command: item.command });
-    case "fileChange": {
-      const changes = Array.isArray(item.changes) ? item.changes : [];
-      return call("Edit", {
-        files: changes.map((change) => readString(change, "path")),
-      });
-    }
-    case "mcpToolCall":
-      return call(
-        `${readString(item, "server") ?? "mcp"}/${readString(item, "tool") ?? "tool"}`,
-        item.arguments,
-      );
-    case "dynamicToolCall":
-      return call(readString(item, "tool") ?? "tool", item.arguments);
-    case "webSearch": {
-      // The query is often filled in only when the search completes.
-      const query = readString(item, "query");
-      return query ? call("WebSearch", { query }) : undefined;
-    }
-    default:
-      return undefined;
-  }
 }
 
 function recordToolItem(waiter: TurnWaiter, item: Record<string, unknown>) {
+  if (typeof item.type === "string" && TOOL_ITEM_TYPES.has(item.type)) {
+    waiter.ranTool = true;
+  }
   if (!waiter.onToolCall) return;
   const call = describeCodexToolItem(item);
   if (!call || waiter.seenToolCallIds.has(call.id)) return;
   waiter.seenToolCallIds.add(call.id);
   try {
     waiter.onToolCall(call);
-  } catch {
-    // Progress display must not break the turn.
-  }
+  } catch {}
+}
+
+function recordTextItem(waiter: TurnWaiter, item: Record<string, unknown>) {
+  const id = readString(item, "id");
+  const { reportedText } = waiter;
+  if (
+    !waiter.onText ||
+    typeof item.text !== "string" ||
+    !item.text.trim() ||
+    (id && reportedText.itemIds.has(id)) ||
+    waiter.textFromEarlierAttempts.has(item.text.trim())
+  )
+    return;
+  if (id) reportedText.itemIds.add(id);
+  reportedText.texts.add(item.text.trim());
+  try {
+    waiter.onText(item.text);
+  } catch {}
 }
 
 function recordItem(
@@ -359,6 +436,13 @@ function recordItem(
     typeof item.text === "string"
   ) {
     session.activeWaiter.latestAgentMessage = item.text;
+    recordTextItem(session.activeWaiter, item);
+  }
+  if (completed) {
+    const result = describeCodexToolResult(item);
+    if (result) emitProgress(session.activeWaiter.onToolResult, result);
+    const reasoning = codexReasoningText(item);
+    if (reasoning) emitProgress(session.activeWaiter.onReasoning, reasoning);
   }
   return true;
 }
@@ -376,19 +460,43 @@ function settleTurn(
   session.activeTurnId = undefined;
   session.activeWaiter = undefined;
   const status = readString(turn, "status");
-  const failure = turnError(params);
+  const completed = status === "completed";
+  const turnError = asRecord(turn?.error);
+  const failure = turnFailureMessage(turnError, waiter.errors);
   waiter.resolve({
-    agentId: `codex_${session.threadId}`,
-    runtimeSessionId: session.threadId,
-    model: waiter.model,
-    report: turnReport(params) || waiter.latestAgentMessage || "",
-    success: status === "completed",
-    ...(status === "completed"
-      ? {}
-      : { error: failure ?? `Codex turn ${status ?? "failed"}` }),
-    durationMs: Date.now() - waiter.startedAt,
+    result: {
+      agentId: `codex_${session.threadId}`,
+      runtimeSessionId: session.threadId,
+      model: waiter.model,
+      report: turnReport(params) || waiter.latestAgentMessage || "",
+      success: completed,
+      ...(completed
+        ? {}
+        : { error: failure ?? `Codex turn ${status ?? "failed"}` }),
+      durationMs: Date.now() - waiter.startedAt,
+    },
+    capacityFailure:
+      !completed &&
+      [turnError, ...waiter.errors].some(
+        (error) => error !== undefined && isCapacityError(error),
+      ),
+    ranTool: waiter.ranTool,
+    steered: waiter.steered,
   });
   scheduleIdleSessionCleanup(session);
+  return true;
+}
+
+function recordError(
+  session: CodexSession,
+  params: Record<string, unknown>,
+): boolean {
+  const turnId = readString(params, "turnId");
+  if (turnId !== session.activeTurnId || !session.activeWaiter) return false;
+  const error = asRecord(params.error);
+  if (error && params.willRetry !== true) {
+    session.activeWaiter.errors.push(error);
+  }
   return true;
 }
 
@@ -405,6 +513,9 @@ function handleNotification(
   }
   if (message.method === "turn/completed") {
     return settleTurn(session, message.params);
+  }
+  if (message.method === "error") {
+    return recordError(session, message.params);
   }
   return true;
 }
@@ -444,10 +555,6 @@ function scheduleIdleSessionCleanup(session: CodexSession): void {
 export const CODEX_NOT_SIGNED_IN_ERROR =
   "Codex is not signed in. Run `codex login` on this computer.";
 
-/**
- * Codex reports `requiresOpenaiAuth: false` when its model provider needs no
- * OpenAI login, such as the Letta proxy used by managed sandboxes.
- */
 async function assertCodexSignedIn(client: CodexAppServerClient) {
   const timeout = Promise.withResolvers<null>();
   const timer = setTimeout(() => timeout.resolve(null), 10_000);
@@ -461,7 +568,6 @@ async function assertCodexSignedIn(client: CodexAppServerClient) {
   } catch (error) {
     if (error instanceof Error && error.message === CODEX_NOT_SIGNED_IN_ERROR)
       throw error;
-    // Codex without account/read: the turn itself reports provider failures.
   } finally {
     clearTimeout(timer);
   }
@@ -471,32 +577,62 @@ async function createSession(
   options: CodexTurnOptions,
   deps: CodexAppServerDependencies,
 ): Promise<CodexSession> {
-  const env = {
+  const env = withNativeCliPath({
     ...(deps.env ?? process.env),
     AGENT_ID: options.parentAgentId,
     LETTA_AGENT_ID: options.parentAgentId,
-  };
-  const transport = (deps.createTransport ?? spawnTransport)({
+  });
+  let transport = (deps.createTransport ?? spawnTransport)({
     cwd: options.cwd,
     env,
   });
   let session: CodexSession | undefined;
   const pendingNotifications: JsonRpcMessage[] = [];
-  const client = new CodexAppServerClient(
-    transport,
-    (message) => {
-      if (!session || !handleNotification(session, message)) {
-        pendingNotifications.push(message);
-      }
-    },
-    (error) => {
-      if (session) failSession(session, error);
-    },
-  );
+  const makeClient = () => {
+    const owner = new CodexAppServerClient(
+      transport,
+      (message) => {
+        if (!session) pendingNotifications.push(message);
+        else if (!handleNotification(session, message)) {
+          session.pendingNotifications.push(message);
+        }
+      },
+      (error) => {
+        if (session?.client === owner) failSession(session, error);
+      },
+    );
+    return owner;
+  };
+  let client = makeClient();
+  let trace: Awaited<ReturnType<typeof traceCodexLaunch>>;
   let response: Record<string, unknown>;
   try {
     await client.initialize();
     await assertCodexSignedIn(client);
+    trace = deps.createTransport
+      ? undefined
+      : await traceCodexLaunch(options.traceContext, env, client);
+    if (trace) {
+      client.dispose();
+      transport = spawnTransport({
+        cwd: options.cwd,
+        env,
+        configArgs: trace.args,
+      });
+      client = makeClient();
+      await client.initialize();
+    }
+    if (trace)
+      void transport.exited
+        ?.finally(() => trace?.close())
+        .catch(() => undefined);
+    if (options.cloudSkillRepositories?.length) {
+      await client.request("skills/extraRoots/set", {
+        extraRoots: cloudRepositoryRoots(options.cloudSkillRepositories).map(
+          (root) => join(root, PROJECT_SKILLS_DIR),
+        ),
+      });
+    }
     const method = options.resumeThreadId ? "thread/resume" : "thread/start";
     const params = options.resumeThreadId
       ? {
@@ -512,8 +648,9 @@ async function createSession(
           sandbox: "danger-full-access",
           developerInstructions: options.mcpReminder,
         };
-    response = await client.request(method, params);
+    response = await client.request(method, { ...params, ...trace?.params });
   } catch (error) {
+    void trace?.close();
     client.dispose();
     throw error;
   }
@@ -523,6 +660,11 @@ async function createSession(
     client.dispose();
     throw new Error("Codex app-server returned no native thread ID");
   }
+  trace?.setSessionId(threadId);
+  if (options.threadName && !options.resumeThreadId)
+    await client
+      .request("thread/name/set", { threadId, name: options.threadName })
+      .catch(() => undefined);
   session = {
     threadId,
     client,
@@ -532,35 +674,32 @@ async function createSession(
     startLock: Promise.resolve(),
     pendingNotifications,
     idleTimeoutMs: deps.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS,
+    sleep: deps.sleep ?? sleep,
   };
   sessions.set(threadId, session);
   return session;
 }
 
-async function withSessionLock<T>(
-  session: CodexSession,
-  operation: () => Promise<T>,
-): Promise<T> {
-  const previous = session.startLock;
-  let release!: () => void;
-  session.startLock = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  await previous;
-  try {
-    return await operation();
-  } finally {
-    release();
-  }
+interface TurnAttempt {
+  turnId: string;
+  outcome: Promise<TurnOutcome>;
 }
 
-async function startTurnUnlocked(
+type TurnListenerOptions = Pick<
+  CodexTurnOptions,
+  "onToolCall" | "onText" | "onToolResult" | "onReasoning"
+>;
+
+type TurnListeners = TurnListenerOptions & {
+  reportedText: ReportedText;
+};
+
+async function startTurnAttempt(
   session: CodexSession,
   prompt: string,
-  signal?: AbortSignal,
-  onStarted?: (threadId: string, turnId: string) => void,
-  onToolCall?: ExternalToolCallListener,
-): Promise<CodexTurnHandle> {
+  startedAt: number,
+  listeners: TurnListeners,
+): Promise<TurnAttempt> {
   if (session.activeTurnId) {
     throw new Error("Codex thread already has an active turn");
   }
@@ -571,42 +710,115 @@ async function startTurnUnlocked(
     cwd: session.cwd,
     model: session.model,
     approvalPolicy: "never",
-    // Unattended subagent: no approval relay exists, so run without the
-    // workspace sandbox rather than failing writes outside cwd.
     sandboxPolicy: { type: "dangerFullAccess" },
   });
   const turn = asRecord(response.turn);
   const turnId = readString(turn, "id");
   if (!turnId) throw new Error("Codex app-server returned no native turn ID");
-  const completion = new Promise<SubagentResult>((resolve) => {
+  const outcome = new Promise<TurnOutcome>((resolve) => {
     session.activeTurnId = turnId;
     session.activeWaiter = {
       turnId,
       resolve,
-      startedAt: Date.now(),
+      startedAt,
       model: session.model,
-      onToolCall,
+      onToolCall: listeners.onToolCall,
       seenToolCallIds: new Set(),
+      onText: listeners.onText,
+      onToolResult: listeners.onToolResult,
+      onReasoning: listeners.onReasoning,
+      reportedText: listeners.reportedText,
+      textFromEarlierAttempts: new Set(listeners.reportedText.texts),
+      ranTool: false,
+      steered: false,
+      errors: [],
     };
   });
-  onStarted?.(session.threadId, turnId);
-  replayPendingNotifications(session);
-  const abort = () => {
-    void session.client
-      .request("turn/interrupt", { threadId: session.threadId, turnId })
-      .catch(() => undefined);
+  return { turnId, outcome };
+}
+
+async function startTurnUnlocked(
+  session: CodexSession,
+  prompt: string,
+  signal?: AbortSignal,
+  onStarted?: (threadId: string, turnId: string) => void,
+  { onToolCall, onText, onToolResult, onReasoning }: TurnListenerOptions = {},
+): Promise<CodexTurnHandle> {
+  const startedAt = Date.now();
+  const listeners: TurnListeners = {
+    onToolCall,
+    onText,
+    onToolResult,
+    onReasoning,
+    reportedText: { itemIds: new Set(), texts: new Set() },
   };
+  const first = await startTurnAttempt(session, prompt, startedAt, listeners);
+  let currentTurnId = first.turnId;
+  let interrupted = false;
+  onStarted?.(session.threadId, first.turnId);
+  replayPendingNotifications(session);
+  const interrupt = async () => {
+    interrupted = true;
+    await session.client.request("turn/interrupt", {
+      threadId: session.threadId,
+      turnId: currentTurnId,
+    });
+  };
+  const abort = () => void interrupt().catch(() => undefined);
   signal?.addEventListener("abort", abort, { once: true });
   if (signal?.aborted) abort();
+  const completion = (async (): Promise<SubagentResult> => {
+    let attempt = first;
+    for (let retry = 0; ; retry++) {
+      const outcome = await attempt.outcome;
+      if (!outcome.capacityFailure) return outcome.result;
+      const delay = CAPACITY_RETRY_DELAYS_MS[retry];
+      const canRetry = () =>
+        !interrupted &&
+        !signal?.aborted &&
+        !outcome.ranTool &&
+        !outcome.steered;
+      if (delay === undefined || !canRetry()) {
+        return capacityResult(outcome.result);
+      }
+      await session.sleep(delay);
+      if (!canRetry()) return capacityResult(outcome.result);
+      try {
+        attempt = await withSessionLock(session, async () => {
+          const next = await startTurnAttempt(
+            session,
+            prompt,
+            startedAt,
+            listeners,
+          );
+          currentTurnId = next.turnId;
+          replayPendingNotifications(session);
+          return next;
+        });
+      } catch {
+        return capacityResult(outcome.result);
+      }
+      if (interrupted || signal?.aborted) abort();
+    }
+  })();
   completion.finally(() => signal?.removeEventListener("abort", abort));
-  return { threadId: session.threadId, turnId, completion };
+  return {
+    threadId: session.threadId,
+    turnId: first.turnId,
+    completion,
+    interrupt,
+  };
 }
 
 function startTurn(
   session: CodexSession,
   options: Pick<
     CodexTurnOptions,
-    "prompt" | "signal" | "onStarted" | "onToolCall" | "beforeStart"
+    | "prompt"
+    | "signal"
+    | "onStarted"
+    | "beforeStart"
+    | keyof TurnListenerOptions
   >,
 ): Promise<CodexTurnHandle> {
   return withSessionLock(session, async () => {
@@ -616,7 +828,7 @@ function startTurn(
       options.prompt,
       options.signal,
       options.onStarted,
-      options.onToolCall,
+      options,
     );
   });
 }
@@ -661,54 +873,60 @@ export async function sendCodexMessage(
 ): Promise<CodexMessageReceipt> {
   const session = await resumeSession(options.threadId, options, deps);
   try {
-    return await withSessionLock(session, async () => {
-      const activeTurnId = session.activeTurnId;
-      if (activeTurnId) {
-        try {
-          await session.client.request("turn/steer", {
-            threadId: session.threadId,
-            expectedTurnId: activeTurnId,
-            input: textInput(options.prompt),
-          });
-          return {
-            mode: "steered",
-            threadId: session.threadId,
-            turnId: activeTurnId,
-          };
-        } catch (error) {
-          if (session.activeTurnId === activeTurnId) throw error;
-          // The matching turn completed while steering. Start exactly one new turn.
+    return await withCodexSteerReceipt<CodexMessageReceipt>((delivery) =>
+      withSessionLock(session, async () => {
+        const activeTurnId = session.activeTurnId;
+        if (activeTurnId) {
+          try {
+            await delivery.wait(
+              session.client.request("turn/steer", {
+                threadId: session.threadId,
+                expectedTurnId: activeTurnId,
+                input: textInput(options.prompt),
+              }),
+              {
+                mode: "steered",
+                threadId: session.threadId,
+                turnId: activeTurnId,
+                queued: true,
+              },
+            );
+            if (session.activeWaiter?.turnId === activeTurnId) {
+              session.activeWaiter.steered = true;
+            }
+            return {
+              mode: "steered",
+              threadId: session.threadId,
+              turnId: activeTurnId,
+            };
+          } catch (error) {
+            if (delivery.queued) throw error;
+            await waitForRejectedCodexSteer(session, activeTurnId, error);
+          }
         }
-      }
-      options.signal?.throwIfAborted();
-      await options.beforeStart?.(session.threadId);
-      const handle = await startTurnUnlocked(
-        session,
-        options.prompt,
-        undefined,
-        options.onStarted,
-        options.onToolCall,
-      );
-      if (options.signal?.aborted) {
-        await session.client.request("turn/interrupt", {
+        options.signal?.throwIfAborted();
+        updateExternalTraceTask(session.threadId, options.traceContext);
+        await options.beforeStart?.(session.threadId);
+        const handle = await startTurnUnlocked(
+          session,
+          options.prompt,
+          undefined,
+          options.onStarted,
+          options,
+        );
+        if (options.signal?.aborted) {
+          await handle.interrupt();
+          options.signal.throwIfAborted();
+        }
+        return {
+          mode: "new_turn",
           threadId: handle.threadId,
           turnId: handle.turnId,
-        });
-        options.signal.throwIfAborted();
-      }
-      return {
-        mode: "new_turn",
-        threadId: handle.threadId,
-        turnId: handle.turnId,
-        completion: handle.completion,
-        interrupt: async () => {
-          await session.client.request("turn/interrupt", {
-            threadId: handle.threadId,
-            turnId: handle.turnId,
-          });
-        },
-      };
-    });
+          completion: handle.completion,
+          interrupt: handle.interrupt,
+        };
+      }),
+    );
   } catch (error) {
     if (!session.activeTurnId && sessions.get(session.threadId) === session) {
       scheduleIdleSessionCleanup(session);
@@ -735,6 +953,13 @@ export async function runCodexTurn(
       error: errorMessage(error),
     };
   }
+}
+export async function stopCodexSession(threadId: string): Promise<boolean> {
+  const session = sessions.get(threadId);
+  if (!session) return false;
+  await session.client.stop();
+  if (sessions.get(threadId) === session) sessions.delete(threadId);
+  return true;
 }
 
 export function hasActiveCodexTurn(threadId: string): boolean {

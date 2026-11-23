@@ -15,6 +15,18 @@ function isWindowsCommandShim(command: string): boolean {
   return /\.(?:cmd|bat)$/i.test(command);
 }
 
+export function getCommandProcessFactory({
+  nativeSpawn = spawn,
+  platform = process.platform,
+  windowsSpawn = crossSpawn,
+}: {
+  nativeSpawn?: PackageManagerProcessFactory;
+  platform?: NodeJS.Platform;
+  windowsSpawn?: PackageManagerProcessFactory;
+} = {}): PackageManagerProcessFactory {
+  return platform === "win32" ? windowsSpawn : nativeSpawn;
+}
+
 export function getPackageManagerProcessFactory({
   nativeSpawn = spawn,
   platform = process.platform,
@@ -29,8 +41,6 @@ export function getPackageManagerProcessFactory({
   }
 
   return (command, args, options) => {
-    // Native Node spawn rejects npm/pnpm .cmd shims with EINVAL on Windows.
-    // cross-spawn preserves argv boundaries while safely routing shims through cmd.exe.
     const spawnImpl = isWindowsCommandShim(command)
       ? windowsSpawn
       : nativeSpawn;

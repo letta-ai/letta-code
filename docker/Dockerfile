@@ -1,4 +1,4 @@
-FROM public.ecr.aws/docker/library/node:22.19-bookworm-slim
+FROM mirror.gcr.io/library/node:22.23.4-bookworm-slim
 
 ARG LETTA_CODE_VERSION=latest
 
@@ -6,9 +6,6 @@ ENV DISABLE_AUTOUPDATER=1
 ENV DEBIAN_FRONTEND=noninteractive \
     LETTA_PACKAGE_MANAGER=npm
 
-# Letta Code can execute tools and skills inside this image. Keep the common
-# runtimes available while leaving project-specific dependencies to downstream
-# images and mounted workspaces.
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \

@@ -1,10 +1,3 @@
-/**
- * Input-frame routing: acknowledgement, the pre-commit originator admission
- * gate, teleport-continue admission, approval responses, queue/dispatch, and
- * the durable input ledger. Split out of message-router.ts so both modules
- * stay under the source-file size limit; the router itself only dispatches.
- */
-
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import { gateMcpOriginatorDeliveryAdmission } from "@/agent/mcp-originator-tokens";
 import type { InputCommand } from "@/types/protocol_v2";
@@ -33,11 +26,7 @@ import {
 import { rollbackInputDisposition } from "./input-disposition-rollback";
 import type { MessageRouterParams } from "./message-router-types";
 import { logV2Command } from "./protocol-logging";
-import {
-  scheduleQueuePump,
-  shouldProcessInboundMessageDirectly,
-  shouldQueueInboundMessage,
-} from "./queue";
+import { scheduleQueuePump, shouldQueueInboundMessage } from "./queue";
 import { emitLoopErrorNotice } from "./recoverable-notices";
 import { getActiveRuntime } from "./runtime";
 import { validateResponseFormat } from "./structured-output";
@@ -84,13 +73,7 @@ export async function routeInputFrame(
     trackListenerError,
     processIncomingMessage,
   } = deps;
-  // Frame-scoped gate extras: set by gateInputOriginatorAdmission below so
-  // every later ack for this frame inherits the gate's verdict (pre-gated
-  // install or the non-retryable abort reason) instead of re-deciding.
   let ackExtras: InputAckExtras | undefined;
-  // Binds the socket and frame; ack arguments pass through verbatim, with
-  // the gate extras appended positionally (never spread: optional tuple
-  // holes would shift the trailing extras into the wrong slot).
   const acknowledgeInput = (...args: InputAckArgs): void =>
     acknowledgeInputFrame(
       safeSocketSend,
@@ -109,18 +92,6 @@ export async function routeInputFrame(
     acknowledgeInput(false, "Runtime is no longer active");
     return;
   }
-  // Pre-commit originator admission gate (evil-shub round-8 P1; the SINGLE
-  // admission decision as of round-9 P1): a delivery denied by the durable
-  // authority must never commit, enqueue, or start work — the ack-time
-  // recordMcpOriginatorDelivery used to be the ONLY gate, and it ran after
-  // the durable commit. "denied_retryable" (degraded store / failed
-  // transaction) returns with NO ack so Cloud redelivers and retries the
-  // whole admission; "denied_permanent" (stale/retired/malformed) rejects
-  // the frame — redelivering identical bytes would loop forever. On admit,
-  // the parsed delivery is captured for the ack path, which installs the
-  // volatile half only: no second admission transaction after commit, so a
-  // retirement landing in the gate→ack gap cannot flip committed work to
-  // denied (it is fenced at use time by the authority recheck instead).
   const gateInputOriginatorAdmission = (): boolean => {
     const gate = gateMcpOriginatorDeliveryAdmission(parsed);
     if (gate.verdict === "denied_retryable") {
@@ -130,9 +101,6 @@ export async function routeInputFrame(
       return false;
     }
     if (gate.verdict === "denied_permanent") {
-      // Mark the rejection non-retryable on the wire (evil-shub round-9 P2):
-      // without an abortReason, Cloud treats an accepted:false ack as
-      // retryable and remint/redelivers bytes that can never be admitted.
       ackExtras = {
         abortReason: MCP_ORIGINATOR_DENIED_PERMANENT_ABORT_REASON,
       };
@@ -145,9 +113,6 @@ export async function routeInputFrame(
       );
       return false;
     }
-    // Admitted (or unstamped): the ack installs exactly this delivery with
-    // no re-admission; `null` records that the gate ran for an unstamped
-    // frame so the ack skips the legacy record path too.
     ackExtras = { preGated: gate.delivery ?? null };
     return true;
   };
@@ -243,13 +208,13 @@ export async function routeInputFrame(
     incoming.conversationId,
   );
 
-  const processIncomingMessageDirectly = (
-    directIncoming: IncomingMessage,
+  const dispatchNonContentMessage = (
+    nonContentIncoming: IncomingMessage,
   ): void => {
     dispatchInboundMessageWhenReady({
       listener: runtime,
       runtime: scopedRuntime,
-      incoming: directIncoming,
+      incoming: nonContentIncoming,
       socket,
       options: opts,
       processQueuedTurn,
@@ -288,11 +253,6 @@ export async function routeInputFrame(
     if (!gateInputOriginatorAdmission()) {
       return;
     }
-    if (shouldProcessInboundMessageDirectly(scopedRuntime, stampedIncoming)) {
-      processIncomingMessageDirectly(stampedIncoming);
-      return;
-    }
-
     const admission = reserveInputDisposition(scopedRuntime, identity);
     if (admission.kind === "duplicate") {
       acknowledgeAdmissionDuplicate(
@@ -304,7 +264,10 @@ export async function routeInputFrame(
       return;
     }
     if (admission.kind === "full") {
-      acknowledgeInput(false, "Stable input ledger is at capacity");
+      acknowledgeInput(
+        false,
+        admission.reason ?? "Stable input ledger is at capacity",
+      );
       return;
     }
     const reservation =
@@ -360,6 +323,6 @@ export async function routeInputFrame(
   if (!gateInputOriginatorAdmission()) {
     return;
   }
-  processIncomingMessageDirectly(incoming);
+  dispatchNonContentMessage(incoming);
   return;
 }

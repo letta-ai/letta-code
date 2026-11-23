@@ -1,3 +1,4 @@
+import { validateHeaderValue } from "node:http";
 import {
   type Api,
   clampThinkingLevel,
@@ -74,8 +75,6 @@ function thinkingLevelSetting(
 ): ThinkingLevel | undefined {
   const effort = settingString(value);
   if (effort === "max") return preserveMax ? "max" : "xhigh";
-  // pi-ai's public ThinkingLevel currently omits `none`, but ChatGPT GPT-5.6
-  // accepts it and rejects the legacy `minimal` alias (LET-11064).
   if (effort === "none") return "none" as ThinkingLevel;
   return effort === "minimal" ||
     effort === "low" ||
@@ -91,10 +90,6 @@ function modelIdFromHandle(modelHandle?: string): string | undefined {
   return modelHandle.slice(modelHandle.indexOf("/") + 1);
 }
 
-// zAI GLM-5.3 (and sibling always-on GLM-5 variants) reject
-// `thinking: {type: "disabled"}` with code 1210. pi-ai sends that whenever
-// `options.reasoning` is absent, so these models need a concrete effort even
-// when Letta has no explicit reasoning setting.
 function alwaysOnZaiThinking(modelId?: string): boolean {
   return (
     modelId === "glm-5.3" ||
@@ -103,11 +98,30 @@ function alwaysOnZaiThinking(modelId?: string): boolean {
   );
 }
 
-// Maps Letta model settings to a pi-ai ThinkingLevel. Every pi-ai Anthropic
-// call against a reasoning-capable model must pass this when available:
-// pi-ai sends `thinking: {type: "disabled"}` for reasoning models when
-// `options.reasoning` is absent, and adaptive-thinking models (for example
-// claude-fable-5) reject that with a 400 invalid_request_error.
+function finiteNumberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
+export function samplingOptionsForSettings(
+  modelSettings: Record<string, unknown>,
+): {
+  samplingParams?: Record<string, unknown>;
+  maxTokens?: number;
+  temperature?: number;
+} {
+  const maxTokens = finiteNumberValue(modelSettings.max_tokens);
+  const temperature = finiteNumberValue(modelSettings.temperature);
+  return {
+    ...(isRecord(modelSettings.sampling_params)
+      ? { samplingParams: modelSettings.sampling_params }
+      : {}),
+    ...(maxTokens ? { maxTokens } : {}),
+    ...(temperature !== undefined ? { temperature } : {}),
+  };
+}
+
 export function reasoningForSettings(
   modelSettings: Record<string, unknown>,
   modelHandle?: string,
@@ -119,7 +133,8 @@ export function reasoningForSettings(
   const modelId = modelIdFromHandle(modelHandle);
   const preserveMax =
     modelId?.startsWith("gpt-5.6") === true ||
-    modelId?.startsWith("gpt-6") === true;
+    modelId?.startsWith("gpt-6") === true ||
+    model?.thinkingLevelMap?.max === "max";
   const nestedReasoning = isRecord(modelSettings.reasoning)
     ? modelSettings.reasoning
     : undefined;
@@ -135,7 +150,6 @@ export function reasoningForSettings(
     preserveMax,
   );
   if (alwaysOnZaiThinking(modelId)) {
-    // API accepts low / high / max; low is the cheapest always-on default.
     return explicit === "medium" || explicit === "minimal"
       ? "low"
       : (explicit ?? "low");
@@ -165,12 +179,6 @@ export interface PiModelFactoryOptions {
   localProviderAuthStorageDir?: string;
   preferredProviderType?: string;
   abortSignal?: AbortSignal;
-  /**
-   * Per-backend pi-ai Models runtime. Runtime-managed providers (local
-   * endpoints and mod registrations) resolve to the complete Model object
-   * published by the provider that discovered it; a call-scoped runtime is
-   * created when omitted. Models are never fabricated from name strings.
-   */
   modelsRuntime?: LocalPiModelsRuntime;
 }
 
@@ -312,11 +320,6 @@ function isZaiCodingBaseURL(baseURL: string | undefined): boolean {
 export function resolveZaiConnection(options: {
   storageDir?: string;
   preferredProviderType?: "zai" | "zai_coding";
-  /**
-   * Catalog/published model URL. Current GLM models publish the coding-plan
-   * endpoint; a lone stored `zai` key should reuse that instead of being
-   * forced onto pay-as-you-go `/api/paas/v4`.
-   */
   publishedBaseURL?: string;
 }): ZaiConnection {
   const regularRecord = localProviderRecord(
@@ -370,9 +373,6 @@ export function resolveZaiConnection(options: {
     return codingConnection;
   }
   if (options.preferredProviderType === "zai" && regularKey) {
-    // /model zai/glm-* stores provider_type=zai even for coding-plan models.
-    // Only stay on pay-as-you-go when a dedicated coding record exists or the
-    // catalog model itself is not a coding endpoint.
     if (!hasDedicatedCodingRecord && publishedWantsCoding) {
       return reuseRegularKeyOnCodingEndpoint();
     }
@@ -506,10 +506,6 @@ export async function resolvePiModelForAgent(
     process.env.LETTA_CODE_DEV_PI_MODEL ??
     "";
   const storageDir = options.localProviderAuthStorageDir;
-  // Every resolution goes through a pi-ai Models runtime: the backend's
-  // instance when threaded, otherwise a call-scoped one (tests, direct
-  // library use). The runtime owns model lookup and credential resolution;
-  // Models are never fabricated from name strings.
   const modelsRuntime =
     options.modelsRuntime ??
     new LocalPiModelsRuntime({
@@ -520,9 +516,6 @@ export async function resolvePiModelForAgent(
       ? modelSettings.provider_type
       : options.preferredProviderType;
 
-  // Non-credential connection config only: the stored record's base URL and
-  // timeout plus spec defaults. All credential resolution happens in the
-  // runtime below.
   const localNames = registeredProvider
     ? localNamesForProviderId(provider)
     : (spec?.localProviderNames ?? [provider]);
@@ -543,11 +536,6 @@ export async function resolvePiModelForAgent(
     );
   }
 
-  // One runtime resolution path for every provider class — registered mods,
-  // managed local endpoints, and built-in catalogs. resolveTurn returns the
-  // provider-published Model and the resolved auth from one consistent
-  // provider state (credential-identity invalidation applied first), so no
-  // registered/catalog/auth branching exists here.
   const runtimeProviderId = registeredProvider
     ? provider
     : spec && modelsRuntime.isRuntimeManagedProvider(spec.id)
@@ -570,9 +558,6 @@ export async function resolvePiModelForAgent(
       fallbackModelId,
       options.abortSignal,
     );
-  // The runtime is the sole credential source (stored records, ambient env
-  // via the runtime's AuthContext aliases, per-credential OAuth request
-  // auth). The one named exception is zai's dual-record endpoint selection.
   connection = {
     ...connection,
     apiKey:
@@ -581,6 +566,9 @@ export async function resolvePiModelForAgent(
         : authResult?.auth.apiKey,
   };
   if (authResult?.auth.baseUrl) baseURL = authResult.auth.baseUrl;
+  if (provider === "kimi-coding" && baseURL === "https://api.kimi.com/coding") {
+    baseURL = publishedModel?.baseUrl;
+  }
   if (authResult?.auth.headers) {
     headers = mergeHeaders(headers, nonNullHeaders(authResult.auth.headers));
   }
@@ -607,6 +595,16 @@ export async function resolvePiModelForAgent(
     baseURL = zai.baseURL;
   }
 
+  if (connection.apiKey) {
+    try {
+      validateHeaderValue("Authorization", `Bearer ${connection.apiKey}`);
+    } catch {
+      throw new Error(
+        `API key for ${provider} is not a valid header value. Reconnect this provider with /connect.`,
+      );
+    }
+  }
+
   if (provider === "amazon-bedrock") {
     const bedrock = bedrockLocalProviderOptions(connection.record);
     providerOptions = bedrock.providerOptions;
@@ -620,8 +618,6 @@ export async function resolvePiModelForAgent(
     );
   }
 
-  // Mod product hook: per-credential model transformation. Deep-copied so a
-  // mutating mod cannot corrupt the provider-published instance.
   const hookedModel =
     oauthCredentials && registeredProvider?.config.oauth?.modifyModels
       ? (registeredProvider.config.oauth.modifyModels(
@@ -630,17 +626,9 @@ export async function resolvePiModelForAgent(
         )[0] ?? publishedModel)
       : publishedModel;
 
-  // Effective-value overrides only: with none, the turn model IS the
-  // runtime-published instance — persisted selection settings that merely
-  // restate the published values never clone. Base URL overrides apply only
-  // to built-in catalog providers (managed endpoints and mods own their
-  // base URLs end-to-end).
   const configuredContextWindow = numericSetting(
     modelSettings.context_window_limit,
   );
-  // Ollama selection persists architectural catalog values into settings.
-  // They must not inflate exact local-daemon serving truth. Other endpoints
-  // retain the existing explicit override escape hatch.
   const isLocalOllama =
     modelsRuntime.isBuiltInLocalOllamaProvider(runtimeProviderId);
   const contextWindow =

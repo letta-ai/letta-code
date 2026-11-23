@@ -1,4 +1,3 @@
-import { addToolCall } from "@/agent/subagent-state";
 import type { SubagentResult } from "@/agent/subagents";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import {
@@ -12,12 +11,15 @@ import {
   type NativeSessionCaptureReservation,
   reportNativeSessionCaptureFailure,
 } from "./native-session-capture";
+import { getNextTaskId } from "./process_manager";
 import {
   type SpawnBackgroundSubagentTaskResult,
   spawnBackgroundSubagentTask,
 } from "./task";
+import { externalWorkerProgressListeners } from "./task-transcript";
 
 export function trackExternalFollowupCompletion(args: {
+  taskId?: string;
   type: ExternalCodingAgentType;
   agentId: string;
   message: string;
@@ -31,17 +33,11 @@ export function trackExternalFollowupCompletion(args: {
   captureReservation?: NativeSessionCaptureReservation;
   toolCallId?: string;
   publishResult?: boolean;
-  /**
-   * Set to false when this follow-up runs on a remote worker rather than on
-   * the caller's own machine: the notice belongs to the caller's conversation
-   * and must be delivered there, not emitted locally against a parent runtime
-   * this machine only holds as a sideband control scope.
-   */
   emitCompletionNotification?: boolean;
-  /** False for remote workers, which must never become the parent's harness. */
   claimsParentRuntime?: boolean;
 }): SpawnBackgroundSubagentTaskResult {
   return spawnBackgroundSubagentTask({
+    taskId: args.taskId,
     subagentType: args.type,
     config: createExternalCodingAgentConfig(args.type),
     prompt: args.message,
@@ -76,7 +72,10 @@ export function trackExternalFollowupCompletion(args: {
           signal?.removeEventListener("abort", interrupt);
         }
         const target = parseExternalCodingAgentId(args.agentId);
-        if (target && target.type !== "opencode") {
+        if (
+          target &&
+          (target.type === "claude-code" || target.type === "codex")
+        ) {
           const source =
             target.type === "claude-code" ? "claude_code" : "codex";
           try {
@@ -103,6 +102,7 @@ export function trackExternalFollowupCompletion(args: {
 }
 
 export function spawnExternalCodingAgentFollowup(args: {
+  taskId?: string;
   agentId: string;
   message: string;
   parentScope: {
@@ -115,7 +115,9 @@ export function spawnExternalCodingAgentFollowup(args: {
   if (!target) {
     throw new Error(`Invalid external coding agent ID: ${args.agentId}`);
   }
+  const taskId = args.taskId ?? getNextTaskId();
   return spawnBackgroundSubagentTask({
+    taskId,
     subagentType: target.type,
     config: createExternalCodingAgentConfig(target.type),
     prompt: args.message,
@@ -126,6 +128,7 @@ export function spawnExternalCodingAgentFollowup(args: {
       spawnSubagentImpl: async (_type, prompt, _model, subagentId, signal) =>
         runExternalCodingAgent({
           type: target.type,
+          taskId,
           prompt,
           parentAgentId: args.parentScope.agentId,
           parentConversationId: args.parentScope.conversationId,
@@ -133,7 +136,7 @@ export function spawnExternalCodingAgentFollowup(args: {
           resumeSessionId: target.sessionId,
           cwd: getCurrentWorkingDirectory(),
           signal,
-          onToolCall: (c) => addToolCall(subagentId, c.id, c.name, c.args),
+          ...externalWorkerProgressListeners(subagentId),
         }),
     },
   });

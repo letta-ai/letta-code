@@ -22,14 +22,13 @@ export interface MonitorBackgroundProcessSummary {
   process_id: string;
   kind: "monitor";
   description: string;
-  source: "command" | "websocket" | "github_pull_request";
+  source: "command" | "websocket" | "script" | "github_pull_request";
   started_at_ms: number;
   status: "running";
   persistent: boolean;
 }
 
 export interface WorkflowProgressCounts {
-  /** Workers scheduled so far, not a fixed planned total. */
   agents_total: number;
   agents_done: number;
   agents_failed: number;
@@ -38,7 +37,6 @@ export interface WorkflowProgressCounts {
 }
 
 export interface WorkflowProgressSummary extends WorkflowProgressCounts {
-  /** Pipeline phases may run concurrently. */
   phases: Array<WorkflowProgressCounts & { title: string }>;
 }
 

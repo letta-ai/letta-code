@@ -1,7 +1,3 @@
-/**
- * Setup flow handler - can be triggered via `letta setup` or automatically on first run
- */
-
 import { render } from "ink";
 import React from "react";
 import { type SetupInitialMode, type SetupResult, SetupUI } from "./setup-ui";
@@ -12,10 +8,6 @@ interface RunSetupOptions {
   persistBackendPreference?: boolean;
 }
 
-/**
- * Run the setup flow
- * Returns a promise that resolves when setup is complete
- */
 export async function runSetup(
   options: RunSetupOptions = {},
 ): Promise<SetupResult> {

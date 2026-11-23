@@ -79,7 +79,10 @@ test("completed input replay survives idle runtime eviction", async () => {
     "agent-1",
     "conversation-1",
   );
-  const processIncomingMessage = mock(async () => {});
+  const processQueuedTurn = mock(async () => {
+    firstRuntime.dequeuedInputIdentitiesByBatchId.clear();
+    firstRuntime.dequeuedClientMessageIdsByBatchId.clear();
+  });
   const acknowledgements: Array<{
     accepted: boolean;
     disposition?: "started" | "queued";
@@ -98,11 +101,12 @@ test("completed input replay survives idle runtime eviction", async () => {
       send: () => {},
     },
     options,
-    processQueuedTurn: async () => {},
-    processIncomingMessage,
+    processQueuedTurn,
+    processIncomingMessage: async () => {},
     trackListenerError: () => {},
     onInputAccepted: (ack) => acknowledgements.push(ack),
   });
+  await firstRuntime.messageQueue;
   await firstRuntime.messageQueue;
   expect(
     getConversationRuntime(listener, "agent-1", "conversation-1"),
@@ -124,18 +128,16 @@ test("completed input replay survives idle runtime eviction", async () => {
       send: () => {},
     },
     options,
-    processQueuedTurn: async () => {},
-    processIncomingMessage,
+    processQueuedTurn,
+    processIncomingMessage: async () => {},
     trackListenerError: () => {},
     onInputAccepted: (ack) => acknowledgements.push(ack),
   });
   await replacementRuntime.messageQueue;
 
-  expect(processIncomingMessage).toHaveBeenCalledTimes(1);
+  expect(processQueuedTurn).toHaveBeenCalledTimes(1);
   expect(acknowledgements).toEqual([
-    { accepted: true, disposition: "started" },
-    // The duplicate re-ack carries the live-owner proof the originator
-    // token store needs before recreating a lost entry.
+    { accepted: true, disposition: "queued" },
     {
       accepted: true,
       disposition: "started",
@@ -147,8 +149,6 @@ test("completed input replay survives idle runtime eviction", async () => {
 
 test("accepted tombstone transfers only through explicit listener replacement", () => {
   const original = createRuntime();
-  // The retry-exhausted path re-registers while its predecessor is still the
-  // active runtime, so that is the authoritative issuer here.
   setActiveRuntime(original);
   const originalRuntime = getOrCreateScopedRuntime(
     original,
@@ -677,8 +677,6 @@ test("dead lock recovery quarantines only the observed owner", () => {
       }),
       { mode: 0o600 },
     );
-    // Successful recovery performs multiple real fsyncs, which can exceed the
-    // tiny contention budget on hosted macOS runners.
     const release = __inputDispositionTestUtils.acquireLock(path, 500);
     const ownerFile = readdirSync(lockPath)[0];
     expect(
@@ -932,7 +930,10 @@ test("corrupt durable store fails closed and is never overwritten", () => {
     const runtime = persistentRuntime(path);
     expect(
       reserveInputDisposition(runtime, ordinaryInputIdentity("cm-corrupt")),
-    ).toEqual({ kind: "full" });
+    ).toEqual({
+      kind: "full",
+      reason: expect.stringContaining("Input ledger unavailable: "),
+    });
     expect(() => restoreDurableQueuedInputs(runtime.listener)).toThrow();
     expect(readFileSync(path, "utf8")).toBe("{corrupt");
   } finally {
@@ -945,12 +946,10 @@ test("durability failure rejects admission without an in-memory tombstone", () =
   try {
     const directoryAsStore = join(root, "not-a-file");
     const runtime = persistentRuntime(directoryAsStore);
-    // Make the configured store path itself a directory, forcing reads/writes to
-    // fail closed rather than allowing accepted work without restart durability.
     mkdirSync(directoryAsStore);
     expect(
       reserveInputDisposition(runtime, ordinaryInputIdentity("cm-failure")),
-    ).toEqual({ kind: "full" });
+    ).toEqual({ kind: "full", reason: expect.stringContaining("EISDIR") });
     expect(runtime.listener.acceptedInputDispositionLedger.entries.size).toBe(
       0,
     );

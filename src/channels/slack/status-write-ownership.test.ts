@@ -155,7 +155,7 @@ for (const threadId of ["100.1", "200.1"]) {
     const next = { ...h.source, threadId };
     const activity = h.controller.activate(next, "is working...", "Inspect B");
     await Bun.sleep(0);
-    expect(h.writes).toHaveLength(1); // The new write cannot overtake the in-flight request.
+    expect(h.writes).toHaveLength(1);
     release.resolve();
     await Promise.all([refresh, queuedRefresh, activity]);
     expect(h.visible.get(threadId)?.loading_messages).toEqual(["Inspect B"]);
@@ -182,7 +182,6 @@ for (const terminal of ["completion", "reply"] as const) {
     await h.controller.activate(next, "is working...", "Inspect B");
     if (terminal === "completion") await h.controller.deactivate(next);
     else {
-      // Slack clears B when its reply posts; local state follows that reply.
       h.visible.delete("200.1");
       h.controller.markAutoCleared(next);
     }
@@ -333,8 +332,6 @@ test("relinquished in-flight write never clears a destination even after source 
   );
   release.resolve();
   await Promise.all([pending, queued, reactivated]);
-  // Already-sent HTTP can still replace the destination title. Relinquishment
-  // prevents only the destructive compensating empty, not network cancellation.
   expect(old.visible.get("100.1")?.loading_messages).toEqual(["Old"]);
   expect(old.writes.some((write) => write.status === "")).toBe(false);
   expect(old.visible.get("200.1")?.loading_messages).toEqual(["New ownership"]);

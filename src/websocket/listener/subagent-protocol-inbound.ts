@@ -1,12 +1,18 @@
 import type {
   LaunchSubagentCommand,
+  LaunchSubagentWireArgs,
+  ReadSubagentEventsCommand,
+  SubagentLaunchArgs,
   SubagentMessageCommand,
   SubagentStopCommand,
 } from "@/types/subagent-protocol";
+import { isCloudRepositoryNames } from "@/utils/cloud-repository-roots";
 import { isAgentRuntimeScope } from "./protocol-validation";
 
 const ARGUMENTS = new Set([
+  "harness",
   "subagent_type",
+  "fork_context",
   "prompt",
   "description",
   "model",
@@ -14,6 +20,7 @@ const ARGUMENTS = new Set([
   "conversation_id",
   "client_message_id",
   "computer",
+  "cloud_skill_repositories",
   "max_turns",
   "mcp",
 ]);
@@ -49,7 +56,10 @@ export function isLaunchSubagentCommand(
     !args.description.trim()
   )
     return false;
+  if (args.fork_context !== undefined && typeof args.fork_context !== "boolean")
+    return false;
   for (const key of [
+    "harness",
     "subagent_type",
     "model",
     "agent_id",
@@ -63,7 +73,11 @@ export function isLaunchSubagentCommand(
     )
       return false;
   }
-  // launchSubagent validates the MCP selection's contents.
+  if (
+    args.cloud_skill_repositories !== undefined &&
+    !isCloudRepositoryNames(args.cloud_skill_repositories)
+  )
+    return false;
   if (
     args.mcp !== undefined &&
     (!args.mcp || typeof args.mcp !== "object" || Array.isArray(args.mcp))
@@ -75,6 +89,31 @@ export function isLaunchSubagentCommand(
       Number.isSafeInteger(args.max_turns) &&
       args.max_turns > 0)
   );
+}
+
+const LEGACY_EXTERNAL_SUBAGENT_TYPES = new Set([
+  "claude-code",
+  "codex",
+  "cursor",
+  "opencode",
+]);
+
+export function toSubagentLaunchArgs(
+  args: LaunchSubagentWireArgs,
+): SubagentLaunchArgs {
+  if (
+    args.subagent_type === undefined ||
+    args.harness !== undefined ||
+    args.fork_context !== undefined
+  )
+    return args;
+  const { subagent_type: wireType, ...launchArgs } = args;
+  const type = wireType.trim();
+  if (LEGACY_EXTERNAL_SUBAGENT_TYPES.has(type))
+    return { ...launchArgs, harness: type, fork_context: false };
+  if (type === "fork") return { ...launchArgs, fork_context: true };
+  if (type === "general-purpose") return { ...launchArgs, fork_context: false };
+  return { ...launchArgs, subagent_type: type };
 }
 
 function hasValidControlBase(value: unknown): value is Record<
@@ -115,5 +154,44 @@ export function isSubagentMessageCommand(
 export function isSubagentStopCommand(
   value: unknown,
 ): value is SubagentStopCommand {
-  return hasValidControlBase(value) && value.type === "subagent_stop";
+  if (!hasValidControlBase(value) || value.type !== "subagent_stop")
+    return false;
+  if (
+    value.client_message_id !== undefined &&
+    (typeof value.client_message_id !== "string" ||
+      !value.client_message_id.trim())
+  )
+    return false;
+  if (value.conversation === undefined) return true;
+  const scope = value.conversation as Record<string, unknown> | null;
+  return Boolean(
+    scope &&
+      typeof scope === "object" &&
+      typeof scope.conversation_id === "string" &&
+      (scope.agent_id === null || typeof scope.agent_id === "string"),
+  );
+}
+
+export function isReadSubagentEventsCommand(
+  value: unknown,
+): value is ReadSubagentEventsCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as Partial<ReadSubagentEventsCommand>;
+  return (
+    c.type === "read_subagent_events" &&
+    typeof c.request_id === "string" &&
+    c.request_id.trim().length > 0 &&
+    isAgentRuntimeScope(c.runtime) &&
+    c.runtime.agent_id.trim().length > 0 &&
+    c.runtime.conversation_id.trim().length > 0 &&
+    typeof c.subagent_id === "string" &&
+    c.subagent_id.trim().length > 0 &&
+    typeof c.after_seq === "number" &&
+    Number.isSafeInteger(c.after_seq) &&
+    c.after_seq >= 0 &&
+    (c.max_bytes === undefined ||
+      (typeof c.max_bytes === "number" &&
+        Number.isSafeInteger(c.max_bytes) &&
+        c.max_bytes > 0))
+  );
 }

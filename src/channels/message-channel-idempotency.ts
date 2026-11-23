@@ -23,11 +23,6 @@ function isErrorResult(result: string): boolean {
   return result.startsWith("Error:");
 }
 
-/**
- * Suppress only an adjacent repeat of the last successful action. Distinct
- * MessageChannel actions clear the remembered result. Suppressed duplicates
- * throw so the agent receives explicit feedback instead of a false success.
- */
 export function createMessageChannelIdempotencyScope(): MessageChannelIdempotencyScope {
   const inFlight = new Map<string, Promise<string>>();
   let lastSuccessful: LastSuccessfulAction | null = null;
@@ -50,7 +45,6 @@ export function createMessageChannelIdempotencyScope(): MessageChannelIdempotenc
       }
 
       const invocation = ++latestInvocation;
-      // A different MessageChannel action makes a later repeat legitimate.
       lastSuccessful = null;
       const pending = Promise.resolve().then(effect);
       inFlight.set(key, pending);

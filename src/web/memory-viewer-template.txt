@@ -1293,7 +1293,7 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
   var coreFiles = allFiles.filter(function(f) { return f.isSystem; });
   var externalFiles = allFiles.filter(function(f) { return !f.isSystem; });
 
-  // Strip system/ prefix for core files display
+  // Legacy v1 core files live under system/; v2 core paths are already at the root.
   var coreFilesStripped = coreFiles.map(function(f) {
     var stripped = String(f.path).replace(/^system[\\/]/, '');
     return { path: stripped, origPath: f.path, isSystem: f.isSystem, frontmatter: f.frontmatter, content: f.content };
@@ -1324,20 +1324,12 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
 
   function renderTree(node, depth, prefix) {
     var html = '';
-    var dirs = Object.keys(node.dirs).sort(function(a, b) {
-      if (a === 'system') return -1;
-      if (b === 'system') return 1;
-      return a.localeCompare(b);
-    });
-    var inSystem = prefix === 'system' || (prefix && prefix.indexOf('system/') === 0);
+    var dirs = Object.keys(node.dirs).sort(function(a, b) { return a.localeCompare(b); });
 
     dirs.forEach(function(dir) {
       var fullDir = prefix ? prefix + '/' + dir : dir;
-      var isSystemRoot = fullDir === 'system';
-      var isUnderSystem = isSystemRoot || fullDir.indexOf('system/') === 0;
-      var sysCls = isUnderSystem ? ' system-child' : '';
       var fileCount = countFiles(node.dirs[dir]);
-      html += '<div class="tree-item dir' + sysCls + '" data-dir="' + escAttr(fullDir) + '">';
+      html += '<div class="tree-item dir" data-dir="' + escAttr(fullDir) + '">';
       html += escHtml(dir) + '/';
       html += '<span class="dir-count">' + fileCount + '</span>';
       html += '</div>';

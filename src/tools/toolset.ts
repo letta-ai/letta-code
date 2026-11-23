@@ -10,12 +10,16 @@ import type { ModAdapter } from "@/mods/mod-adapter";
 import type { ModPermissionDefinition } from "@/mods/permission-registry";
 import type { ModToolDefinition } from "@/mods/tool-registry";
 import type { ModContext } from "@/mods/types";
-import type { RuntimeContextSnapshot } from "@/runtime-context";
+import {
+  getRuntimeSessionSource,
+  type RuntimeContextSnapshot,
+} from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { OPENAI_COMPATIBLE_PROXY_UPDATE_ARG } from "@/utils/openai-endpoint";
 import { isRecord } from "@/utils/type-guards";
 import { getStoredClientPreferences } from "./client-preferences";
 import {
+  getExecutionContextById,
   getInternalToolName,
   isOpenAIModel,
   loadTools,
@@ -25,14 +29,13 @@ import {
 import type { PermissionModeState } from "./permission-mode-state";
 import { isRemovedToolName } from "./removed-tools";
 import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
+import { mergeClientToolsetFields } from "./tool-policy";
 import type { ToolsetName, ToolsetPreference } from "./toolset-types";
 
 export type { ToolsetName, ToolsetPreference } from "./toolset-types";
 
 export interface ClientToolsetConfig {
-  /** Request-scoped base toolset. Omitted preserves the runtime preference. */
   base?: ToolsetPreference;
-  /** Additional bundled client tools to load before applying the allowlist. */
   include?: string[];
 }
 
@@ -52,12 +55,6 @@ function resolveIncludedToolNames(toolNames: string[] | undefined): ToolName[] {
   });
 }
 
-/**
- * Provider types whose models speak the OpenAI API and should use the codex
- * toolset regardless of handle prefix. Handles are unreliable here: BYOK and
- * managed providers use arbitrary prefixes (e.g. "lc-openai/gpt-6-astra",
- * "chatgpt-work/gpt-5.5"), so the provider type is the authoritative signal.
- */
 const OPENAI_PROVIDER_TYPES = new Set([
   "openai",
   "openai-codex",
@@ -69,9 +66,6 @@ export function deriveToolsetFromModel(
   providerType?: string | null,
   options?: { openAICompatibleProxy?: boolean | null },
 ): "codex" | "default" {
-  // Generic OpenAI-compatible endpoints also report provider_type "openai"
-  // (with the openai_compatible_proxy marker in model_settings) but may serve
-  // non-GPT models, so they keep the default toolset.
   if (
     providerType &&
     OPENAI_PROVIDER_TYPES.has(providerType) &&
@@ -83,7 +77,6 @@ export function deriveToolsetFromModel(
   return isOpenAIModel(resolvedModel) ? "codex" : "default";
 }
 
-/** Startup uses the same preset selection and construction as each turn. */
 export async function loadStartupTools(params: {
   modelIdentifier?: string;
   toolset?: ToolsetPreference;
@@ -193,7 +186,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
   clientToolset?: ClientToolsetConfig;
   exclude?: ToolName[];
   clientToolAllowlist?: string[];
-  externalToolScopeIds?: string[];
+  externalToolOwnerConnectionId?: string;
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
   modContext?: ModContext;
@@ -211,7 +204,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     clientToolset,
     exclude,
     clientToolAllowlist: inputToolAllowlist,
-    externalToolScopeIds,
+    externalToolOwnerConnectionId,
     workingDirectory,
     permissionModeState,
     modContext,
@@ -267,7 +260,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
       exclude,
       include: includedToolNames,
       clientToolAllowlist,
-      externalToolScopeIds,
+      externalToolOwnerConnectionId,
       workingDirectory,
       permissionModeState,
       modContext: scopedModContext,
@@ -294,15 +287,16 @@ export async function prepareToolExecutionContextForScope(params: {
   conversationId?: string | null;
   actingUserId?: string;
   suppressActingUserFallback?: boolean;
-  /** Cloud super run owning this turn, when the relay delivered one. */
   mcpOriginatorSuperRunId?: string;
+  resolveClientMessageIds?: () => string[];
+  turnStartedAt?: number;
   overrideModel?: string | null;
   overrideProviderType?: string | null;
   cachedEffectiveModel?: string | null;
   exclude?: ToolName[];
   clientToolset?: ClientToolsetConfig;
   clientToolAllowlist?: string[];
-  externalToolScopeIds?: string[];
+  externalToolOwnerConnectionId?: string;
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
   skillsDirectory?: string;
@@ -310,8 +304,11 @@ export async function prepareToolExecutionContextForScope(params: {
   bundledSkills?: string[];
   workspaceSandbox?: RuntimeContextSnapshot["workspaceSandbox"];
   executionSettings?: RuntimeContextSnapshot["executionSettings"];
+  foregroundYieldMs?: number;
   cachedAgent?: AgentState | null;
+  readScopeState?: <T>(read: () => Promise<T>) => Promise<T>;
   modContext?: ModContext;
+  shouldEnqueueBackground?: () => Promise<boolean>;
   modEvents?: ModEvents;
   modAdapters?: ModAdapter[];
 }): Promise<PreparedScopeToolContext> {
@@ -323,13 +320,15 @@ export async function prepareToolExecutionContextForScope(params: {
     actingUserId,
     suppressActingUserFallback,
     mcpOriginatorSuperRunId,
+    resolveClientMessageIds,
+    turnStartedAt,
     overrideModel,
     overrideProviderType,
     cachedEffectiveModel,
     exclude,
     clientToolset: requestClientToolset,
     clientToolAllowlist,
-    externalToolScopeIds,
+    externalToolOwnerConnectionId,
     workingDirectory,
     permissionModeState,
     skillsDirectory,
@@ -337,6 +336,7 @@ export async function prepareToolExecutionContextForScope(params: {
     bundledSkills,
     workspaceSandbox,
     executionSettings,
+    foregroundYieldMs,
     cachedAgent,
     modContext,
     modEvents,
@@ -344,19 +344,24 @@ export async function prepareToolExecutionContextForScope(params: {
   } = params;
 
   const clientToolset: ClientToolsetConfig | undefined =
-    requestClientToolset ??
-    getStoredClientPreferences(agentId, conversationId).toolset;
+    mergeClientToolsetFields(
+      requestClientToolset,
+      getStoredClientPreferences(agentId, conversationId).toolset,
+    );
   const backend = getBackend();
+  const readScopeState = params.readScopeState ?? ((read) => read());
   const agent = agentId
     ? ((cachedAgent ??
-        (await backend.retrieveAgent(agentId))) as ScopeModelCarrier)
+        (await readScopeState(() =>
+          backend.retrieveAgent(agentId),
+        ))) as ScopeModelCarrier)
     : null;
   const agentTarget = modelTargetFromCarrier(agent);
   const conversationTarget =
     conversationId && conversationId !== "default"
       ? modelTargetFromCarrier(
-          (await backend.retrieveConversation(
-            conversationId,
+          (await readScopeState(() =>
+            backend.retrieveConversation(conversationId),
           )) as ScopeModelCarrier,
         )
       : { model: null, providerType: null, openAICompatibleProxy: false };
@@ -404,10 +409,7 @@ export async function prepareToolExecutionContextForScope(params: {
     try {
       effectiveProviderType =
         (await getModelProviderType(effectiveModel)) ?? null;
-    } catch {
-      // Model metadata is best-effort. Handle-based classification remains
-      // available when the provider inventory cannot be fetched.
-    }
+    } catch {}
   }
 
   const scopedConversationId = conversationId ?? "default";
@@ -421,7 +423,7 @@ export async function prepareToolExecutionContextForScope(params: {
     clientToolset,
     exclude,
     clientToolAllowlist,
-    externalToolScopeIds,
+    externalToolOwnerConnectionId,
     workingDirectory,
     permissionModeState,
     modContext,
@@ -429,6 +431,7 @@ export async function prepareToolExecutionContextForScope(params: {
     modAdapters,
     agent: agent as AgentState | null,
     runtimeContext: {
+      sessionSource: getRuntimeSessionSource(),
       connectionId,
       environmentDeviceId,
       agentId,
@@ -438,16 +441,20 @@ export async function prepareToolExecutionContextForScope(params: {
       ...(suppressActingUserFallback
         ? { suppressActingUserFallback: true }
         : {}),
-      // A newly scoped execution context must never inherit ambient authority.
       mcpOriginatorSuperRunId: mcpOriginatorSuperRunId ?? null,
+      resolveClientMessageIds,
+      turnStartedAt,
       workingDirectory,
       ...(skillsDirectory !== undefined ? { skillsDirectory } : {}),
       ...(skillSources !== undefined ? { skillSources } : {}),
       ...(bundledSkills !== undefined ? { bundledSkills } : {}),
       ...(workspaceSandbox !== undefined ? { workspaceSandbox } : {}),
       executionSettings,
+      foregroundYieldMs,
     },
   });
+  const context = getExecutionContextById(result.preparedToolContext.contextId);
+  if (context) context.shouldEnqueueBackground = params.shouldEnqueueBackground;
   return { ...result, agent: agent as AgentState | null };
 }
 
@@ -500,23 +507,12 @@ export async function clearPersistedClientToolRules(
   }
 }
 
-/**
- * Force switch to a specific toolset regardless of model.
- *
- * @param toolsetName - The toolset to switch to
- */
 export async function forceToolsetSwitch(
   toolsetName: ToolsetName,
 ): Promise<void> {
   await loadTools(undefined, { resolvedToolset: toolsetName });
 }
 
-/**
- * Switches the loaded toolset based on the target model identifier.
- *
- * @param modelIdentifier - The model handle/id
- * @param providerType - Provider type used to refine toolset derivation
- */
 export async function switchToolsetForModel(
   modelIdentifier: string,
   providerType?: string | null,

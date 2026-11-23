@@ -1,14 +1,48 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { AgentRuntimeStatusSnapshot } from "@/backend/api/agents";
-import type { EnvironmentConnection } from "@/backend/api/environments";
+import {
+  type EnvironmentConnection,
+  resolveEnvironmentConnectionId,
+} from "@/backend/api/environments";
 import { ApiRequestError } from "@/backend/api/request";
 import {
   buildEnvironmentCreateMessageBody,
   buildEnvironmentLaunchResult,
   resolveEnvironmentMaxWaitMs,
+  resolveListenerLaunchTarget,
   waitForEnvironmentAssistantMessage,
 } from "@/headless-environment-response";
 import { toolFilter } from "@/tools/filter";
+
+test("an offline --computer resolves to a reportable error instead of throwing", async () => {
+  const now = Date.now();
+  const offline: EnvironmentConnection = {
+    id: "env-1",
+    connectionId: "conn-1",
+    deviceId: "f7a46670-7aaa-4742-bb41-b916fc314cd8",
+    connectionName: "Sergey-PC",
+    organizationId: "org-1",
+    podId: "pod-1",
+    connectedAt: now - 3_600_000,
+    lastHeartbeat: now - 3_600_000,
+    lastSeenAt: now - 3_600_000,
+    firstSeenAt: now - 7_200_000,
+  };
+  const result = await resolveListenerLaunchTarget({
+    selector: "Sergey-PC",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+    resolveComputer: (selector) =>
+      resolveEnvironmentConnectionId(selector, async () => ({
+        connections: [offline],
+        hasNextPage: false,
+      })),
+  });
+  expect(result).toEqual({
+    error:
+      'Computer "Sergey-PC" is offline. Matched: Sergey-PC (f7a46670-7aaa-4742-bb41-b916fc314cd8, offline)',
+  });
+});
 
 test("launch envelopes preserve queued identity, failure text, and completed usage", () => {
   const base = {
@@ -65,7 +99,6 @@ test("launch envelopes preserve queued identity, failure text, and completed usa
   });
 });
 
-/** Pins the wait to the run-based fallback (server without the route). */
 const runtimeStatusUnavailable =
   async (): Promise<AgentRuntimeStatusSnapshot> => {
     throw new ApiRequestError("Not Found", 404, "");
@@ -337,7 +370,6 @@ function toolMessage(id: string, runId: string, sequenceId: number) {
   };
 }
 
-/** Fake clock: sleep() advances time instead of waiting. */
 function makeClock() {
   let t = 0;
   return {
@@ -391,7 +423,6 @@ describe("environment turn liveness", () => {
       },
       async listConversationMessages() {
         listCalls += 1;
-        // Flip to completed after ~15 simulated minutes of polling.
         if (clock.now() >= 15 * 60_000 && runStatus === "running") {
           runStatus = "completed";
           return [
@@ -497,7 +528,6 @@ describe("environment turn liveness", () => {
         },
       }),
     ).rejects.toThrow(/device device-1 went offline/);
-    // First online check fires at the 30s interval, well before inactivity.
     expect(clock.now()).toBeLessThan(60_000);
   });
 
@@ -550,7 +580,7 @@ describe("environment turn liveness", () => {
         throw new Error("should not be called: no run visible");
       },
       async listConversationMessages() {
-        return []; // the listener never picked up the turn
+        return [];
       },
     };
 
@@ -650,8 +680,6 @@ describe("runtime-status wait mode", () => {
     expect(result.stopReason).toBe("end_turn");
     expect(clock.now()).toBeGreaterThan(10 * 60_000);
     expect(statusCalls).toBeGreaterThan(50);
-    // Per-run polling stops in runtime-status mode; one final best-effort
-    // lookup fills the stop reason.
     expect(runRetrievals).toBe(1);
   });
 
@@ -677,7 +705,6 @@ describe("runtime-status wait mode", () => {
       pollIntervalMs: 1_000,
       deps: {
         ...clock,
-        // An armed Monitor keeps the outer state ACTIVE after the turn.
         getAgentRuntimeStatus: async () =>
           runtimeSnapshot("conv-1", "ACTIVE", "WAITING_ON_INPUT"),
       },

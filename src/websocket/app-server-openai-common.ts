@@ -105,7 +105,6 @@ function toImagePart(rawUrl: string): UserContentPart | null {
   return null;
 }
 
-/** OpenAI user content → Letta content parts (text and image_url). */
 export function extractUserContentParts(
   content: string | OpenAiChatMessagePart[] | null | undefined,
 ): UserContentPart[] {
@@ -169,34 +168,82 @@ function getPageItems<T>(page: unknown): T[] {
   return [];
 }
 
-const MAX_LISTED_AGENTS = 1000;
+const AGENT_LIST_PAGE_LIMIT = 200;
+const AGENT_SEARCH_PAGE_LIMIT = 50;
 
-async function listAgentEntries(): Promise<AgentModelEntry[]> {
-  const page = await getBackend().listAgents({ limit: MAX_LISTED_AGENTS });
+function isAgentShapedId(model: string): boolean {
+  return model.startsWith("agent-") || model.startsWith("agent_");
+}
+
+function isBackendNotFoundError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { name?: unknown; status?: unknown };
+  return (
+    candidate.name === "LocalBackendNotFoundError" ||
+    candidate.status === 404 ||
+    candidate.status === 422
+  );
+}
+
+async function listAgentEntries(options: {
+  limit: number;
+  query_text?: string;
+}): Promise<AgentModelEntry[]> {
+  const backend = getBackend();
+  let page: unknown = await backend.listAgents(options);
   if (Array.isArray(page)) return page as AgentModelEntry[];
-  // SDK pages are async-iterable across ALL pages; a first-page-only read
-  // silently drops agents once the list exceeds one page.
-  const iterable = page as unknown as {
+
+  const iterable = page as {
     [Symbol.asyncIterator]?: () => AsyncIterator<AgentModelEntry>;
   };
   if (typeof iterable[Symbol.asyncIterator] === "function") {
     const items: AgentModelEntry[] = [];
     for await (const item of iterable as AsyncIterable<AgentModelEntry>) {
       items.push(item);
-      if (items.length >= MAX_LISTED_AGENTS) break;
     }
     return items;
   }
-  return getPageItems<AgentModelEntry>(page);
+
+  const items: AgentModelEntry[] = [];
+  const seenCursors = new Set<string>();
+  while (true) {
+    const pageItems = getPageItems<AgentModelEntry>(page);
+    items.push(...pageItems);
+    const sdkPage = page as {
+      hasNextPage?: () => boolean;
+      getNextPage?: () => Promise<unknown>;
+    };
+    if (typeof sdkPage.hasNextPage === "function") {
+      if (!sdkPage.hasNextPage() || typeof sdkPage.getNextPage !== "function") {
+        break;
+      }
+      page = await sdkPage.getNextPage();
+      continue;
+    }
+    if (pageItems.length < options.limit) break;
+    const cursor = pageItems.at(-1)?.id;
+    if (!cursor || seenCursors.has(cursor)) break;
+    seenCursors.add(cursor);
+    page = await backend.listAgents({ ...options, after: cursor });
+    if (Array.isArray(page)) {
+      items.push(...(page as AgentModelEntry[]));
+      break;
+    }
+  }
+  return items;
 }
 
-/**
- * One collision-free advertised-id map, used by both listing and
- * resolution. An agent name is advertised only when it is unique among
- * names AND does not equal any agent id — otherwise the agent id is
- * advertised — so every advertised id resolves to exactly one agent and
- * raw agent-id lookups can never be shadowed by another agent's name.
- */
+async function listAllAgentEntries(): Promise<AgentModelEntry[]> {
+  return listAgentEntries({ limit: AGENT_LIST_PAGE_LIMIT });
+}
+
+async function searchAgentEntries(model: string): Promise<AgentModelEntry[]> {
+  return listAgentEntries({
+    query_text: model,
+    limit: AGENT_SEARCH_PAGE_LIMIT,
+  });
+}
+
 function buildAdvertisedModelMap(
   agents: AgentModelEntry[],
 ): Map<string, AgentModelEntry> {
@@ -219,7 +266,7 @@ function buildAdvertisedModelMap(
 export async function handleListModels(
   response: ServerResponse,
 ): Promise<void> {
-  const advertised = buildAdvertisedModelMap(await listAgentEntries());
+  const advertised = buildAdvertisedModelMap(await listAllAgentEntries());
   const data = [...advertised.entries()].map(([id, agent]) => ({
     id,
     object: "model" as const,
@@ -232,17 +279,22 @@ export async function handleListModels(
 export async function resolveAgentForModel(
   model: string,
 ): Promise<AgentModelEntry | null> {
-  const agents = await listAgentEntries();
-  return (
-    buildAdvertisedModelMap(agents).get(model) ??
-    agents.find((agent) => agent.id === model) ??
-    null
-  );
+  const backend = getBackend();
+  if (isAgentShapedId(model)) {
+    try {
+      return (await backend.retrieveAgent(model)) as AgentModelEntry;
+    } catch (error) {
+      if (!isBackendNotFoundError(error)) throw error;
+    }
+  }
+
+  const searched = await searchAgentEntries(model);
+  const exactId = searched.find((agent) => agent.id === model);
+  if (exactId) return exactId;
+  const exactNames = searched.filter((agent) => agent.name === model);
+  return exactNames.length === 1 ? (exactNames[0] ?? null) : null;
 }
 
-// Conversation continuity for header-keyed chats. Clients that supply a
-// stable chat identity get a pinned Letta conversation; the bounded FIFO
-// map evicts long-idle chats, which then start a fresh conversation.
 const MAX_TRACKED_TRANSCRIPTS = 4096;
 const conversationIdByTranscript = new Map<string, string>();
 
@@ -259,10 +311,6 @@ export function rememberConversation(
   }
 }
 
-// Conversation creation is serialized per agent: concurrent creations race
-// on initializing the agent's local memory repository (transient git config
-// lock failures). Failures propagate to the caller as a 500 — routing into
-// the shared "default" conversation instead would cross-wire client chats.
 const conversationCreateTailByAgent = new Map<string, Promise<void>>();
 const CONVERSATION_CREATE_RETRIES = 2;
 const CONVERSATION_CREATE_RETRY_DELAY_MS = 200;
@@ -287,9 +335,6 @@ async function createConversationWithRetry(agentId: string): Promise<string> {
   throw lastError;
 }
 
-/** Serialized per-agent conversation creation (see note above). The
- * optional reuseKey is re-checked after the queue drains so a concurrent
- * request with the same key reuses the conversation it created. */
 export async function createConversationSerialized(
   agentId: string,
   reuseKey?: string,
@@ -324,12 +369,6 @@ export async function resolveConversationId(
   return await createConversationSerialized(agentId, chatKey);
 }
 
-// Clients that know their chat identity can pin it explicitly instead of
-// relying on transcript fingerprints, which collide when two chats have
-// byte-identical transcripts (e.g. both start "Hello" and get the same
-// verbatim reply). Open WebUI sends X-OpenWebUI-Chat-Id when
-// ENABLE_FORWARD_USER_INFO_HEADERS is on; X-Letta-Chat-Key is the generic
-// escape hatch for other clients.
 function headerValue(
   request: HttpIncomingMessage,
   name: string,
@@ -340,13 +379,6 @@ function headerValue(
   return null;
 }
 
-/**
- * X-Letta-Chat-Key always pins chat identity. X-OpenWebUI-Chat-Id is
- * honored only for streaming requests: Open WebUI's real chat messages
- * always stream, while its background task requests (title/tags/follow-up
- * generation) are non-streaming yet carry the same chat id — honoring
- * those would route task prompts into the user's pinned conversation.
- */
 export function chatKeyFromHeaders(
   request: HttpIncomingMessage,
   streaming: boolean,
@@ -363,10 +395,6 @@ export function openWebUiChatIdFromHeaders(
   return headerValue(request, "x-openwebui-chat-id");
 }
 
-// Retry idempotency: a client retry carrying the same Idempotency-Key
-// reuses the original request's outcome instead of running (and appending)
-// the message again. In-flight duplicates share the same turn; failed
-// outcomes are evicted so an intentional retry after an error re-runs.
 const IDEMPOTENCY_HEADERS = ["idempotency-key", "x-idempotency-key"] as const;
 const MAX_IDEMPOTENT_OUTCOMES = 1024;
 const outcomeByIdempotencyKey = new Map<string, Promise<TurnOutcome>>();
@@ -408,7 +436,6 @@ export function getIdempotentOutcome(
   return outcomeByIdempotencyKey.get(key);
 }
 
-/** @internal Clears chat-key and idempotency maps between tests. */
 export function resetOpenAiCompatState(): void {
   conversationIdByTranscript.clear();
   outcomeByIdempotencyKey.clear();

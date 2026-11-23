@@ -2,16 +2,34 @@ import {
   type ExecFileOptionsWithStringEncoding,
   execFile,
 } from "node:child_process";
-import { accessSync, constants, realpathSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import {
+  accessSync,
+  closeSync,
+  constants,
+  linkSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeSync,
+} from "node:fs";
 import { readdir, rm } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
+import {
+  getOwnProcessStartTime,
+  isSameProcessRunning,
+} from "@/utils/process-liveness";
 import { getVersion } from "@/version";
 
 const execFileAsync = promisify(execFile);
 
-// Debug logging - set LETTA_DEBUG_AUTOUPDATE=1 to enable
 const DEBUG = process.env.LETTA_DEBUG_AUTOUPDATE === "1";
 function debugLog(...args: unknown[]) {
   if (DEBUG) {
@@ -23,11 +41,9 @@ interface UpdateCheckResult {
   updateAvailable: boolean;
   latestVersion?: string;
   currentVersion: string;
-  /** True when the version check itself failed (network error, registry down, etc.) */
   checkFailed?: boolean;
 }
 
-// Supported package managers for global install/update
 export type PackageManager = "npm" | "bun" | "pnpm";
 
 const DEFAULT_UPDATE_PACKAGE_NAME = "@letta-ai/letta-code";
@@ -45,7 +61,15 @@ const INSTALL_ARG_PREFIX: Record<PackageManager, string[]> = {
 
 const VALID_PACKAGE_MANAGERS = new Set<string>(Object.keys(INSTALL_ARG_PREFIX));
 const NPM_PREFIX_TIMEOUT_MS = 5000;
+const UPDATE_LOCK_STALE_MS = 15 * 60 * 1000;
 type FetchImpl = typeof fetch;
+type RunUpdateCommand = typeof runUpdateCommand;
+
+export interface UpdateDeps {
+  fetchImpl?: FetchImpl;
+  runCommand?: RunUpdateCommand;
+  lockPath?: string;
+}
 
 export interface SelfUpdateStatus {
   supported: boolean;
@@ -59,7 +83,6 @@ function normalizeUpdatePackageName(raw: string | undefined): string | null {
   if (!raw) return null;
   const value = raw.trim();
   if (!value) return null;
-  // Basic npm package name validation: no whitespace/shell separators.
   if (/\s/.test(value) || /["'`;|&$]/.test(value)) return null;
   return value;
 }
@@ -127,8 +150,6 @@ export function buildUpdateExecOptions(
   return {
     timeout,
     encoding: "utf8",
-    // Match Codex's updater behavior: route package-manager commands through
-    // the Windows shell so npm/pnpm/bun .cmd shims resolve via PATHEXT.
     shell: platform === "win32",
   };
 }
@@ -244,10 +265,6 @@ export function buildInstallArgs(
   return args;
 }
 
-/**
- * Detect which package manager was used to install this binary.
- * Checks LETTA_PACKAGE_MANAGER env var first, then inspects the resolved binary path.
- */
 export function detectPackageManager(): PackageManager {
   const envOverride = process.env.LETTA_PACKAGE_MANAGER;
   if (envOverride) {
@@ -286,8 +303,6 @@ function isRunningLocally(): boolean {
   debugLog("argv[1]:", argv);
   debugLog("resolved path:", resolvedPath);
 
-  // If running from node_modules, it's npm installed (should auto-update)
-  // Otherwise it's local dev (source or built locally)
   return !resolvedPath.includes("node_modules");
 }
 
@@ -298,8 +313,6 @@ export async function checkForUpdate(
   if (isPythonDistribution()) return { updateAvailable: false, currentVersion };
   debugLog("Current version:", currentVersion);
 
-  // Skip auto-update for prerelease versions (e.g., 0.2.0-next.3)
-  // Prerelease users should manage updates manually to stay on their channel
   if (currentVersion.includes("-")) {
     debugLog("Prerelease version detected, skipping auto-update check");
     return { updateAvailable: false, currentVersion };
@@ -353,12 +366,11 @@ export async function checkForUpdate(
   };
 }
 
-/**
- * Get the npm global prefix path (e.g., /Users/name/.npm-global or ~/.nvm/versions/node/v20/lib)
- */
-async function getNpmGlobalPath(): Promise<string | null> {
+async function getNpmGlobalPath(
+  runCommand: RunUpdateCommand,
+): Promise<string | null> {
   try {
-    const { stdout } = await runUpdateCommand(
+    const { stdout } = await runCommand(
       "npm",
       ["prefix", "-g"],
       NPM_PREFIX_TIMEOUT_MS,
@@ -369,28 +381,170 @@ async function getNpmGlobalPath(): Promise<string | null> {
   }
 }
 
-/**
- * Clean up orphaned temp directories left by interrupted npm installs.
- * These look like: .letta-code-lnWEqMep (npm's temp rename targets)
- */
 async function cleanupOrphanedDirs(globalPath: string): Promise<void> {
   const lettaAiDir = join(globalPath, "lib/node_modules/@letta-ai");
   try {
     const entries = await readdir(lettaAiDir);
     for (const entry of entries) {
-      // Match orphaned temp dirs like .letta-code-lnWEqMep
       if (entry.startsWith(".letta-code-")) {
         const orphanPath = join(lettaAiDir, entry);
         debugLog("Cleaning orphaned temp directory:", orphanPath);
         await rm(orphanPath, { recursive: true, force: true });
       }
     }
-  } catch {
-    // Directory might not exist or not readable, ignore
+  } catch {}
+}
+
+function getUpdateLockPath(): string {
+  return join(homedir(), ".letta", "auto-update.lock");
+}
+
+interface UpdateLockOwner {
+  pid: number;
+  started?: string;
+  createdAt: number;
+}
+
+function readUpdateLockOwner(
+  lockPath: string,
+): { owner: UpdateLockOwner; raw: string } | null {
+  try {
+    const raw = readFileSync(lockPath, "utf8");
+    try {
+      const parsed = JSON.parse(raw) as Partial<UpdateLockOwner>;
+      if (
+        typeof parsed.pid === "number" &&
+        typeof parsed.createdAt === "number"
+      ) {
+        return {
+          owner: {
+            pid: parsed.pid,
+            started:
+              typeof parsed.started === "string" ? parsed.started : undefined,
+            createdAt: parsed.createdAt,
+          },
+          raw,
+        };
+      }
+    } catch {}
+    return { owner: { pid: 0, createdAt: statSync(lockPath).mtimeMs }, raw };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
   }
 }
 
-async function performUpdate(progressLog?: (message: string) => void): Promise<{
+function tryCreateUpdateLock(lockPath: string, contents: string): boolean {
+  let fd: number;
+  try {
+    fd = openSync(lockPath, "wx", 0o600);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+    throw error;
+  }
+  try {
+    writeSync(fd, contents);
+  } finally {
+    closeSync(fd);
+  }
+  return true;
+}
+
+function removeQuietly(path: string): void {
+  try {
+    unlinkSync(path);
+  } catch {}
+}
+
+function takeOverStaleLock(lockPath: string, staleRaw: string): boolean {
+  const asidePath = `${lockPath}.stale-${process.pid}-${randomUUID()}`;
+  try {
+    renameSync(lockPath, asidePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+  try {
+    if (readFileSync(asidePath, "utf8") === staleRaw) return true;
+    try {
+      linkSync(asidePath, lockPath);
+    } catch {}
+    return false;
+  } finally {
+    removeQuietly(asidePath);
+  }
+}
+
+export async function acquireUpdateLock(
+  lockPath: string,
+): Promise<(() => void) | null> {
+  const started = (await getOwnProcessStartTime()) ?? undefined;
+  const contents = JSON.stringify({
+    pid: process.pid,
+    started,
+    createdAt: Date.now(),
+    nonce: randomUUID(),
+  });
+  const release = () => {
+    try {
+      if (readFileSync(lockPath, "utf8") === contents) unlinkSync(lockPath);
+    } catch {}
+  };
+
+  try {
+    mkdirSync(dirname(lockPath), { recursive: true });
+    if (tryCreateUpdateLock(lockPath, contents)) return release;
+
+    const current = readUpdateLockOwner(lockPath);
+    if (current) {
+      const { owner, raw } = current;
+      const recent = Date.now() - owner.createdAt < UPDATE_LOCK_STALE_MS;
+      if (recent || (await isSameProcessRunning(owner))) {
+        debugLog("Another update holds the lock; skipping:", lockPath);
+        return null;
+      }
+      if (!takeOverStaleLock(lockPath, raw)) {
+        debugLog("Another process took over the stale lock; skipping");
+        return null;
+      }
+      debugLog("Took over stale update lock:", lockPath);
+    }
+    return tryCreateUpdateLock(lockPath, contents) ? release : null;
+  } catch (error) {
+    debugLog("Could not acquire update lock; skipping update:", error);
+    return null;
+  }
+}
+
+async function performUpdate(
+  progressLog?: (message: string) => void,
+  deps: UpdateDeps = {},
+): Promise<{
+  success: boolean;
+  error?: string;
+  enotemptyFailed?: boolean;
+}> {
+  const release = await acquireUpdateLock(deps.lockPath ?? getUpdateLockPath());
+  if (!release) {
+    return {
+      success: false,
+      error: "Another Letta Code update is already in progress.",
+    };
+  }
+  try {
+    return await performUpdateLocked(
+      deps.runCommand ?? runUpdateCommand,
+      progressLog,
+    );
+  } finally {
+    release();
+  }
+}
+
+async function performUpdateLocked(
+  runCommand: RunUpdateCommand,
+  progressLog?: (message: string) => void,
+): Promise<{
   success: boolean;
   error?: string;
   enotemptyFailed?: boolean;
@@ -401,10 +555,9 @@ async function performUpdate(progressLog?: (message: string) => void): Promise<{
   debugLog("Detected package manager:", pm);
   debugLog("Install command:", installCmd);
 
-  // ENOTEMPTY orphan cleanup is npm-specific (npm's temp rename behavior)
   let globalPath: string | null = null;
   if (pm === "npm") {
-    globalPath = await getNpmGlobalPath();
+    globalPath = await getNpmGlobalPath(runCommand);
     if (globalPath) {
       debugLog("Pre-cleaning orphaned directories in:", globalPath);
       await cleanupOrphanedDirs(globalPath);
@@ -414,8 +567,7 @@ async function performUpdate(progressLog?: (message: string) => void): Promise<{
   try {
     debugLog(`Running ${installCmd}...`);
     progressLog?.(`Running update command: ${installCmd}`);
-    // Never time out an install: killing it can leave the global package incomplete.
-    await runUpdateCommand(pm, installArgs);
+    await runCommand(pm, installArgs);
     debugLog("Update completed successfully");
     progressLog?.("Update command completed successfully.");
     return { success: true };
@@ -429,13 +581,12 @@ async function performUpdate(progressLog?: (message: string) => void): Promise<{
     });
     const errorMsg = error instanceof Error ? error.message : String(error);
 
-    // ENOTEMPTY retry is npm-specific
     if (pm === "npm" && errorMsg.includes("ENOTEMPTY") && globalPath) {
       debugLog("ENOTEMPTY detected, attempting cleanup and retry...");
       await cleanupOrphanedDirs(globalPath);
 
       try {
-        await runUpdateCommand(pm, installArgs);
+        await runCommand(pm, installArgs);
         debugLog("Update succeeded after cleanup retry");
         return { success: true };
       } catch (retryError) {
@@ -459,9 +610,6 @@ async function performUpdate(progressLog?: (message: string) => void): Promise<{
       }
     }
 
-    // npm race condition retry: covers TAR_ENTRY_ERROR (parallel extraction races),
-    // uv_cwd (npm CWD deleted during atomic package swap), and spawn sh ENOENT
-    // (sharp postinstall CWD missing). All are transient npm parallelism issues.
     const isNpmRaceCondition =
       pm === "npm" &&
       (errorMsg.includes("TAR_ENTRY_ERROR") ||
@@ -474,7 +622,7 @@ async function performUpdate(progressLog?: (message: string) => void): Promise<{
         await cleanupOrphanedDirs(globalPath);
       }
       try {
-        await runUpdateCommand(pm, installArgs);
+        await runCommand(pm, installArgs);
         debugLog("Update succeeded after race condition retry");
         return { success: true };
       } catch (retryError) {
@@ -496,19 +644,11 @@ async function performUpdate(progressLog?: (message: string) => void): Promise<{
 }
 
 export interface AutoUpdateResult {
-  /** Whether an ENOTEMPTY error persisted after cleanup and retry */
   enotemptyFailed?: boolean;
-  /** Latest version available (set when a significant update was applied) */
   latestVersion?: string;
-  /** True when the binary was updated and the user should restart */
   updateApplied?: boolean;
 }
 
-/**
- * Returns true when `latest` is at least one minor version ahead of `current`.
- * Used to gate the in-app "restart to update" notification — patch-only bumps
- * are applied silently without interrupting the user.
- */
 function isSignificantUpdate(current: string, latest: string): boolean {
   const [cMajor = 0, cMinor = 0] = current.split(".").map(Number);
   const [lMajor = 0, lMinor = 0] = latest.split(".").map(Number);
@@ -517,9 +657,9 @@ function isSignificantUpdate(current: string, latest: string): boolean {
   return false;
 }
 
-export async function checkAndAutoUpdate(): Promise<
-  AutoUpdateResult | undefined
-> {
+export async function checkAndAutoUpdate(
+  deps: UpdateDeps = {},
+): Promise<AutoUpdateResult | undefined> {
   if (isPythonDistribution()) return;
   debugLog("Auto-update check starting...");
   debugLog("isAutoUpdateEnabled:", isAutoUpdateEnabled());
@@ -531,15 +671,20 @@ export async function checkAndAutoUpdate(): Promise<
     return;
   }
 
+  if (process.env.LETTA_CODE_AGENT_ROLE === "subagent") {
+    debugLog("Subagent process, skipping auto-update");
+    return;
+  }
+
   if (runningLocally) {
     debugLog("Running locally, skipping auto-update");
     return;
   }
 
-  const result = await checkForUpdate();
+  const result = await checkForUpdate(deps.fetchImpl);
 
   if (result.updateAvailable) {
-    const updateResult = await performUpdate();
+    const updateResult = await performUpdate(undefined, deps);
     if (updateResult.enotemptyFailed) {
       return { enotemptyFailed: true };
     }

@@ -33,10 +33,6 @@ interface UpdateChunk {
   changeContext: string | null;
   oldLines: string[];
   newLines: string[];
-  /**
-   * Pairs of indices into `oldLines` and `newLines` for lines parsed as
-   * context, so they stay distinguishable from identical changed lines.
-   */
   contextLineIndices: Array<[oldIndex: number, newIndex: number]>;
   isEndOfFile: boolean;
 }
@@ -69,9 +65,6 @@ interface AffectedPaths {
   deleted: string[];
 }
 
-/**
- * ApplyPatch implementation compatible with Codex apply_patch semantics.
- */
 export async function apply_patch(
   args: ApplyPatchArgs,
 ): Promise<ApplyPatchResult> {
@@ -475,12 +468,6 @@ async function deriveNewContentsFromChunks(
     .join("");
 }
 
-/**
- * Splits contents into logical lines while retaining each line ending.
- *
- * The first existing ending becomes the preferred style for inserted lines;
- * files without an ending default to LF.
- */
 function parseSourceFile(contents: string): SourceFile {
   const lines: SourceLine[] = [];
   let preferredEnding: LineEnding | null = null;
@@ -575,14 +562,9 @@ function computeReplacements(
       );
     }
 
-    // Context lines occur in both sides of a patch chunk. Keep those original
-    // lines in place so their exact contents and terminators survive,
-    // especially when the file has mixed line endings.
     let oldStart = 0;
     let newStart = 0;
     for (const [oldContext, newContext] of chunk.contextLineIndices) {
-      // A trailing empty context line can be removed from `pattern` and
-      // `newSlice` above when it represents the final newline.
       if (oldContext >= pattern.length || newContext >= newSlice.length) {
         break;
       }
@@ -610,13 +592,6 @@ function computeReplacements(
   return replacements;
 }
 
-/**
- * Rebuilds the file from source-ordered, non-overlapping replacements.
- *
- * Unchanged lines retain their original endings, inserted lines use the
- * preferred ending, and every resulting line receives an ending to match
- * apply-patch's historical trailing-newline behavior.
- */
 function applyReplacements(
   { lines, preferredEnding }: SourceFile,
   replacements: Replacement[],
@@ -633,8 +608,6 @@ function applyReplacements(
   }
   newLines.push(...lines.slice(sourceIndex));
 
-  // Updates have historically added a trailing newline. This also gives an
-  // unterminated last line an ending if an insertion moved it inward.
   return newLines.map((line) => ({
     text: line.text,
     ending: line.ending ?? preferredEnding,

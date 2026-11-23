@@ -1,9 +1,3 @@
-/**
- * Default agent (Letta Code) creation and management.
- *
- * Letta Code: Stateful agent with full memory - learns and grows with the user.
- */
-
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { ONBOARDING_ORIGIN_TAG } from "@/agent/agent-tags";
 import type { Backend } from "@/backend";
@@ -15,19 +9,11 @@ import { getDefaultModel, resolveModel } from "./model";
 import { buildCreateAgentOptionsForPersonality } from "./personality";
 import { MEMORY_PROMPTS } from "./prompt-assets";
 
-// Tags used to identify default agents
 export const MEMO_TAG = "default:memo";
 export const TUTOR_TAG = "default:tutorial";
 
-/**
- * Personalities the startup bootstrap can create. Kept deliberately simple:
- * a true fresh start (brand-new account, nothing to resume) gets the Tutor
- * onboarding agent, while an explicit `--new-agent` (and headless runs) get
- * the standard Letta Code (memo) agent.
- */
 export type DefaultAgentPersonality = "memo" | "tutorial";
 
-// Letta Code's default memory blocks - loaded from Memo-specific prompts.
 const MEMO_PERSONA = parseMdxFrontmatter(
   MEMORY_PROMPTS["persona_memo.mdx"] ?? "",
 ).body;
@@ -35,18 +21,12 @@ const MEMO_HUMAN = parseMdxFrontmatter(
   MEMORY_PROMPTS["human_memo.mdx"] ?? "",
 ).body;
 
-// Agent descriptions shown in /agents selector
 const MEMO_DESCRIPTION = "The default Letta Code agent with persistent memory";
 
-/**
- * Default agent configurations.
- */
 export const DEFAULT_AGENT_CONFIGS: Record<string, CreateAgentOptions> = {
   memo: {
     name: "Letta Code",
     description: MEMO_DESCRIPTION,
-    // Uses default memory blocks and tools (full stateful config)
-    // Override global blocks with Memo-specific personality defaults
     blockValues: {
       persona: MEMO_PERSONA,
       human: MEMO_HUMAN,
@@ -128,9 +108,6 @@ async function resolveDefaultAgentModel(
   }
 }
 
-/**
- * Add a tag to an existing agent.
- */
 async function addTagToAgent(
   backend: Backend,
   agentId: string,
@@ -153,20 +130,10 @@ async function addTagToAgent(
   }
 }
 
-/**
- * Create a fresh default Letta Code agent and pin it globally.
- * Always creates a new agent — does NOT search by tag to avoid picking up
- * agents created by other users on shared Letta Cloud orgs.
- *
- * Respects `createDefaultAgents` setting (defaults to true).
- *
- * @returns The Letta Code agent (or null if creation disabled/failed).
- */
 export async function ensureDefaultAgents(
   backend: Backend,
   options?: {
     preferredModel?: string;
-    /** Which personality the created agent gets. Defaults to memo (Letta Code). */
     personality?: DefaultAgentPersonality;
   },
 ): Promise<AgentState | null> {
@@ -177,7 +144,6 @@ export async function ensureDefaultAgents(
   const personality = options?.personality ?? "memo";
 
   try {
-    // Pre-determine memfs mode so the agent is created with the correct prompt.
     const { isLettaCloud } = await import("@/agent/memory-filesystem");
     const willAutoEnableMemfs =
       backend.capabilities.remoteMemfs && (await isLettaCloud());
@@ -219,7 +185,6 @@ export async function ensureDefaultAgents(
 
     return agent;
   } catch (err) {
-    // Re-throw so caller can handle/exit appropriately
     throw new Error(
       `Failed to create default agents: ${err instanceof Error ? err.message : String(err)}`,
     );

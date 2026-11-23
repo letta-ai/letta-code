@@ -50,7 +50,11 @@ export function hasCompletedInputTerminalAuthority(
       return (
         completed?.interruptedRevision === authority.interruptedRevision &&
         completed.authorityRevision === authority.authorityRevision &&
-        completed.recoveryLineageId === authority.recoveryLineageId
+        completed.recoveryLineageId === authority.recoveryLineageId &&
+        (authority.terminalIdentity === undefined ||
+          completed.terminalIdentity === authority.terminalIdentity) &&
+        (authority.preparationSequence === undefined ||
+          completed.preparationSequence === authority.preparationSequence)
       );
     });
   if (!ledger.persistentPath) return matches(ledger.entries);

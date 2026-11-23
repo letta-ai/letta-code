@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type {
+  Api,
   AssistantMessage,
   AssistantMessageEvent,
+  Model,
   Usage,
 } from "@earendil-works/pi-ai";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
@@ -24,6 +26,8 @@ import {
   markLocalStateChunkOnly,
   type ProviderStreamPart,
 } from "@/backend/local/local-stream-chunks";
+import type { UsageStatistics } from "@/types/protocol";
+import { calculateUsageCost } from "@/usage/cost";
 import type {
   HeadlessTurnBody,
   HeadlessTurnExecutor,
@@ -47,7 +51,6 @@ export interface ProviderTurnInput {
   clientSkills: unknown[];
 }
 
-/** Provider-request start info emitted at the model-call boundary. */
 export interface LlmStartInfo {
   agentId: string;
   conversationId: string;
@@ -63,7 +66,6 @@ export interface LlmEndErrorInfo {
   retryable: boolean;
 }
 
-/** Provider-request completion info emitted once a final message is produced. */
 export interface LlmEndInfo {
   agentId: string;
   conversationId: string;
@@ -79,15 +81,16 @@ export interface LlmEndInfo {
 }
 
 export type ProviderStreamEvent =
-  | { type: "provider-part"; part: ProviderStreamPart }
+  | { type: "provider-part"; part: ProviderStreamPart; model?: Model<Api> }
   | { type: "local-message"; message: LocalMessage }
   | { type: "letta-chunk"; chunk: LettaStreamingResponse }
   | { type: "error"; error: unknown };
 
 export function providerStreamPart(
   part: ProviderStreamPart,
+  model?: Model<Api>,
 ): ProviderStreamEvent {
-  return { type: "provider-part", part };
+  return { type: "provider-part", part, model };
 }
 
 export function providerLocalMessage(
@@ -205,13 +208,6 @@ export function estimateProviderContextTokens(
   return total > 0 ? total : undefined;
 }
 
-/**
- * Tokens the request cannot shed: the compiled system prompt plus the tool
- * definitions. Compaction rewrites message history, so when this floor alone
- * exceeds the serving context window there is no recovery — every turn would be
- * truncated by the engine before the model ever sees the memory the system
- * prompt carries. Callers use this to fail loudly instead.
- */
 export function estimateProviderPromptFloorTokens(
   input: ProviderTurnInput,
 ): number {
@@ -221,23 +217,6 @@ export function estimateProviderPromptFloorTokens(
   );
 }
 
-/**
- * Context pressure must be handled before the provider request, not only after
- * an overflow. pi-ai first makes an oversized request valid by shrinking its
- * output allowance to `contextWindow - estimatedContext - 4096`, floored at
- * one token. A near-full request can therefore finish with `length` instead of
- * throwing the overflow that our retry path would catch.
- *
- * Keep the same 16,384-token reserve as Pi's coding-agent harness, capped at
- * 20% for small local windows. This is deliberately based on context usage,
- * not the configured output limit: an intentionally small `max_tokens` value
- * remains a normal provider length stop (the policy preserved by #3355).
- *
- * Upstream references, pinned when #3508 was fixed:
- * - pi-ai clamp: https://github.com/earendil-works/pi/blob/cee5ff7520d8828bed9955ef00419e995d1f91e0/packages/ai/src/api/simple-options.ts#L12-L19
- * - Pi reserve: https://github.com/earendil-works/pi/blob/cee5ff7520d8828bed9955ef00419e995d1f91e0/packages/coding-agent/src/core/compaction/compaction.ts#L128-L137
- * - Pi threshold: https://github.com/earendil-works/pi/blob/cee5ff7520d8828bed9955ef00419e995d1f91e0/packages/coding-agent/src/core/compaction/compaction.ts#L235-L238
- */
 export function contextCompactionThreshold(
   contextWindow: number | undefined,
 ): number | undefined {
@@ -282,12 +261,6 @@ function serializedLength(value: unknown): number {
   }
 }
 
-// Approximate request payload size in bytes (serialized chars ~= bytes for the
-// dominant base64/ASCII content). This intentionally measures bytes, not
-// tokens: image/base64 payloads are cheap in provider tokens but can break
-// provider transports when the raw request body grows too large. Slightly
-// overcounts versus the real request because local message wrappers
-// (ids/timestamps/metadata) are included.
 export function estimateProviderRequestBytes(
   input: ProviderTurnInput,
 ): number | undefined {
@@ -302,8 +275,10 @@ export function estimateProviderRequestBytes(
 
 function createUsageStatisticsChunk(
   usage: Usage | undefined,
+  model: Model<Api> | undefined,
   contextTokensEstimate?: number,
-): LettaStreamingResponse {
+): UsageStatistics {
+  const costUsd = usage ? calculateUsageCost(model, usage) : null;
   const promptTokens = usage?.input;
   const completionTokens = usage?.output;
   const totalTokens = usage?.totalTokens;
@@ -314,9 +289,11 @@ function createUsageStatisticsChunk(
   const reasoningTokens = usage?.reasoning;
   return {
     message_type: "usage_statistics",
-    // One chunk per completed provider step (see the `done` handler), so each
-    // reports exactly one step, matching Cloud's per-step usage_statistics.
     step_count: 1,
+    api_cost_usd: costUsd,
+    ...(usage?.cacheWrite1h !== undefined
+      ? { cache_write_1h_tokens: usage.cacheWrite1h }
+      : {}),
     ...(promptTokens !== undefined ? { prompt_tokens: promptTokens } : {}),
     ...(completionTokens !== undefined
       ? { completion_tokens: completionTokens }
@@ -332,7 +309,7 @@ function createUsageStatisticsChunk(
       ? { reasoning_tokens: reasoningTokens }
       : {}),
     ...(contextTokens !== undefined ? { context_tokens: contextTokens } : {}),
-  } as unknown as LettaStreamingResponse;
+  } as unknown as UsageStatistics;
 }
 
 function errorFromAssistantEvent(part: AssistantMessageEvent): Error {
@@ -486,6 +463,12 @@ function createProviderLettaStream(
           }
 
           if (part.type === "toolcall_end") {
+            if (part.toolCall.argumentsError) {
+              yield* createProviderErrorChunks(
+                new Error(part.toolCall.argumentsError),
+              );
+              return;
+            }
             sawToolCall = true;
             yield {
               message_type: "approval_request_message",
@@ -503,6 +486,7 @@ function createProviderLettaStream(
               sawUsageStatistics = true;
               yield createUsageStatisticsChunk(
                 part.message.usage,
+                event.model,
                 contextTokensEstimate,
               );
             }

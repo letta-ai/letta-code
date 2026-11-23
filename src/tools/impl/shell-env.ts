@@ -1,12 +1,6 @@
-/**
- * Shell environment utilities
- * Provides enhanced environment variables for shell execution,
- * including bundled tools like ripgrep in PATH and Letta context for skill scripts.
- */
-
 import { mkdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
@@ -23,6 +17,7 @@ import {
   peekOrganizationId,
   warmOrganizationId,
 } from "@/agent/organization-id";
+import { resolveDetachedSubagentEnvAgentId } from "@/agent/subagents/ephemeral-subagent";
 import { getDesktopAccessToken } from "@/auth/desktop-credentials";
 import { peekOrgAccessToken } from "@/auth/org-credentials-session";
 import { getServerUrl } from "@/backend/api/server-url";
@@ -31,23 +26,19 @@ import {
   getCurrentWorkingDirectory,
   getRuntimeActingUserId,
   getRuntimeContext,
+  getRuntimeSessionSource,
 } from "@/runtime-context";
 import { getRuntimeExecutionEnv } from "@/runtime-execution-settings";
 import { settingsManager } from "@/settings-manager";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 import { LISTENER_CONNECTION_ENV } from "@/utils/subagent-launch-marker";
 import { getRipgrepBinDir } from "./ripgrep-manager.js";
 
-/**
- * Get the node_modules directory containing this package's dependencies.
- * Skill scripts use createRequire with NODE_PATH to resolve dependencies.
- */
 function getPackageNodeModulesDir(): string | undefined {
   try {
     const __filename = fileURLToPath(import.meta.url);
     const require = createRequire(__filename);
-    // Find where letta-client is installed
     const clientPath = require.resolve("@letta-ai/letta-client");
-    // Extract node_modules path: /a/b/node_modules/@letta-ai/letta-client/... -> /a/b/node_modules
     const match = clientPath.match(/^(.+[/\\]node_modules)[/\\]/);
     return match ? match[1] : undefined;
   } catch {
@@ -94,9 +85,7 @@ function parseInvocationArgs(raw: string | undefined): string[] {
     ) {
       return parsed;
     }
-  } catch {
-    // Ignore malformed JSON and fall back to empty args.
-  }
+  } catch {}
   return [];
 }
 
@@ -166,12 +155,8 @@ function shellEscape(arg: string): string {
 const SHELL_SHIM_DIR_NAME = "letta-code-shell-shim";
 
 export function getLettaShimDir(env: NodeJS.ProcessEnv = process.env): string {
-  // Subagents with the memory-subagent profile run under a write-restricted filesystem sandbox. The
-  // default OS temp dir is intentionally not writable there, so keep the shim in
-  // harness state when already sandboxed. `~/.letta` is writable in that profile,
-  // while the cross-agent memory subtrees inside it remain masked.
   if (env.LETTA_SANDBOX) {
-    return path.join(homedir(), ".letta", SHELL_SHIM_DIR_NAME);
+    return path.join(resolveGlobalConfigDir(env), SHELL_SHIM_DIR_NAME);
   }
 
   return path.join(tmpdir(), SHELL_SHIM_DIR_NAME);
@@ -205,8 +190,6 @@ export function ensureLettaShimDir(
   const commandWithArgs = [invocation.command, ...invocation.args]
     .map(shellEscape)
     .join(" ");
-  // Electron needs this when launched from a fresh shell that did not inherit
-  // Desktop's environment. Do not add it for ordinary Node/Bun launchers.
   const electronEnv =
     electronExecPath && invocation.command === electronExecPath
       ? "export ELECTRON_RUN_AS_NODE=1\n"
@@ -239,10 +222,6 @@ function trimBaseUrl(value: string): string {
 }
 
 function getShellMemfsBaseUrl(env: NodeJS.ProcessEnv): string {
-  // Use the shell environment as the source of truth for command execution.
-  // This keeps Desktop's transient LETTA_BASE_URL proxy from affecting the
-  // canonical MemFS git remote, while still allowing an explicit MemFS base
-  // override to opt out of the Cloud rewrite.
   return env.LETTA_MEMFS_BASE_URL || LETTA_CLOUD_MEMFS_GIT_BASE_URL;
 }
 
@@ -323,10 +302,6 @@ function applyHostedMemfsGitHeaderEnv(env: NodeJS.ProcessEnv): void {
   }
 }
 
-/**
- * Get enhanced environment variables for shell execution.
- * Includes bundled tools (like ripgrep) in PATH and Letta context for skill scripts.
- */
 export function getShellEnv(): NodeJS.ProcessEnv {
   const executionEnv = getRuntimeExecutionEnv(
     process.env,
@@ -349,7 +324,6 @@ export function getShellEnv(): NodeJS.ProcessEnv {
     }
   }
 
-  // Add ripgrep bin directory to PATH if available
   const rgBinDir = getRipgrepBinDir();
   if (rgBinDir) {
     pathPrefixes.push(rgBinDir);
@@ -364,14 +338,13 @@ export function getShellEnv(): NodeJS.ProcessEnv {
 
   env.USER_CWD = getCurrentWorkingDirectory();
 
-  // Commands started by a listener turn must inherit that listener's registered
-  // device identity, not a stale installation id from the child CLI settings.
+  const sessionSource = getRuntimeSessionSource();
+  if (sessionSource) env.LETTA_RUNTIME_SESSION_SOURCE = sessionSource;
+  else delete env.LETTA_RUNTIME_SESSION_SOURCE;
   const environmentDeviceId = getRuntimeContext()?.environmentDeviceId?.trim();
   if (environmentDeviceId) {
     env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID = environmentDeviceId;
   }
-  // Expose the signed-in organization when known. Never block on resolving it:
-  // the first shell may miss it while the cached one-shot lookup warms up.
   if (!env.LETTA_ORGANIZATION_ID?.trim()) {
     const organizationId = peekOrganizationId();
     if (organizationId) {
@@ -391,17 +364,13 @@ export function getShellEnv(): NodeJS.ProcessEnv {
     delete env[ACTING_USER_ID_ENV];
   }
 
-  // Add Letta context for skill scripts.
-  // Prefer explicit agent context, but fall back to inherited env values.
   let agentId: string | undefined;
   try {
     const resolvedAgentId = getCurrentAgentId();
     if (typeof resolvedAgentId === "string" && resolvedAgentId.trim()) {
       agentId = resolvedAgentId.trim();
     }
-  } catch {
-    // Context not set yet (e.g., during startup), try env fallback below.
-  }
+  } catch {}
 
   if (!agentId) {
     const fallbackAgentId = env.AGENT_ID || env.LETTA_AGENT_ID;
@@ -411,8 +380,10 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   }
 
   if (agentId) {
-    env.LETTA_AGENT_ID = agentId;
-    env.AGENT_ID = agentId;
+    const exportedAgentId =
+      resolveDetachedSubagentEnvAgentId(agentId, executionEnv) ?? agentId;
+    env.LETTA_AGENT_ID = exportedAgentId;
+    env.AGENT_ID = exportedAgentId;
 
     const agentName = getCurrentAgentName()?.trim() || env.AGENT_NAME?.trim();
     if (agentName) {
@@ -457,13 +428,6 @@ export function getShellEnv(): NodeJS.ProcessEnv {
                   ),
               )
             : false;
-        // An EXPLICIT memory scope (LETTA_MEMORY_DIR_EXPLICIT=1, set by a
-        // launcher that deliberately points this session's memory at an
-        // isolated copy — e.g. an SDK dream batch's memfs clone) is honored
-        // when it lies outside the agents' memory store: such a path cannot
-        // be another agent's memory, which is what this guard protects.
-        // Without the marker, a non-parent-scoped inherited value is treated
-        // as stale leakage and stripped, as before.
         const inheritedMemoryExplicit =
           process.env.LETTA_MEMORY_DIR_EXPLICIT === "1";
         const memoryStoreDir = path.dirname(
@@ -485,23 +449,17 @@ export function getShellEnv(): NodeJS.ProcessEnv {
           env.MEMORY_DIR = inheritedMemoryDir;
           env.LETTA_MEMORY_DIR = inheritedLettaMemoryDir || inheritedMemoryDir;
         } else {
-          // Clear inherited/stale memory-dir vars for non-memfs agents.
           delete env.LETTA_MEMORY_DIR;
           delete env.MEMORY_DIR;
         }
       }
-    } catch {
-      // Settings may not be initialized in tests/startup; preserve inherited values.
-    }
+    } catch {}
   }
-  // Inject conversation ID if available
   let convId: string | undefined;
   try {
     const resolved = getConversationId();
     if (resolved) convId = resolved;
-  } catch {
-    // Not set yet
-  }
+  } catch {}
   if (!convId) {
     const fallback = env.LETTA_CONVERSATION_ID;
     if (typeof fallback === "string" && fallback.trim()) {
@@ -513,7 +471,6 @@ export function getShellEnv(): NodeJS.ProcessEnv {
     env.CONVERSATION_ID = convId;
   }
 
-  // Inject API key and base URL from settings if not already in env
   if (!env.LETTA_API_KEY || !env.LETTA_BASE_URL) {
     try {
       const settings = settingsManager.getSettings();
@@ -523,13 +480,9 @@ export function getShellEnv(): NodeJS.ProcessEnv {
       if (!env.LETTA_BASE_URL) {
         env.LETTA_BASE_URL = getServerUrl();
       }
-    } catch {
-      // Settings not initialized yet, skip
-    }
+    } catch {}
   }
 
-  // Add NODE_PATH for skill scripts to resolve @letta-ai/letta-client
-  // ES modules don't respect NODE_PATH, but createRequire does
   const nodeModulesDir = getPackageNodeModulesDir();
   if (nodeModulesDir) {
     const currentNodePath = env.NODE_PATH || "";
@@ -538,20 +491,14 @@ export function getShellEnv(): NodeJS.ProcessEnv {
       : nodeModulesDir;
   }
 
-  // Disable interactive pagers (fixes git log, man, etc. hanging)
   env.PAGER = "cat";
   env.GIT_PAGER = "cat";
   env.MANPAGER = "cat";
 
-  // Ensure TERM is set for proper color support
   if (!env.TERM) {
     env.TERM = "xterm-256color";
   }
 
-  // Desktop's local listener only has a localhost session token; the proxy owns
-  // the real Cloud token. Apply a process-local git URL rewrite so agent-run
-  // `git push`/`pull` inside $MEMORY_DIR uses the proxy without persisting the
-  // ephemeral localhost URL into the memory repo's git config.
   applyMemfsGitProxyEnv(env);
   if (sessionAccessToken) {
     const memfsPrefix = `${trimBaseUrl(getShellMemfsBaseUrl(env))}/v1/git/`;

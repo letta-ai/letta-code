@@ -201,6 +201,7 @@ test.each(["throw", "pending-cap"] as const)(
         listener,
         command: {
           type: "teleport_failed",
+          request_id: "request-failed",
           teleport_id: pending.teleportId,
           runtime: {
             agent_id: pending.agentId,

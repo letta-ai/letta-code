@@ -22,10 +22,12 @@ import {
 } from "./scheduler";
 
 const originalSandbox = process.env.LETTA_MANAGED_CLOUD_RUNTIME;
+const originalDesktopMode = process.env.LETTA_DESKTOP_MODE;
 const originalHome = process.env.LETTA_HOME;
 const dir = mkdtempSync(path.join(tmpdir(), "cron-catch-up-"));
 beforeEach(() => {
   delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
+  process.env.LETTA_DESKTOP_MODE = "1";
   process.env.LETTA_HOME = dir;
   mkdirSync(dir, { recursive: true });
 });
@@ -33,6 +35,8 @@ afterEach(() => {
   if (originalSandbox === undefined)
     delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
   else process.env.LETTA_MANAGED_CLOUD_RUNTIME = originalSandbox;
+  if (originalDesktopMode === undefined) delete process.env.LETTA_DESKTOP_MODE;
+  else process.env.LETTA_DESKTOP_MODE = originalDesktopMode;
   if (originalHome === undefined) delete process.env.LETTA_HOME;
   else process.env.LETTA_HOME = originalHome;
   rmSync(dir, { recursive: true, force: true });
@@ -171,7 +175,6 @@ test("invalid legacy cron falls back to the current minute and Send now does not
     expect(getIntendedCronOccurrence(task, now)).toEqual(
       new Date("2026-06-03T13:02:00.000Z"),
     );
-    // No active conversation runtime: the manual path should return its normal failure.
     expect(await runCronTaskNow(task.id)).toMatchObject({
       found: true,
       success: false,

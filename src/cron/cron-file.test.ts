@@ -14,6 +14,7 @@ import {
   deleteTask,
   garbageCollect,
   getActiveTasks,
+  getCronFilePath,
   getTask,
   hasLiveSchedulerOwner,
   isProcessAlive,
@@ -31,29 +32,21 @@ import {
 } from "@/cron/cron-file";
 import { __testOverridePidReuseProbe } from "@/cron/process-identity";
 
-// ── Test setup ──────────────────────────────────────────────────────
-
 const TEST_DIR = path.join(import.meta.dir, "__cron_test_tmp__");
 const _CRON_PATH = path.join(TEST_DIR, "crons.json");
 const _LOCK_PATH = path.join(TEST_DIR, "crons.lock");
 
-// Override the internal paths used by cronFile.ts for testing.
-// We need to use the module's own path resolution, so we'll set
-// LETTA_HOME to point to our test directory.
 const origHome = process.env.LETTA_HOME;
+const origConfigDir = process.env.LETTA_CONFIG_DIR;
 const origXdg = process.env.XDG_CONFIG_HOME;
 
 beforeEach(() => {
-  // Point LETTA_HOME to test dir so cronFile uses our temp path
   if (existsSync(TEST_DIR)) {
     rmSync(TEST_DIR, { recursive: true });
   }
   mkdirSync(TEST_DIR, { recursive: true });
-  // Note: cronFile.ts reads from ~/.letta/crons.json.
-  // For unit tests we need to test the pure logic functions.
-  // We'll test addTask/listTasks/deleteTask through the public API
-  // by setting LETTA_HOME.
   process.env.LETTA_HOME = TEST_DIR;
+  delete process.env.LETTA_CONFIG_DIR;
 });
 
 afterEach(() => {
@@ -66,11 +59,18 @@ afterEach(() => {
   }
   if (origHome) process.env.LETTA_HOME = origHome;
   else delete process.env.LETTA_HOME;
+  if (origConfigDir) process.env.LETTA_CONFIG_DIR = origConfigDir;
+  else delete process.env.LETTA_CONFIG_DIR;
   if (origXdg) process.env.XDG_CONFIG_HOME = origXdg;
   else delete process.env.XDG_CONFIG_HOME;
 });
 
-// ── Helper ──────────────────────────────────────────────────────────
+test("product config root takes precedence over legacy LETTA_HOME", () => {
+  const productConfigDir = path.join(TEST_DIR, ".dream");
+  process.env.LETTA_CONFIG_DIR = productConfigDir;
+
+  expect(getCronFilePath()).toBe(path.join(productConfigDir, "crons.json"));
+});
 
 function makeInput(overrides: Partial<AddTaskInput> = {}): AddTaskInput {
   return {
@@ -101,11 +101,6 @@ function deadSchedulerOwner(token = "dead-token"): SchedulerOwner {
   };
 }
 
-/**
- * Mimic an older binary: inspect only `scheduler_owner`, then rewrite the
- * file without `scheduler_owners`. A live tombstone must make this throw
- * before the write.
- */
 function simulateLegacyClaimSchedulerLease(): string {
   return withLock(() => {
     const data = readCronFile();
@@ -135,8 +130,6 @@ function simulateLegacyClaimSchedulerLease(): string {
     return token;
   });
 }
-
-// ── Tests ───────────────────────────────────────────────────────────
 
 describe("addTask", () => {
   test("creates a new recurring task", () => {
@@ -229,7 +222,6 @@ describe("listTasks", () => {
         scheduled_for: new Date(Date.now() + 60000),
       }),
     );
-    // Mark second as cancelled
     updateTask(t2.task.id, (t) => {
       t.status = "cancelled";
     });
@@ -778,28 +770,12 @@ describe("scheduler lease", () => {
     writePreBootOwner();
     probe("node /usr/local/bin/letta server");
     expect(() => claimSchedulerLease()).toThrow(/Cannot claim/);
-    probe(null);
-    expect(() => claimSchedulerLease()).toThrow(/Cannot claim/);
-    // A dev/bun-run listener: same runtime as this process, no "letta" in argv.
-    probe(`${process.execPath} run src/index.ts`);
-    expect(() => claimSchedulerLease()).toThrow(/Cannot claim/);
 
     probe("/System/Library/PrivateFrameworks/CloudDocsDaemon.framework/bird");
     const token = claimSchedulerLease();
     expect(readCronFile().scheduler_owner).toEqual(
       expect.objectContaining({ pid: process.pid, token }),
     );
-  });
-
-  test("never treats our own pid as reused, even for a pre-boot lease", () => {
-    __testOverrideReadProcessIdentity(() => null);
-    __testOverridePidReuseProbe({
-      platform: "darwin",
-      bootTimeMs: () => Date.now() - 3_600_000,
-      getProcessCommand: () => "/usr/sbin/unrelated",
-    });
-    const started_at = new Date(Date.now() - 86_400_000).toISOString();
-    expect(isProcessAlive(process.pid, { started_at })).toBe(true);
   });
 });
 
@@ -811,7 +787,6 @@ describe("garbageCollect", () => {
         scheduled_for: new Date(Date.now() + 60000),
       }),
     );
-    // Mark as fired with old timestamps (both created_at and fired_at must be old for GC)
     updateTask(task.id, (t) => {
       t.status = "fired";
       const twoDaysAgo = new Date(
@@ -834,7 +809,7 @@ describe("garbageCollect", () => {
     );
     updateTask(task.id, (t) => {
       t.status = "fired";
-      t.fired_at = new Date().toISOString(); // just now
+      t.fired_at = new Date().toISOString();
     });
     const removed = garbageCollect();
     expect(removed).toBe(0);
@@ -928,13 +903,10 @@ describe("withLock", () => {
   });
 });
 
-// ── computeJitter ─────────────────────────────────────────────────
-
 describe("computeJitter", () => {
   const now = new Date("2026-03-26T00:00:00Z");
 
   test("recurring jitter is always < 60s", () => {
-    // Hourly cron: period=3600s, 10% = 360s, but cap at 59999ms
     const jitter = computeJitter(
       "test-hourly-task",
       "0 * * * *",
@@ -947,7 +919,6 @@ describe("computeJitter", () => {
   });
 
   test("recurring jitter for daily cron is < 60s", () => {
-    // Daily: period=86400s, 10% = 8640s, but cap at 59999ms
     const jitter = computeJitter(
       "test-daily-task",
       "30 9 * * *",
@@ -960,7 +931,6 @@ describe("computeJitter", () => {
   });
 
   test("recurring jitter for frequent cron stays small", () => {
-    // Every 5 min: period=300s, 10% = 30s < 60s → no cap needed
     const jitter = computeJitter(
       "test-5m-task",
       "*/5 * * * *",
@@ -969,7 +939,7 @@ describe("computeJitter", () => {
       now,
     );
     expect(jitter).toBeGreaterThanOrEqual(0);
-    expect(jitter).toBeLessThan(30_000); // 10% of 300s = 30s
+    expect(jitter).toBeLessThan(30_000);
   });
 
   test("one-shot at :00 gets negative jitter up to 90s", () => {

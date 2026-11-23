@@ -12,10 +12,12 @@ import type { ApprovalResult } from "@/agent/approval-execution";
 import { reportListenerStateWriteFailure } from "@/telemetry/error-reporting";
 import { debugWarn } from "@/utils/debug";
 import { acquireDurableFileLock } from "./durable-file-lock";
+import { withInterruptedTurnDiskReserve } from "./interrupted-turn-disk-reserve";
 import {
   collectInterruptedTurnInputOwnershipWithSidecars,
   listInterruptedTurnMainSnapshot as snapshotMain,
 } from "./interrupted-turn-input-ownership";
+import { stampInterruptedTurnRevision } from "./interrupted-turn-revision";
 import { isInterruptedTurnRecord } from "./interrupted-turn-schema";
 import {
   defaultInterruptedTurnDirectory,
@@ -36,7 +38,6 @@ export {
   allRecordedResults,
   recordedToolResults,
 } from "./recorded-tool-results";
-
 export type ListenerStateWritePhase =
   | "run_observed"
   | "before_tool_execution"
@@ -69,7 +70,7 @@ export function createInterruptedTurnStore(
       `${encodeURIComponent(agentId)}_${encodeURIComponent(conversationId)}.json`,
     );
   }
-  function readRecord(file: string): InterruptedTurnRecord | null {
+  function readRecordOrThrow(file: string): InterruptedTurnRecord | null {
     try {
       const value: unknown = JSON.parse(readFileSync(file, "utf8"));
       if (!isInterruptedTurnRecord(value, file, path)) {
@@ -77,14 +78,20 @@ export function createInterruptedTurnStore(
       }
       return value;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        debugWarn(
-          "recovery",
-          "Ignoring unreadable interrupted-turn record",
-          file,
-          error,
-        );
-      }
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    }
+  }
+  function readRecord(file: string): InterruptedTurnRecord | null {
+    try {
+      return readRecordOrThrow(file);
+    } catch (error) {
+      debugWarn(
+        "recovery",
+        "Ignoring unreadable interrupted-turn record",
+        file,
+        error,
+      );
       return null;
     }
   }
@@ -127,7 +134,7 @@ export function createInterruptedTurnStore(
     snapshotSidecar,
   });
   const rawSnapshot = () => snapshotMain(directory, readRecord);
-  return {
+  return withInterruptedTurnDiskReserve(directory, {
     list(): InterruptedTurnRecord[] {
       try {
         const rawRecords = rawSnapshot().records;
@@ -197,6 +204,13 @@ export function createInterruptedTurnStore(
       conversationId: string,
     ): InterruptedTurnRecord | null {
       const current = readRecord(path(agentId, conversationId));
+      return current ? readMainView(current) : null;
+    },
+    readOrThrow(
+      agentId: string,
+      conversationId: string,
+    ): InterruptedTurnRecord | null {
+      const current = readRecordOrThrow(path(agentId, conversationId));
       return current ? readMainView(current) : null;
     },
     readRecoveryView(
@@ -274,27 +288,38 @@ export function createInterruptedTurnStore(
         ) {
           throw new Error("Interrupted-turn revision changed");
         }
-        const revision = randomUUID();
-        const written = {
-          ...record,
-          revision,
-          ...(record.teleport
-            ? {
-                teleport: {
-                  ...record.teleport,
-                  intentRevision: record.teleport.intentRevision ?? revision,
-                  readyRevision: record.teleport.ready
-                    ? (record.teleport.readyRevision ?? revision)
-                    : record.teleport.readyRevision,
-                },
-              }
-            : {}),
-        };
+        const written = stampInterruptedTurnRevision(record);
         persist(destination, written);
         return written;
       } finally {
         release();
       }
+    },
+    writeWithRecoveryAuthority(params: {
+      record: InterruptedTurnRecord;
+      expectedRevision: string;
+      lineageId: string;
+      expectedAuthorityRevision: string;
+    }): InterruptedTurnRecord | null {
+      let written: InterruptedTurnRecord | null = null;
+      const guarded = recoveryAuthority.withAuthority({
+        agentId: params.record.agentId,
+        conversationId: params.record.conversationId,
+        lineageId: params.lineageId,
+        expectedRevision: params.expectedAuthorityRevision,
+        action: () => {
+          const destination = path(
+            params.record.agentId,
+            params.record.conversationId,
+          );
+          const current = readRecord(destination);
+          if (current?.revision !== params.expectedRevision) return false;
+          written = stampInterruptedTurnRevision(params.record);
+          persist(destination, written);
+          return true;
+        },
+      });
+      return guarded ? written : null;
     },
     writeRecoveryLineageSnapshot(params: {
       agentId: string;
@@ -684,7 +709,7 @@ export function createInterruptedTurnStore(
         release();
       }
     },
-  };
+  });
 }
 export function recordListenerWork(
   runtime: ConversationRuntime,
@@ -882,7 +907,6 @@ export function recordListenerWork(
     throw error;
   }
 }
-
 export async function recordListenerWorkRetriably(
   runtime: ConversationRuntime,
   update: Parameters<typeof recordListenerWork>[1],
@@ -945,9 +969,6 @@ export async function recordListenerWorkRetriably(
       ) {
         throw error;
       }
-      // Keep this timer referenced: it is the only event-loop yield between
-      // synchronous lock attempts, and Bun on Windows can otherwise strand the
-      // awaited retry promise indefinitely.
       await new Promise<void>((resolve) =>
         setTimeout(resolve, options.retryDelayMs ?? 10),
       );
@@ -955,7 +976,6 @@ export async function recordListenerWorkRetriably(
   }
   throw new Error("Interrupted durable write lost authority before commit");
 }
-
 export function forgetListenerWork(
   runtime: ConversationRuntime,
   expectedRevision?: string | null,

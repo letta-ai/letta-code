@@ -1,4 +1,4 @@
-import type WebSocket from "ws";
+import WebSocket from "ws";
 import { rebindBrowserDeviceMcpOAuthOperationsToSocket } from "./commands/browser-device-mcp-oauth";
 import { closeOutboundTransportQueue } from "./outbound-wire";
 import { getConversationRuntimeKey, nextEventSeq } from "./runtime";
@@ -64,14 +64,21 @@ function refreshLegacySingleConnection(runtime: ListenerRuntime): void {
   const only =
     live.find(({ id }) => id === runtime.connectionId) ??
     (live.length === 1 ? live[0] : null);
-  // Keep the process-scoped transport stable across relay socket replacement.
-  // Turn continuations may capture this handle before a transient disconnect.
   runtime.transport = runtime.processTransport ?? only?.writer ?? null;
   runtime.streamTransport = only?.streamWriter ?? null;
-  runtime.socket = only ? socketForTransport(only.writer) : null;
-  runtime.streamSocket = only?.streamWriter
-    ? socketForTransport(only.streamWriter)
-    : null;
+  const pending = (socket: WebSocket | null | undefined) =>
+    socket != null &&
+    socket.readyState <= WebSocket.OPEN &&
+    ![...runtime.connections.values()].some(
+      ({ writer, streamWriter }) =>
+        writer === socket || streamWriter === socket,
+    );
+  if (only || !pending(runtime.socket))
+    runtime.socket = only ? socketForTransport(only.writer) : null;
+  if (only || !pending(runtime.streamSocket))
+    runtime.streamSocket = only?.streamWriter
+      ? socketForTransport(only.streamWriter)
+      : null;
 }
 
 export function createConnectionRequestKey(
@@ -88,7 +95,6 @@ export function openListenerConnection(params: {
   streamWriter?: ListenerTransport | null;
   cancellation?: AbortController;
   options: StartListenerOptions;
-  /** Owner already reserved before the transport existed; claimed as-is. */
   startupOwner?: StartupIngressOwner;
 }): ListenerConnectionState {
   const existing = params.runtime.connections.get(params.connectionId);
@@ -256,11 +262,6 @@ export function getSubscribedListenerConnections(
     .sort((a, b) => a.ordinal - b.ordinal);
 }
 
-/**
- * Connection that executes a turn. Process-originated turns (task
- * notifications, cron, mod continues) carry no submitting connection, but their
- * tools still run on this listener; children they launch must attach to it.
- */
 export function resolveTurnExecutionConnectionId(
   runtime: ListenerRuntime,
   scope: { agent_id?: string | null; conversation_id?: string | null },
@@ -324,9 +325,6 @@ export function resolveListenerConnectionTargets(params: {
         connections = [explicitConnection];
         break;
       }
-      // The outbound Cloud listener predates the connection map. Preserve its
-      // single transport while the local app-server always has tracked
-      // connections and therefore cannot enter this compatibility branch.
       if (
         (runtime?.connections.size ?? 0) === 0 &&
         params.routing.connectionId === (runtime?.connectionId ?? "legacy")
@@ -343,10 +341,6 @@ export function resolveListenerConnectionTargets(params: {
       if (connections.length > 0) {
         break;
       }
-      // Letta's outbound Desktop listener is a single pre-subscription
-      // transport. This does not apply to app-server connections: once a
-      // connection map exists, a scoped message with no subscribers is
-      // dropped, matching Codex.
       if ((runtime?.connections.size ?? 0) === 0) {
         connections = [null];
         break;
@@ -439,7 +433,6 @@ export function suspendListenerConnection(
   return closed;
 }
 
-/** Move the relay's suspended subscriptions to its newly registered identity. */
 export function resumeListenerConnectionIdentity(
   runtime: ListenerRuntime,
   previousId: string,

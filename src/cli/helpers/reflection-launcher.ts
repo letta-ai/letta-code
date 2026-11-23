@@ -69,7 +69,6 @@ export function getReflectionFinalizationContext(agentId: string) {
   } as const;
 }
 
-/** Max background wait for the reflection subagent's agent ID before emitting `reflection_start` (previously 1s inline, timed out ~100% of the time). */
 export const REFLECTION_AGENT_ID_WAIT_MS = 30_000;
 
 const reservedReflectionAgentIds = new Set<string>();
@@ -245,16 +244,9 @@ export interface ReflectionLaunchOptions {
   reflectionSettings?: ReflectionSettings;
   actingUserId?: string | null;
   description: string;
-  /** Explicit model for this reflection subagent, if requested by the caller. */
   model?: string;
   instruction?: string;
-  /**
-   * Replace the reflection task prompt entirely (advanced). The caller owns the
-   * transcript/memory mechanics the default prompt provides ($TRANSCRIPT_PATH,
-   * $MEMORY_DIR, the commit contract).
-   */
   reflectionPromptOverride?: string;
-  /** Replace the reflection subagent's system prompt/persona (advanced). */
   reflectionSystemPromptOverride?: string;
   completionConversationId?: string | (() => string);
   recompileByConversation: Map<string, Promise<void>>;
@@ -541,9 +533,6 @@ export async function prepareReflectionMemoryWorktreeLaunch(params: {
     parentMemoryDir: memoryDir,
   });
   try {
-    // An override replaces the whole task prompt; the caller is then responsible
-    // for referencing $TRANSCRIPT_PATH / $MEMORY_DIR, so we skip the (otherwise
-    // wasted) parent-memory snapshot in that case.
     const reflectionPrompt =
       params.reflectionPromptOverride ??
       buildReflectionSubagentPrompt({
@@ -575,7 +564,6 @@ export async function finalizeReflectionMemoryWorktreeLaunch(params: {
   mergePolicy?: "auto" | "explicit";
   mergeInstructions?: string;
   runExplicitIntegration?: RunExplicitReflectionIntegration;
-  /** Pushes the integration merge; the integration child cannot while the lease is held. */
   syncIntegratedMemory?: typeof syncPendingMemoryCommitsAfterTurn;
   updateIntegrationConversation?: (
     conversationId: string,
@@ -623,9 +611,6 @@ export async function finalizeReflectionMemoryWorktreeLaunch(params: {
       : await inspectReflectionMemoryWorktree(params.worktree).then(
           (state) => state.commitCount > 0 || state.dirty,
         ));
-  // Explicit integration, its verification and the push happen under one
-  // lease: releasing between them would let another process's post-turn sync
-  // pull --rebase and rewrite the merge before ancestry is checked.
   const integration = explicitIntegration
     ? await withMemoryOperation(params.worktree.parentMemoryDir, async () => {
         integrationRun = await (
@@ -641,8 +626,6 @@ export async function finalizeReflectionMemoryWorktreeLaunch(params: {
           params.worktree,
           finalizeOptions(),
         );
-        // The integration child's own post-turn sync found the lease held and
-        // skipped, and no parent turn may follow; push its verified merge here.
         if (result.status === "merged") {
           try {
             const sync = await (
@@ -861,7 +844,6 @@ export async function launchReflectionSubagent(
     const { spawnBackgroundSubagentTask, waitForBackgroundSubagentAgentId } =
       await import("@/tools/impl/task");
 
-    // Defer `reflection_start` until the agent ID resolves (background, bounded by REFLECTION_AGENT_ID_WAIT_MS).
     const emitReflectionStart = (resolvedAgentId: string | null) => {
       emitReflectionRunStart({
         triggerSource,
@@ -953,7 +935,6 @@ export async function launchReflectionSubagent(
     });
     releaseOnComplete = true;
     preparedWorktree = undefined;
-    // Fire-and-forget: emit `reflection_start` when the agent ID resolves or after timeout.
     void waitForBackgroundSubagentAgentId(
       subagentId,
       REFLECTION_AGENT_ID_WAIT_MS,
@@ -962,7 +943,6 @@ export async function launchReflectionSubagent(
         emitReflectionStart(resolvedAgentId);
       })
       .catch((err) => {
-        // Worst case — still emit with no subagent_id so we don't lose the event.
         debugWarn(
           "memory",
           `Failed waiting for reflection agent ID: ${

@@ -54,10 +54,25 @@ VERSION_TIMEOUT_SECONDS = 2
 MAX_VERSION_TEXT = 200
 
 
+def get_user_config_dir() -> Path:
+    """Resolve the product-selected global config directory."""
+    override = os.environ.get("LETTA_CONFIG_DIR", "").strip()
+    if override:
+        path = Path(override)
+        if not path.is_absolute():
+            raise ValueError("LETTA_CONFIG_DIR must be absolute")
+        return path
+    return Path.home() / ".letta"
+
+
 def get_settings_paths(working_directory: str) -> list[tuple[str, Path]]:
     """Return (scope, path) in precedence order (lowest to highest)."""
-    return [
-        ("user", Path.home() / ".letta" / "settings.json"),
+    paths = [("user", get_user_config_dir() / "settings.json")]
+    if os.environ.get("LETTA_CONFIG_DIR", "").strip() and (
+        Path(working_directory).resolve() == Path.home().resolve()
+    ):
+        return paths
+    return paths + [
         ("project", Path(working_directory) / ".letta" / "settings.json"),
         ("local", Path(working_directory) / ".letta" / "settings.local.json"),
     ]

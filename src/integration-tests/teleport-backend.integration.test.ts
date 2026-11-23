@@ -1,9 +1,17 @@
 import { expect, test } from "bun:test";
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { createInterface } from "node:readline";
 import Letta from "@letta-ai/letta-client";
 import WebSocket from "ws";
 import { AppServerClient } from "@/app-server-client";
@@ -12,10 +20,17 @@ import type {
   TeleportResponse,
 } from "@/backend/api/environments";
 import { createCloudFixture } from "@/test-utils/cloud-fixture-retry";
+import {
+  CloudRequestTimeoutError,
+  pollCloudReadiness,
+} from "@/test-utils/cloud-readiness-poll";
+import { CloudReadinessError } from "@/test-utils/cloud-readiness-retry";
+import {
+  deleteCloudFixture,
+  initiateFixtureTeleport,
+} from "@/test-utils/teleport-fixture-retry";
 import { createAuthenticatedCliTestEnv } from "@/test-utils/test-process-env";
 
-// Real Cloud relay, model turn, and two real CLIs; the test owns the tool reply.
-// Optional: LETTA_TEST_CLI_PATH=/absolute/path/to/built/letta.js runs Node.
 const apiKey = process.env.LETTA_API_KEY;
 const baseURL = process.env.LETTA_BASE_URL || "https://api.letta.com";
 const sourceEntry = resolve(import.meta.dir, "../../src/index.ts");
@@ -35,6 +50,34 @@ async function bounded<T>(label: string, work: Promise<T>, ms = 30_000) {
   }
 }
 
+async function connectStatusWebSocket(url: string): Promise<AppServerClient> {
+  for (let attempt = 1; ; attempt++) {
+    const client = new AppServerClient({
+      url,
+      authToken: apiKey,
+      WebSocket,
+      requestTimeoutMs: 30_000,
+    });
+    try {
+      return await client.connect();
+    } catch (error) {
+      if (
+        attempt === 3 ||
+        !(error instanceof Error) ||
+        !(
+          error.message.endsWith("failed: Expected 101 status code") ||
+          /^App-server WebSocket failed to open: HTTP (502|503|504)\b/.test(
+            error.message,
+          )
+        )
+      ) {
+        throw error;
+      }
+      await delay(attempt * 500);
+    }
+  }
+}
+
 async function poll<T>(label: string, probe: () => Promise<T | undefined>) {
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
@@ -49,26 +92,37 @@ async function request<T>(
   path: string,
   body?: object,
   method = body ? "POST" : "GET",
+  timeoutMs = 15_000,
 ): Promise<T> {
-  const response = await fetch(new URL(path, baseURL), {
-    method,
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    ...(body ? { body: JSON.stringify(body) } : {}),
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!response.ok) {
-    const error = (await response.json().catch(() => ({}))) as {
-      errorCode?: string;
-      message?: string;
-    };
-    throw new Error(
-      `Cloud request failed: HTTP ${response.status}: ${error.errorCode ?? ""} ${error.message ?? ""}`,
-    );
+  const signal = AbortSignal.timeout(timeoutMs);
+  try {
+    const response = await fetch(new URL(path, baseURL), {
+      method,
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+      signal,
+    });
+    if (!response.ok) {
+      const error = (await response.json().catch(() => ({}))) as {
+        errorCode?: string;
+        message?: string;
+      };
+      throw new CloudReadinessError(
+        response.status,
+        error.errorCode,
+        error.message,
+      );
+    }
+    if (method === "DELETE") return undefined as T;
+    return (await response.json()) as T;
+  } catch (error) {
+    if (signal.aborted)
+      throw new CloudRequestTimeoutError(`${method} ${path}`, error);
+    throw error;
   }
-  return response.json() as Promise<T>;
 }
 
 async function stop(child: ChildProcess) {
@@ -106,6 +160,8 @@ testWithAPI.each([
     let destinationAgentNotFound = false;
     const failures: string[] = [];
     const stderrByRole = new Map<string, string>();
+    const stdoutByRole = new Map<string, string>();
+    const readinessByRole = new Map<string, string>();
     let releaseTool: (() => void) | undefined;
     try {
       async function listener(role: "source" | "destination") {
@@ -143,6 +199,9 @@ testWithAPI.each([
         const env = createAuthenticatedCliTestEnv({
           HOME: home,
           LETTA_BASE_URL: baseURL,
+          LETTA_DEBUG: undefined,
+          DEBUG: undefined,
+          LETTA_LOG_WS_EVENTS: "1",
         });
         for (const key of Object.keys(env)) {
           if (
@@ -167,12 +226,34 @@ testWithAPI.each([
                 ]),
             artifact ? resolve(artifact) : sourceEntry,
             "remote",
+            "--lifecycle-output=jsonl",
             "--computer-name",
             name,
           ],
           { cwd, env, stdio: ["ignore", "pipe", "pipe"] },
         );
         children.push(child);
+        let listenerReady = false;
+        readinessByRole.set(
+          role,
+          "spawned; lifecycle=none; environment=unknown",
+        );
+        createInterface({ input: child.stdout }).on("line", (line) => {
+          try {
+            const event = JSON.parse(line);
+            if (event.lettaLifecycleProtocol !== 1) return;
+            readinessByRole.set(role, `lifecycle=${event.state}`);
+            if (event.state === "connected") listenerReady = true;
+            if (event.state === "reconnecting" || event.state === "error")
+              listenerReady = false;
+          } catch {}
+        });
+        child.stdout?.on("data", (chunk: Buffer) => {
+          stdoutByRole.set(
+            role,
+            `${stdoutByRole.get(role) ?? ""}${chunk.toString()}`.slice(-12000),
+          );
+        });
         child.stderr?.on("data", (chunk: Buffer) => {
           stderrByRole.set(
             role,
@@ -193,34 +274,48 @@ testWithAPI.each([
             }
           });
         }
-        const connectionId = await poll(`${role} registration`, async () => {
-          if (
-            spawnFailed ||
-            child.exitCode !== null ||
-            child.signalCode !== null
-          ) {
-            throw new Error(`${role} listener exited before registration`);
-          }
-          const result = await request<ListEnvironmentsResponse>(
-            "/v1/environments?limit=100&onlineOnly=true",
-          );
-          const environment = result.connections.find(
-            (item) => item.connectionName === name,
-          );
-          if (environment) environmentIds.add(environment.id);
-          return environment?.connectionId ?? undefined;
-        });
-        const client = new AppServerClient({
-          url: new URL(
+        stage = `${role} registration and listener readiness`;
+        const connectionId = await pollCloudReadiness(
+          `${stage} (expected connected lifecycle event)`,
+          async (remainingMs) => {
+            if (
+              spawnFailed ||
+              child.exitCode !== null ||
+              child.signalCode !== null
+            ) {
+              throw new Error(`${role} listener exited before registration`);
+            }
+            const result = await request<ListEnvironmentsResponse>(
+              "/v1/environments?limit=100&onlineOnly=true",
+              undefined,
+              "GET",
+              Math.min(15_000, remainingMs),
+            );
+            const environment = result.connections.find(
+              (item) => item.connectionName === name,
+            );
+            if (environment) environmentIds.add(environment.id);
+            readinessByRole.set(
+              role,
+              `lifecycleConnected=${listenerReady}; environment=${environment?.connectionId ?? "absent"}`,
+            );
+            return listenerReady
+              ? (environment?.connectionId ?? undefined)
+              : undefined;
+          },
+        );
+        stage = `${role} status WebSocket readiness`;
+        const client = await connectStatusWebSocket(
+          new URL(
             `/v1/environments/${encodeURIComponent(connectionId)}/status/ws`,
             baseURL,
           ).toString(),
-          authToken: apiKey,
-          WebSocket,
-          requestTimeoutMs: 30_000,
-        });
+        );
         clients.push(client);
-        await bounded(`${role} status WebSocket`, client.connect());
+        stage = `${role} API backend readiness`;
+        const info = await client.info();
+        expect(info.success).toBe(true);
+        expect(info.backend).toBe("api");
         return { client, connectionId };
       }
 
@@ -329,8 +424,6 @@ testWithAPI.each([
             ? true
             : undefined;
         }
-        // Hold the source in its tool call: a completed reply would drop active
-        // ownership between this test's status read and its teleport request.
         source.client.input({
           runtime: scope,
           payload: {
@@ -346,21 +439,18 @@ testWithAPI.each([
         await poll(stage, () => ownerIs(source.connectionId));
         stage = "teleport";
         const runtimePath = `/v1/environments/runtimes/${agent.id}/${conversation.id}`;
-        const teleport = await request<TeleportResponse>(
-          `${runtimePath}/teleport`,
-          {
+        const idempotencyKey = randomUUID();
+        const teleport = await initiateFixtureTeleport(() =>
+          request<TeleportResponse>(`${runtimePath}/teleport`, {
             targetConnectionId: destination.connectionId,
-            idempotencyKey: randomUUID(),
-          },
+            idempotencyKey,
+          }),
         );
         expect(teleport.sourceConnectionId).toBe(source.connectionId);
         expect(teleport.targetConnectionId).toBe(destination.connectionId);
         expect(typeof teleport.id).toBe("string");
-        // POST confirms the source has registered teleport before it returns.
-        // Let the tool finish so the listener can reach its normal boundary.
         releaseTool?.();
         const completed = await poll("teleport completion", async () => {
-          // Cloud's GET route is plural, unlike the initiation POST route.
           const result = await request<TeleportResponse>(
             `${runtimePath}/teleports/${encodeURIComponent(teleport.id)}`,
           );
@@ -370,8 +460,6 @@ testWithAPI.each([
               : undefined;
           }
           if (result.status === "failed") {
-            // On pre-fix code this produces the concrete local lookup failure,
-            // rather than merely asserting that a backend flag has the wrong value.
             const failed = await destination.client.runtimeStart(runtimeStart);
             destinationAgentNotFound ||= /Agent\b.*not found/i.test(
               failed.error ?? "",
@@ -424,8 +512,39 @@ testWithAPI.each([
       failures.push(
         `stage=${stage}; HTTP=${httpStatus ?? "n/a"}; destination Agent not found=${destinationAgentNotFound}; listener exits=${children.map((child) => child.exitCode ?? child.signalCode ?? "running").join(",")}`,
       );
+      const sessionLogs = await Promise.all(
+        ["source", "destination"].map(async (role) => {
+          const directory = join(
+            root,
+            role,
+            "home",
+            ".letta",
+            "logs",
+            "remote",
+          );
+          try {
+            const files = (await readdir(directory))
+              .filter((name) => name.endsWith(".log"))
+              .sort()
+              .slice(-2);
+            const logs = await Promise.all(
+              files.map((name) => readFile(join(directory, name), "utf8")),
+            );
+            return `${role} session log: ${logs.join("\n").slice(-16000)}`;
+          } catch {
+            return `${role} session log: unavailable`;
+          }
+        }),
+      );
       const detail = [
         error instanceof Error ? error.message : "Unknown failure",
+        ...[...readinessByRole].map(
+          ([role, state]) => `${role} readiness: ${state}`,
+        ),
+        ...sessionLogs,
+        ...[...stdoutByRole].map(
+          ([role, stdout]) => `${role} stdout: ${stdout}`,
+        ),
         ...[...stderrByRole].map(([role, stderr]) => `${role}: ${stderr}`),
       ].join("\n");
       failures.push(
@@ -448,7 +567,6 @@ testWithAPI.each([
           }),
         ),
       );
-      // Check after shutdown too: an asynchronous settings flush must not persist API.
       if (destinationSettingsPath) {
         try {
           const saved = JSON.parse(
@@ -459,26 +577,38 @@ testWithAPI.each([
           failures.push("destination saved local preference was not preserved");
         }
       }
-      if (conversationId)
-        await sdk.conversations.delete(conversationId).catch((error) => {
-          failures.push(
-            `conversation deletion ${conversationId}: ${error instanceof Letta.APIError ? error.status : "unknown"}`,
+      const cleanup = async (label: string, remove: () => Promise<unknown>) => {
+        try {
+          await deleteCloudFixture(remove);
+        } catch (error) {
+          const status =
+            error instanceof Letta.APIError ||
+            error instanceof CloudReadinessError
+              ? error.status
+              : "unknown";
+          console.warn(
+            `Teleport fixture cleanup failed: ${label}; HTTP=${status}`,
           );
-        });
-      if (agentId)
-        await sdk.agents.delete(agentId).catch((error) => {
-          failures.push(
-            `agent deletion ${agentId}: ${error instanceof Letta.APIError ? error.status : "unknown"}`,
-          );
-        });
+        }
+      };
+      if (conversationId) {
+        const id = conversationId;
+        await cleanup(`conversation deletion: ${id}`, () =>
+          sdk.conversations.delete(id),
+        );
+      }
+      if (agentId) {
+        const id = agentId;
+        await cleanup(`agent deletion: ${id}`, () => sdk.agents.delete(id));
+      }
       for (const id of environmentIds) {
-        await request(
-          `/v1/environments/${encodeURIComponent(id)}`,
-          undefined,
-          "DELETE",
-        ).catch(() => {
-          failures.push(`environment deletion: ${id}`);
-        });
+        await cleanup(`environment deletion: ${id}`, () =>
+          request(
+            `/v1/environments/${encodeURIComponent(id)}`,
+            undefined,
+            "DELETE",
+          ),
+        );
       }
       await rm(root, { recursive: true, force: true }).catch(() => {
         failures.push("temporary directory removal");

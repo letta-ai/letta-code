@@ -1,9 +1,3 @@
-/**
- * Converts internal diff results (AdvancedDiffResult) to wire-safe DiffPreview
- * for the bidirectional protocol. Strips full file contents (oldStr/newStr)
- * and only sends hunks, which is sufficient for rendering.
- */
-
 import path, { basename } from "node:path";
 import type { AdvancedDiffResult, AdvancedHunk } from "@/cli/helpers/diff";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
@@ -14,7 +8,6 @@ function parseHunkLinePrefix(raw: string): DiffHunkLine | null {
     return { type: "context", content: "" };
   }
   if (raw[0] === "\\") {
-    // Metadata line (e.g. "\ No newline at end of file"), not a diff row.
     return null;
   }
   const prefix = raw[0];
@@ -22,7 +15,6 @@ function parseHunkLinePrefix(raw: string): DiffHunkLine | null {
   if (prefix === "+") return { type: "add", content };
   if (prefix === "-") return { type: "remove", content };
   if (prefix === " ") return { type: "context", content };
-  // Unknown prefix: preserve full line as context rather than dropping first char.
   return { type: "context", content: raw };
 }
 
@@ -57,10 +49,6 @@ function convertHunk(hunk: AdvancedHunk): DiffHunk {
   };
 }
 
-/**
- * Convert a single AdvancedDiffResult to a wire-safe DiffPreview.
- * For multi-file patch tools, call this once per file operation.
- */
 export function toDiffPreview(
   result: AdvancedDiffResult,
   fileNameOverride?: string,
@@ -116,12 +104,6 @@ async function getDiffDeps(): Promise<DiffDeps> {
   return cachedDiffDeps;
 }
 
-/**
- * Compute diff previews for a tool call. Returns an array of DiffPreview
- * (one per file for patch tools, one for Write/Edit tools).
- *
- * Mirrors the diff computation logic in App.tsx:4372-4438.
- */
 export async function computeDiffPreviews(
   toolName: string,
   toolArgs: Record<string, unknown>,
@@ -175,12 +157,9 @@ export async function computeDiffPreviews(
             previews.push(toDiffPreview(result, basename(op.path)));
           }
         }
-        // Delete operations don't produce diffs
       }
     }
-  } catch {
-    // Ignore diff computation errors — return whatever we have so far
-  }
+  } catch {}
 
   return previews;
 }

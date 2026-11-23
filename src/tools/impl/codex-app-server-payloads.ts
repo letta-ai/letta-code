@@ -1,0 +1,160 @@
+import type { SubagentResult } from "@/agent/subagents";
+import {
+  type ExternalToolCall,
+  type ExternalToolResult,
+  formatExternalToolCallArgs,
+  toolOutputText,
+} from "./external-tool-call";
+
+export const CAPACITY_RETRY_DELAYS_MS = [1_000, 2_000] as const;
+
+export const CODEX_CAPACITY_ERROR =
+  "Codex is out of capacity for this session; start a new codex session or use claude-code";
+
+export function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+export function readString(value: unknown, key: string): string | undefined {
+  const record = asRecord(value);
+  return typeof record?.[key] === "string"
+    ? (record[key] as string)
+    : undefined;
+}
+
+export function isCapacityError(error: Record<string, unknown>): boolean {
+  const info = asRecord(error.codexErrorInfo);
+  if (
+    info &&
+    Object.values(info).some(
+      (detail) => asRecord(detail)?.httpStatusCode === 409,
+    )
+  ) {
+    return true;
+  }
+  return /\b409 Conflict\b/i.test(readString(error, "message") ?? "");
+}
+
+export function turnFailureMessage(
+  turnError: Record<string, unknown> | undefined,
+  notifications: Array<Record<string, unknown>>,
+): string | undefined {
+  const messages = [turnError, ...notifications]
+    .map((error) => readString(error, "message")?.trim())
+    .filter((message): message is string => Boolean(message));
+  return messages.length ? [...new Set(messages)].join("; ") : undefined;
+}
+
+export function turnReport(params: Record<string, unknown>): string {
+  const turn = asRecord(params.turn);
+  const items = Array.isArray(turn?.items) ? turn.items : [];
+  for (let index = items.length - 1; index >= 0; index--) {
+    const item = asRecord(items[index]);
+    if (item?.type === "agentMessage" && typeof item.text === "string") {
+      return item.text;
+    }
+  }
+  return "";
+}
+
+export function describeCodexToolItem(
+  item: Record<string, unknown> | undefined,
+): ExternalToolCall | undefined {
+  const id = readString(item, "id");
+  if (!item || !id) return undefined;
+  const call = (name: string, args: unknown) => ({
+    id,
+    name,
+    args: formatExternalToolCallArgs(args),
+    input: args,
+  });
+  switch (item.type) {
+    case "commandExecution":
+      return call("Bash", { command: item.command });
+    case "fileChange": {
+      const changes = Array.isArray(item.changes) ? item.changes : [];
+      return call("Edit", {
+        files: changes.map((change) => readString(change, "path")),
+      });
+    }
+    case "mcpToolCall":
+      return call(
+        `${readString(item, "server") ?? "mcp"}/${readString(item, "tool") ?? "tool"}`,
+        item.arguments,
+      );
+    case "dynamicToolCall":
+      return call(readString(item, "tool") ?? "tool", item.arguments);
+    case "webSearch": {
+      const query = readString(item, "query");
+      return query ? call("WebSearch", { query }) : undefined;
+    }
+    default:
+      return undefined;
+  }
+}
+
+export function describeCodexToolResult(
+  item: Record<string, unknown>,
+): ExternalToolResult | undefined {
+  const id = readString(item, "id");
+  if (!id || !TOOL_ITEM_TYPES.has(String(item.type))) return undefined;
+  const status = readString(item, "status");
+  const exitCode = typeof item.exitCode === "number" ? item.exitCode : 0;
+  const error = asRecord(item.error);
+  const output =
+    item.type === "commandExecution"
+      ? `${toolOutputText(item.aggregatedOutput)}${exitCode ? `\n[exit code ${exitCode}]` : ""}`
+      : item.type === "fileChange"
+        ? toolOutputText(item.changes)
+        : item.type === "mcpToolCall"
+          ? error
+            ? (readString(error, "message") ?? toolOutputText(error))
+            : toolOutputText(asRecord(item.result)?.content ?? item.result)
+          : toolOutputText(item.contentItems);
+  return {
+    id,
+    isError:
+      status === "failed" ||
+      status === "declined" ||
+      exitCode !== 0 ||
+      Boolean(error) ||
+      item.success === false,
+    output,
+  };
+}
+
+export function codexReasoningText(item: Record<string, unknown>): string {
+  if (item.type !== "reasoning") return "";
+  for (const parts of [item.summary, item.content]) {
+    const text = Array.isArray(parts)
+      ? parts.filter((part) => typeof part === "string").join("\n\n")
+      : "";
+    if (text.trim()) return text;
+  }
+  return "";
+}
+
+export const TOOL_ITEM_TYPES = new Set([
+  "commandExecution",
+  "fileChange",
+  "mcpToolCall",
+  "dynamicToolCall",
+  "webSearch",
+]);
+
+export function capacityResult(result: SubagentResult): SubagentResult {
+  return {
+    ...result,
+    error: `${CODEX_CAPACITY_ERROR}. Last error: ${result.error ?? "unknown"}`,
+  };
+}
+
+export function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export function textInput(text: string): Array<{ type: "text"; text: string }> {
+  return [{ type: "text", text }];
+}

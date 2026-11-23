@@ -17,11 +17,12 @@ The important part is choosing the right layer. Do not smear a preference into d
 | Memory and identity | Facts worth retaining, style preferences, persona changes, project knowledge, reusable skills | Edit `$MEMORY_DIR` files and sync the memory repo |
 | Server agent fields | Agent default model (only on explicit request), context limit, system prompt, compaction, agent name, description | Patch `/v1/agents/{agent_id}` |
 | Server conversation fields | Model/context changes for the current conversation (the normal target) | Patch `/v1/conversations/{conversation_id}` |
-| Local settings | Permissions, environment variables, UI/runtime preferences, pinned agents, toolset overrides, reflection cadence | Edit `~/.letta/settings.json`, `./.letta/settings.json`, or `./.letta/settings.local.json` |
+| Local settings | Permissions, environment variables, UI/runtime preferences, pinned agents, toolset overrides, reflection cadence | Edit `$LETTA_CONFIG_DIR/settings.json` when configured (otherwise `~/.letta/settings.json`), `./.letta/settings.json`, or `./.letta/settings.local.json` |
 | Mods | New deterministic tools, slash commands, providers, statusline behavior, or lightweight UI | Load `creating-mods`, `customizing-commands`, or `customizing-statusline` |
 | Skills | Reusable procedural knowledge or bundled scripts | Load `creating-skills` or `acquiring-skills` |
 | Channels | Slack/Discord/Telegram/WhatsApp/Signal accounts, pairing, routing, listener state | Use `letta channels` or channel commands |
 | Schedules | Reminders and recurring prompts | Load `scheduling-tasks` and use `letta cron` |
+| Agent variables | Plain, readable `$NAME` values for shell commands | Use `letta variable` (or `/variable` in a session) |
 | Agent secrets | Per-agent `$NAME` credential values for shell commands | Use `letta secret` (or `/secret` in a session) |
 
 Decision rule: if the model should remember and reason about it, use memory. If the runtime must enforce it or route it before the model decides anything, use settings, API fields, mods, channels, or schedules.
@@ -55,13 +56,15 @@ Local settings, server state, and the current process are different sources of t
 
 `letta model` reads and writes through the active backend, so it works the same on every backend. Prefer it over the REST helper scripts for anything model-related.
 
-### Account credits and model quota
+### Account credits
 
-Run `letta usage` for a Markdown overview of the current plan, credit balance, and `letta/*` model quota (`lettaTier` only). Report the server's bucket (`full`, `high`, `medium`, `low`, or `empty`) and quota/daily reset timestamps as-is; do not infer exact requests or percentages. Amounts are credits, not dollars; preserve negative balances. An omitted daily reset is shown as unavailable.
+Hosted model quota has been retired; `letta usage` shows Letta credits instead, not provider subscription quota.
 
-The command uses CLI auth and respects `LETTA_API_KEY`/`LETTA_BASE_URL`, not agent or conversation selectors. Credits belong to the organization; user-scoped quota belongs to the authenticated user, not necessarily the person chatting with the agent. In local mode, use `letta --backend cloud usage` only when the user wants Cloud account usage.
+Run `letta usage` for a Markdown overview of the current plan and remaining credit balance. Amounts are credits, not dollars; preserve negative balances.
 
-Use `letta model list` for available models; credits and quota buckets do not guarantee inference availability. `letta usage` does not include session token statistics; the interactive `/usage` command is a separate surface. If either lookup fails, the command exits nonzero without partial usage. Treat that as unavailable data, not zero credits or exhausted quota.
+The command uses CLI auth and respects `LETTA_API_KEY`/`LETTA_BASE_URL`, not agent or conversation selectors. Credits belong to the organization, not necessarily the person chatting with the agent. In local mode, use `letta --backend cloud usage` only when the user wants Cloud account usage.
+
+Use `letta model list` for available models; a credit balance does not guarantee inference availability. `letta usage` does not include session token statistics; the interactive `/usage` command is a separate surface. If the balance lookup fails, the command exits nonzero without partial usage. Treat that as unavailable data, not zero credits.
 
 ### Billing path when changing models
 
@@ -69,7 +72,7 @@ The same model can often be reached through more than one route: a connected sub
 
 Before switching models, consider how the current model is billed and keep the user on that route unless they asked to change it. Use the current handle, the labels in `letta model list`, and anything the user has said about billing as evidence. If several available handles serve the requested model and you cannot tell which one uses the user's subscription, list the candidates and ask before switching. Do not silently move a user from a subscription to per-token billing.
 
-`letta model list --byok` includes both connected subscriptions and user API keys, so it does not separate the two. `letta usage` covers only Letta credits and `letta/*` quota, not connected subscriptions.
+`letta model list --byok` includes both connected subscriptions and user API keys, so it does not separate the two. `letta usage` covers only Letta credits, not connected subscriptions.
 
 ### Harness and server settings
 
@@ -110,7 +113,7 @@ Use the active layout shown by the prompt and memory files. Do not create a
 `system/` directory in a root-layout repository or move existing-layout memory
 to the root as part of an unrelated self-configuration request.
 
-A requested memory or identity change is memory as the main task: make the edit directly with ordinary file tools, preserve the active layout, stage only the files you changed by explicit path, commit in the same shell call, and verify the result before reporting success. If a memory worker you launched may still be running, read its output file first (it ends with `[Task completed]` or `[Task failed]`) and reread the files before editing what it was asked to change. Delegate to the background `memory` subagent only when the change is incidental to another task the user is waiting on.
+Before editing memory, load the relevant skills: `maintaining-core-memory` for root/core files, `maintaining-deferred-memory` for deferred files, and `creating-skills` for skills. Then make the edit directly with ordinary file tools so the agent with the context applies the memory guidance. Preserve the active layout, stage only changed files by explicit path, commit in the same shell call, and verify the result before reporting success.
 
 Do not use API system-prompt replacement for ordinary learning. That can clobber the compiled prompt. Edit the memory files instead.
 
@@ -232,7 +235,7 @@ Settings scopes:
 
 | File | Scope | Typical contents |
 | --- | --- | --- |
-| `~/.letta/settings.json` | User/global | Permissions, env keys, experiments, UI/runtime preferences, agents[] entries |
+| `$LETTA_CONFIG_DIR/settings.json` when configured; otherwise `~/.letta/settings.json` | User/global | Permissions, env keys, experiments, UI/runtime preferences, agents[] entries |
 | `./.letta/settings.json` | Project/shared | Project settings committed with the repo |
 | `./.letta/settings.local.json` | Project-local | Personal project overrides, usually gitignored |
 
@@ -347,14 +350,26 @@ Use skills when the user wants you to become good at a repeatable workflow. Sour
 
 1. Project skills: `.agents/skills/` with `.skills/` as legacy fallback
 2. Agent skills: `$MEMORY_DIR/skills/`
-3. Global skills: `~/.letta/skills/`
+3. Global skills: `$LETTA_CONFIG_DIR/skills/` when configured; otherwise `~/.letta/skills/`
 4. Bundled skills
 
 Load `creating-skills` to create or edit a skill. Load `acquiring-skills` when the user asks for a capability you do not already have. Project, global, bundled, and agent-owned skills have different visibility; verify the target scope before changing skills another agent may load.
 
+## Agent variables
+
+Variables are plain values the agent can read. They are never redacted. Use them for usernames, emails, URLs and other non-secret configuration. Never put a password, token or key in a variable. For a login, store the username as a variable (`X_USERNAME`) and the password as a secret (`X_PASSWORD`), and reference both in one command. Reference `$NAME` in a shell command to load a variable into the child shell's environment. A secret wins if it has the same name.
+
+```bash
+letta variable set X_USERNAME user@example.com
+letta variable list                     # names and values
+letta variable unset X_USERNAME
+```
+
+Use `--agent <agent-id>` to target another agent. `set` also supports `--env SOURCE_VAR` and `--stdin`. Cloud agents store variables server-side; local agents store them as plain JSON. Running sessions refresh variables within a minute.
+
 ## Agent secrets
 
-Agent-scoped secrets hold credential values that are referenced as `$NAME` in shell commands. Cloud agents store them server-side on the agent; local agents use OS secure storage. The harness substitutes `$NAME` at exec time and scrubs values from tool output, so values never enter agent context.
+Agent-scoped secrets hold credential values that are referenced as `$NAME` in shell commands. Cloud agents store them server-side on the agent; local agents use OS secure storage. The harness substitutes `$NAME` at exec time and scrubs values from tool output, so values never enter agent context. Because a secret's value is redacted wherever it appears, store only credentials as secrets; keep harmless identifiers like usernames in variables.
 
 ```bash
 letta secret list                                   # names only, never values
@@ -385,7 +400,7 @@ letta channels pair --channel <channel> --code <code> --agent <agent-id> --conve
 letta server --channels <channel>
 ```
 
-Channel state lives under `~/.letta/channels/<channel>/` (`config.yaml`, `accounts.json`, routing/pairing files, and channel runtimes). Account tokens may be plaintext in `file` mode or keyring placeholders in `keyring`/`auto` mode. Configure storage with `channelCredentialsStore` (`file`, `keyring`, `auto`) or `LETTA_CHANNEL_CREDENTIALS_STORE`; do not treat keyring placeholders as usable secrets and do not print tokens. Channel configuration and pairing can route external messages to other agents/conversations; verify IDs and get human consent for interactive authorization.
+Channel state lives under `${LETTA_CONFIG_DIR:-$HOME/.letta}/channels/<channel>/` (`config.yaml`, `accounts.json`, routing/pairing files, and channel runtimes). Account tokens may be plaintext in `file` mode or keyring placeholders in `keyring`/`auto` mode. Configure storage with `channelCredentialsStore` (`file`, `keyring`, `auto`) or `LETTA_CHANNEL_CREDENTIALS_STORE`; do not treat keyring placeholders as usable secrets and do not print tokens. Channel configuration and pairing can route external messages to other agents/conversations; verify IDs and get human consent for interactive authorization.
 
 `letta channels configure <channel>` is an interactive TTY wizard. Do not launch it as unattended work or claim setup succeeded while it is waiting for input; hand the authorization/setup step to the user.
 

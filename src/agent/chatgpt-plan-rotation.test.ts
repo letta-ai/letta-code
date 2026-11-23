@@ -301,7 +301,6 @@ describe("rotateChatGPTPlanOnQuotaLimit", () => {
       const repeatedRotation = await rotateChatGPTPlanOnQuotaLimit({
         agentId: "agent-rotation",
         conversationId: "conv-first",
-        // Simulate the TUI's render-time handle still naming the first plan.
         currentHandle: PRIMARY_HANDLE,
         error: { error_code: "usage_limit_reached" },
         exhaustedProviders: firstTurnExhausted,
@@ -391,7 +390,6 @@ describe("rotateChatGPTPlanOnQuotaLimit", () => {
         expect(helpers.conversationUpdates).toHaveLength(1);
         const payload = helpers.conversationUpdates[0]?.payload;
         expect(payload?.model).toBe(SIBLING_HANDLE);
-        // Account changes must not change the selected settings or window.
         expect(payload?.model_settings?.reasoning?.reasoning_effort).toBe(
           "medium",
         );
@@ -405,6 +403,45 @@ describe("rotateChatGPTPlanOnQuotaLimit", () => {
       }
     });
   }
+
+  test("rotates away from a plan that rejects the model with model_not_found", async () => {
+    const agent = {
+      id: "agent-rotation",
+      model: PRIMARY_HANDLE,
+      llm_config: { context_window: 272_000 },
+    };
+    const conversations = new Map([
+      ["conv-first", { id: "conv-first", model: PRIMARY_HANDLE }],
+    ]);
+    const { backend } = mockBackend(agent, conversations);
+    __testSetBackend(backend as never);
+    clearAvailableModelsCache();
+
+    try {
+      const exhausted = new Set<string>();
+      const rotation = await rotateChatGPTPlanOnQuotaLimit({
+        agentId: "agent-rotation",
+        conversationId: "conv-first",
+        currentHandle: null,
+        error: {
+          message:
+            "ChatGPT SSE error (model_not_found): The 'gpt-5.2' model is not supported when using Codex with a ChatGPT account.",
+        },
+        exhaustedProviders: exhausted,
+      });
+
+      expect(rotation?.toHandle).toBe(SIBLING_HANDLE);
+      expect(conversations.get("conv-first")?.model).toBe(SIBLING_HANDLE);
+      expect(exhausted).toEqual(new Set(["chatgpt-caren"]));
+      if (!rotation) throw new Error("expected a rotation");
+      expect(formatPlanRotationNotice(rotation)).toBe(
+        "chatgpt-caren doesn't support gpt-5.2 — switched to chatgpt-jin",
+      );
+    } finally {
+      clearAvailableModelsCache();
+      __testSetBackend(null);
+    }
+  });
 
   test("inherits variant settings from the agent when the conversation has no override", async () => {
     const agent = {
@@ -627,7 +664,6 @@ describe("selectChatGPTQuotaFailoverHandle", () => {
   });
 
   test("only matches siblings with the same model suffix", () => {
-    // chatgpt-mia has no gpt-5.2-codex, so jin is the only candidate
     expect(select("chatgpt-caren/gpt-5.2-codex", [], () => 0)).toBe(
       "chatgpt-jin/gpt-5.2-codex",
     );

@@ -1,11 +1,14 @@
-import type { AgentRuntimeScope } from "./runtime-scope";
+import type {
+  AgentRuntimeScope,
+  ConversationRuntimeScope,
+} from "./runtime-scope";
 
-/** The public launch arguments shared by Agent and App Server clients. */
 export interface SubagentLaunchArgs {
+  harness?: string;
   subagent_type?: string;
+  fork_context?: boolean;
   prompt: string;
   description: string;
-  /** Identity of the initial assignment input, not the launch command request_id. */
   client_message_id?: string;
   model?: string;
   agent_id?: string;
@@ -29,35 +32,29 @@ export type SubagentLaunchResult =
   | {
       success: false;
       error: string;
-      /** Why a claude-code/codex worker could not start on this computer. */
       error_code?: SubagentStartupErrorCode;
     };
 
 export type SubagentStartupErrorCode = "not_installed" | "not_signed_in";
 
-/**
- * `caller`: the launching client owns the completion notification. The
- * computer skips its own notification and publishes the final report as
- * `result` on the `update_subagent_state` snapshot.
- */
 export type SubagentLaunchNotify = "caller";
+
+export type LaunchSubagentWireArgs = SubagentLaunchArgs & {
+  cloud_skill_repositories?: string[];
+};
 
 export interface LaunchSubagentCommand {
   type: "launch_subagent";
   request_id: string;
-  /** Parent conversation, used for launch context and completion notifications. */
   runtime: AgentRuntimeScope;
-  args: SubagentLaunchArgs;
-  /** The originating Agent or external-tool call, when present. */
+  args: LaunchSubagentWireArgs;
   tool_call_id?: string;
-  /** Requires the `launch_subagent_notify_caller` capability. */
   notify?: SubagentLaunchNotify;
 }
 
 export type LaunchSubagentResponse = SubagentLaunchResult & {
   type: "launch_subagent_response";
   request_id: string;
-  /** The launch command's parent runtime, so relays can scope the reply. */
   runtime?: AgentRuntimeScope;
 };
 
@@ -75,11 +72,13 @@ export type SubagentMessageResponse = {
   request_id: string;
   runtime?: AgentRuntimeScope;
 } & (
-  | { success: true; delivery: "steered" | "resumed" }
+  | { success: true; delivery: "steered" | "queued" | "resumed" }
   | { success: false; error: string }
 );
 
 export interface SubagentStopCommand {
+  conversation?: ConversationRuntimeScope;
+  client_message_id?: string;
   type: "subagent_stop";
   request_id: string;
   runtime: AgentRuntimeScope;
@@ -87,6 +86,7 @@ export interface SubagentStopCommand {
 }
 
 export interface SubagentStopResponse {
+  cleanup_confirmed?: boolean;
   type: "subagent_stop_response";
   request_id: string;
   runtime: AgentRuntimeScope;
@@ -95,3 +95,39 @@ export interface SubagentStopResponse {
   stopped: boolean;
   error?: string;
 }
+
+export interface SubagentEvents {
+  event_seq?: number;
+}
+
+export interface SubagentEventRecord {
+  seq: number;
+  at: string;
+  type: string;
+  [key: string]: unknown;
+}
+
+export interface ReadSubagentEventsCommand {
+  type: "read_subagent_events";
+  request_id: string;
+  runtime: AgentRuntimeScope;
+  subagent_id: string;
+  after_seq: number;
+  max_bytes?: number;
+}
+
+export type ReadSubagentEventsResponse = {
+  type: "read_subagent_events_response";
+  request_id: string;
+  runtime: AgentRuntimeScope;
+  subagent_id: string;
+} & (
+  | {
+      success: true;
+      events: SubagentEventRecord[];
+      next_seq: number;
+      has_more: boolean;
+      missed: number;
+    }
+  | { success: false; error: string }
+);

@@ -44,6 +44,32 @@ Share the saved file the way your current surface supports: attach or upload it
 to the conversation or channel you are replying in. Keep credit amounts out of
 replies unless the user asks about cost.
 
+## Word timings
+
+Use `POST /v1/audio/speech/with-timestamps` for captions, cueing visuals to
+words, or lip-sync checks. It accepts the same body as plain speech (`text`,
+`voice_id`, `model_id`, `voice_settings`, and other options), with the same
+Letta authentication and billing; no ElevenLabs key is needed.
+
+The response is JSON `{ audio_base64, alignment, normalized_alignment, words }`.
+Each word is `{ text, type: "word", start, end }`, with times in seconds.
+Words retain punctuation and use normalized spoken text when available;
+missing alignment produces an empty `words` array.
+
+```bash
+base_url="${LETTA_BASE_URL%/}"
+
+curl -fsS -X POST "$base_url/v1/audio/speech/with-timestamps" \
+  -H "Authorization: Bearer $LETTA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"Hello world!","voice_id":"JBFqnCBsd6RMkjVDRZzb","model_id":"eleven_v4","output_format":"mp3_44100_128"}' \
+  --output speech.json &&
+jq -r '.audio_base64' speech.json | base64 --decode > output.mp3 &&
+jq '.words' speech.json > words.json
+```
+
+Plain `/v1/audio/speech` still returns raw audio bytes.
+
 ## Models
 
 | Model ID | Languages | Latency | Best For |

@@ -1,34 +1,6 @@
 import { telemetry } from "@/telemetry";
 import { debugWarn } from "@/utils/debug";
 
-/**
- * Mid-stream stall reconciler for message streams.
- *
- * drainStream reads the SSE body with `for await`; if the HTTP response
- * stalls before the terminal sequence (dead socket with no FIN/RST, frames
- * lost in transit), the iterator neither yields nor throws and the turn
- * wedges in PROCESSING_API_RESPONSE forever. Seen in production as a run
- * that completed server-side with requires_approval whose approval request
- * never reached the client — no approval prompt, no way to cancel, stuck
- * until process restart.
- *
- * The terminal-EOF guard (stream-terminal-eof-guard.ts) only covers stalls
- * AFTER stop_reason arrived. This reconciler covers stalls BEFORE it:
- * streams request include_pings and the server emits a keepalive ping every
- * ~20s during quiet periods, so sustained silence means the stream is dead,
- * not slow. On each firing the reconciler asks the server whether the run
- * already ended; only then does it abort the dead HTTP read, which lets
- * drainStream return and drainStreamWithResume replay the lost tail
- * (including any approval request) from the run's persisted stream.
- *
- * If the server confirms that the run is still active, the reconciler waits
- * through another silence window. If status cannot be determined, it aborts
- * only the client read and lets the resume path reconnect. Aborting the client
- * read does not cancel the server run.
- */
-
-// 3x the server keepalive interval (~20s): one missed ping could be jitter,
-// three in a row is a dead stream.
 const DEFAULT_STREAM_STALL_RECONCILE_MS = 60_000;
 const DEFAULT_STREAM_STALL_STATUS_TIMEOUT_MS = 5_000;
 
@@ -54,7 +26,6 @@ function getStatusLookupTimeoutMs(): number {
   return DEFAULT_STREAM_STALL_STATUS_TIMEOUT_MS;
 }
 
-/** Run statuses under which the stream may still legitimately produce data. */
 const ACTIVE_RUN_STATUSES = new Set([
   "created",
   "not_started",
@@ -63,11 +34,8 @@ const ACTIVE_RUN_STATUSES = new Set([
 ]);
 
 export type StreamStallReconciler = {
-  /** (Re-)start the silence timer. Call at stream start and on every chunk. */
   arm: () => void;
-  /** Cancel the timer. Call when the stream ends for any reason. */
   clear: () => void;
-  /** True if the reconciler aborted the HTTP read. */
   fired: () => boolean;
 };
 
@@ -75,7 +43,6 @@ export function createStreamStallReconciler(context: {
   getRunId: () => string | null;
   getStopReason: () => string | null;
   canResumeWithoutRunId: () => boolean;
-  /** Fetch the run's current server-side status; may throw. */
   retrieveRunStatus: (
     runId: string,
     signal: AbortSignal,
@@ -125,7 +92,6 @@ export function createStreamStallReconciler(context: {
     if (cleared || fired || reconciling) {
       return;
     }
-    // After stop_reason the terminal-EOF guard owns the stream's end.
     if (context.getStopReason() !== null) {
       return;
     }

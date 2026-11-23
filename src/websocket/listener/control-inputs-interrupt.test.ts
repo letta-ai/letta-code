@@ -1,9 +1,21 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type WebSocket, WebSocketServer } from "ws";
+import {
+  resolveBackendMode,
+  setConfiguredBackendMode,
+} from "@/backend/backend-mode";
 import { bash } from "@/tools/impl/bash";
+
+let previousBackendMode = resolveBackendMode();
+beforeEach(() => {
+  previousBackendMode = resolveBackendMode();
+  setConfiguredBackendMode("local");
+});
+afterEach(() => setConfiguredBackendMode(previousBackendMode));
+
 import { monitor } from "@/tools/impl/monitor";
 import { MONITOR_EVENT_BATCH_MS } from "@/tools/impl/monitor-event-stream";
 import {
@@ -89,7 +101,6 @@ describe("listener interrupt queue handoff", () => {
     server.on("connection", (peer) => peers.push(peer));
     const processQueuedTurn = mock(async (_incoming: IncomingMessage) => {});
     setActiveRuntime(listener);
-    // Another test's background task can finish before this listener mounts.
     addToMessageQueue({
       kind: "task_notification",
       text: "Unrelated background task completed",
@@ -107,11 +118,16 @@ describe("listener interrupt queue handoff", () => {
       const address = server.address();
       if (!address || typeof address === "string")
         throw new Error("No WS port");
-      // Start all sources in an earlier turn, not under the lease being aborted.
       const earlier = target.turnLifecycle.begin({
         origin: "message",
         workingDirectory: process.cwd(),
       });
+      for (const runtime of runtimes.slice(1)) {
+        runtime.turnLifecycle.begin({
+          origin: "message",
+          workingDirectory: process.cwd(),
+        });
+      }
       const script = join(scratchpad, "source.js");
       writeFileSync(
         script,
@@ -177,13 +193,6 @@ describe("listener interrupt queue handoff", () => {
         workingDirectory: process.cwd(),
       });
       target.turnLifecycle.setRunId(later, "run-later");
-      // Keep the control scopes busy so their real routed notifications remain inspectable.
-      for (const runtime of runtimes.slice(1)) {
-        runtime.turnLifecycle.begin({
-          origin: "message",
-          workingDirectory: process.cwd(),
-        });
-      }
       const baseline = target.queueRuntime.peek().map((item) => item.id);
       requireFixture(peers[0]).send("buffered-before-interrupt");
       const wsState = requireFixture(
@@ -196,7 +205,6 @@ describe("listener interrupt queue handoff", () => {
           ),
         4000,
       );
-      // The frame reached the actual source but has not reached its batch timer.
       expect(target.queueRuntime.peek().map((item) => item.id)).toEqual(
         baseline,
       );
@@ -223,7 +231,6 @@ describe("listener interrupt queue handoff", () => {
           },
         ),
       ).toBe(true);
-      // Turn cancellation leaves previously started Monitor sources running.
       expect(commandState.status).toBe("running");
       expect(wsState.status).toBe("running");
       expect(requireFixture(peers[0]).readyState).toBe(1);
@@ -429,8 +436,6 @@ describe("listener interrupt queue handoff", () => {
     expect(forgotWork).toHaveBeenCalledTimes(1);
     expect(runtime.turnLifecycle.kind).toBe("cancelling");
 
-    // The owner has finished, so the fenced lease is no longer current even
-    // though backend settlement still keeps the lifecycle in `cancelling`.
     expect(
       await handleAbortMessageInput(
         listener,

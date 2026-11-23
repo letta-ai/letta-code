@@ -11,6 +11,7 @@ import {
   type ReflectionLaunchOptions,
   shouldRunQueuedReflectionLaunch,
 } from "@/cli/helpers/reflection-launcher";
+import * as reflectionRetry from "@/cli/helpers/reflection-retry";
 import {
   isReflectionRetryDeferred,
   recordReflectionIntegrationRetry,
@@ -65,7 +66,6 @@ async function fixture() {
   writeFileSync(join(memory, "MEMORY.md"), "Before\n");
   git(memory, ["add", "MEMORY.md"]);
   git(memory, ["commit", "-m", "Initial"]);
-  // A real fetch failure without network access or credentials.
   git(memory, ["remote", "add", "origin", join(root, "missing-origin")]);
   await appendTranscriptDeltaJsonl(agentId, conversationId, [
     { kind: "user", id: "u1", text: "Remember this", messageId: "msg-u1" },
@@ -175,8 +175,22 @@ test("failed integration defers repeated turns and queued launches without consu
 
 test("automatic retries back off, suppress duplicate warnings, and manual success clears the delay", async () => {
   let now = Date.now();
-  const clock = spyOn(Date, "now").mockImplementation(() => now);
-  cleanup.push(() => clock.mockRestore());
+  const isDeferred = reflectionRetry.isReflectionRetryDeferred;
+  const recordRetry = reflectionRetry.recordReflectionIntegrationRetry;
+  const deferralClock = spyOn(
+    reflectionRetry,
+    "isReflectionRetryDeferred",
+  ).mockImplementation((agentId, trigger) => isDeferred(agentId, trigger, now));
+  const retryClock = spyOn(
+    reflectionRetry,
+    "recordReflectionIntegrationRetry",
+  ).mockImplementation((agentId, integration, success, trigger) =>
+    recordRetry(agentId, integration, success, trigger, now),
+  );
+  cleanup.push(
+    () => deferralClock.mockRestore(),
+    () => retryClock.mockRestore(),
+  );
   const f = await fixture();
   expect((await f.launch()).launched).toBe(true);
   await f.complete();
@@ -185,17 +199,16 @@ test("automatic retries back off, suppress duplicate warnings, and manual succes
   await f.complete();
   expect(f.notifications).toHaveLength(1);
   now += 60_000;
-  expect((await f.launch()).launched).toBe(false); // next delay doubled
+  expect((await f.launch()).launched).toBe(false);
   expect((await f.launch("manual")).launched).toBe(true);
   await f.complete();
-  expect(f.notifications).toHaveLength(2); // explicit requests always get a result
+  expect(f.notifications).toHaveLength(2);
   expect((await f.launch("manual")).launched).toBe(true);
-  await f.complete(false); // successful no-op consumes the transcript
+  await f.complete(false);
   expect(f.notifications).toHaveLength(3);
   const state = await getReflectionTranscriptState(f.agentId, f.conversationId);
   expect(state.reflected_through_message_id).toBe("msg-a1");
   expect(state.steps_since_last_successful_reflection).toBe(0);
-  // No cooldown remains: the launch reaches the existing no-payload check.
   expect(await f.launch()).toEqual({ launched: false, reason: "no_payload" });
 });
 

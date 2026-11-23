@@ -94,11 +94,6 @@ export function resolveTeleportSession(
   return session;
 }
 
-/**
- * Parse an API error response body `{errorCode, message}` and return a
- * concrete, human-readable message. Falls back to the raw response text
- * when the body is not valid JSON or doesn't match the expected shape.
- */
 export function formatTeleportApiError(error: unknown): string {
   if (error instanceof ApiRequestError) {
     try {
@@ -112,9 +107,7 @@ export function formatTeleportApiError(error: unknown): string {
       if (typeof body.errorCode === "string" && body.errorCode.length > 0) {
         return body.errorCode;
       }
-    } catch {
-      // Fall through to raw response text
-    }
+    } catch {}
     return `API error (${error.status}): ${error.responseText}`;
   }
   if (error instanceof Error) {
@@ -193,7 +186,6 @@ export async function runTeleportSubcommand(
       return 0;
     }
 
-    // cloud and <computer> both need a valid session
     const session = resolveTeleportSession(
       process.env,
       (
@@ -237,7 +229,6 @@ export async function runTeleportSubcommand(
       session.conversationId,
       targetConnectionId,
     );
-    // Submit-and-exit immediately after 202; the harness owns yield
     console.log(JSON.stringify(result, null, 2));
     return 0;
   } catch (error) {

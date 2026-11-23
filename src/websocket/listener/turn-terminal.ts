@@ -3,11 +3,13 @@ import type { UsageStatistics } from "@/types/protocol";
 import type { StopReasonType } from "@/types/protocol_v2";
 import { debugWarn } from "@/utils/debug";
 import { TO_SUBSCRIBERS } from "./connection";
+import { snapshotInputTerminalConsumers } from "./input-terminal-consumer-snapshot";
 import {
   claimPreparedInputTerminalIfCurrent,
   completePreparedInputTerminal,
   loadPreparedInputTerminals,
   prepareInputTerminal,
+  terminalMessageWithoutConsumers,
 } from "./input-terminal-journal";
 import { readInterruptedTurn } from "./interrupted-turn-read";
 import {
@@ -19,6 +21,10 @@ import {
   emitRuntimeStateUpdates,
 } from "./protocol-outbound";
 import { emitLoopErrorNotice } from "./recoverable-notices";
+import {
+  TeleportIntentUnavailableError,
+  TeleportTerminalConsumerRaceError,
+} from "./teleport-terminal-transfer";
 import type { ListenerTransport } from "./transport";
 import {
   type createTurnFinishedStore,
@@ -28,7 +34,11 @@ import {
   type ReplayableTurnFinished,
 } from "./turn-finished-replay";
 import type { TurnFinishTransition, TurnLease } from "./turn-lifecycle";
-import type { ConversationRuntime, InputIdentity } from "./types";
+import type {
+  ConversationRuntime,
+  DurablePreparedInputTerminal,
+  InputIdentity,
+} from "./types";
 
 export function buildTurnUsage(usage: Buffers["usage"]): UsageStatistics {
   return {
@@ -63,29 +73,23 @@ export function finishListenerTurn(
     usage?: UsageStatistics;
     terminalConsumerIds?: readonly string[];
     durableInputIdentities?: readonly InputIdentity[];
-    /** Recovery claims fence terminal persistence and transport emission. */
     canCommit?: () => boolean;
-    /** Deterministic persistence seams for listener durability tests. */
     forgetWork?: () => void;
     turnFinishedStore?: ReturnType<typeof createTurnFinishedStore>;
     prepareInputTerminal?: typeof prepareInputTerminal;
     completePreparedInputTerminal?: typeof completePreparedInputTerminal;
-    /** Persist a crash proof even when no external terminal consumer exists. */
+    onBeforePrepareInputTerminal?: (
+      terminal: DurablePreparedInputTerminal,
+    ) => string | false | undefined;
+    validatePreparedInputTerminal?: (
+      terminal: DurablePreparedInputTerminal,
+    ) => boolean;
     persistTerminalWithoutConsumers?: boolean;
-    /**
-     * The turn continues on a teleport destination, which reports its real
-     * end. Keep local terminal durability but publish no `turn_finished`:
-     * channel gateways retire the turn's delivery when they receive one.
-     */
     teleportHandoff?: boolean;
-    /** Exact interrupted revision owned by this finalizer. */
     expectedInterruptedRevision?: string;
-    /** Recovery lineages read their sidecar revision view, not successor main. */
     readInterruptedRevision?: () => string | undefined;
-    /** Mutable checkpoint generation that owns this terminal transition. */
     expectedInterruptedAuthorityRevision?: string;
     readInterruptedAuthorityRevision?: () => string | undefined;
-    /** Independent recovery lineage bound to the mutable authority token. */
     recoveryLineageId?: string;
     recoveryAuthorityGuard?: Pick<
       ReturnType<typeof createInterruptedTurnStore>,
@@ -111,7 +115,7 @@ export function finishListenerTurn(
           type: "turn_finished",
           turn_id: options.turnId,
           stop_reason: options.stopReason,
-          ...(options.terminalConsumerIds?.length && !options.teleportHandoff
+          ...(options.terminalConsumerIds?.length
             ? {
                 terminal_consumer_ids: [
                   ...new Set(options.terminalConsumerIds),
@@ -129,7 +133,7 @@ export function finishListenerTurn(
     options.readInterruptedRevision ??
     (() => readInterruptedTurn(runtime)?.revision);
   const interruptedRevision = readRevision();
-  const expectedAuthorityRevision =
+  let expectedAuthorityRevision =
     options.expectedInterruptedAuthorityRevision ??
     options.expectedInterruptedRevision;
   const readAuthorityRevision =
@@ -156,45 +160,83 @@ export function finishListenerTurn(
     terminalOwner.recoveryLineageId = options.recoveryLineageId;
     terminalOwner.interruptedAuthorityRevision = expectedAuthorityRevision;
   }
+  if (turnFinishedMessage && options.onBeforePrepareInputTerminal) {
+    const consumers = snapshotInputTerminalConsumers(
+      runtime,
+      options.durableInputIdentities ?? [],
+      turnFinishedMessage.terminal_consumer_ids ?? [],
+    );
+    if (consumers.length) turnFinishedMessage.terminal_consumer_ids = consumers;
+  }
   const identitylessConsumerTerminal =
     !!turnFinishedMessage?.terminal_consumer_ids?.length &&
     (options.durableInputIdentities?.length ?? 0) === 0;
   if (identitylessConsumerTerminal && terminalOwner.connectionId === null) {
-    // With no accepted-input identity there is no journal entry that can wait
-    // for a future subscriber to become the replay owner. Persist a rotatable
-    // process-owned terminal directly instead of retiring all evidence.
     terminalOwner.canRotate = true;
   }
   let preparedTurnFinished: ReturnType<typeof prepareTurnFinished> | null =
     null;
+  const inputTerminal: DurablePreparedInputTerminal | undefined =
+    turnFinishedMessage
+      ? {
+          scope: {
+            agentId: runtime.agentId,
+            conversationId: runtime.conversationId,
+          },
+          message: turnFinishedMessage,
+          owner: terminalOwner,
+          ...(options.persistTerminalWithoutConsumers
+            ? { persistWithoutConsumers: true }
+            : {}),
+          ...(options.teleportHandoff
+            ? { suppressConsumerPublication: true }
+            : {}),
+        }
+      : undefined;
+  if (inputTerminal && options.onBeforePrepareInputTerminal) {
+    const nextRevision = options.onBeforePrepareInputTerminal(inputTerminal);
+    if (nextRevision === false) throw new TeleportIntentUnavailableError();
+    if (nextRevision) {
+      terminalOwner.interruptedRevision = nextRevision;
+      if (
+        !options.readInterruptedAuthorityRevision ||
+        readAuthorityRevision() === nextRevision
+      ) {
+        expectedAuthorityRevision = nextRevision;
+        terminalOwner.interruptedAuthorityRevision = nextRevision;
+      }
+    }
+  }
+  let preparedValidationRejected = false;
   if (
-    turnFinishedMessage &&
+    inputTerminal &&
     !(options.prepareInputTerminal ?? prepareInputTerminal)(
       runtime,
       options.durableInputIdentities ?? [],
+      inputTerminal,
       {
-        scope: {
-          agentId: runtime.agentId,
-          conversationId: runtime.conversationId,
-        },
-        message: turnFinishedMessage,
-        owner: terminalOwner,
-        ...(options.persistTerminalWithoutConsumers
-          ? { persistWithoutConsumers: true }
-          : {}),
+        onPrepared: options.validatePreparedInputTerminal
+          ? (terminal) => {
+              const valid =
+                options.validatePreparedInputTerminal?.(terminal) === true;
+              preparedValidationRejected = !valid;
+              return valid;
+            }
+          : undefined,
       },
     )
   ) {
-    // No state transition is safe: the accepted input is still replayable.
+    if (preparedValidationRejected) {
+      throw new TeleportTerminalConsumerRaceError();
+    }
     runtime.turnLifecycle.finish(lease, options.stopReason);
     throw new Error("Failed to atomically prepare accepted-input terminal");
   }
-  // The input journal fsync above can cross a claim's local expiry. Leave the
-  // prepared journal for the successor rather than persisting as a stale owner.
   if (!ownsInterruptedRevision()) {
     return rejectedCommit();
   }
   const deferUntilReplayOwner =
+    !options.teleportHandoff &&
     runtime.listener.connectionId?.startsWith("conn-") === true &&
     !!turnFinishedMessage?.terminal_consumer_ids?.length &&
     terminalOwner.connectionId === null &&
@@ -248,17 +290,19 @@ export function finishListenerTurn(
     throw error;
   }
   try {
-    const persistTerminal = () =>
-      turnFinishedMessage && !deferUntilReplayOwner
-        ? prepareTurnFinished(
-            runtime,
-            turnFinishedMessage,
-            options.turnFinishedStore,
-            terminalOwner,
-            options.persistTerminalWithoutConsumers ||
-              identitylessConsumerTerminal,
-          )
-        : null;
+    const persistTerminal = () => {
+      if (!turnFinishedMessage || deferUntilReplayOwner) return null;
+      const durableMessage = options.teleportHandoff
+        ? terminalMessageWithoutConsumers(turnFinishedMessage)
+        : turnFinishedMessage;
+      return prepareTurnFinished(
+        runtime,
+        durableMessage,
+        options.turnFinishedStore,
+        terminalOwner,
+        options.persistTerminalWithoutConsumers || identitylessConsumerTerminal,
+      );
+    };
     if (
       guardDirectPublication &&
       authorityGuard?.withRecoveryAuthority &&
@@ -293,14 +337,9 @@ export function finishListenerTurn(
       throw new Error("Failed to promote accepted-input terminal");
     }
   } catch (error) {
-    // Persistence failure is visible to the owner, but it must not strand the
-    // active lease forever (notably when the bounded store reaches capacity).
     runtime.turnLifecycle.finish(lease, options.stopReason);
     throw error;
   }
-  // Terminal-store locking and fsync can also cross expiry. At this point the
-  // terminal has a durable home, so a successor can replay it without rerunning
-  // the input; only the stale owner's lifecycle transition is fenced.
   const mayEmit = ownsInterruptedRevision();
   if (!mayEmit) {
     return rejectedCommit();
@@ -309,9 +348,6 @@ export function finishListenerTurn(
   if (!transition.finished) {
     return transition;
   }
-  // Publish the terminal failure before idle can complete the accepted send.
-  // The lifecycle transition above prevents stale or duplicate finalizers
-  // from emitting either the failure or its following status snapshots.
   if (mayEmit && options.socket && options.errorNotice) {
     const runId =
       options.errorNotice.runId ?? options.runId ?? transition.runId;
@@ -328,8 +364,6 @@ export function finishListenerTurn(
     runtime.lastTerminalLoopErrorRunId = runId ?? null;
   }
 
-  // Explicit abort projects the interrupted state when it moves the lease to
-  // cancelling. Only server-originated cancellation reaches finish from active.
   if (
     options.stopReason === "cancelled" &&
     transition.previousKind === "active" &&
@@ -365,9 +399,6 @@ export function finishListenerTurn(
       preparedTurnFinished,
     );
   }
-  // Once the terminal is either queued or durably represented, successful and
-  // explicit-user terminal paths can destructively retire execution evidence.
-  // Transport interruption retains it for continuation recovery.
   if (
     options.stopReason === "end_turn" ||
     (options.stopReason === "cancelled" &&
@@ -379,8 +410,6 @@ export function finishListenerTurn(
         (() => forgetListenerWork(runtime, interruptedRevision ?? null))
       )();
     } catch (error) {
-      // The terminal transition already owns cleanup. A failed unlink is
-      // recoverable evidence, not a reason to wedge or reject a detached turn.
       debugWarn("recovery", "Failed to retire completed listener work", error);
     }
   }

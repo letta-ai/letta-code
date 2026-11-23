@@ -1,14 +1,14 @@
-/**
- * Applying personalities to agents: agent creation via the backend and
- * rewriting persona/human files in an agent's memory repo.
- *
- * Pure preset definitions and content builders live in
- * `personality-presets.ts` (bundled into the `agent-presets` package export).
- */
-
 import { execFile as execFileCb } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import {
   GIT_MEMORY_ENABLED_TAG,
@@ -16,6 +16,7 @@ import {
 } from "@/agent/agent-tags";
 import { getBackend } from "@/backend";
 import { isCloudServerUrl } from "@/backend/api/server-url";
+import { memoryNameFromPath } from "@/backend/local/initial-memory";
 import { settingsManager } from "@/settings-manager";
 import type { CreateAgentOptions } from "./create";
 import { getDefaultMemoryBlocks, parseMdxFrontmatter } from "./memory";
@@ -24,6 +25,7 @@ import {
   isLettaCloud,
 } from "./memory-filesystem";
 import { commitMemoryWrite, getMemoryRepoDir, pullMemory } from "./memory-git";
+import { hasRootMemoryMarker } from "./memory-git-hooks";
 import {
   buildDefaultMemoryFile,
   buildPersonalityMemoryBlocks,
@@ -47,6 +49,8 @@ const PRIMARY_PERSONA_RELATIVE_PATH = "system/persona.md";
 const LEGACY_PERSONA_RELATIVE_PATH = "memory/system/persona.md";
 const PRIMARY_HUMAN_RELATIVE_PATH = "system/human.md";
 const LEGACY_HUMAN_RELATIVE_PATH = "memory/system/human.md";
+const ROOT_PERSONA_RELATIVE_PATH = "persona.md";
+const ROOT_HUMAN_RELATIVE_PATH = "human.md";
 
 export interface ApplyPersonalityToMemoryParams {
   agentId: string;
@@ -68,9 +72,17 @@ function ensureTrailingNewline(content: string): string {
 
 function getMemoryFileRelativePathForRepo(
   repoDir: string,
+  rootRelativePath: string,
   primaryRelativePath: string,
   legacyRelativePath: string,
 ): string {
+  if (
+    existsSync(join(repoDir, rootRelativePath)) ||
+    hasRootMemoryMarker(repoDir)
+  ) {
+    return rootRelativePath;
+  }
+
   const primaryPath = join(repoDir, primaryRelativePath);
   if (existsSync(primaryPath)) {
     return primaryRelativePath;
@@ -81,7 +93,6 @@ function getMemoryFileRelativePathForRepo(
     return legacyRelativePath;
   }
 
-  // Prefer legacy layout when the repo has a top-level memory/ directory.
   if (existsSync(join(repoDir, "memory"))) {
     return legacyRelativePath;
   }
@@ -92,6 +103,7 @@ function getMemoryFileRelativePathForRepo(
 function getPersonaRelativePathForRepo(repoDir: string): string {
   return getMemoryFileRelativePathForRepo(
     repoDir,
+    ROOT_PERSONA_RELATIVE_PATH,
     PRIMARY_PERSONA_RELATIVE_PATH,
     LEGACY_PERSONA_RELATIVE_PATH,
   );
@@ -100,15 +112,12 @@ function getPersonaRelativePathForRepo(repoDir: string): string {
 function getHumanRelativePathForRepo(repoDir: string): string {
   return getMemoryFileRelativePathForRepo(
     repoDir,
+    ROOT_HUMAN_RELATIVE_PATH,
     PRIMARY_HUMAN_RELATIVE_PATH,
     LEGACY_HUMAN_RELATIVE_PATH,
   );
 }
 
-/**
- * "cloud" environment covers any remote backend; only Letta Cloud gets the
- * v2 root layout. Self-hosted servers keep the legacy memfs mode.
- */
 async function resolvePersonalityMemoryPromptMode(
   environment: PersonalityEnvironment,
 ): Promise<CreateAgentOptions["memoryPromptMode"]> {
@@ -116,7 +125,6 @@ async function resolvePersonalityMemoryPromptMode(
   try {
     return (await isLettaCloud()) ? "root-memfs" : "memfs";
   } catch {
-    // Settings may be uninitialized in tests; fall back to the URL check.
     return isCloudServerUrl() ? "root-memfs" : "memfs";
   }
 }
@@ -188,9 +196,7 @@ export async function enableMemfsForCreatedAgent(params: {
       });
     }
     settingsManager.setMemfsEnabled(agentId, true);
-  } catch {
-    // Self-hosted or memfs not available - skip silently
-  }
+  } catch {}
 }
 
 export async function createAgentForPersonality(params: {
@@ -278,15 +284,35 @@ async function getMemoryCommitAuthor(agentId: string): Promise<{
     if (agent.name?.trim()) {
       authorName = agent.name.trim();
     }
-  } catch {
-    // best-effort fallback to agent id
-  }
+  } catch {}
 
   return {
     agentId,
     authorName,
     authorEmail: `${agentId}@letta.com`,
   };
+}
+
+function buildRootMemoryFile(
+  relativePath: string,
+  templatePromptAssetName: string,
+  body: string,
+  description?: string,
+): string {
+  const { frontmatter, body: normalizedBody } = parseMdxFrontmatter(
+    buildDefaultMemoryFile(templatePromptAssetName, body, description),
+  );
+  const name = memoryNameFromPath(basename(relativePath));
+  return `${serializeFrontmatter({
+    name,
+    description: frontmatter.description?.trim() || name,
+  })}\n\n${ensureTrailingNewline(normalizedBody.trim())}`;
+}
+
+interface PersonalityFileUndo {
+  absolutePath: string;
+  previousContent: string | null;
+  createdDirs: string[];
 }
 
 function applyPersonalityFiles(
@@ -296,7 +322,9 @@ function applyPersonalityFiles(
     templatePromptAssetName: string;
     content: string;
     description?: string;
+    onlyIfBlank?: boolean;
   }>,
+  undoLog: PersonalityFileUndo[],
 ): string[] {
   const changedPaths: string[] = [];
 
@@ -304,15 +332,29 @@ function applyPersonalityFiles(
     const existingContent = existsSync(file.absolutePath)
       ? readFileSync(file.absolutePath, "utf-8")
       : null;
+    if (
+      file.onlyIfBlank &&
+      existingContent !== null &&
+      existingContent.replace(FRONTMATTER_REGEX, "").trim()
+    ) {
+      continue;
+    }
     const nextContent = existingContent
       ? replaceBodyPreservingFrontmatter(existingContent, file.content, {
           description: file.description,
         })
-      : buildDefaultMemoryFile(
-          file.templatePromptAssetName,
-          file.content,
-          file.description,
-        );
+      : file.relativePath.includes("/")
+        ? buildDefaultMemoryFile(
+            file.templatePromptAssetName,
+            file.content,
+            file.description,
+          )
+        : buildRootMemoryFile(
+            file.relativePath,
+            file.templatePromptAssetName,
+            file.content,
+            file.description,
+          );
 
     if (
       existingContent !== null &&
@@ -322,12 +364,51 @@ function applyPersonalityFiles(
       continue;
     }
 
+    const createdDirs: string[] = [];
+    for (
+      let dir = dirname(file.absolutePath);
+      !existsSync(dir);
+      dir = dirname(dir)
+    ) {
+      createdDirs.push(dir);
+    }
+    undoLog.push({
+      absolutePath: file.absolutePath,
+      previousContent: existingContent,
+      createdDirs,
+    });
     mkdirSync(dirname(file.absolutePath), { recursive: true });
     writeFileSync(file.absolutePath, nextContent, "utf-8");
     changedPaths.push(file.relativePath);
   }
 
   return changedPaths;
+}
+
+async function undoPersonalityFiles(
+  repoDir: string,
+  undoLog: PersonalityFileUndo[],
+): Promise<void> {
+  if (undoLog.length === 0) return;
+  for (const entry of [...undoLog].reverse()) {
+    try {
+      if (entry.previousContent === null) {
+        rmSync(entry.absolutePath, { force: true });
+      } else {
+        writeFileSync(entry.absolutePath, entry.previousContent, "utf-8");
+      }
+      for (const dir of entry.createdDirs) {
+        if (existsSync(dir) && readdirSync(dir).length === 0) rmdirSync(dir);
+      }
+    } catch {}
+  }
+  try {
+    await execFile(
+      "git",
+      ["reset", "-q", "--", ...undoLog.map((entry) => entry.absolutePath)],
+      { cwd: repoDir, timeout: 10_000 },
+    );
+  } catch {}
 }
 
 export async function applyPersonalityToMemory(
@@ -344,7 +425,6 @@ export async function applyPersonalityToMemory(
     ? getScopedMemoryFilesystemRoot(params.agentId)
     : getMemoryRepoDir(params.agentId);
 
-  // Fail early if the memory repo has uncommitted changes
   const statusResult = await execFile("git", ["status", "--porcelain"], {
     cwd: repoDir,
     timeout: 10_000,
@@ -378,12 +458,34 @@ export async function applyPersonalityToMemory(
       templatePromptAssetName: blockDefinitions.human.templatePromptAssetName,
       content: blockDefinitions.human.value,
       description: blockDefinitions.human.description,
+      onlyIfBlank: true,
     },
   ];
 
-  const changedPaths = applyPersonalityFiles(filesToUpdate);
+  const commitMessage =
+    params.commitMessage ??
+    `chore(personality): switch to ${personality.label}`;
 
-  if (changedPaths.length === 0) {
+  const undoLog: PersonalityFileUndo[] = [];
+  let commitResult: Awaited<ReturnType<typeof commitMemoryWrite>> | null = null;
+  try {
+    const changedPaths = applyPersonalityFiles(filesToUpdate, undoLog);
+    if (changedPaths.length > 0) {
+      const author = await getMemoryCommitAuthor(params.agentId);
+      commitResult = await commitMemoryWrite({
+        memoryDir: repoDir,
+        pathspecs: changedPaths,
+        reason: commitMessage,
+        author,
+        syncMode: isLocalMemfs ? "local" : "remote",
+      });
+    }
+  } catch (error) {
+    await undoPersonalityFiles(repoDir, undoLog);
+    throw error;
+  }
+
+  if (!commitResult) {
     return {
       changed: false,
       personality,
@@ -392,20 +494,8 @@ export async function applyPersonalityToMemory(
     };
   }
 
-  const commitMessage =
-    params.commitMessage ??
-    `chore(personality): switch to ${personality.label}`;
-
-  const author = await getMemoryCommitAuthor(params.agentId);
-  const commitResult = await commitMemoryWrite({
-    memoryDir: repoDir,
-    pathspecs: changedPaths,
-    reason: commitMessage,
-    author,
-    syncMode: isLocalMemfs ? "local" : "remote",
-  });
-
   if (!commitResult.committed) {
+    await undoPersonalityFiles(repoDir, undoLog);
     return {
       changed: false,
       personality,

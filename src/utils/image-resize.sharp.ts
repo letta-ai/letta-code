@@ -1,28 +1,15 @@
-// Image resizing utilities for clipboard paste
-// Follows Codex CLI's approach (codex-rs/utils/image/src/lib.rs)
-import type sharpFactory from "sharp";
+import sharp from "sharp";
 import {
   assertImageHasDimensions,
   assertImageWithinBounds,
   buildResizeResult,
   canonicalizeOutputMediaType,
-  MAX_IMAGE_BYTES,
+  fitsImageByteLimit,
   MAX_IMAGE_HEIGHT,
   MAX_IMAGE_INPUT_PIXELS,
   MAX_IMAGE_WIDTH,
   type ResizeResult,
 } from "./image-resize.shared";
-
-// Electron and Sharp load different GLib copies into one Linux process. Use a
-// patched native build only for that combination; keep standard Sharp for the
-// CLI and for platforms that the patched build does not support.
-const sharp = (
-  process.platform === "linux" &&
-  process.arch === "x64" &&
-  process.versions.electron
-    ? await import("@janhapke/sharp-electron")
-    : await import("sharp")
-).default as typeof sharpFactory;
 
 function createSharpInstance(buffer: Buffer) {
   return sharp(buffer, {
@@ -86,28 +73,21 @@ async function buildVerifiedResizeResult(
   );
 }
 
-/**
- * Compress an image to fit within MAX_IMAGE_BYTES using progressive JPEG quality reduction.
- * If quality reduction alone isn't enough, also reduces dimensions.
- * Returns null if compression is not needed (image already under limit).
- */
 async function compressToFitByteLimit(
   buffer: Buffer,
   currentWidth: number,
   currentHeight: number,
 ): Promise<ResizeResult | null> {
-  // Check if compression is needed
-  if (buffer.length <= MAX_IMAGE_BYTES) {
-    return null; // No compression needed
+  if (fitsImageByteLimit(buffer)) {
+    return null;
   }
 
-  // Try progressive JPEG quality reduction
   const qualities = [85, 70, 55, 40];
   for (const quality of qualities) {
     const compressed = await createSharpInstance(buffer)
       .jpeg({ quality })
       .toBuffer();
-    if (compressed.length <= MAX_IMAGE_BYTES) {
+    if (fitsImageByteLimit(compressed)) {
       return buildVerifiedResizeResult(
         compressed,
         "image/jpeg",
@@ -117,7 +97,6 @@ async function compressToFitByteLimit(
     }
   }
 
-  // Quality reduction wasn't enough - also reduce dimensions
   const scales = [0.75, 0.5, 0.25];
   for (const scale of scales) {
     const scaledWidth = Math.floor(currentWidth * scale);
@@ -129,7 +108,7 @@ async function compressToFitByteLimit(
       })
       .jpeg({ quality: 70 })
       .toBuffer();
-    if (reduced.length <= MAX_IMAGE_BYTES) {
+    if (fitsImageByteLimit(reduced)) {
       return buildVerifiedResizeResult(
         reduced,
         "image/jpeg",
@@ -139,17 +118,11 @@ async function compressToFitByteLimit(
     }
   }
 
-  // Extremely rare: even 25% scale at q70 doesn't fit
   throw new Error(
-    `Image too large: ${(buffer.length / 1024 / 1024).toFixed(1)}MB exceeds 5MB limit even after compression`,
+    `Image too large: ${(buffer.length / 1024 / 1024).toFixed(1)}MB exceeds the 5MB base64 image limit even after compression`,
   );
 }
 
-/**
- * Resize image if it exceeds MAX_IMAGE_WIDTH or MAX_IMAGE_HEIGHT.
- * Uses 'inside' fit to preserve aspect ratio (like Codex's resize behavior).
- * Returns original if already within limits and format is supported.
- */
 export async function resizeImageIfNeeded(
   buffer: Buffer,
   inputMediaType: string,
@@ -167,11 +140,9 @@ export async function resizeImageIfNeeded(
 
   const needsResize = width > MAX_IMAGE_WIDTH || height > MAX_IMAGE_HEIGHT;
 
-  // Determine if we can pass through the original format
   const isPassthroughFormat = format === "png" || format === "jpeg";
 
   if (!needsResize && isPassthroughFormat) {
-    // No resize needed and format is supported - but check byte limit
     const compressed = await compressToFitByteLimit(
       normalizedBuffer,
       width,
@@ -189,23 +160,18 @@ export async function resizeImageIfNeeded(
   }
 
   if (needsResize) {
-    // Resize preserving aspect ratio
-    // Use 'inside' fit which is equivalent to Codex's resize behavior
     const resized = image.resize(MAX_IMAGE_WIDTH, MAX_IMAGE_HEIGHT, {
       fit: "inside",
       withoutEnlargement: true,
     });
 
-    // Output as PNG for lossless quality (or JPEG if input was JPEG)
     let outputBuffer: Buffer;
     let outputMediaType: string;
 
     if (format === "jpeg") {
-      // Preserve JPEG format with good quality (Codex uses 85)
       outputBuffer = await resized.jpeg({ quality: 85 }).toBuffer();
       outputMediaType = "image/jpeg";
     } else {
-      // Default to PNG for everything else
       outputBuffer = await resized.png().toBuffer();
       outputMediaType = "image/png";
     }
@@ -213,7 +179,6 @@ export async function resizeImageIfNeeded(
     const { width: resizedWidth, height: resizedHeight } =
       await inspectImageBuffer(outputBuffer, "resized image output");
 
-    // Check byte limit after dimension resize
     const compressed = await compressToFitByteLimit(
       outputBuffer,
       resizedWidth,
@@ -231,10 +196,8 @@ export async function resizeImageIfNeeded(
     );
   }
 
-  // No resize needed but format needs conversion (e.g., HEIC, TIFF, etc.)
   const outputBuffer = await image.png().toBuffer();
 
-  // Check byte limit after format conversion
   const compressed = await compressToFitByteLimit(outputBuffer, width, height);
   if (compressed) {
     return compressed;

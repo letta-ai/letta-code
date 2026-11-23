@@ -2,7 +2,7 @@ import { WebSocket } from "ws";
 import { debugLog, isDebugEnabled } from "@/utils/debug";
 import { LISTENER_STREAM_OPEN_TIMEOUT_MS } from "./constants";
 import { getActiveRuntime } from "./runtime";
-import type { ListenerTransport } from "./transport";
+import { isListenerTransportOpen, type ListenerTransport } from "./transport";
 import type { ListenerRuntime, StartListenerOptions } from "./types";
 
 type TrackListenerError = (
@@ -81,9 +81,7 @@ export function parseListenerReadyMessage(
     ) {
       return parsed as ListenerReadyMessage;
     }
-  } catch {
-    // Other frames belong to the normal listener message parser.
-  }
+  } catch {}
   return null;
 }
 
@@ -122,6 +120,31 @@ export function shouldHandleControlSocketClose(
   );
 }
 
+const reconnectsInFlight = new WeakSet<ListenerRuntime>();
+
+export function trackReconnectInFlight(
+  runtime: ListenerRuntime,
+  reconnect: Promise<void>,
+): Promise<void> {
+  reconnectsInFlight.add(runtime);
+  return reconnect.finally(() => reconnectsInFlight.delete(runtime));
+}
+
+export function shouldRecoverOrphanedControlClose(
+  runtime: ListenerRuntime,
+): boolean {
+  return (
+    runtime === getActiveRuntime() &&
+    !runtime.intentionallyClosed &&
+    (!runtime.socket || runtime.socket.readyState === WebSocket.CLOSED) &&
+    ![...runtime.connections.values()].some(({ writer }) =>
+      isListenerTransportOpen(writer),
+    ) &&
+    !runtime.reconnectTimeout &&
+    !reconnectsInFlight.has(runtime)
+  );
+}
+
 function terminateCurrentSocketPair(
   runtime: ListenerRuntime,
   controlSocket: WebSocket,
@@ -149,12 +172,6 @@ export function terminateControlAfterStreamClose(
   }
   runtime.streamTransport = null;
 
-  // The stream channel has no independent replay or reconnect path. Closing
-  // control tears down the paired session so its normal reconnect/bootstrap
-  // flow restores one coherent connection instead of silently losing frames.
-  // Keep the exact stream identity installed until control's close handler
-  // revokes this pair's generation; clearing it here would make that handler
-  // misclassify the ordinary recycle as stale and leave recovery claims live.
   terminateSocketIfOpenOrConnecting(runtime.socket);
 }
 
@@ -355,7 +372,6 @@ export async function preparePairedListenerTransport(params: {
 
 export type ListenerLifecycleLog = (message: string) => void;
 
-/** Lifecycle lines go to the session log even when debug output is off. */
 export function createListenerLifecycleLog(
   opts: Pick<StartListenerOptions, "onLog">,
 ): ListenerLifecycleLog {
@@ -370,7 +386,6 @@ export function createListenerLifecycleLog(
 
 const MAX_CLOSE_REASON_LENGTH = 120;
 
-/** Close code and (truncated) reason only; frame payloads are never logged. */
 export function formatListenerSocketClose(
   channel: "control" | "stream",
   code: number,

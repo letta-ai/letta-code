@@ -1,18 +1,3 @@
-/**
- * Cross-process lock for remote-settings.json.
- *
- * Primary locks and recovery claims are fully initialized before hard-link
- * publication, so another process never observes an ownerless lock. Recovery
- * claims form an immutable chain scoped to one dead primary token: a live
- * claim owner blocks recovery, while a crashed recovery owner is bypassed at
- * the next depth. This prevents two recoverers from unlinking different
- * generations of the primary lock.
- *
- * The protocol is for a local filesystem shared by processes on one host. A
- * listener upgrade must stop the old listener before starting code that uses a
- * different lock protocol.
- */
-
 import { createHash, randomUUID } from "node:crypto";
 import {
   linkSync,
@@ -73,8 +58,6 @@ function isLockOwnerProcessAlive(ownerToken: string): boolean {
     process.kill(ownerPid, 0);
     return true;
   } catch (error) {
-    // ESRCH is the only result that proves the process is gone. Access
-    // failures and unfamiliar platform errors must fail safe.
     return !hasErrorCode(error, "ESRCH");
   }
 }
@@ -125,9 +108,7 @@ function createInitializedTokenLinkSync(
   }
   try {
     rmSync(candidatePath, { force: true });
-  } catch {
-    // Candidate names are unique and never participate in lock ownership.
-  }
+  } catch {}
   return acquisitionError;
 }
 
@@ -160,10 +141,7 @@ function cleanupRecoveryClaimsSync(
       rmSync(getRecoveryClaimPath(lockPath, staleToken, depth), {
         force: true,
       });
-    } catch {
-      // Claim paths are unique to the dead token and never protect a later
-      // primary lock, so failed cleanup is harmless.
-    }
+    } catch {}
   }
 }
 

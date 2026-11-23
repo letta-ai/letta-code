@@ -23,13 +23,7 @@ ls "$MEMORY_DIR/../"                      # attached repositories appear here by
 cat "$MEMORY_DIR/../<repo-name>/<path>"   # read like any file
 ```
 
-Edit files with your normal file tools, then commit with git. The mount's origin and credentials are already configured:
-
-```bash
-cd "$MEMORY_DIR/../<repo-name>"
-git add <files>
-git commit -m "describe the change"
-```
+Edit files with your normal file tools, then commit from the mount (`cd "$MEMORY_DIR/../<repo-name>"`) using [Commit memory changes](#commit-memory-changes). The mount's origin and credentials are already configured. Other agents read this history, so the sources matter as much as in your own memory.
 
 The harness pushes clean commits from read/write attached repositories after the turn. If a push collides with another agent's work, it pulls with rebase and retries once. Dirty files and conflicts are not changed automatically; the harness adds a reminder to the next turn instead.
 
@@ -84,6 +78,27 @@ letta shared-memory history shared-notes --path docs/plan.md
 - **Never hand-clone the repository to another location (e.g. /tmp) to work around a broken mount** — fix the mount with `letta shared-memory sync` so every session and other agents see the same checkout.
 - **Permission denied under another agent's directory** — shared repositories mount per-agent. Only your own mount (under your agent directory) is accessible; another agent's mount of the same repository is walled off by the cross-agent guard. Run `letta shared-memory sync` to get your own mount.
 - **Shared-memory conflict reminder** — resolve the conflict in the named repository, finish the rebase or commit, and leave the repository clean. The harness retries the push after a future turn.
+
+## Commit memory changes
+
+Every memory commit must let someone reading `git log` or `git blame` on a memory or skill line trace back to the events that justified it. Commit each learning separately; a learning may touch several files. When a turn produces several learnings, finish and commit one before editing for the next. From the repository root, stage only that learning's files and commit in one shell call:
+
+```bash
+git add <changed files> && git commit -m "memory(<origin>): <what was learned>
+
+<what happened: the events that led to this learning and why it should persist>
+
+Sources:
+- <conversation ID> (<message IDs>), <who>, <date>: <what happened there>"
+```
+
+- `<origin>` is `self` when you edit your own memory during a conversation, or `dream` when you are a reflection or dream subagent reviewing past transcripts.
+- Provenance belongs in the commit, not the memory file: who said or did it (name and ID), when, the quote, and the incident go in the body and `Sources:`. The memory line states only the resulting rule or fact. For example, the file says "Be concise" and the commit says "feedback 'talk more concisely' from Charles <id> on <date>". Git dates the commit, not the event, so write the event date.
+- The subject states the learning itself, such as `memory(self): Sarah wants one commit per learning`, not the file edit.
+- The body tells the story: what the user said or corrected, what failed or succeeded, or what pattern recurred, and why it generalizes beyond that moment. A reader should understand why the memory exists without opening the sources.
+- `Sources:` lists the evidence precisely enough to find again, with one line on what happened at each: a conversation ID with the message IDs where it happened, a transcript or session ID, a file path, a URL, PR, or issue, or a commit hash. When the user explicitly asked for the change, cite that request. Resolve values such as `$CONVERSATION_ID` before writing them; never commit a literal variable name.
+- Do not invent a source. If the origin cannot be identified, write `Sources: unknown` and say why in the body.
+- Never include secrets.
 
 ## Notes and Limits
 

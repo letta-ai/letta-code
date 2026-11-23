@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
@@ -11,6 +11,8 @@ import type { LocalMessage } from "@/backend/local/local-message";
 import { LocalStore } from "@/backend/local/local-store";
 import {
   LOCAL_TRANSCRIPT_MESSAGE_FORMAT,
+  LOCAL_TRANSCRIPT_PROVIDER_STACK,
+  LOCAL_TRANSCRIPT_SCHEMA_VERSION,
   LOCAL_TRANSCRIPT_TAIL_MAX_BYTES,
   LocalTranscriptRepairRequiredError,
   type LocalTranscriptRowsResult,
@@ -20,6 +22,10 @@ import {
   restrictLocalTranscriptToResidentMessages,
   spliceOutOfContextMessages,
 } from "@/backend/local/local-transcript";
+import {
+  LOCAL_OMITTED_IMAGE_PLACEHOLDER,
+  readLocalTranscriptRowsForHistory,
+} from "@/backend/local/local-transcript-history";
 
 const temporaryDirectories: string[] = [];
 
@@ -48,6 +54,147 @@ function userMessage(id: string, text: string): LocalMessage {
     timestamp: 0,
   } as LocalMessage;
 }
+
+describe("full-history reads of image-heavy transcripts", () => {
+  test("omit out-of-context image bytes in memory and leave the file unchanged", async () => {
+    const storageDir = await createStorageDirectory();
+    const agentId = "agent-images";
+    const conversationId = "conv-images";
+    const conversationDir = join(storageDir, "conversations", "images");
+    await mkdir(conversationDir, { recursive: true });
+    const image = (index: number) => `${index}`.padEnd(1024 * 1024, "A");
+    const rows: unknown[] = [
+      {
+        type: "session",
+        version: 3,
+        id: conversationId,
+        timestamp: "2026-01-01T00:00:00.000Z",
+      },
+    ];
+    let parentId: string | null = null;
+    const turns = 24;
+    for (let turn = 0; turn < turns; turn += 1) {
+      const toolCallId = `call-${turn}`;
+      const messages = [
+        {
+          id: `msg-${turn}-call`,
+          role: "assistant",
+          content: [
+            {
+              type: "toolCall",
+              id: toolCallId,
+              name: "ViewImage",
+              arguments: { path: `shot-${turn}.png` },
+            },
+          ],
+          api: "openai-completions",
+          provider: "openai",
+          model: "test",
+          usage: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 0,
+            cost: {
+              input: 0,
+              output: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+              total: 0,
+            },
+          },
+          stopReason: "toolUse",
+          timestamp: Date.UTC(2026, 0, 1, 0, turn),
+        },
+        {
+          id: `msg-${turn}-result`,
+          role: "toolResult",
+          toolCallId,
+          toolName: "ViewImage",
+          content: [
+            { type: "text", text: `screenshot ${turn}` },
+            { type: "image", mimeType: "image/png", data: image(turn) },
+          ],
+          isError: false,
+          timestamp: Date.UTC(2026, 0, 1, 0, turn, 1),
+        },
+      ];
+      for (const message of messages) {
+        const entryId = `entry-${rows.length}`;
+        rows.push({
+          type: "message",
+          id: entryId,
+          parentId,
+          timestamp: new Date(message.timestamp).toISOString(),
+          message,
+        });
+        parentId = entryId;
+      }
+    }
+    const inContextIds = [turns - 2, turns - 1].flatMap((turn) => [
+      `msg-${turn}-call`,
+      `msg-${turn}-result`,
+    ]);
+    const messagesPath = join(conversationDir, "messages.jsonl");
+    const original = `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`;
+    await writeFile(messagesPath, original);
+    await writeFile(
+      join(conversationDir, "manifest.json"),
+      JSON.stringify({
+        schema_version: LOCAL_TRANSCRIPT_SCHEMA_VERSION,
+        message_format: LOCAL_TRANSCRIPT_MESSAGE_FORMAT,
+        provider_stack: LOCAL_TRANSCRIPT_PROVIDER_STACK,
+        created_at: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    await writeFile(
+      join(conversationDir, "conversation.json"),
+      JSON.stringify({
+        id: conversationId,
+        agent_id: agentId,
+        created_at: "2026-01-01T00:00:00.000Z",
+        updated_at: "2026-01-01T00:00:00.000Z",
+        in_context_message_ids: inContextIds,
+      }),
+    );
+
+    const expectedContent = (turn: number): unknown[] =>
+      turn >= turns - 2
+        ? [
+            { type: "text", text: `screenshot ${turn}` },
+            { type: "image", mimeType: "image/png", data: image(turn) },
+          ]
+        : [
+            { type: "text", text: `screenshot ${turn}` },
+            { type: "text", text: LOCAL_OMITTED_IMAGE_PLACEHOLDER },
+          ];
+
+    const parsed = readLocalTranscriptRowsForHistory(
+      messagesPath,
+      inContextIds,
+    ) as Array<{ message?: LocalMessage }>;
+    const parsedResults = parsed
+      .map((row) => row.message)
+      .filter((message) => message?.role === "toolResult");
+    expect(parsedResults.map((message) => message?.content) as unknown).toEqual(
+      Array.from({ length: turns }, (_, turn) => expectedContent(turn)),
+    );
+
+    const store = new LocalStore(agentId, {
+      storageDir,
+      residentMessageTailLimit: 1,
+    });
+    const history = store.listLocalMessages(conversationId, agentId);
+    expect(history.map((message) => message.id)).toEqual(inContextIds);
+    expect(
+      history
+        .filter((message) => message.role === "toolResult")
+        .map((message) => message.content) as unknown,
+    ).toEqual([expectedContent(turns - 2), expectedContent(turns - 1)]);
+    expect(await readFile(messagesPath, "utf8")).toBe(original);
+  });
+});
 
 describe("readJsonlFile", () => {
   test("parses rows across chunks without splitting multibyte characters", async () => {
@@ -293,10 +440,6 @@ describe("in-context tail window and unread head validation", () => {
     return join(storageDir, "conversations", key, file);
   }
 
-  // 80 messages of ~2 KB. The tail load parses every in-context row, so an
-  // unparsed head only remains for compacted history (`compactKeep`) or for
-  // a record without an in-context list (`clearInContext`, where the 4-message
-  // floor bounds the window and every message counts as in context).
   async function seedTranscript(
     options: { compactKeep?: number; clearInContext?: boolean } = {},
   ): Promise<string> {
@@ -355,8 +498,6 @@ describe("in-context tail window and unread head validation", () => {
     const storageDir = await seedTranscript({ compactKeep: 2 });
     const messagesPath = conversationPath(storageDir, "messages.jsonl");
     const original = await readFile(messagesPath, "utf8");
-    // The 64 KB suffix drops its partial first line; that line must still be
-    // validated as part of the head. Corrupt it in place (same length).
     const boundary = Buffer.byteLength(original) - 64 * 1024;
     const lineStart = original.lastIndexOf("\n", boundary - 1) + 1;
     const corrupted = `${original.slice(0, lineStart)}X${original.slice(lineStart + 1)}`;
@@ -399,8 +540,6 @@ describe("in-context tail window and unread head validation", () => {
 
     const store = freshStore(storageDir);
     expect(() => sendUserMessage(store, "first")).toThrow();
-    // The bounded resident window prevents the listing from falling back to a
-    // full read, without clearing the pending check for the next append.
     expect(store.listLocalMessages("default", agentId)).toHaveLength(4);
     expect(() => sendUserMessage(store, "retry")).toThrow();
     expect(await readFile(messagesPath, "utf8")).toBe(corrupted);
@@ -413,8 +552,6 @@ describe("in-context tail window and unread head validation", () => {
     await corruptFirstLine(messagesPath);
     const record = await readFile(recordPath, "utf8");
 
-    // Tail loaded by a non-writing path; the compacted in-context set is
-    // resident, so reads never touch the corrupt head.
     const reopened = freshStore(storageDir);
     reopened.settleInterruptedToolCalls("default", { agentId });
     const current = reopened.listLocalMessages("default", agentId);
@@ -434,8 +571,6 @@ describe("in-context tail window and unread head validation", () => {
     const storageDir = await seedTranscript();
     const store = freshStore(storageDir);
     appendTurn(store, "after reload");
-    // Every in-context message is resident despite the 4-message floor, so
-    // full-history reads never go back to disk.
     await writeFile(conversationPath(storageDir, "messages.jsonl"), "{gone\n");
     const messages = store.listLocalMessages("default", agentId);
     expect(messages).toHaveLength(82);
@@ -463,7 +598,6 @@ describe("in-context tail window and unread head validation", () => {
       packedSummary: "packed summary",
       remainingMessages: messages.slice(-6),
     });
-    // Summary + 6 kept exceeds the 4-message floor; none of it is evicted.
     expect(inspectResidency(store)).toEqual({
       residentMessages: 7,
       persistedSnapshots: 7,
@@ -489,7 +623,6 @@ describe("in-context tail window and unread head validation", () => {
       .in_context_message_ids as string[];
     expect(inContext).toHaveLength(5);
     expect(inContext).not.toContain(danglingId);
-    // The window covers the pruned context: reads stay off disk.
     await writeFile(conversationPath(storageDir, "messages.jsonl"), "{gone\n");
     expect(restarted.listLocalMessages("default", agentId)).toHaveLength(5);
   });
@@ -503,7 +636,6 @@ describe("spliceOutOfContextMessages", () => {
     const window = messages();
     const evicted = spliceOutOfContextMessages(window, ["b", "d"], 2);
     expect(evicted.map((message) => message.id)).toEqual(["a", "c"]);
-    // The newest message stays even though it is not yet in context.
     expect(window.map((message) => message.id)).toEqual(["b", "d", "e"]);
   });
 

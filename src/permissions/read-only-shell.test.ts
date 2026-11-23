@@ -439,9 +439,6 @@ describe("isReadOnlyShellCommand", () => {
       });
 
       test("denies git config --global / --system in memory-rooted commands", () => {
-        // --global writes to ~/.gitconfig, --system writes to /etc/gitconfig.
-        // Neither flag looks like a path token, so validateScopedTokens
-        // can't catch them — must be rejected explicitly.
         expect(
           isScopedMemoryShellCommand(
             "cd /Users/test/.letta/agents/agent-1/memory && git config --global user.email evil@example.com",
@@ -512,14 +509,14 @@ describe("isReadOnlyShellCommand", () => {
 
     test("handles env safely", () => {
       expect(isReadOnlyShellCommand("env")).toBe(true);
-      expect(isReadOnlyShellCommand("env --help")).toBe(true);
-      expect(isReadOnlyShellCommand("env ls -la")).toBe(true);
-      expect(isReadOnlyShellCommand("env bash -lc 'touch /tmp/pwn'")).toBe(
-        false,
-      );
-      expect(
-        isReadOnlyShellCommand("env FOO=1 bash -lc 'touch /tmp/pwn'"),
-      ).toBe(false);
+      expect(isReadOnlyShellCommand("less f")).toBe(true);
+      expect(isReadOnlyShellCommand("env less f")).toBe(true);
+      expect(isReadOnlyShellCommand("env -u VAR less f")).toBe(true);
+      expect(isReadOnlyShellCommand("env ls")).toBe(true);
+      expect(isReadOnlyShellCommand("env VAR=x less f")).toBe(false);
+      expect(isReadOnlyShellCommand("env -i VAR=x less f")).toBe(false);
+      expect(isReadOnlyShellCommand("env VAR=x git log")).toBe(false);
+      expect(isReadOnlyShellCommand("env VAR=x ls")).toBe(false);
     });
   });
 
@@ -602,7 +599,6 @@ describe("isReadOnlyShellCommand", () => {
       expect(isReadOnlyShellCommand("git branch --list 'feature/*'")).toBe(
         true,
       );
-      // Filter flags combined with listing flags
       expect(isReadOnlyShellCommand("git branch -a --contains 63dd7483")).toBe(
         true,
       );
@@ -813,8 +809,6 @@ describe("isReadOnlyShellCommand", () => {
     });
 
     test("does not misclassify commands with trailing digits before redirect", () => {
-      // "ls3>/dev/null" should evaluate as command "ls3" (not "ls")
-      // ls3 is not in the safe list, so it must be blocked
       expect(isReadOnlyShellCommand("ls3>/dev/null")).toBe(false);
       expect(isReadOnlyShellCommand("git branch3>/dev/null")).toBe(false);
       expect(isReadOnlyShellCommand("evil9>/dev/null")).toBe(false);
@@ -1038,7 +1032,6 @@ describe("isReadOnlyShellCommand", () => {
 
 describe("isMemoryDirCommand", () => {
   const AGENT_ID = "agent-test-abc123";
-  // Normalize to forward slashes for shell command strings (even on Windows)
   const home = homedir().replace(/\\/g, "/");
   const memDir = `${home}/.letta/agents/${AGENT_ID}/memory`;
   const worktreeDir = `${home}/.letta/agents/${AGENT_ID}/memory-worktrees`;

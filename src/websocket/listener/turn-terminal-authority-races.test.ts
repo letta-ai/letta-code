@@ -188,6 +188,55 @@ test("a stale finalizer cannot delete a newer authority terminal", () => {
   }
 });
 
+test("recovery teleport journaling preserves sidecar authority", () => {
+  const directory = mkdtempSync(join(tmpdir(), "teleport-authority-"));
+  try {
+    const runtime = getOrCreateScopedRuntime(
+      createRuntime(),
+      "agent-1",
+      "conversation-1",
+    );
+    const lease = runtime.turnLifecycle.begin({
+      origin: "approval_recovery",
+      workingDirectory: process.cwd(),
+    });
+    const store = createTurnFinishedStore(directory);
+    const transition = finishListenerTurn(runtime, lease, {
+      socket: {
+        kind: "local",
+        bufferedAmount: 0,
+        isOpen: () => true,
+        send: () => {},
+      },
+      turnId: "turn-teleport-recovery",
+      stopReason: "end_turn",
+      agentId: "agent-1",
+      conversationId: "conversation-1",
+      terminalConsumerIds: ["slack:agent-1"],
+      turnFinishedStore: store,
+      expectedInterruptedAuthorityRevision: "authority-sidecar",
+      readInterruptedAuthorityRevision: () => "authority-sidecar",
+      readInterruptedRevision: () => "main-before-teleport",
+      recoveryLineageId: "lineage-teleport",
+      teleportHandoff: true,
+      persistTerminalWithoutConsumers: true,
+      onBeforePrepareInputTerminal: () => "main-after-teleport",
+      forgetWork: () => {},
+    });
+
+    expect(transition.finished).toBe(true);
+    expect(
+      store.read("agent-1", "conversation-1")?.terminals[0]?.owner,
+    ).toMatchObject({
+      interruptedRevision: "main-after-teleport",
+      interruptedAuthorityRevision: "authority-sidecar",
+      recoveryLineageId: "lineage-teleport",
+    });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test.each(["exact", "legacy"] as const)(
   "%s retired lineage tombstone delivers only the winning authority terminal",
   (format) => {

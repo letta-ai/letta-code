@@ -4,6 +4,10 @@ import type { Skill, SkillSource } from "@/agent/skills";
 import { estimateTokens } from "@/cli/helpers/format";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { colors } from "./colors";
+import {
+  getSkillsCreationHint,
+  getSkillsTabDescription,
+} from "./skills-dialog-paths";
 import { Text } from "./Text";
 
 const SOLID_LINE = "─";
@@ -19,20 +23,6 @@ const TAB_LABELS: Record<SkillTab, string> = {
   global: "Global",
   bundled: "Bundled",
 };
-
-function getTabDescription(tab: SkillTab, agentId: string): string {
-  const shortId = agentId.length > 20 ? `${agentId.slice(0, 20)}...` : agentId;
-  switch (tab) {
-    case "project":
-      return ".skills/";
-    case "agent":
-      return `~/.letta/agents/${shortId}/memory/skills/`;
-    case "global":
-      return "~/.letta/skills/";
-    case "bundled":
-      return "Built-in skills shipped with Letta Code";
-  }
-}
 
 interface SkillsDialogProps {
   onClose: () => void;
@@ -68,7 +58,6 @@ export function SkillsDialog({ onClose, agentId }: SkillsDialogProps) {
     })();
   }, [agentId]);
 
-  // Group skills by source
   const skillsBySource = useMemo(() => {
     const grouped = new Map<SkillSource, Skill[]>();
     for (const skill of skills) {
@@ -79,12 +68,10 @@ export function SkillsDialog({ onClose, agentId }: SkillsDialogProps) {
     return grouped;
   }, [skills]);
 
-  // Always show all tabs so users can discover empty sources
   const availableTabs = useMemo(() => [...TAB_ORDER], []);
 
   const [activeTab, setActiveTab] = useState<SkillTab | null>(null);
 
-  // Set initial tab once skills load
   useEffect(() => {
     if (!loading && availableTabs.length > 0 && activeTab === null) {
       setActiveTab(availableTabs[0] ?? null);
@@ -172,19 +159,15 @@ export function SkillsDialog({ onClose, agentId }: SkillsDialogProps) {
     </Box>
   );
 
-  // Count currently loaded skills (skills in the loaded_skills memory block)
-  // For now, use total count since we don't track loaded state here
   const loadedCount = skills.length;
 
   return (
     <Box flexDirection="column">
-      {/* Command header */}
       <Text dimColor>{"> /skills"}</Text>
       <Text dimColor>{solidLine}</Text>
 
       <Box height={1} />
 
-      {/* Title and tabs */}
       <Box flexDirection="column" gap={1} marginBottom={1}>
         <Text bold color={colors.selector.title}>
           Skills ({loadedCount} currently available)
@@ -199,7 +182,9 @@ export function SkillsDialog({ onClose, agentId }: SkillsDialogProps) {
         {!loading && skills.length === 0 && (
           <Box flexDirection="column" paddingLeft={2}>
             <Text dimColor>No skills found</Text>
-            <Text dimColor>Create skills in .skills/ or ~/.letta/skills/</Text>
+            <Text dimColor>
+              Create skills in {getSkillsCreationHint(agentId)}
+            </Text>
           </Box>
         )}
 
@@ -207,13 +192,15 @@ export function SkillsDialog({ onClose, agentId }: SkillsDialogProps) {
           <Box flexDirection="column" paddingLeft={1}>
             {renderTabBar()}
             {activeTab && (
-              <Text dimColor> {getTabDescription(activeTab, agentId)}</Text>
+              <Text dimColor>
+                {" "}
+                {getSkillsTabDescription(activeTab, agentId)}
+              </Text>
             )}
           </Box>
         )}
       </Box>
 
-      {/* Skill list for active tab */}
       {!loading && currentSkills.length > 0 && (
         <Box flexDirection="column">
           {visibleSkills.map((skill) => {
@@ -236,14 +223,12 @@ export function SkillsDialog({ onClose, agentId }: SkillsDialogProps) {
         </Box>
       )}
 
-      {/* Empty state for active tab */}
       {!loading && activeTab && currentSkills.length === 0 && (
         <Box paddingLeft={2}>
           <Text dimColor>No skills in this location</Text>
         </Box>
       )}
 
-      {/* Footer */}
       <Box marginTop={1}>
         <Text dimColor>
           {"  "}

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Backend } from "@/backend";
 import {
+  buildAgentMessageRecoveryCommands,
   buildAgentSendContent,
   normalizeAgentMessageComputer,
   resolveAgentMessageDestination,
@@ -57,8 +58,6 @@ function validateSendOptions(values: SendValues): void {
     );
   if (values.new && values.conversation)
     throw new Error("--new cannot be combined with --conversation.");
-  // Enqueue runs with the receiving listener's configuration. These flags
-  // cannot silently change that configuration or weaken its restrictions.
   for (const flag of [
     "tools",
     "allowedTools",
@@ -99,7 +98,6 @@ export interface CloudSendDeps {
   timeoutMs?: number;
 }
 
-/** Return undefined for execution paths this PR intentionally leaves unchanged. */
 export async function tryCloudHeadlessSend(
   values: SendValues,
   prompt: string,
@@ -114,10 +112,6 @@ export async function tryCloudHeadlessSend(
       isAgentLaunch,
     )
   ) {
-    // An Agent process launch aimed at a computer submits through the
-    // listener-launch path, which honors --no-wait by exiting with the
-    // enqueue receipt. Every other non-Cloud destination executes locally
-    // and has nothing to hand back early.
     const agentLaunchTargetsComputer =
       isAgentLaunch &&
       backend.capabilities.environmentRouting &&
@@ -177,7 +171,6 @@ export async function tryCloudHeadlessSend(
     const ambientSender = env.AGENT_ID || env.LETTA_AGENT_ID;
     const sender = {
       agentId: validateAddress(explicitSender || ambientSender, "agent"),
-      // An explicit different sender cannot inherit this process's return conversation.
       conversationId: validateAddress(
         !explicitSender || explicitSender === ambientSender
           ? env.CONVERSATION_ID || env.LETTA_CONVERSATION_ID
@@ -205,7 +198,6 @@ export async function tryCloudHeadlessSend(
       !noWait &&
       (values.computer || values.environment || values.env)
     ) {
-      // Preserve the existing `--computer` shorthand for the ambient agent.
       agentId = validateAddress(ambientSender, "agent");
     }
     if (!agentId && !conversationId)
@@ -225,20 +217,27 @@ export async function tryCloudHeadlessSend(
       backend,
       controller.signal,
     ));
-    const recovery = {
-      status_command: `letta messages status --agent ${agentId} --conversation ${conversationId}`,
-      messages_command: `letta messages list --agent ${agentId} --conversation ${conversationId}`,
-    };
-    // Subscribe and receive the initial snapshot BEFORE submitting. A status
-    // stream opened only after 202 can miss a fast run's exact send mapping.
-    const events = noWait
-      ? undefined
-      : (
-          await (deps.openStatusStream ?? openConversationStatusStream)(
-            agentId,
-            controller,
-          )
-        )[Symbol.asyncIterator]();
+    if (!agentId && !noWait) {
+      agentId =
+        (
+          await backend.retrieveConversation(conversationId, {
+            signal: controller.signal,
+          })
+        ).agent_id ?? undefined;
+      if (!agentId)
+        throw new Error(
+          "Could not determine the conversation's agent to wait for a reply; pass --agent or use --no-wait.",
+        );
+    }
+    const events =
+      noWait || !agentId
+        ? undefined
+        : (
+            await (deps.openStatusStream ?? openConversationStatusStream)(
+              agentId,
+              controller,
+            )
+          )[Symbol.asyncIterator]();
     const initial = events ? await events.next() : undefined;
     if (initial?.done)
       throw new Error(
@@ -256,11 +255,16 @@ export async function tryCloudHeadlessSend(
       AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]),
     );
     clearTimeout(submissionTimeout);
+    agentId = receipt.agent_id ?? agentId;
+    const recovery = buildAgentMessageRecoveryCommands({
+      agentId,
+      conversationId,
+    });
     if (noWait) {
       await writeObject({ ...receipt, ...recovery });
       return 0;
     }
-    if (!events || !initial || initial.done)
+    if (!events || !initial || initial.done || !agentId)
       throw new Error("Missing conversation status subscription.");
     if (format === "stream-json") {
       const init: SystemInitMessage = {
@@ -356,11 +360,8 @@ export async function tryCloudHeadlessSend(
       conversation_id: conversationId ?? "",
       client_message_id: clientMessageId,
       ...(receipt ? { receipt } : {}),
-      ...(agentId && conversationId
-        ? {
-            status_command: `letta messages status --agent ${agentId} --conversation ${conversationId}`,
-            messages_command: `letta messages list --agent ${agentId} --conversation ${conversationId}`,
-          }
+      ...(conversationId
+        ? buildAgentMessageRecoveryCommands({ agentId, conversationId })
         : {}),
       ...(error instanceof ApiRequestError
         ? { http_status: error.status }

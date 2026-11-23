@@ -75,21 +75,7 @@ function buildNotFoundError(
   );
 }
 
-/**
- * Unescapes a string that might have been overly escaped by an LLM.
- * Based on Gemini CLI's unescapeStringForGeminiBug function.
- *
- * LLMs sometimes generate strings with extra escape characters like:
- * - \\n instead of \n (newline)
- * - \\t instead of \t (tab)
- * - \\\" instead of " (quote)
- * - \\` instead of ` (backtick)
- */
 export function unescapeOverEscapedString(input: string): string {
-  // Match one or more backslashes followed by an escapable character
-  // and reduce to the proper single escape sequence.
-  // Based on Gemini CLI's unescapeStringForGeminiBug - intentionally conservative
-  // to avoid over-correcting intentional escapes in shell/regex contexts.
   return input.replace(
     /\\+(n|t|r|'|"|`|\\|\n)/g,
     (_match: string, capturedChar: string): string => {
@@ -124,7 +110,6 @@ export async function edit(args: EditArgs): Promise<EditResult> {
     "Edit",
   );
   const { file_path, replace_all = false, expected_replacements } = args;
-  // Normalize line endings in old_string and new_string to match file normalization
   const old_string = args.old_string.replace(/\r\n/g, "\n");
   const new_string = args.new_string.replace(/\r\n/g, "\n");
   if (old_string.length === 0) {
@@ -148,22 +133,16 @@ export async function edit(args: EditArgs): Promise<EditResult> {
     );
   try {
     const rawContent = await readUtf8TextStrict(resolvedPath);
-    // Normalize line endings to LF for consistent matching (Windows uses CRLF)
     const content = rawContent.replace(/\r\n/g, "\n");
     let occurrences = countOccurrences(content, old_string);
     let finalOldString = old_string;
     const finalNewString = new_string;
 
-    // If no match found, try unescaping old_string in case LLM over-escaped it
     if (occurrences === 0) {
       const unescapedOld = unescapeOverEscapedString(old_string);
       const unescapedOccurrences = countOccurrences(content, unescapedOld);
 
       if (unescapedOccurrences > 0) {
-        // Unescaping old_string worked - use it for matching
-        // NOTE: We intentionally do NOT unescape new_string here.
-        // The user's replacement text should be used as-is. If they want
-        // actual newlines, they should provide actual newlines.
         finalOldString = unescapedOld;
         occurrences = unescapedOccurrences;
       }
@@ -189,7 +168,6 @@ export async function edit(args: EditArgs): Promise<EditResult> {
     if (effectiveReplaceAll) {
       newContent = content.split(finalOldString).join(finalNewString);
       replacements = occurrences;
-      // For replace_all, calculate line number of first occurrence
       const firstIndex = content.indexOf(finalOldString);
       if (firstIndex !== -1) {
         startLine = content.substring(0, firstIndex).split("\n").length;
@@ -198,7 +176,6 @@ export async function edit(args: EditArgs): Promise<EditResult> {
       const index = content.indexOf(finalOldString);
       if (index === -1)
         throw new Error(`String not found in file: ${finalOldString}`);
-      // Calculate the line number where old_string starts (1-indexed)
       startLine = content.substring(0, index).split("\n").length;
       newContent =
         content.substring(0, index) +

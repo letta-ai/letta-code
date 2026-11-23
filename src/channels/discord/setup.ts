@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline/promises";
 import { upsertChannelAccountWithSecrets } from "@/channels/accounts";
+import { getChannelAccountsPath } from "@/channels/config";
 import type {
   DiscordChannelAccount,
   DiscordChannelMode,
@@ -9,7 +10,6 @@ import type {
 import { ensureDiscordRuntimeInstalled } from "./runtime";
 
 function isValidBotToken(token: string): boolean {
-  // Discord bot tokens are base64-encoded and typically 59-72 chars
   return token.length >= 50 && token.includes(".");
 }
 
@@ -135,8 +135,6 @@ export async function runDiscordSetup(): Promise<boolean> {
     );
     const transcribeVoice = /^(y|yes)$/i.test(transcriptionInput.trim());
 
-    // Agent binding — required for account-bound DMs and guild @mentions.
-    // Without this, the bot won't know which agent to create conversations for.
     const envAgentId = process.env.LETTA_AGENT_ID || "";
     let agentId: string | null = null;
 
@@ -163,9 +161,7 @@ export async function runDiscordSetup(): Promise<boolean> {
       console.log(
         "  You can bind later: letta channels bind --channel discord --agent <id>",
       );
-      console.log(
-        "  Or set agentId in ~/.letta/channels/discord/accounts.json\n",
-      );
+      console.log(`  Or set agentId in ${getChannelAccountsPath("discord")}\n`);
     }
 
     const now = new Date().toISOString();
@@ -189,7 +185,7 @@ export async function runDiscordSetup(): Promise<boolean> {
 
     await upsertChannelAccountWithSecrets("discord", account);
     console.log("\n✓ Discord bot configured!");
-    console.log("Config written to: ~/.letta/channels/discord/accounts.json\n");
+    console.log(`Config written to: ${getChannelAccountsPath("discord")}\n`);
     console.log("Next steps:");
     console.log("  1. Start the listener: letta server --channels discord");
     if (channelMode === "open") {

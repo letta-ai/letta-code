@@ -139,6 +139,36 @@ test.each([undefined, "My laptop", "cloud"])(
   },
 );
 
+test.each([
+  [undefined, null],
+  ["agent-from-server", "agent-from-server"],
+])(
+  "a conversation-ID enqueue omits agent_id; server agent %s",
+  async (serverAgentId, expected) => {
+    let body: Record<string, unknown> | undefined;
+    const request: typeof apiRequest = async <T>(
+      _method: string,
+      _path: string,
+      value?: Record<string, unknown>,
+    ) => {
+      body = value;
+      return {
+        client_message_id: "cm-1",
+        workflow_id: "wf-1",
+        super_run_id: "sr-1",
+        ...(serverAgentId ? { agent_id: serverAgentId } : {}),
+      } as T;
+    };
+    const receipt = await enqueueConversationMessage(
+      { conversationId: "conv-target", clientMessageId: "cm-1", content: "hi" },
+      undefined,
+      request,
+    );
+    expect(body).not.toHaveProperty("agent_id");
+    expect(receipt.agent_id).toBe(expected);
+  },
+);
+
 test.each([400, 404, 409, 503])(
   "HTTP %s never falls back to local execution or retries",
   async (status) => {

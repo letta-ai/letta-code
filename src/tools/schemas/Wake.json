@@ -14,7 +14,7 @@
     "prompt": {
       "type": "string",
       "maxLength": 4000,
-      "description": "Instruction your future turn should act on. Required for create."
+      "description": "Note to your future self: what you are waiting on, what you planned and why, and what to check before acting. Required for create."
     },
     "after_seconds": {
       "type": "integer",

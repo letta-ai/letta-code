@@ -1,14 +1,3 @@
-/**
- * Channel Registry — singleton that manages channel adapters, routing,
- * pairing, and the ingress pipeline.
- *
- * Lifecycle:
- * 1. initializeChannels() creates adapters from channel accounts
- * 2. Adapters start long-polling (buffer inbound until ready)
- * 3. setReady() is called from inside startListenerClient() once closure state exists
- * 4. Buffered messages flush through the registered onMessage handler
- */
-
 import {
   getChannelAccountWithSecrets,
   hydrateChannelAccountSecrets,
@@ -79,8 +68,6 @@ import type {
 import { isSignalChannelAccount } from "./types";
 import { subscribeWhatsAppConnectionState } from "./whatsapp/state";
 
-// ── Singleton ─────────────────────────────────────────────────────
-
 let instance: ChannelRegistry | null = null;
 
 export function getChannelRegistry(): ChannelRegistry | null {
@@ -95,8 +82,6 @@ export function getActiveChannelIds(): string[] {
   if (!instance) return [];
   return instance.getActiveChannelIds();
 }
-
-// ── Types ─────────────────────────────────────────────────────────
 
 type ChannelStartupOptions = {
   logger?: ChannelStartupLogger;
@@ -154,8 +139,6 @@ export function formatChannelStartupFailures(
     ),
   ].join("\n");
 }
-
-// ── Registry ──────────────────────────────────────────────────────
 
 export class ChannelRegistry {
   private readonly adapters = new Map<string, ChannelAdapter>();
@@ -221,8 +204,6 @@ export class ChannelRegistry {
     );
   }
 
-  // ── Adapter management ────────────────────────────────────────
-
   private getAdapterKey(
     channelId: string,
     accountId = LEGACY_CHANNEL_ACCOUNT_ID,
@@ -236,7 +217,6 @@ export class ChannelRegistry {
       adapter,
     );
 
-    // Wire the adapter's onMessage to our ingress pipeline
     adapter.onMessage = async (msg: InboundChannelMessage) => {
       await this.inbound.handleInboundMessage(msg);
     };
@@ -415,12 +395,6 @@ export class ChannelRegistry {
     }
   }
 
-  // ── Readiness / ingress handler ───────────────────────────────
-
-  /**
-   * Set the message handler and mark the registry as ready.
-   * Called by the owning gateway after its App Server client is connected.
-   */
   setMessageHandler(handler: ChannelMessageHandler): void {
     this.messageHandler = handler;
   }
@@ -475,22 +449,14 @@ export class ChannelRegistry {
     this.controls.clear(requestId);
   }
 
-  /**
-   * Mark the registry as ready, flushing any buffered messages.
-   */
   setReady(): void {
     this.ready = true;
     this.flushBuffer();
   }
 
-  /**
-   * Check if the registry is ready to deliver messages.
-   */
   isReady(): boolean {
     return this.ready && this.messageHandler !== null;
   }
-
-  // ── Routing ───────────────────────────────────────────────────
 
   getRoute(
     channel: string,
@@ -667,8 +633,6 @@ export class ChannelRegistry {
     return true;
   }
 
-  // ── Lifecycle ─────────────────────────────────────────────────
-
   async startAll(): Promise<void> {
     for (const adapter of Array.from(this.adapters.values())) {
       if (!adapter.isRunning()) {
@@ -677,11 +641,6 @@ export class ChannelRegistry {
     }
   }
 
-  /**
-   * Pause delivery without stopping adapters.
-   * Called on WS disconnect — adapters keep polling, messages buffer.
-   * On reconnect, wireChannelIngress re-registers the handler and calls setReady().
-   */
   pause(): void {
     this.ready = false;
     this.messageHandler = null;
@@ -693,10 +652,6 @@ export class ChannelRegistry {
     this.reloadHandler = null;
   }
 
-  /**
-   * Fully stop all adapters and destroy the singleton.
-   * Only called on actual process shutdown, NOT on WS disconnect.
-   */
   async stopAll(): Promise<void> {
     for (const adapter of Array.from(this.adapters.values())) {
       if (adapter.isRunning()) {
@@ -715,8 +670,6 @@ export class ChannelRegistry {
     this.unsubscribeWhatsAppState();
     instance = null;
   }
-
-  // ── Inbound message pipeline ──────────────────────────────────
 
   private deliverOrBuffer(delivery: ChannelInboundDelivery): void {
     if (this.isReady()) {
@@ -739,19 +692,6 @@ export class ChannelRegistry {
   }
 }
 
-// ── Initialization ────────────────────────────────────────────────
-
-/**
- * Initialize the channel system.
- *
- * 1. Creates the ChannelRegistry singleton
- * 2. Loads configs, routing tables, and pairing stores
- * 3. Creates adapters for each requested channel
- * 4. Starts adapters (begin long-polling, buffer until ready)
- *
- * Does NOT set the message handler or mark ready — that happens
- * inside startListenerClient() when closure state is available.
- */
 export async function initializeChannels(
   channelNames: string[],
   options?: {
@@ -769,10 +709,6 @@ export async function initializeChannels(
   );
   logChannelStartup(options?.logger, `root: ${getChannelsRoot()}`);
 
-  // Eagerly hydrate/migrate channel account secrets at channel subsystem
-  // startup. This converts existing plaintext token fields in accounts.json to
-  // keyring-backed refs when the active credential store is `keyring` (or
-  // `auto` with keyring available), while preserving file-mode compatibility.
   for (const channelId of new Set([
     ...getSupportedChannelIds(),
     ...channelNames,
@@ -865,12 +801,6 @@ export async function initializeChannels(
   return registry;
 }
 
-/**
- * Complete a pairing and create a route (atomic operation).
- *
- * Validates the pairing code, approves the user, and binds their
- * chat to the specified agent+conversation.
- */
 export function completePairing(
   channelId: string,
   code: string,
@@ -885,14 +815,12 @@ export function completePairing(
 
   const resolvedAccountId = pending.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
 
-  // Snapshot existing route so we can restore it on failure
   const previousRoute = getRouteRaw(
     channelId,
     pending.chatId,
     resolvedAccountId,
   );
 
-  // Create route — roll back pairing approval AND in-memory route if this fails
   try {
     const now = new Date().toISOString();
     addRoute(channelId, {
@@ -907,13 +835,11 @@ export function completePairing(
       updatedAt: now,
     });
   } catch (err) {
-    // Restore in-memory route to prior state (no disk write — disk is what failed)
     if (previousRoute) {
       setRouteInMemory(channelId, previousRoute);
     } else {
       removeRouteInMemory(channelId, pending.chatId, resolvedAccountId, null);
     }
-    // Roll back: re-add the pending code and remove the approved user
     rollbackPairingApproval(channelId, pending);
     const msg = err instanceof Error ? err.message : "unknown error";
     return {

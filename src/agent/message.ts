@@ -1,7 +1,3 @@
-/**
- * Utilities for sending messages to an agent via conversations
- **/
-
 import { Buffer } from "node:buffer";
 import { APIUserAbortError } from "@letta-ai/letta-client/core/error";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
@@ -12,10 +8,18 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
 import { ACTING_USER_ID_ENV, ACTING_USER_ID_HEADER } from "@/agent/acting-user";
+import { getMcpOriginatorToken } from "@/agent/mcp-originator-tokens";
 import type { SkillSource } from "@/agent/skill-sources";
 import { type Backend, getBackend } from "@/backend";
+import { isCompactionSummaryChunk } from "@/backend/compaction-events";
 import { takePendingDiskSpaceReminder } from "@/reminders/disk-space";
 import { getRuntimeContext } from "@/runtime-context";
+import {
+  getBusyRecoveryHttpStatus,
+  markBusyRequest,
+  reportBusyRecovery,
+  traceBusyRecoveryStream,
+} from "@/telemetry/busy-recovery";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import {
   type ClientTool,
@@ -40,26 +44,26 @@ import {
   type ApprovalNormalizationOptions,
   normalizeOutgoingApprovalMessages,
 } from "./approval-result-normalization";
-import {
-  buildClientSkillsPayload,
-  buildClientSkillsUpdateReminder,
-} from "./client-skills";
+import { buildClientSkillsPayload } from "./client-skills";
+import { planClientSkillsRequest } from "./client-skills-baseline";
 import { getSkillSources } from "./context";
-import { parseRetryAfterHeaderMs } from "./turn-recovery-policy";
+import {
+  extractConflictDetail,
+  extractConversationBusyRunId,
+  isConversationBusyError,
+  parseRetryAfterHeaderMs,
+} from "./turn-recovery-policy";
 
 const streamRequestStartTimes = new WeakMap<object, number>();
 const streamToolContextIds = new WeakMap<object, string>();
 const RESPONSE_STATE_HEADER = "X-Letta-Response-State";
 const RESPONSE_STATE_CACHE_SCOPE = "approval_boundary";
+const MCP_ORIGINATOR_TOKEN_HEADER = "x-letta-mcp-originator-token";
+const MCP_ORIGINATOR_ISOLATION_HEADER = "x-letta-mcp-originator-isolation";
+const MCP_ORIGINATOR_SUPER_RUN_HEADER = "x-letta-mcp-originator-super-run-id";
 const CLOUD_API_SHUTDOWN_MAX_RETRIES = 3;
 const CLOUD_API_SHUTDOWN_DEFAULT_RETRY_DELAY_MS = 1000;
 const responseStateIdsByScope = new Map<string, string>();
-// Backend identity and agent/default-conversation scope must not share a
-// notification baseline. Discovery cache invalidation must not clear it either.
-const sentClientSkillsByBackend = new WeakMap<
-  Backend,
-  Map<string, NonNullable<ConversationMessageCreateParams["client_skills"]>>
->();
 
 function getCloudApiShutdownRetryDelayMs(error: { headers?: unknown }): number {
   const headers = error.headers;
@@ -169,6 +173,7 @@ function attachResponseStateTracking(
     scope: string;
     conversationId: string;
     agentId: string | null;
+    onCompaction?: () => void;
   },
 ): Stream<LettaStreamingResponse> {
   const originalAsyncIterator = stream[Symbol.asyncIterator].bind(stream);
@@ -183,6 +188,9 @@ function attachResponseStateTracking(
       async next() {
         const result = await iterator.next();
         if (!result.done) {
+          if (isCompactionSummaryChunk(result.value)) {
+            params.onCompaction?.();
+          }
           const responseId = getResponseStateId(result.value);
           if (responseId) {
             responseStateIdsByScope.set(params.scope, responseId);
@@ -240,49 +248,16 @@ export function getStreamRequestContext(
 export type SendMessageStreamOptions = {
   streamTokens?: boolean;
   background?: boolean;
-  agentId?: string; // Required when conversationId is "default"
+  agentId?: string;
   approvalNormalization?: ApprovalNormalizationOptions;
   workingDirectory?: string;
-  /** Per-conversation permission mode state. When provided, tool execution uses
-   *  this scoped state instead of the global permissionMode singleton. */
   permissionModeState?: PermissionModeState;
-  /** Per-request skill sources. An empty array disables client skills. */
   skillSources?: SkillSource[];
-  /**
-   * Per-request model override. Uses backend request-scoped override_model and
-   * does not mutate agent/conversation persisted model configuration.
-   */
   overrideModel?: string;
-  /** Request-scoped Messages API response format. */
   responseFormat?: Record<string, unknown>;
-  /** Explicit turn-scoped tool snapshot. When present, bypasses the global registry. */
   preparedToolContext?: PreparedToolExecutionContext;
-  /**
-   * Allow sending a cached previous response id for this request. Callers should
-   * set this only for approval continuations that were fully auto-handled by
-   * the client, with no human approval/denial in the loop.
-   */
   allowResponseStateReuse?: boolean;
-  /**
-   * Per-message failure policy for best-effort channel attachments. Images are
-   * always normalized; entries here only choose whether a failed conversion is
-   * dropped instead of failing the request.
-   */
   imageFailureModesByMessageOtid?: ImageFailureModesByMessageOtid;
-  /**
-   * Cloud user id of the human who pressed "send" (multi-user
-   * sandbox scenario). When set, `sendMessageStream` echoes this on
-   * the outbound HTTP request as the `X-Letta-Acting-User-Id`
-   * header so cloud-api can re-attribute credits + rate limits to
-   * the actual sender — rather than the user whose API key is the
-   * bearer credential (i.e. whoever spawned the sandbox).
-   *
-   * Set by the listener after reading
-   * `runtime.acting_user_id` from cloud's status WS frame; absent
-   * for self-hosted / single-user / pre-channel-split flows.
-   * Pass `null` when a queued system/unattributed input must explicitly suppress
-   * an actor inherited from the execution context or process environment.
-   */
   actingUserId?: string | null;
 };
 
@@ -339,20 +314,10 @@ function buildRequestBodyFromPreparedMessages(
   };
 }
 
-/**
- * Send a message to a conversation and return a streaming response.
- * Uses the conversations API for all conversations.
- *
- * For the "default" conversation (agent's primary message history without
- * an explicit conversation object), pass conversationId="default" and
- * provide agentId in opts. The agent id is sent in the request body.
- */
 export async function sendMessageStream(
   conversationId: string,
   messages: Array<MessageCreate | ApprovalCreate>,
   opts: SendMessageStreamOptions = { streamTokens: true, background: true },
-  // Disable SDK retries by default - state management happens outside the stream,
-  // so retries would violate idempotency and create race conditions
   requestOptions: SendMessageStreamRequestOptions = {
     maxRetries: 0,
   },
@@ -366,11 +331,6 @@ export async function sendMessageStream(
   );
 }
 
-/**
- * Send a message through an explicit backend instance. Use this when a caller
- * composes several backend operations and needs fork/send to stay on the same
- * backend without reaching back through the global backend singleton.
- */
 export async function sendMessageStreamWithBackend(
   backend: Backend,
   conversationId: string,
@@ -386,10 +346,6 @@ export async function sendMessageStreamWithBackend(
     messages,
     opts.approvalNormalization,
   );
-  // Scrub vault and ambient secret values from outgoing message text before
-  // they enter the conversation transcript. ApprovalCreate carries tool-call
-  // payloads, not user text, and has no `role` field — so `role` presence
-  // discriminates the union.
   const scrubbedMessages = canonicalMessages.map((message) => {
     if (!("role" in message) || message.role !== "user") {
       return message;
@@ -419,8 +375,6 @@ export async function sendMessageStreamWithBackend(
   const preparedToolContext = opts.preparedToolContext
     ? opts.preparedToolContext
     : await (async () => {
-        // Wait for any in-progress toolset switch to complete before reading tools
-        // This prevents sending messages with stale tools during a switch
         await waitForToolsetReady();
         return await prepareCurrentToolExecutionContext({
           workingDirectory: opts.workingDirectory,
@@ -431,41 +385,33 @@ export async function sendMessageStreamWithBackend(
   const executionRuntimeContext = getExecutionContextById(
     preparedToolContext.contextId,
   )?.runtimeContext;
-  const { clientSkills, errors: clientSkillDiscoveryErrors } =
-    await buildClientSkillsPayload({
-      agentId: opts.agentId,
-      workingDirectory:
-        opts.workingDirectory ??
-        executionRuntimeContext?.workingDirectory ??
-        undefined,
-      skillsDirectory: executionRuntimeContext?.skillsDirectory,
-      skillSources: opts.skillSources ?? getSkillSources(),
-      bundledSkills: executionRuntimeContext?.bundledSkills,
-    });
+  const {
+    clientSkills: discoveredClientSkills,
+    errors: clientSkillDiscoveryErrors,
+  } = await buildClientSkillsPayload({
+    agentId: opts.agentId,
+    workingDirectory:
+      opts.workingDirectory ??
+      executionRuntimeContext?.workingDirectory ??
+      undefined,
+    skillsDirectory: executionRuntimeContext?.skillsDirectory,
+    skillSources: opts.skillSources ?? getSkillSources(),
+    bundledSkills: executionRuntimeContext?.bundledSkills,
+    cloudSkillRepositories:
+      executionRuntimeContext?.executionSettings?.cloud_skill_repositories,
+  });
 
   const resolvedConversationId = conversationId;
   const responseStateScope = buildResponseStateScope(
     resolvedConversationId,
     opts.agentId ?? null,
   );
-  const skillScope = buildResponseStateScope(
-    resolvedConversationId,
-    conversationId === "default" ? opts.agentId : null,
+  const skillPlan = planClientSkillsRequest(
+    backend,
+    { conversationId: resolvedConversationId, agentId: opts.agentId },
+    discoveredClientSkills,
   );
-  let sentClientSkills = sentClientSkillsByBackend.get(backend);
-  if (!sentClientSkills) {
-    sentClientSkills = new Map();
-    sentClientSkillsByBackend.set(backend, sentClientSkills);
-  }
-  const skillReminder = buildClientSkillsUpdateReminder(
-    sentClientSkills.get(skillScope),
-    clientSkills,
-  );
-  // Deliver at the next model boundary (including tool continuations), not by
-  // launching an unsolicited run from a filesystem watcher. Keep approvals and
-  // the original input/otid in place, then append the runtime reminder.
-  // A low-disk alert held for a loop with no queue (e.g. a subagent) rides
-  // this same boundary.
+  const { clientSkills, reminder: skillReminder } = skillPlan;
   const diskReminder = takePendingDiskSpaceReminder();
   const runtimeReminders = [skillReminder, diskReminder].filter(
     (text): text is string => Boolean(text),
@@ -480,10 +426,6 @@ export async function sendMessageStreamWithBackend(
   ];
   const isApprovalContinuation =
     isApprovalContinuationRequest(normalizedMessages);
-  // Only reuse cached response state when the approval continuation was fully
-  // auto-handled by the client. If a human reviewed any approval, the pause can
-  // allow visible agent/conversation state to change, so use the full server path.
-  // A changed skill catalog also needs that path, rather than a cached prompt.
   const canUsePreviousResponseState =
     isApprovalContinuation &&
     opts.allowResponseStateReuse === true &&
@@ -498,6 +440,8 @@ export async function sendMessageStreamWithBackend(
     clientTools,
     clientSkills,
   );
+
+  reportAttachedRepositorySkillErrors(clientSkillDiscoveryErrors);
 
   if (isDebugEnabled()) {
     debugLog(
@@ -555,11 +499,17 @@ export async function sendMessageStreamWithBackend(
   } else if (!canUsePreviousResponseState) {
     responseStateIdsByScope.delete(responseStateScope);
   }
-  // Echo the cloud user id back to cloud-api so it can re-attribute
-  // credits + rate limits on multi-user sandboxes. See
-  // SendMessageStreamOptions.actingUserId for full context.
   if (actingUserId) {
     extraHeaders[ACTING_USER_ID_HEADER] = actingUserId;
+  }
+  const originatorSuperRunId = executionRuntimeContext
+    ? executionRuntimeContext.mcpOriginatorSuperRunId
+    : getRuntimeContext()?.mcpOriginatorSuperRunId;
+  const originatorToken = getMcpOriginatorToken(originatorSuperRunId);
+  if (originatorToken && originatorSuperRunId) {
+    extraHeaders[MCP_ORIGINATOR_TOKEN_HEADER] = originatorToken;
+    extraHeaders[MCP_ORIGINATOR_ISOLATION_HEADER] = "1";
+    extraHeaders[MCP_ORIGINATOR_SUPER_RUN_HEADER] = originatorSuperRunId;
   }
 
   const messageSummary = normalizedMessages
@@ -609,12 +559,12 @@ export async function sendMessageStreamWithBackend(
           },
         },
       );
-      // A rejected request must not consume the notification; retries need it.
-      sentClientSkills.set(skillScope, clientSkills);
+      const onSkillsCompaction = skillPlan.accept();
       stream = attachResponseStateTracking(stream, {
         scope: responseStateScope,
         conversationId: resolvedConversationId,
         agentId: opts.agentId ?? null,
+        onCompaction: onSkillsCompaction,
       });
       break;
     } catch (error) {
@@ -639,8 +589,6 @@ export async function sendMessageStreamWithBackend(
           );
         } catch (abortError) {
           abortRelay?.cleanup();
-          // Classify the interrupt as a user abort so callers unwind silently
-          // instead of reporting a stream error and clearing queued work.
           throw abortError instanceof APIUserAbortError
             ? abortError
             : new APIUserAbortError();
@@ -649,6 +597,16 @@ export async function sendMessageStreamWithBackend(
       }
 
       abortRelay?.cleanup();
+      const detail = extractConflictDetail(error);
+      if (isConversationBusyError(detail)) {
+        markBusyRequest(backend, resolvedConversationId, firstOtid);
+        reportBusyRecovery("send_rejected", {
+          conversationId: resolvedConversationId,
+          otid: firstOtid,
+          blockerRunId: extractConversationBusyRunId(detail) ?? undefined,
+          httpStatus: getBusyRecoveryHttpStatus(error),
+        });
+      }
       debugWarn(
         "send-message-stream",
         "request_error conversation_id=%s otid=%s status=%s error=%s",
@@ -668,6 +626,13 @@ export async function sendMessageStreamWithBackend(
     firstOtid ?? "none",
   );
 
+  stream = traceBusyRecoveryStream(
+    stream,
+    resolvedConversationId,
+    firstOtid,
+    requestOptions.signal,
+    backend,
+  );
   abortRelay?.attach(stream as object);
 
   if (requestStartTime !== undefined) {
@@ -684,4 +649,17 @@ export async function sendMessageStreamWithBackend(
   });
 
   return stream;
+}
+
+function reportAttachedRepositorySkillErrors(
+  errors: ReadonlyArray<{ path: string; message: string }>,
+): void {
+  for (const error of errors) {
+    if (!error.path.startsWith("shared-memory:")) continue;
+    trackBoundaryError({
+      errorType: "client_skills_attached_repositories_error",
+      error: error.message,
+      context: "send_message_client_skills",
+    });
+  }
 }

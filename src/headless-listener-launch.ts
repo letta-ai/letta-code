@@ -15,8 +15,9 @@ import {
   getLatestConversationSuperRun,
   listEnqueuedRunMessages,
 } from "@/backend/api/conversation-enqueue";
-import { getApiRequestConfig } from "@/backend/api/request";
+import { ApiRequestError, getApiRequestConfig } from "@/backend/api/request";
 import type { RuntimeExecutionSettings } from "@/runtime-execution-settings";
+import { stopLocalSubagent } from "@/tools/impl/subagent-stop-bridge";
 import type {
   ConversationRuntimeScope,
   LoopState,
@@ -24,6 +25,7 @@ import type {
   RuntimeStartCommand,
   TurnFinishedMessage,
 } from "@/types/protocol_v2";
+import type { SubagentStopCommand } from "@/types/subagent-protocol";
 import {
   type ListenerLaunchResult,
   resolveEnvironmentMaxWaitMs,
@@ -57,7 +59,6 @@ async function createListenerClient(
   });
 }
 
-/** Cancel only this input: a queued child must not interrupt the turn ahead of it. */
 export async function cancelListenerInput(params: {
   client: AppServerClient;
   scope: ConversationRuntimeScope;
@@ -99,7 +100,6 @@ export async function cancelListenerInput(params: {
   return response.aborted;
 }
 
-/** Reconnect only for explicit cancellation, never to observe task progress. */
 export async function cancelAcceptedListenerInput(
   receipt: EnqueueReceipt,
 ): Promise<boolean> {
@@ -145,14 +145,68 @@ export async function cancelAcceptedListenerInput(
   }
 }
 
-/** The CLI remains the caller; the existing listener owns model and tool execution. */
+export async function stopAcceptedListenerConversation(
+  receipt: EnqueueReceipt,
+): Promise<void> {
+  if (!receipt.connection_id) throw new Error("The owning listener is unknown");
+  const scope = {
+    agent_id: receipt.agent_id,
+    conversation_id: receipt.conversation_id,
+    acting_user_id: receipt.acting_user_id ?? undefined,
+  };
+  try {
+    await dequeueConversationMessage(
+      {
+        agentId: getEnqueueAgentId(receipt),
+        conversationId: receipt.conversation_id,
+        clientMessageId: receipt.client_message_id,
+        actingUserId: receipt.acting_user_id,
+      },
+      AbortSignal.timeout(10_000),
+    );
+  } catch (error) {
+    if (!(error instanceof ApiRequestError && error.status === 404))
+      throw error;
+  }
+  const command: SubagentStopCommand = {
+    type: "subagent_stop",
+    request_id: randomUUID(),
+    runtime: { ...scope, agent_id: getEnqueueAgentId(receipt) },
+    agent_id: getEnqueueAgentId(receipt),
+    conversation: scope,
+    client_message_id: receipt.client_message_id,
+  };
+  const requireStopped = (response: {
+    success: boolean;
+    stopped: boolean;
+    error?: string;
+    cleanup_confirmed?: boolean;
+  }) => {
+    if (!response.success || !response.stopped || !response.cleanup_confirmed)
+      throw new Error(
+        response.error ?? "The listener did not confirm the stop",
+      );
+  };
+  const local = stopLocalSubagent(receipt.connection_id, command);
+  if (local) {
+    requireStopped(await local);
+    return;
+  }
+  const client = await createListenerClient(receipt.connection_id, scope);
+  try {
+    await client.connect();
+    requireStopped(await client.stopSubagent(command));
+  } finally {
+    client.close();
+  }
+}
+
 export async function launchListenerConversation(
   params: {
     connectionId: string;
     scope: ConversationRuntimeScope;
     parentAgentId?: string;
     content: MessageCreate["content"];
-    /** Initial assignment identity, not a control-command request_id. */
     clientMessageId?: string;
     backend: Pick<Backend, "retrieveRun">;
     settings: RuntimeExecutionSettings;
@@ -161,11 +215,6 @@ export async function launchListenerConversation(
     skillSources?: RuntimeStartCommand["skill_sources"];
     onMessage?: (message: MessageDelta) => void;
     signal?: AbortSignal;
-    /**
-     * Return the enqueue receipt as soon as Cloud accepts the send instead of
-     * waiting for the remote turn. The caller tracks completion through the
-     * Cloud super-run status APIs; nothing in this process keeps waiting.
-     */
     noWait?: boolean;
   },
   deps: {
@@ -223,7 +272,7 @@ export async function launchListenerConversation(
         if (ids.includes(clientMessageId)) runIds.add(runId);
       }
     } else if (message.type === "update_queue") {
-      cancelled ||= message.removed.some(
+      cancelled ||= (message.removed ?? []).some(
         (entry) =>
           entry.client_message_id === clientMessageId &&
           entry.disposition === "cancelled",
@@ -302,8 +351,6 @@ export async function launchListenerConversation(
       },
       AbortSignal.timeout(30_000),
     );
-    // Tracked callers follow this receipt until the Super Run completes. The
-    // child's first end_turn may only be waiting for its own background work.
     if (params.noWait)
       return {
         status: "queued",
@@ -341,8 +388,6 @@ export async function launchListenerConversation(
           throw new Error(
             "Could not confirm listener cancellation; execution may still be running",
           );
-        // Cancellation has its own deadline and requests. Never feed it the
-        // already-aborted signal used to interrupt status/result reads.
         await delay(deps.pollMs ?? 1000);
         continue;
       }

@@ -1,20 +1,14 @@
-// src/cli/helpers/sessionContext.ts
-// Generates session context system reminder for the first message of each CLI session
-// Contains device/environment information only. Agent metadata is in agentMetadata.ts.
-
 import { platform } from "node:os";
 import { basename } from "node:path";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import type { SessionContextReason } from "@/reminders/state";
+import type { RuntimeSessionSource } from "@/runtime-context";
 import { detectShellContext, type ShellContext } from "@/utils/shell-context";
 import { getVersion } from "@/version";
 import { gatherGitContextSnapshot } from "./git-context";
 
-export type SessionContextSource = "interactive-cli" | "headless" | "listen";
+export type SessionContextSource = RuntimeSessionSource;
 
-/**
- * Get the current local time in a human-readable format
- */
 export function getLocalTime(): string {
   const now = new Date();
   return now.toLocaleString(undefined, {
@@ -28,9 +22,6 @@ export function getLocalTime(): string {
   });
 }
 
-/**
- * Get device type based on platform
- */
 export function getDeviceType(p: NodeJS.Platform = platform()): string {
   switch (p) {
     case "darwin":
@@ -44,11 +35,6 @@ export function getDeviceType(p: NodeJS.Platform = platform()): string {
   }
 }
 
-/**
- * Gather git information if in a git repository
- * Returns truncated commits (3) and status (20 lines)
- * Each field is gathered independently with fallbacks
- */
 function getGitInfo(cwd?: string): {
   isGitRepo: boolean;
   branch?: string;
@@ -81,15 +67,9 @@ export interface BuildSessionContextOptions {
   source?: SessionContextSource;
   reason?: SessionContextReason;
   shellContext?: ShellContext;
-  /** Override the host platform (tests). Defaults to `os.platform()`. */
   platform?: NodeJS.Platform;
 }
 
-/**
- * Name the shell Bash/Monitor spawn on macOS/Linux, mirroring Claude Code's
- * `Shell:` env line and Codex's `<shell>` environment_context field.
- * Windows keeps its dedicated shell notes instead.
- */
 export function buildUnixShellLine(shellContext: ShellContext): string {
   const shellName =
     basename(shellContext.displayName) || shellContext.displayName;
@@ -141,11 +121,6 @@ ${shellLine}
 `;
 }
 
-/**
- * Build the session context system reminder (device/environment info only).
- * Agent metadata is handled separately by buildAgentMetadata().
- * Returns empty string on any failure (graceful degradation).
- */
 export function buildSessionContext(
   options?: BuildSessionContextOptions,
 ): string {
@@ -155,27 +130,20 @@ export function buildSessionContext(
     const reason = options?.reason ?? "initial_attach";
     const currentPlatform = options?.platform ?? platform();
 
-    // Gather info with safe fallbacks
     let version = "unknown";
     try {
       version = getVersion();
-    } catch {
-      // version stays "unknown"
-    }
+    } catch {}
 
     let deviceType = "unknown";
     try {
       deviceType = getDeviceType(currentPlatform);
-    } catch {
-      // deviceType stays "unknown"
-    }
+    } catch {}
 
     let localTime = "unknown";
     try {
       localTime = getLocalTime();
-    } catch {
-      // localTime stays "unknown"
-    }
+    } catch {}
 
     let unixShellLine = "";
     if (currentPlatform !== "win32") {
@@ -184,14 +152,11 @@ export function buildSessionContext(
           options?.shellContext ??
             detectShellContext(process.env, currentPlatform),
         );
-      } catch {
-        // omit the shell line
-      }
+      } catch {}
     }
 
     const gitInfo = getGitInfo(cwd);
 
-    // Build the context
     let context = `${SYSTEM_REMINDER_OPEN}
 This is an automated message providing context about the user's environment.
 ${getIntroText(source, reason)}
@@ -203,7 +168,6 @@ ${unixShellLine}- **Letta Code version**: ${version}
 - **Current working directory**: ${cwd}
 `;
 
-    // Add git info if available
     if (gitInfo.isGitRepo) {
       context += `- **Git repository**: Yes (branch: ${gitInfo.branch})
 - **Git user**: ${gitInfo.gitUser}
@@ -223,7 +187,6 @@ ${gitInfo.status}
 `;
     }
 
-    // Add Windows-specific shell guidance
     if (currentPlatform === "win32") {
       context += buildWindowsShellNotes(options?.shellContext);
     }
@@ -232,8 +195,6 @@ ${gitInfo.status}
 
     return context;
   } catch {
-    // If anything fails catastrophically, return empty string
-    // This ensures the user's message still gets sent
     return "";
   }
 }

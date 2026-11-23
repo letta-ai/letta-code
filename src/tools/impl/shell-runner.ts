@@ -1,6 +1,16 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
+import { getClient } from "@/backend/api/client";
+import { resolveMcpOriginatorToken } from "@/backend/api/mcp-originator-resolver";
+import {
+  createMcpSubprocessBroker,
+  type McpSubprocessBroker,
+} from "@/backend/api/mcp-subprocess-broker";
 import { isUsableDirectory } from "@/helpers/usable-directory";
+import { getMcpScopeAgentId } from "@/mcp-scope";
+import { getRuntimeContext } from "@/runtime-context";
+import { getRuntimeExecutionEnv } from "@/runtime-execution-settings";
+import { createSecretStreamScrubber } from "@/tools/secret-substitution";
 import { wrapManagedWorkloadLauncher } from "@/utils/systemd-workload-scope";
 import { noteExpectedWorktreeForLauncher } from "@/websocket/listener/worktree-ownership";
 import {
@@ -12,7 +22,6 @@ export class ShellExecutionError extends Error {
   code?: string;
   executable?: string;
   cwd?: string;
-  /** Distinguishes which lookup failed when `code` is ENOENT. */
   reason?: "executable_missing" | "cwd_missing";
 }
 
@@ -22,12 +31,11 @@ export type ShellSpawnOptions = {
   cwd: string;
   env: NodeJS.ProcessEnv;
   timeoutMs: number;
-  /** Command before launcher and sandbox wrapping, used for completion metadata. */
   sourceCommand?: ShellSourceCommand;
   signal?: AbortSignal;
+  waitForProcessGroupOnClose?: boolean;
   onOutput?: (chunk: string, stream: ShellOutputStream) => void;
   tty?: boolean;
-  /** Disable when the caller already keeps its own bounded output buffer. */
   captureOutput?: boolean;
 };
 
@@ -41,6 +49,7 @@ export interface ShellProcessResult {
   stdout: string;
   stderr: string;
   exitCode: number | null;
+  signal?: string | number | null;
 }
 
 export interface RunningShellProcess {
@@ -76,7 +85,11 @@ type NodePtyModule = {
 type ProcessEvents = {
   output(data: Buffer | string, stream: ShellOutputStream): void;
   error(error: NodeJS.ErrnoException): void;
-  close(code: number | null): void;
+  close(
+    code: number | null,
+    signal?: string | number | null,
+    processGroup?: number,
+  ): void;
 };
 
 const NODE_PTY_BRIDGE_SCRIPT = `
@@ -97,7 +110,7 @@ process.on("SIGTERM", () => child.kill("SIGTERM"));
 process.on("SIGINT", () => child.kill("SIGINT"));
 `;
 
-const FORCE_KILL_GRACE_MS = 2000;
+export const FORCE_KILL_GRACE_MS = 2000;
 
 function buildSpawnError(
   err: NodeJS.ErrnoException,
@@ -179,17 +192,13 @@ function killChildProcessTree(
     taskkill.once("error", () => {
       try {
         childProcess.kill("SIGKILL");
-      } catch {
-        // Already dead, ignore.
-      }
+      } catch {}
     });
     taskkill.once("close", (code) => {
       if (code === 0) return;
       try {
         childProcess.kill("SIGKILL");
-      } catch {
-        // Already dead, ignore.
-      }
+      } catch {}
     });
     return;
   }
@@ -199,9 +208,7 @@ function killChildProcessTree(
   } catch {
     try {
       childProcess.kill(signal as NodeJS.Signals);
-    } catch {
-      // Already dead, ignore.
-    }
+    } catch {}
   }
 }
 
@@ -212,6 +219,33 @@ function interruptChildProcessTree(childProcess: ChildProcess): void {
     );
   }
   killChildProcessTree(childProcess, "SIGINT");
+}
+
+function createPipeProcessKiller(
+  childProcess: ChildProcess,
+): ShellProcessHandle["kill"] {
+  let exited = false;
+  let forced = false;
+  let drainTimer: ReturnType<typeof setTimeout> | undefined;
+  childProcess.once("close", () => clearTimeout(drainTimer));
+  const closePipes = () => {
+    if (!exited || !forced || drainTimer) return;
+    drainTimer = setTimeout(() => {
+      childProcess.stdin?.destroy();
+      childProcess.stdout?.destroy();
+      childProcess.stderr?.destroy();
+    }, 100);
+  };
+  childProcess.once("exit", () => {
+    exited = true;
+    closePipes();
+  });
+  return (signal?: string | number) => {
+    forced ||=
+      process.platform === "win32" || signal === "SIGKILL" || signal === 9;
+    killChildProcessTree(childProcess, signal);
+    closePipes();
+  };
 }
 
 function spawnPipeProcess(
@@ -230,6 +264,7 @@ function spawnPipeProcess(
     shell: false,
     stdio: ["ignore", "pipe", "pipe"],
     detached: process.platform !== "win32",
+    windowsHide: true,
   });
 
   childProcess.stdout?.on("data", (chunk: Buffer) => {
@@ -239,18 +274,20 @@ function spawnPipeProcess(
     events.output(chunk, "stderr");
   });
   childProcess.on("error", events.error);
-  childProcess.on("close", events.close);
+  childProcess.on("close", (code, signal) => {
+    events.close(
+      code,
+      signal,
+      process.platform === "win32" ? undefined : childProcess.pid,
+    );
+  });
 
   return {
-    kill(signal?: string | number) {
-      killChildProcessTree(childProcess, signal);
-    },
+    kill: createPipeProcessKiller(childProcess),
     interrupt() {
       interruptChildProcessTree(childProcess);
     },
-    write(_input: string) {
-      // Pipe-mode shell processes deliberately keep stdin closed.
-    },
+    write(_input: string) {},
   };
 }
 
@@ -277,6 +314,7 @@ function spawnPtyBridgeProcess(
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
       detached: process.platform !== "win32",
+      windowsHide: true,
     },
   );
 
@@ -290,9 +328,7 @@ function spawnPtyBridgeProcess(
   childProcess.on("close", events.close);
 
   return {
-    kill(signal?: string | number) {
-      killChildProcessTree(childProcess, signal);
-    },
+    kill: createPipeProcessKiller(childProcess),
     interrupt() {
       interruptChildProcessTree(childProcess);
     },
@@ -323,8 +359,8 @@ function spawnNativePtyProcess(
   });
 
   ptyProcess.onData((data) => events.output(data, "stdout"));
-  ptyProcess.onExit(({ exitCode }) => {
-    events.close(typeof exitCode === "number" ? exitCode : null);
+  ptyProcess.onExit(({ exitCode, signal }) => {
+    events.close(typeof exitCode === "number" ? exitCode : null, signal);
   });
 
   return {
@@ -345,41 +381,76 @@ function spawnPtyProcess(
   options: ShellSpawnOptions,
   events: ProcessEvents,
 ): ShellProcessHandle {
-  // node-pty's native handles do not integrate reliably when loaded into
-  // Bun's event loop. Local Bun dev/tests use a tiny Node bridge; the
-  // distributed CLI runs under Node and uses node-pty directly.
   return typeof Bun !== "undefined"
     ? spawnPtyBridgeProcess(launcher, options, events)
     : spawnNativePtyProcess(launcher, options, events);
 }
 
-/**
- * Starts one shell process. Every built-in shell surface uses this function,
- * while its adapter decides whether to await completion or expose a session.
- */
 export function startShellProcess(
   launcher: string[],
   options: ShellSpawnOptions,
 ): RunningShellProcess {
+  const runtimeContext = getRuntimeContext();
+  const dynamicOrigin = runtimeContext?.resolveMcpOriginatorSuperRunId;
+  const initialOrigin =
+    dynamicOrigin?.() ?? runtimeContext?.mcpOriginatorSuperRunId;
+  const brokerAgentId = runtimeContext?.agentId;
+  let broker: McpSubprocessBroker | null = null;
+  if (
+    brokerAgentId &&
+    (initialOrigin || (runtimeContext.connectionId && dynamicOrigin))
+  ) {
+    try {
+      broker = createMcpSubprocessBroker({
+        agentId: brokerAgentId,
+        getAllowedAgentIds: async () => {
+          const inheritedAgentId = await getMcpScopeAgentId(
+            brokerAgentId,
+            getRuntimeExecutionEnv(
+              process.env,
+              runtimeContext.executionSettings,
+            ),
+          );
+          return new Set([brokerAgentId, inheritedAgentId]);
+        },
+        getScope: () => {
+          const superRunId =
+            dynamicOrigin?.() ?? runtimeContext.mcpOriginatorSuperRunId;
+          return {
+            agentId: brokerAgentId,
+            ...(superRunId
+              ? { originatorToken: resolveMcpOriginatorToken(superRunId) }
+              : {}),
+          };
+        },
+        getClient: async () => await getClient(),
+      });
+    } catch {}
+  }
+  const launchOptions: ShellSpawnOptions = broker
+    ? { ...options, env: { ...options.env, ...broker.env } }
+    : options;
   const managedLauncher = wrapManagedWorkloadLauncher(launcher, {
-    env: options.env,
+    env: launchOptions.env,
   });
   const [executable] = managedLauncher;
   if (!executable) {
+    broker?.close();
     throw new ShellExecutionError("Executable is required");
   }
-  if (!isUsableDirectory(options.cwd)) {
+  if (!isUsableDirectory(launchOptions.cwd)) {
+    broker?.close();
     throw buildSpawnError(
       { code: "ENOENT" } as NodeJS.ErrnoException,
       executable,
-      options.cwd,
+      launchOptions.cwd,
     );
   }
 
-  noteExpectedWorktreeForLauncher(launcher, options.cwd);
+  noteExpectedWorktreeForLauncher(launcher, launchOptions.cwd);
 
   const pullRequestTracker = createGitHubPullRequestOutputTracker(
-    options.sourceCommand ?? launcher,
+    launchOptions.sourceCommand ?? launcher,
   );
 
   const stdoutChunks: Buffer[] = [];
@@ -388,6 +459,12 @@ export function startShellProcess(
     stdout: new StringDecoder("utf8"),
     stderr: new StringDecoder("utf8"),
   };
+  const brokerScrubbers = broker
+    ? {
+        stdout: createSecretStreamScrubber(broker.redactions),
+        stderr: createSecretStreamScrubber(broker.redactions),
+      }
+    : null;
   let completed = false;
   let timedOut = false;
   let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
@@ -408,51 +485,61 @@ export function startShellProcess(
       clearTimeout(forceKillTimer);
       forceKillTimer = undefined;
     }
-    options.signal?.removeEventListener("abort", abortHandler);
+    launchOptions.signal?.removeEventListener("abort", abortHandler);
+    broker?.close();
   };
 
   let processHandle: ShellProcessHandle;
+  let forceKillIssued = false;
+  let finishGroupClose: (() => void) | undefined;
   const terminateProcess = () => {
+    if (completed || forceKillTimer) return;
     if (process.platform === "win32") {
       processHandle.kill("SIGKILL");
       return;
     }
 
     processHandle.kill("SIGTERM");
-    if (!forceKillTimer) {
-      forceKillTimer = setTimeout(() => {
-        if (!completed) {
-          processHandle.kill("SIGKILL");
-        }
-      }, FORCE_KILL_GRACE_MS);
-    }
+    forceKillTimer = setTimeout(() => {
+      forceKillIssued = true;
+      processHandle.kill("SIGKILL");
+      finishGroupClose?.();
+    }, FORCE_KILL_GRACE_MS);
   };
 
   const abortHandler = () => {
     terminateProcess();
   };
 
-  const emitDecodedOutput = (text: string, stream: ShellOutputStream): void => {
+  const emitOutput = (text: string, stream: ShellOutputStream): void => {
     if (!text) return;
+    if (launchOptions.captureOutput !== false) {
+      if (stream === "stdout") {
+        stdoutChunks.push(Buffer.from(text));
+      } else {
+        stderrChunks.push(Buffer.from(text));
+      }
+    }
     pullRequestTracker?.append(text, stream);
-    options.onOutput?.(text, stream);
+    launchOptions.onOutput?.(text, stream);
+  };
+
+  const emitDecodedOutput = (text: string, stream: ShellOutputStream): void => {
+    emitOutput(brokerScrubbers?.[stream].push(text) ?? text, stream);
   };
 
   const flushOutputDecoders = (): void => {
     emitDecodedOutput(outputDecoders.stdout.end(), "stdout");
     emitDecodedOutput(outputDecoders.stderr.end(), "stderr");
+    if (brokerScrubbers) {
+      emitOutput(brokerScrubbers.stdout.flush(), "stdout");
+      emitOutput(brokerScrubbers.stderr.flush(), "stderr");
+    }
   };
 
   const events: ProcessEvents = {
     output(data, stream) {
       const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
-      if (options.captureOutput !== false) {
-        if (stream === "stdout") {
-          stdoutChunks.push(buffer);
-        } else {
-          stderrChunks.push(buffer);
-        }
-      }
       emitDecodedOutput(outputDecoders[stream].write(buffer), stream);
     },
     error(error) {
@@ -463,8 +550,25 @@ export function startShellProcess(
       void pullRequestTracker?.finish();
       rejectCompletion(buildSpawnError(error, executable, options.cwd));
     },
-    close(code) {
+    close(code, signal, processGroup) {
       if (completed) return;
+      if (
+        launchOptions.waitForProcessGroupOnClose &&
+        forceKillTimer &&
+        !forceKillIssued &&
+        processGroup !== undefined
+      ) {
+        let groupExists = true;
+        try {
+          process.kill(-processGroup, 0);
+        } catch (error) {
+          groupExists = (error as NodeJS.ErrnoException).code !== "ESRCH";
+        }
+        if (groupExists) {
+          finishGroupClose = () => events.close(code, signal);
+          return;
+        }
+      }
       completed = true;
       cleanup();
       flushOutputDecoders();
@@ -475,47 +579,47 @@ export function startShellProcess(
         rejectCompletion(buildTimeoutError(stdout, stderr, code));
         return;
       }
-      if (options.signal?.aborted) {
+      if (launchOptions.signal?.aborted) {
         rejectCompletion(buildAbortError(stdout, stderr));
         return;
       }
-      resolveCompletion({ stdout, stderr, exitCode: code });
+      resolveCompletion({
+        stdout,
+        stderr,
+        exitCode: code,
+        ...(signal ? { signal } : {}),
+      });
     },
   };
 
   try {
-    processHandle = options.tty
-      ? spawnPtyProcess(managedLauncher, options, events)
-      : spawnPipeProcess(managedLauncher, options, events);
+    processHandle = launchOptions.tty
+      ? spawnPtyProcess(managedLauncher, launchOptions, events)
+      : spawnPipeProcess(managedLauncher, launchOptions, events);
   } catch (error) {
     completed = true;
     cleanup();
     const failure = error instanceof Error ? error : new Error(String(error));
     rejectCompletion(failure);
-    // Preserve synchronous startup errors without leaving the deferred
-    // completion promise unhandled.
     void completion.catch(() => {});
     throw failure;
   }
 
-  if (options.timeoutMs) {
+  if (launchOptions.timeoutMs) {
     timeoutTimer = setTimeout(() => {
       if (completed) return;
       timedOut = true;
       terminateProcess();
-    }, options.timeoutMs);
+    }, launchOptions.timeoutMs);
   }
-  options.signal?.addEventListener("abort", abortHandler, { once: true });
-  if (options.signal?.aborted) {
+  launchOptions.signal?.addEventListener("abort", abortHandler, { once: true });
+  if (launchOptions.signal?.aborted) {
     abortHandler();
   }
 
   return { process: processHandle, completion, terminate: terminateProcess };
 }
 
-/**
- * Compatibility helper for callers that wait for the process to finish.
- */
 export async function spawnWithLauncher(
   launcher: string[],
   options: ShellSpawnOptions,

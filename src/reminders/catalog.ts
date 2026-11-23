@@ -9,10 +9,10 @@ export type SharedReminderId =
   | "session-context"
   | "conversation-bootstrap"
   | "agent-info"
+  | "variables-info"
   | "secrets-info"
   | "mcp-servers-info"
   | "permission-mode"
-  | "memory-git-sync"
   | "command-io"
   | "toolset-change"
   | "disk-space";
@@ -51,6 +51,16 @@ export const SHARED_REMINDER_CATALOG: ReadonlyArray<SharedReminderDefinition> =
       ],
     },
     {
+      id: "variables-info",
+      description: "Available plain variable names and values",
+      modes: [
+        "interactive",
+        "headless-one-shot",
+        "headless-bidirectional",
+        "listen",
+      ],
+    },
+    {
       id: "secrets-info",
       description: "Available secret names for $SECRET_NAME substitution",
       modes: [
@@ -73,16 +83,6 @@ export const SHARED_REMINDER_CATALOG: ReadonlyArray<SharedReminderDefinition> =
     {
       id: "permission-mode",
       description: "Permission mode reminder",
-      modes: [
-        "interactive",
-        "headless-one-shot",
-        "headless-bidirectional",
-        "listen",
-      ],
-    },
-    {
-      id: "memory-git-sync",
-      description: "Queued post-turn memory git sync status",
       modes: [
         "interactive",
         "headless-one-shot",

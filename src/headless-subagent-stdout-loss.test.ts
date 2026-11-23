@@ -1,13 +1,3 @@
-// End-to-end regression test for #3257: a subagent child whose stdout stream
-// is lost before the final result envelope must be retried once by the parent
-// with the original spawn arguments, instead of surfacing a truncated-output
-// parse failure.
-//
-// The harness runs the real CLI headless against an in-process mock
-// OpenAI-compatible provider that forces one Agent tool call. The subagent
-// child binary is overridden (LETTA_CODE_BIN) with a script that simulates
-// the failure on its first spawn and succeeds on the second, so the whole
-// spawn → detect-loss → retry → collect-result path is exercised for real.
 import { afterAll, describe, expect, test } from "bun:test";
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
@@ -48,11 +38,8 @@ describe("headless subagent stdout loss", () => {
     const summary = await runStdoutLossScenario("truncate-result");
 
     expect(summary.code, formatSummary(summary)).toBe(0);
-    // Exactly one retry: the isRetry guard must prevent further respawns.
     expect(summary.spawnArgvs, formatSummary(summary)).toHaveLength(2);
-    // The retry must preserve the original spawn arguments verbatim.
     expect(summary.spawnArgvs[1]).toEqual(summary.spawnArgvs[0]);
-    // The recovered report reaches the background task transcript.
     expect(summary.taskOutput, formatSummary(summary)).toContain(
       "SUBAGENT-REPORT-OK",
     );
@@ -76,11 +63,6 @@ describe("headless subagent stdout loss", () => {
 async function runStdoutLossScenario(
   mode: ChildFailMode,
 ): Promise<ScenarioSummary> {
-  // Canonicalize the temp root: on macOS tmpdir() is a symlink
-  // (/var/folders -> /private/var/folders), and the spawned CLI's
-  // process.cwd() resolves to the real path while USER_CWD would carry the
-  // symlink path — the mismatch makes local project settings load under one
-  // path and get looked up under the other, crashing startup.
   const tmpRoot = realpathSync(
     await mkdtemp(join(tmpdir(), "letta-subagent-stdout-loss-")),
   );
@@ -181,16 +163,6 @@ async function runStdoutLossScenario(
   };
 }
 
-/**
- * The script standing in for the spawned subagent CLI (via LETTA_CODE_BIN).
- * First spawn simulates #3257 according to CHILD_FAIL_MODE:
- *   - truncate-result: emits the result envelope cut mid-JSON and exits 0
- *     (the child believed it succeeded; the parent sees a truncated stream).
- *   - stderr-marker: exits 1 with the stdout-lost marker on stderr (the
- *     child detected the loss, as src/utils/headless-stdout-guard.ts does).
- * Later spawns emit a complete result envelope. Every spawn records its argv
- * so the test can assert the retry preserved the original arguments.
- */
 function buildMockChildScript(): string {
   return `
 import { appendFileSync, existsSync, writeFileSync } from "node:fs";
@@ -247,11 +219,6 @@ process.exit(0);
 `;
 }
 
-/**
- * Minimal OpenAI-compatible SSE provider: the first chat round forces one
- * Agent tool call, later rounds record the tool results the CLI sends back
- * and wait for the background report before finishing the turn.
- */
 function startMockProvider(): {
   server: ReturnType<typeof Bun.serve>;
   port: number;
@@ -290,9 +257,6 @@ function startMockProvider(): {
         }
       }
 
-      // Agent returns a launch acknowledgement, not the child's report. Keep
-      // the CLI alive to collect that report before sending its final response.
-      // Waiting after CLI exit cannot help: its output collector is gone.
       if (round > 1) {
         const outputFile = toolResults
           .map((result) => JSON.parse(result) as string)
@@ -329,7 +293,6 @@ function startMockProvider(): {
                             arguments: JSON.stringify({
                               description: "run test subagent",
                               prompt: "produce the test report",
-                              subagent_type: "general-purpose",
                             }),
                           },
                         },
@@ -414,9 +377,7 @@ async function waitForTaskOutput(
     try {
       content = readFileSync(outputFile, "utf-8");
       if (content.includes(expected)) return content;
-    } catch {
-      // The CLI is still running and may not have created the transcript yet.
-    }
+    } catch {}
     await Bun.sleep(25);
   }
   return content;

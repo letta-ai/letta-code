@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  closeTaskProgressLog,
+  openTaskProgressLog,
+} from "@/tools/impl/task-transcript";
 import {
   type ExecutionState,
+  flushPendingProgressText,
   hasSuccessfulToolCall,
   looksLikeTruncatedStreamJson,
   parseResultFromStdout,
@@ -107,14 +115,10 @@ describe("looksLikeTruncatedStreamJson", () => {
   });
 
   test("does not flag complete-but-unexpected JSON output", () => {
-    // Last line parses fine — this is a wrong-shape stream, not truncation,
-    // so retrying could double side effects for no reason.
     expect(looksLikeTruncatedStreamJson(`${initLine}\n`)).toBe(false);
   });
 
   test("does not flag a complete non-JSON line", () => {
-    // An invalid protocol line is not evidence of truncation when its line
-    // terminator arrived. Retrying here could duplicate subagent side effects.
     expect(looksLikeTruncatedStreamJson(`${initLine}\nplain-text-log\n`)).toBe(
       false,
     );
@@ -149,8 +153,6 @@ function freshState(): ExecutionState {
 
 describe("result envelope parsing", () => {
   test("reads the error text of a Cloud-routed failure from `error`, not `result`", () => {
-    // Cloud sends emit `{ result: null, error: "<text>" }`; reading `result`
-    // turned every such failure into "Unknown error".
     const state = freshState();
     processStreamEvent(
       JSON.stringify({
@@ -257,5 +259,63 @@ describe("result envelope parsing", () => {
     );
     expect(state.enqueueReceipt).toBeNull();
     expect(state.finalError).toContain("without a complete receipt");
+  });
+});
+
+describe("task progress log", () => {
+  test("writes each tool call and whole assistant message as it streams", () => {
+    const dir = mkdtempSync(join(tmpdir(), "subagent-stream-progress-"));
+    const outputFile = join(dir, "task.log");
+    openTaskProgressLog("subagent-1", outputFile, undefined, {
+      now: () => new Date(0),
+    });
+    try {
+      const state = createState();
+      const text = (id: string, content: string) =>
+        processEvent(state, {
+          type: "message",
+          message_type: "assistant_message",
+          id,
+          content,
+        });
+      text("m1", "Listing ");
+      text("m1", "files.");
+      processEvent(state, {
+        type: "message",
+        message_type: "reasoning_message",
+        id: "r1",
+        reasoning: "only in the event log",
+      });
+      processEvent(state, {
+        type: "message",
+        message_type: "tool_call_message",
+        date: "2026-11-01T10:00:00.000Z",
+        tool_call: {
+          tool_call_id: "call-1",
+          name: "Bash",
+          arguments: '{"command":"ls"}',
+        },
+      });
+      processEvent(state, {
+        type: "message",
+        message_type: "tool_return_message",
+        date: "2026-11-01T10:00:01.000Z",
+        tool_call_id: "call-1",
+        status: "error",
+        tool_return: "a.txt\nls: b: No such file",
+      });
+      text("m2", "Done.");
+      flushPendingProgressText(state, "subagent-1");
+
+      expect(readFileSync(outputFile, "utf8")).toBe(
+        "[1970-01-01T00:00:00.000Z] text: Listing files.\n" +
+          '[2026-11-01T10:00:00.000Z] tool: Bash {"command":"ls"}\n' +
+          "[2026-11-01T10:00:01.000Z] result: Bash error, 25 B: ls: b: No such file\n" +
+          "[1970-01-01T00:00:00.000Z] text: Done.\n",
+      );
+    } finally {
+      closeTaskProgressLog("subagent-1");
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

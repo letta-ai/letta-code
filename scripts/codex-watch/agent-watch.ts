@@ -1,10 +1,4 @@
 #!/usr/bin/env bun
-/**
- * Amelia-driven Codex release watcher entrypoint.
- *
- * Uses a central tracker issue for state and only asks Amelia to review
- * non-noop releases.
- */
 
 import { appendFileSync, writeFileSync } from "node:fs";
 import {
@@ -90,7 +84,7 @@ async function main() {
   let stableReleases: Release[] | undefined;
 
   if (!state.audit_cursor_validated) {
-    stableReleases = await listStableReleases();
+    stableReleases = await listStableReleases({ fullHistory: true });
     state = validateLegacyCodexAuditCursor(
       state,
       stableReleases.map((release) => release.tag_name),
@@ -103,7 +97,7 @@ async function main() {
   if (!sinceTag && !currentTag) {
     const cursorTag = getCodexAuditCursorTag(state);
     if (cursorTag) {
-      stableReleases ??= await listStableReleases();
+      stableReleases ??= await listStableReleases({ sinceTag: cursorTag });
       const latestRelease = findLatestStableReleaseAfter(
         stableReleases,
         cursorTag,

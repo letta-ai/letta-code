@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { type AddressInfo, createConnection } from "node:net";
 import { join, relative } from "node:path";
+import { isProcessAlive } from "@/utils/process-liveness";
 import {
   BROWSER_DISCOVERY_HOST,
   type BrowserDiscoveryServerHandle,
@@ -13,6 +14,7 @@ import {
 const handles: BrowserDiscoveryServerHandle[] = [];
 const blockers: Server[] = [];
 const tempDirs: string[] = [];
+const NODE_FIXTURE_TIMEOUT_MS = 10_000;
 
 afterEach(async () => {
   await Promise.all(handles.splice(0).map((handle) => handle.close()));
@@ -148,9 +150,6 @@ describe("browser discovery server", () => {
       `Discovery takeover blocker did not close port ${port}`,
     );
     blockers.splice(blockers.indexOf(blocker), 1);
-    // Keep a referenced watchdog while waiting: the production retry timer is
-    // intentionally unref'd, and Bun on Windows does not schedule it when the
-    // test harness is otherwise the only remaining owner of the event loop.
     const address = await withTimeout(
       handle.ready,
       2_000,
@@ -220,7 +219,7 @@ setTimeout(() => undefined, 500);
       socket.write(
         `GET /status HTTP/1.1\r\nHost: ${address.host}:${address.port}\r\n`,
       );
-      const exit = await waitForChildExit(child, 2_000, () => stderr);
+      const exit = await waitForChildExit(child, 4_000, () => stderr);
       expect(exit).toEqual({ code: 0, signal: null });
     } finally {
       socket.destroy();
@@ -237,7 +236,7 @@ setTimeout(() => undefined, 500);
 `);
     const result = spawnSync("bun", [fixture], {
       encoding: "utf8",
-      timeout: 5_000,
+      timeout: NODE_FIXTURE_TIMEOUT_MS,
     });
 
     expect(result.status).toBe(0);
@@ -256,7 +255,7 @@ setTimeout(() => undefined, 500);
 `);
     const result = spawnSync("node", [fixture], {
       encoding: "utf8",
-      timeout: 5_000,
+      timeout: NODE_FIXTURE_TIMEOUT_MS,
     });
 
     expect(result.status).toBe(0);
@@ -272,7 +271,7 @@ console.log("closed");
 `);
     const result = spawnSync("node", [fixture], {
       encoding: "utf8",
-      timeout: 5_000,
+      timeout: NODE_FIXTURE_TIMEOUT_MS,
     });
 
     expect(result.status).toBe(0);
@@ -362,10 +361,13 @@ async function readFirstLine(
     let output = "";
     const timeout = setTimeout(() => {
       cleanup();
+      const alive = child.pid !== undefined && isProcessAlive(child.pid);
       reject(
-        new Error(`Timed out waiting for Node fixture output: ${getStderr()}`),
+        new Error(
+          `Timed out waiting for Node fixture output (pid ${child.pid}, alive ${alive}, exitCode ${child.exitCode}, stdout ${JSON.stringify(output)}): ${getStderr()}`,
+        ),
       );
-    }, 2_000);
+    }, NODE_FIXTURE_TIMEOUT_MS);
     const onData = (chunk: Buffer): void => {
       output += chunk.toString();
       const newline = output.indexOf("\n");

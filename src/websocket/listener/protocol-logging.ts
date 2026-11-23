@@ -56,11 +56,6 @@ function summarizeInputPayload(payload: unknown): string[] {
     }
     pushField(
       fields,
-      "external_tool_scope_ids",
-      payload.external_tool_scope_ids,
-    );
-    pushField(
-      fields,
       "exclude_interactive_tools",
       payload.exclude_interactive_tools,
     );

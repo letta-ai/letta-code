@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 import type { SessionStatsSnapshot } from "./stats";
 
 export interface SessionHistoryEntry {
@@ -42,24 +42,14 @@ interface SessionStartData {
   provider: string;
 }
 
-/**
- * Get the Letta Code history directory
- */
 function getHistoryDir(): string {
-  const homeDir = os.homedir();
-  return path.join(homeDir, ".letta");
+  return resolveGlobalConfigDir();
 }
 
-/**
- * Get the session history file path
- */
 function getHistoryFilePath(): string {
   return path.join(getHistoryDir(), "sessions.jsonl");
 }
 
-/**
- * Ensure the history directory and file exist
- */
 function ensureHistoryFile(): void {
   const dir = getHistoryDir();
   const filePath = getHistoryFilePath();
@@ -73,9 +63,6 @@ function ensureHistoryFile(): void {
   }
 }
 
-/**
- * Record session start data (called when a session begins)
- */
 export function recordSessionStart(data: SessionStartData): void {
   ensureHistoryFile();
 
@@ -100,7 +87,7 @@ export function recordSessionStart(data: SessionStartData): void {
       wall_ms: 0,
     },
     cost: {
-      type: "hosted", // Default, will be updated on session end
+      type: "hosted",
     },
   };
 
@@ -108,11 +95,6 @@ export function recordSessionStart(data: SessionStartData): void {
   fs.appendFileSync(filePath, `${JSON.stringify(entry)}\n`);
 }
 
-/**
- * Update session entry with final stats (called when session ends)
- * For now, this just updates an in-memory tracking - actual file updates
- * would require rewriting the file or using a different storage approach
- */
 export function recordSessionEnd(
   agentId: string,
   sessionId: string,
@@ -125,8 +107,6 @@ export function recordSessionEnd(
     exitReason?: string;
   },
 ): void {
-  // For now, we'll append a new "end" entry with the final stats
-  // A more sophisticated approach would update the existing entry
   const entry: SessionHistoryEntry = {
     agent_id: agentId,
     session_id: sessionId,
@@ -154,14 +134,10 @@ export function recordSessionEnd(
     exit_reason: metadata?.exitReason,
   };
 
-  // For v1, we just append end entries - in future, we could update the start entry
   const filePath = getHistoryFilePath();
   fs.appendFileSync(filePath, `${JSON.stringify(entry)}\n`);
 }
 
-/**
- * Read all session history entries
- */
 export function getSessionHistory(): SessionHistoryEntry[] {
   const filePath = getHistoryFilePath();
 

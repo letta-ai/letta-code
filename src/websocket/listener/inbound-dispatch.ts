@@ -1,7 +1,7 @@
 import { readMcpOriginatorDelivery } from "@/agent/mcp-originator-tokens";
 import type { InputCreateMessagePayload } from "@/types/protocol_v2";
 import type { ConversationRuntimeScope } from "@/types/runtime-scope";
-import { isDebugEnabled } from "@/utils/debug";
+import { debugLog, isDebugEnabled } from "@/utils/debug";
 import { getOrCreateProcessTransport } from "./connection";
 import {
   enqueueInboundUserMessage,
@@ -13,13 +13,12 @@ import {
   ordinaryInputIdentity,
   reserveInputDisposition,
 } from "./input-disposition";
-import { liveAcceptedInputOwnerProof } from "./input-disposition-ownership";
-import { rollbackInputDisposition } from "./input-disposition-rollback";
 import {
-  scheduleQueuePump,
-  shouldProcessInboundMessageDirectly,
-  shouldQueueInboundMessage,
-} from "./queue";
+  attachTerminalConsumerToLiveAcceptedInput,
+  hasLiveAcceptedInputOwner,
+} from "./input-disposition-ownership";
+import { rollbackInputDisposition } from "./input-disposition-rollback";
+import { scheduleQueuePump, shouldQueueInboundMessage } from "./queue";
 import {
   emitListenerStatus,
   evictConversationRuntimeIfIdle,
@@ -41,9 +40,6 @@ export function createIncomingMessage(
   scope: ConversationRuntimeScope,
   payload: InputCreateMessagePayload,
   connectionId?: ListenerConnectionId,
-  // The delivery fields' declared types live on InputCommand
-  // (protocol_v2.ts); they are unknown here because the raw wire frame is
-  // validated by readMcpOriginatorDelivery before either is trusted.
   frame?: {
     terminal_consumer_id?: string | null;
     super_run_id?: unknown;
@@ -51,25 +47,20 @@ export function createIncomingMessage(
     mcp_originator_generation?: unknown;
   },
 ): IncomingMessage {
-  // MCP originator delivery (USER_SCOPED_MCP_CONNECTIONS): the IncomingMessage
-  // carries just the super run id — it is persisted by the durable input
-  // ledger, and the token must never touch disk. The delivery rides the
-  // TOP-LEVEL relay frame (never inside the user-message payload, which is
-  // persisted), so it is read from the frame, not the payload. The token
-  // itself reaches the in-memory store only when the input is ACCEPTED (see
-  // recordMcpOriginatorDelivery in message-router's acknowledge path), so
-  // rejected/dropped inputs never strand credentials.
   const mcpOriginator = readMcpOriginatorDelivery(frame);
   const terminalConsumerId = frame?.terminal_consumer_id ?? undefined;
+  if (Object.hasOwn(payload, "external_tool_scope_ids")) {
+    debugLog("Listen", "Ignoring deprecated external_tool_scope_ids");
+  }
   return {
     type: "message",
+    receivedAt: Date.now(),
     connectionId,
     agentId: scope.agent_id,
     conversationId: scope.conversation_id,
     clientToolAllowlist: payload.client_tool_allowlist,
     clientToolset: payload.client_toolset,
     clientPreferences: payload.client_preferences,
-    externalToolScopeIds: payload.external_tool_scope_ids,
     excludeInteractiveTools: payload.exclude_interactive_tools,
     responseFormat: payload.response_format,
     imageFailureMode: payload.image_failure_mode,
@@ -103,9 +94,7 @@ export function dispatchInboundMessageWhenReady(params: {
   onInputAccepted?: (result: {
     accepted: boolean;
     disposition?: "started" | "queued";
-    /** True when the accept re-acks an already-admitted input (no new owner). */
     duplicate?: boolean;
-    /** Proof the durable ledger still shows a live owner for the input. */
     mayRecreateOwner?: () => boolean;
   }) => void;
   forgetQueuedInput?: typeof forgetQueuedInputDisposition;
@@ -152,9 +141,6 @@ export function dispatchInboundMessageWhenReady(params: {
     setImmediate(retry);
   };
 
-  // The chained work below uses this exact runtime object. Reserve it so a
-  // preceding turn's post-cleanup eviction cannot unregister it first; a
-  // detached runtime projects WAITING_ON_INPUT for its whole turn.
   runtime.pendingInboundDispatches += 1;
   runtime.messageQueue = runtime.messageQueue
     .then(async () => {
@@ -164,14 +150,19 @@ export function dispatchInboundMessageWhenReady(params: {
       }
       const admission = reserveInputDisposition(runtime, identity);
       if (admission.kind === "duplicate") {
-        // Refresh-only re-ack: the originator token store may recreate a
-        // lost entry only while the durable ledger shows a live owner for
-        // this input; terminal tombstones fail the proof and stay rejected.
+        const terminalConsumerId = incoming.terminalConsumerIds?.[0];
         acknowledgeInput({
           accepted: true,
           disposition: admission.disposition,
           duplicate: true,
-          mayRecreateOwner: liveAcceptedInputOwnerProof(runtime, identity),
+          mayRecreateOwner: () =>
+            terminalConsumerId
+              ? attachTerminalConsumerToLiveAcceptedInput(
+                  runtime,
+                  identity,
+                  terminalConsumerId,
+                )
+              : hasLiveAcceptedInputOwner(runtime, identity),
         });
         return;
       }
@@ -188,10 +179,6 @@ export function dispatchInboundMessageWhenReady(params: {
           : {}),
         ...(identity ? { durableInputIdentities: [identity] } : {}),
       };
-      // Everything past the reservation runs inside this callback. An
-      // acknowledgement callback, the queue, or the turn itself can throw, and
-      // an uncommitted placeholder left behind would never expire and would
-      // reject the sender's stable-ID retry forever.
       try {
         if (
           isRuntimeTeleportPending(
@@ -204,13 +191,7 @@ export function dispatchInboundMessageWhenReady(params: {
           acknowledgeInput({ accepted: false });
           return;
         }
-        if (
-          shouldQueueInboundMessage(incoming) &&
-          !shouldProcessInboundMessageDirectly(runtime, incoming)
-        ) {
-          // The replayable payload and queued disposition commit before the
-          // volatile enqueue and before acknowledgement. A crash at either
-          // boundary is recovered from the durable payload on process startup.
+        if (shouldQueueInboundMessage(incoming)) {
           const committed = commitInputDisposition(
             runtime,
             reservation,
@@ -257,9 +238,6 @@ export function dispatchInboundMessageWhenReady(params: {
           options.onStatusChange,
           options.connectionId,
         );
-        // Queued turns store the actor on the queue item. Direct turns skip
-        // that item, so carry the actor and durable identity on the replayable
-        // message committed before acknowledgement.
         if (
           !commitInputDisposition(runtime, reservation, "started", {
             incoming: attributedIncoming,
@@ -270,25 +248,14 @@ export function dispatchInboundMessageWhenReady(params: {
           acknowledgeInput({ accepted: false });
           return;
         }
-        const directBatchId = `batch-direct-${crypto.randomUUID()}`;
-        if (identity) {
-          runtime.dequeuedInputIdentitiesByBatchId.set(directBatchId, [
-            identity,
-          ]);
-        }
         acknowledgeInput({ accepted: true, disposition: "started" });
-        try {
-          await processIncomingMessage(
-            attributedIncoming,
-            getOrCreateProcessTransport(listener),
-            runtime,
-            options.onStatusChange,
-            options.connectionId,
-            directBatchId,
-          );
-        } finally {
-          runtime.dequeuedInputIdentitiesByBatchId.delete(directBatchId);
-        }
+        await processIncomingMessage(
+          attributedIncoming,
+          getOrCreateProcessTransport(listener),
+          runtime,
+          options.onStatusChange,
+          options.connectionId,
+        );
         emitListenerStatus(
           listener,
           options.onStatusChange,
