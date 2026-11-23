@@ -437,13 +437,22 @@ export function recordRuntimeSubmittingConnection(
   );
 }
 
+export function getConnectionToolRegistration(
+  runtime: ListenerRuntime,
+  runtimeScope: RuntimeScope<string | null>,
+  connectionId: ListenerConnectionId,
+): Readonly<RuntimeToolRegistration> | undefined {
+  return registeredToolsByRuntime
+    .get(runtime)
+    ?.get(
+      createConnectionRequestKey(connectionId, getRuntimeKey(runtimeScope)),
+    );
+}
+
 /**
- * Pick the connection whose registration shapes a turn's tools. A client turn
- * uses its own connection when that connection registered tools here. Any
- * other turn (task notification, cron, recovery, or input relayed by a
- * connection without a registration, such as Cloud delivering to a registered
- * computer) uses the last connection that submitted input on this runtime if
- * it still has a registration here, else the newest registration.
+ * A client turn prefers its submitter. A process-started turn prefers the
+ * last submitter. If the preferred connection has no registration for this
+ * runtime, use the newest registration for the runtime.
  */
 export function resolveRuntimeToolOwner(
   runtime: ListenerRuntime,
@@ -452,24 +461,17 @@ export function resolveRuntimeToolOwner(
 ): { connectionId?: ListenerConnectionId; toolPolicy?: RuntimeToolPolicy } {
   const registeredTools = registeredToolsByRuntime.get(runtime);
   const runtimeKey = getRuntimeKey(runtimeScope);
-  const registrationFor = (connectionId: ListenerConnectionId) =>
-    registeredTools?.get(createConnectionRequestKey(connectionId, runtimeKey));
-  const submitterRegistration =
-    submittingConnectionId !== undefined
-      ? registrationFor(submittingConnectionId)
-      : undefined;
-  if (submittingConnectionId !== undefined && submitterRegistration) {
-    const toolPolicy = submitterRegistration.toolPolicy;
-    return {
-      connectionId: submittingConnectionId,
-      ...(toolPolicy ? { toolPolicy } : {}),
-    };
-  }
-  const lastSubmitter = lastSubmittingConnectionByRuntime
-    .get(runtime)
-    ?.get(runtimeKey);
+  const preferredConnectionId =
+    submittingConnectionId ??
+    lastSubmittingConnectionByRuntime.get(runtime)?.get(runtimeKey);
   let owner =
-    lastSubmitter !== undefined ? registrationFor(lastSubmitter) : undefined;
+    preferredConnectionId !== undefined
+      ? getConnectionToolRegistration(
+          runtime,
+          runtimeScope,
+          preferredConnectionId,
+        )
+      : undefined;
   if (!owner) {
     for (const registration of registeredTools?.values() ?? []) {
       if (

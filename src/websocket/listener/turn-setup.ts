@@ -30,6 +30,7 @@ import { publishChannelRuntimeToolsForTurn } from "./channel-runtime-tools";
 import { resolveTurnExecutionConnectionId } from "./connection";
 import {
   captureNotificationWait,
+  getConnectionToolRegistration,
   recordRuntimeSubmittingConnection,
   resolveRuntimeToolOwner,
 } from "./external-tools";
@@ -116,11 +117,11 @@ export async function prepareListenerTurn(params: {
   const submitter = connectionId
     ? runtime.listener.connections.get(connectionId)
     : undefined;
-  // Disconnect removes the client's registration while warmup is in flight.
-  // Keep its tool restrictions for the accepted turn.
-  const submittedToolOwner =
+  // Disconnect removes the submitter's own registration during warmup.
+  // Other registrations are resolved after the gateway publishes its tools.
+  const submitterRegistration =
     submitter?.options.connectionIdCanResume === false
-      ? resolveRuntimeToolOwner(
+      ? getConnectionToolRegistration(
           runtime.listener,
           toolRuntimeScope,
           submitter.id,
@@ -372,8 +373,8 @@ export async function prepareListenerTurn(params: {
   // Connection-level tools and policy apply to every turn on the runtime;
   // this input's own fields override them for this turn only.
   const toolOwner =
-    submittedToolOwner?.toolPolicy && submitter?.cancellation.signal.aborted
-      ? submittedToolOwner
+    submitterRegistration && submitter?.cancellation.signal.aborted
+      ? submitterRegistration
       : resolveRuntimeToolOwner(
           runtime.listener,
           toolRuntimeScope,
