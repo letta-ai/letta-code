@@ -21,6 +21,7 @@ import {
   stampRootMemoryOnCreateBody,
 } from "@/agent/memory-filesystem";
 import {
+  MEMORY_REPOSITORY_PUSH_HOOKS,
   POST_COMMIT_HOOK_SCRIPT,
   PRE_COMMIT_HOOK_SCRIPT,
 } from "@/agent/memory-git-hooks";
@@ -537,9 +538,11 @@ describe("memory filesystem paths", () => {
       expect(readFileSync(join(hooksDir, "pre-commit"), "utf8")).toBe(
         PRE_COMMIT_HOOK_SCRIPT,
       );
-      expect(readFileSync(join(hooksDir, "post-commit"), "utf8")).toBe(
-        POST_COMMIT_HOOK_SCRIPT,
-      );
+      for (const hook of MEMORY_REPOSITORY_PUSH_HOOKS) {
+        expect(readFileSync(join(hooksDir, hook), "utf8")).toBe(
+          POST_COMMIT_HOOK_SCRIPT,
+        );
+      }
       expect(
         readFileSync(
           join(memoryDir, ".git", "letta-memory-layout-policy"),
