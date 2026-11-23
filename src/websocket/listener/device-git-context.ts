@@ -55,8 +55,6 @@ export class DeviceGitContextCache {
           this.prune();
           return value;
         },
-        // A failed or timed-out load caches nothing: serve the last known
-        // value and let the next refresh retry.
         () => this.entries.get(cwd)?.value ?? null,
       )
       .finally(() => {

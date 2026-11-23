@@ -5,13 +5,6 @@ import type {
   OutboundChannelMessage,
 } from "@/channels/types";
 
-/**
- * Outbound-only adapter for the first-party "custom" channel.
- *
- * `start()` / `stop()` toggle a local `running` flag — there is no inbound
- * listener in this MVP. The agent's outbound messages are forwarded as JSON
- * POSTs to the configured webhook URL.
- */
 function readString(account: CustomChannelAccount, key: string): string | null {
   const value = account.config[key];
   return typeof value === "string" && value.length > 0 ? value : null;

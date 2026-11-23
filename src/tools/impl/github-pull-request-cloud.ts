@@ -26,8 +26,6 @@ type FetchSnapshot = (
   options: SnapshotOptions,
 ) => Promise<GitHubPullRequestSnapshot>;
 
-// TODO: switch to the generated @letta-ai/letta-client types once the SDK
-// includes POST /v1/integrations/github/pull-request-snapshots.
 interface CloudComment {
   id: string;
   author: string;
@@ -100,7 +98,6 @@ interface CloudSnapshotDeps {
   random?: () => number;
 }
 
-// Used when the server signals a cooldown without a usable retry time.
 const DEFAULT_COOLDOWN_MS = 30_000;
 const MAX_COOLDOWN_MS = 60_000;
 
@@ -119,7 +116,6 @@ async function requestSnapshot(
           ],
         },
         signal,
-        // Handle quota cooldown here instead of the SDK's automatic retries.
         maxRetries: 0,
         timeout: 30_000,
       },
@@ -166,7 +162,6 @@ export function toClientSnapshot(
     mergeable: snapshot.mergeable,
     mergeStateStatus: snapshot.merge_state_status,
     reviewDecision: snapshot.review_decision,
-    // Readiness still requires two same-head client reads.
     readinessConfirmed: false,
     checks: snapshot.checks,
     checkAttempts: snapshot.check_attempts,
@@ -190,7 +185,6 @@ export function toClientSnapshot(
   };
 }
 
-/** One fetcher per watch: capability and telemetry state never leak to other watches. */
 export function createGitHubPullRequestSnapshotFetcher(
   deps: CloudSnapshotDeps = {},
 ): FetchSnapshot {
@@ -220,7 +214,6 @@ export function createGitHubPullRequestSnapshotFetcher(
       );
     }
     const remaining = Date.parse(retryAt ?? "") - now();
-    // A missing or expired retry time must not cause a busy retry loop.
     await wait(
       Math.min(
         MAX_COOLDOWN_MS - 2_000,
@@ -247,12 +240,10 @@ export function createGitHubPullRequestSnapshotFetcher(
         options.signal?.throwIfAborted();
         const result = await request(ref, options.signal);
         if (!("body" in result)) {
-          // The endpoint reports quota as 200 + rate_limits; 429 is defensive.
           if (result.status === 429) {
             await cooldown();
             continue;
           }
-          // 404/501: an older Cloud without the route.
           unsupported = true;
           return fetchGh(ref, options);
         }
@@ -260,7 +251,6 @@ export function createGitHubPullRequestSnapshotFetcher(
         const limit = result.body.rate_limits?.find((item) =>
           sameRef(item, ref),
         );
-        // Stale data must never advance the baseline, so wait for fresh data.
         if (limit || entry?.stale) {
           await cooldown(entry?.retry_at ?? limit?.retry_at);
           continue;

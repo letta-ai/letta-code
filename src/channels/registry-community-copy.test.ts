@@ -88,10 +88,6 @@ describe("registry copy: first-party channels", () => {
 });
 
 describe("registry copy: community channels", () => {
-  // Any channel id that isn't telegram/slack/discord/whatsapp/signal is a community plugin.
-  // We don't need a real plugin installed — `isFirstPartyChannelPlugin` only
-  // checks the FIRST_PARTY_CHANNEL_PLUGIN_REGISTRATIONS map.
-
   test("pairing instructions surface the CLI command for community channels", () => {
     const text = buildPairingInstructions("custom-chat", "ABC123");
     expect(text).toContain("Connect this chat to a Letta agent.");
@@ -104,7 +100,6 @@ describe("registry copy: community channels", () => {
     expect(text).toContain("This code expires in 15 minutes.");
     expect(text).not.toContain("open Channels >");
     expect(text).not.toContain("(community channel)");
-    // Hard-stop against shipping the wrong subcommand again.
     expect(text).not.toContain("letta channels pair approve");
   });
 
@@ -149,9 +144,6 @@ describe("registry copy: community channels", () => {
   });
 
   test("community pairing copy points at a real subcommand", () => {
-    // The actual handler in src/cli/subcommands/channels.ts is `letta channels
-    // pair` (no `approve` subcommand). If someone introduces an `approve`
-    // subcommand, this test should be updated together with the copy.
     const text = buildPairingInstructions("custom-chat", "X");
     expect(text).toMatch(/letta channels pair --channel custom-chat /);
     expect(text).not.toMatch(/letta channels pair approve/);

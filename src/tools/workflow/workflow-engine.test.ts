@@ -119,8 +119,6 @@ return await pipeline(['a', 'b'],
   (prev, item, index) => agent('s2:' + prev + ':' + index))`,
     });
     await Bun.sleep(20);
-    // Both stage-1 calls are in flight; finishing only 'a' lets its stage 2
-    // start while 'b' is still in stage 1.
     gates.get("s1:a")?.();
     await Bun.sleep(20);
     expect(order).toEqual([
@@ -317,7 +315,6 @@ return { listed, read, schema, missing, failed, unregistered: typeof tools.Edit 
     });
     expect(run.result).toEqual({
       listed: ["Read", "Bash", "mcp__db__query"],
-      // Built-in output stays verbatim text, never JSON-parsed.
       read: '{"looks":"like json"}',
       schema: {
         name: "Read",
@@ -485,7 +482,6 @@ catch (error) { return await agent('continue', { conversationId: error.conversat
     await expect(pending).rejects.toThrow("Workflow aborted.");
     expect(aborted).toBe(true);
     await Bun.sleep(10);
-    // Nothing is emitted after the abort, even if the script body continues.
     expect(events.some((e) => e.kind === "log")).toBe(false);
   });
 
@@ -515,8 +511,6 @@ catch (error) { return await agent('continue', { conversationId: error.conversat
       await Bun.sleep(10);
       controller.abort();
       await expect(pending).rejects.toThrow("Workflow aborted.");
-      // The terminal event and journal line carry what the worker consumed
-      // before TaskStop, so /workflows and the journal do not undercount.
       expect(events.at(-1)).toMatchObject({
         kind: "agent",
         status: "error",
@@ -548,7 +542,6 @@ catch (error) { return await agent('continue', { conversationId: error.conversat
       return run;
     });
     await Bun.sleep(20);
-    // The script returned, but its fire-and-forget worker is still running.
     expect(settledResult).toBe("unsettled");
     release();
     const run = await pending;

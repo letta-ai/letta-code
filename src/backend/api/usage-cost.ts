@@ -1,7 +1,6 @@
 import type { APIClient } from "@/backend/backend";
 import { priceUsageEvent } from "@/usage/cost";
 
-/** Resolve request and conversation overrides before the owning agent. */
 export async function conversationCostModel(
   client: APIClient,
   conversationId: string,
@@ -10,7 +9,9 @@ export async function conversationCostModel(
 ): Promise<string | null> {
   if (overrideModel) return overrideModel;
   if (conversationId !== "default") {
-    const conversation = await client.conversations.retrieve(conversationId);
+    const conversation = await client.conversations.retrieve(conversationId, {
+      query: { include_context_message_ids: false },
+    });
     if (conversation.model) return conversation.model;
     agentId = conversation.agent_id;
   }
@@ -19,12 +20,10 @@ export async function conversationCostModel(
   return agent.model ?? agent.llm_config?.handle ?? null;
 }
 
-/** Preserve the stream's controller and metadata; price lazily on the first usage. */
 export function withClientUsageCost<T extends { message_type?: string }>(
   stream: AsyncIterable<T>,
   resolveModel: () => Promise<string | null>,
 ): void {
-  // Non-streaming results (and test doubles) have nothing to price.
   if (typeof stream?.[Symbol.asyncIterator] !== "function") return;
   const iterate = stream[Symbol.asyncIterator].bind(stream);
   let model: Promise<string | null> | undefined;
@@ -34,7 +33,6 @@ export function withClientUsageCost<T extends { message_type?: string }>(
         yield event;
         continue;
       }
-      // A failed model lookup must never restore a server-reported estimate.
       model ??= resolveModel().catch(() => null);
       yield priceUsageEvent(event, await model);
     }

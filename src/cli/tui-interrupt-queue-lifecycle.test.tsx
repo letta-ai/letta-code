@@ -1,15 +1,3 @@
-/**
- * Regression tests for the TUI interrupt -> queue handoff (issue #4168).
- *
- * A Monitor `task_notification` queued while a turn is active must start the
- * next turn on its own once an Esc cancellation has settled. The interrupted
- * turn's finally block owns that `cancelling -> idle` transition and wakes the
- * dequeue effect; no timer or later user prompt may be required.
- *
- * The typed-prompt case matters: a turn started from the queue bridge is woken
- * by the dequeue effect's own completion callback, which masked the bug. A
- * turn started by typing has no such callback.
- */
 import {
   afterEach,
   beforeEach,
@@ -101,8 +89,6 @@ async function waitFor(
   }
 }
 
-// Records the app's existing queue debug lines (call-through spy) so a CI-only
-// timeout can report why the dequeue effect did not start the next turn.
 let debugLogSpy: Mock<typeof debugModule.debugLog> | null = null;
 
 function recentQueueDebugLines(limit = 15): string[] {
@@ -115,7 +101,6 @@ function recentQueueDebugLines(limit = 15): string[] {
     );
 }
 
-/** Snapshot of queue/dequeue state for timeouts that only reproduce on CI. */
 function describeQueueState(
   frames: string[],
   inputCount: number,
@@ -153,11 +138,6 @@ function monitorNotification(summary: string): string {
   });
 }
 
-/**
- * First turn: a stream that yields nothing until aborted, then ends only when
- * the test releases it (so the test controls when cancellation settles).
- * Every later turn: an immediate assistant reply.
- */
 class DelayedInterruptExecutor implements HeadlessTurnExecutor {
   readonly inputs: HeadlessTurnExecutorInput[] = [];
   private releaseInterruptedTurn: (() => void) | null = null;
@@ -291,8 +271,6 @@ async function renderTestApp(executor: HeadlessTurnExecutor): Promise<{
   stdin: NodeJS.ReadStream;
   frames: string[];
 }> {
-  // This fixture is local. A Cloud-shaped ID makes skill discovery query
-  // attached repositories over HTTP before each otherwise-fake turn.
   const agentId = "agent-local-tui-interrupt-queue";
   const backend = new FakeHeadlessBackend(agentId, executor);
   __testSetBackend(backend);
@@ -322,7 +300,6 @@ async function renderTestApp(executor: HeadlessTurnExecutor): Promise<{
 }
 
 async function typePrompt(stdin: NodeJS.ReadStream, text: string) {
-  // Give the input component a moment to mount before typing.
   await sleep(200);
   stdin.push(text);
   await sleep(50);
@@ -344,7 +321,6 @@ describe("TUI interrupt queue lifecycle", () => {
     if (!input) throw new Error("Missing first turn");
     const source = await startMonitor(input);
     const diagnose = () => describeQueueState(frames, inputs.length, source);
-    // An event drives another complete turn while the source stays connected.
     source.socket.send("normal monitor event");
     await waitFor(
       () =>
@@ -353,8 +329,6 @@ describe("TUI interrupt queue lifecycle", () => {
         ),
       "the normal Monitor event to be received",
     );
-    // Receipt and TUI delivery are separate stages. On Windows the 200 ms
-    // Monitor batch plus Ink dequeue can exceed the generic fixture deadline.
     await waitFor(
       () => inputs.length === 2,
       "the Monitor notification turn",
@@ -416,14 +390,12 @@ describe("TUI interrupt queue lifecycle", () => {
         ),
       "the real Monitor event to be received",
     );
-    // Monitor batches events for 200ms before handing them to the TUI queue.
     await sleep(300);
     stdin.push("\u001b");
     await executor.abortObserved;
     expect(source.isClosed()).toBe(false);
     expect(source.state.status).toBe("running");
 
-    // Cancellation has not settled yet: nothing may start a replacement turn.
     await sleep(100);
     expect(executor.inputs).toHaveLength(1);
 
@@ -489,19 +461,12 @@ describe("TUI interrupt queue lifecycle", () => {
     await executor.abortObserved;
     await waitFor(() => cancelCalls.length === 1, "the first backend cancel");
 
-    // The interrupted turn is still unwinding (the executor holds its
-    // stream). A second Esc must escalate: re-fire the backend cancel
-    // instead of silently returning, so a lost first attempt is retried.
     stdin.push("\u001b");
     await waitFor(
       () => cancelCalls.length === 2,
       "the escalated backend cancel",
     );
 
-    // The escalation force-settles the interrupt, but the executor still
-    // holds the turn. A third Esc must keep routing to the handler (the
-    // aborted controller witnesses the in-flight interrupt) and re-fire
-    // the cancel again, so the retry route survives the settle.
     stdin.push("\u001b");
     await waitFor(
       () => cancelCalls.length === 3,
@@ -536,7 +501,6 @@ describe("TUI interrupt queue lifecycle", () => {
       "the surfaced cancel failure",
     );
 
-    // The interrupt is still unwinding; a second Esc must retry the cancel.
     stdin.push("\u001b");
     await waitFor(() => cancelAttempts === 2, "the retried backend cancel");
 
@@ -554,7 +518,6 @@ describe("TUI interrupt queue lifecycle", () => {
         () => executor.inputs.length === 1,
         "the typed initial turn",
       );
-      // A user message queued behind the active turn (source: user).
       addToMessageQueue({ kind: "user", text: "queued while busy" });
 
       addToMessageQueue(
@@ -569,7 +532,6 @@ describe("TUI interrupt queue lifecycle", () => {
       await executor.abortObserved;
       executor.settleInterruptedTurn();
 
-      // The notification starts a turn on its own; the parked user message does not.
       await waitFor(
         () => executor.inputs.length === 2,
         "the notification turn after Esc",

@@ -1,7 +1,3 @@
-/**
- * Utilities for sending messages to an agent via conversations
- **/
-
 import { Buffer } from "node:buffer";
 import { APIUserAbortError } from "@letta-ai/letta-client/core/error";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
@@ -252,49 +248,16 @@ export function getStreamRequestContext(
 export type SendMessageStreamOptions = {
   streamTokens?: boolean;
   background?: boolean;
-  agentId?: string; // Required when conversationId is "default"
+  agentId?: string;
   approvalNormalization?: ApprovalNormalizationOptions;
   workingDirectory?: string;
-  /** Per-conversation permission mode state. When provided, tool execution uses
-   *  this scoped state instead of the global permissionMode singleton. */
   permissionModeState?: PermissionModeState;
-  /** Per-request skill sources. An empty array disables client skills. */
   skillSources?: SkillSource[];
-  /**
-   * Per-request model override. Uses backend request-scoped override_model and
-   * does not mutate agent/conversation persisted model configuration.
-   */
   overrideModel?: string;
-  /** Request-scoped Messages API response format. */
   responseFormat?: Record<string, unknown>;
-  /** Explicit turn-scoped tool snapshot. When present, bypasses the global registry. */
   preparedToolContext?: PreparedToolExecutionContext;
-  /**
-   * Allow sending a cached previous response id for this request. Callers should
-   * set this only for approval continuations that were fully auto-handled by
-   * the client, with no human approval/denial in the loop.
-   */
   allowResponseStateReuse?: boolean;
-  /**
-   * Per-message failure policy for best-effort channel attachments. Images are
-   * always normalized; entries here only choose whether a failed conversion is
-   * dropped instead of failing the request.
-   */
   imageFailureModesByMessageOtid?: ImageFailureModesByMessageOtid;
-  /**
-   * Cloud user id of the human who pressed "send" (multi-user
-   * sandbox scenario). When set, `sendMessageStream` echoes this on
-   * the outbound HTTP request as the `X-Letta-Acting-User-Id`
-   * header so cloud-api can re-attribute credits + rate limits to
-   * the actual sender — rather than the user whose API key is the
-   * bearer credential (i.e. whoever spawned the sandbox).
-   *
-   * Set by the listener after reading
-   * `runtime.acting_user_id` from cloud's status WS frame; absent
-   * for self-hosted / single-user / pre-channel-split flows.
-   * Pass `null` when a queued system/unattributed input must explicitly suppress
-   * an actor inherited from the execution context or process environment.
-   */
   actingUserId?: string | null;
 };
 
@@ -351,20 +314,10 @@ function buildRequestBodyFromPreparedMessages(
   };
 }
 
-/**
- * Send a message to a conversation and return a streaming response.
- * Uses the conversations API for all conversations.
- *
- * For the "default" conversation (agent's primary message history without
- * an explicit conversation object), pass conversationId="default" and
- * provide agentId in opts. The agent id is sent in the request body.
- */
 export async function sendMessageStream(
   conversationId: string,
   messages: Array<MessageCreate | ApprovalCreate>,
   opts: SendMessageStreamOptions = { streamTokens: true, background: true },
-  // Disable SDK retries by default - state management happens outside the stream,
-  // so retries would violate idempotency and create race conditions
   requestOptions: SendMessageStreamRequestOptions = {
     maxRetries: 0,
   },
@@ -378,11 +331,6 @@ export async function sendMessageStream(
   );
 }
 
-/**
- * Send a message through an explicit backend instance. Use this when a caller
- * composes several backend operations and needs fork/send to stay on the same
- * backend without reaching back through the global backend singleton.
- */
 export async function sendMessageStreamWithBackend(
   backend: Backend,
   conversationId: string,
@@ -398,10 +346,6 @@ export async function sendMessageStreamWithBackend(
     messages,
     opts.approvalNormalization,
   );
-  // Scrub vault and ambient secret values from outgoing message text before
-  // they enter the conversation transcript. ApprovalCreate carries tool-call
-  // payloads, not user text, and has no `role` field — so `role` presence
-  // discriminates the union.
   const scrubbedMessages = canonicalMessages.map((message) => {
     if (!("role" in message) || message.role !== "user") {
       return message;
@@ -431,8 +375,6 @@ export async function sendMessageStreamWithBackend(
   const preparedToolContext = opts.preparedToolContext
     ? opts.preparedToolContext
     : await (async () => {
-        // Wait for any in-progress toolset switch to complete before reading tools
-        // This prevents sending messages with stale tools during a switch
         await waitForToolsetReady();
         return await prepareCurrentToolExecutionContext({
           workingDirectory: opts.workingDirectory,
@@ -455,6 +397,8 @@ export async function sendMessageStreamWithBackend(
     skillsDirectory: executionRuntimeContext?.skillsDirectory,
     skillSources: opts.skillSources ?? getSkillSources(),
     bundledSkills: executionRuntimeContext?.bundledSkills,
+    cloudSkillRepositories:
+      executionRuntimeContext?.executionSettings?.cloud_skill_repositories,
   });
 
   const resolvedConversationId = conversationId;
@@ -462,19 +406,12 @@ export async function sendMessageStreamWithBackend(
     resolvedConversationId,
     opts.agentId ?? null,
   );
-  // Keep the prompt prefix byte-stable: send the conversation's frozen
-  // catalog and announce changes through a skill-delta reminder instead.
   const skillPlan = planClientSkillsRequest(
     backend,
     { conversationId: resolvedConversationId, agentId: opts.agentId },
     discoveredClientSkills,
   );
   const { clientSkills, reminder: skillReminder } = skillPlan;
-  // Deliver at the next model boundary (including tool continuations), not by
-  // launching an unsolicited run from a filesystem watcher. Keep approvals and
-  // the original input/otid in place, then append the runtime reminder.
-  // A low-disk alert held for a loop with no queue (e.g. a subagent) rides
-  // this same boundary.
   const diskReminder = takePendingDiskSpaceReminder();
   const runtimeReminders = [skillReminder, diskReminder].filter(
     (text): text is string => Boolean(text),
@@ -489,10 +426,6 @@ export async function sendMessageStreamWithBackend(
   ];
   const isApprovalContinuation =
     isApprovalContinuationRequest(normalizedMessages);
-  // Only reuse cached response state when the approval continuation was fully
-  // auto-handled by the client. If a human reviewed any approval, the pause can
-  // allow visible agent/conversation state to change, so use the full server path.
-  // A changed skill catalog also needs that path, rather than a cached prompt.
   const canUsePreviousResponseState =
     isApprovalContinuation &&
     opts.allowResponseStateReuse === true &&
@@ -566,20 +499,9 @@ export async function sendMessageStreamWithBackend(
   } else if (!canUsePreviousResponseState) {
     responseStateIdsByScope.delete(responseStateScope);
   }
-  // Echo the cloud user id back to cloud-api so it can re-attribute
-  // credits + rate limits on multi-user sandboxes. See
-  // SendMessageStreamOptions.actingUserId for full context.
   if (actingUserId) {
     extraHeaders[ACTING_USER_ID_HEADER] = actingUserId;
   }
-  // Client-side tools continue the same chat turn through a new Messages API
-  // request. Forward the server-minted originator proof held for that turn so
-  // private MCP authorization survives the continuation without treating the
-  // listener's API key as the human who started it. The bearer remains
-  // process-local: it is never copied into message bodies, tool arguments, or
-  // transcripts, and headerless turns keep their existing behavior.
-  // A prepared tool context is an authority boundary. Its explicit null must
-  // not fall back to an outer AsyncLocalStorage turn's originator.
   const originatorSuperRunId = executionRuntimeContext
     ? executionRuntimeContext.mcpOriginatorSuperRunId
     : getRuntimeContext()?.mcpOriginatorSuperRunId;
@@ -637,7 +559,6 @@ export async function sendMessageStreamWithBackend(
           },
         },
       );
-      // A rejected request must not consume the notification; retries need it.
       const onSkillsCompaction = skillPlan.accept();
       stream = attachResponseStateTracking(stream, {
         scope: responseStateScope,
@@ -668,8 +589,6 @@ export async function sendMessageStreamWithBackend(
           );
         } catch (abortError) {
           abortRelay?.cleanup();
-          // Classify the interrupt as a user abort so callers unwind silently
-          // instead of reporting a stream error and clearing queued work.
           throw abortError instanceof APIUserAbortError
             ? abortError
             : new APIUserAbortError();
@@ -732,12 +651,6 @@ export async function sendMessageStreamWithBackend(
   return stream;
 }
 
-/**
- * Attached-repository resolution failures (e.g. the repository list fetch)
- * change which skills reach the prompt, so surface them beyond debug logs.
- * Only `shared-memory:` errors are reported: they carry server error messages
- * and opaque ids, not local filesystem paths from project skill parsing.
- */
 function reportAttachedRepositorySkillErrors(
   errors: ReadonlyArray<{ path: string; message: string }>,
 ): void {

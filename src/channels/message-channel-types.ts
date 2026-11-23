@@ -22,9 +22,7 @@ export interface MessageChannelInput {
 }
 
 export interface MessageChannelArgs extends MessageChannelInput {
-  /** Injected by executeTool() — NOT read from global context. */
   parentScope?: { agentId: string; conversationId: string };
-  /** Injected by executeTool() for channel-originated turns. */
   channelTurnSources?: ChannelTurnSource[];
 }
 

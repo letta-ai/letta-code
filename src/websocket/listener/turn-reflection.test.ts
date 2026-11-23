@@ -48,7 +48,6 @@ describe("post-turn listener reflection", () => {
     );
     const source = readFileSync(completionPath, "utf-8");
 
-    // The channel-only gate was removed: every end_turn evaluates reflection.
     expect(source).not.toContain("hasChannelTurnSources");
     expect(source).toContain("maybeLaunchPostTurnReflection({");
   });

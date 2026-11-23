@@ -62,11 +62,9 @@ export function renderModPanelLines(
     };
     result = panel.render(renderContext);
   } catch {
-    // A mod's render fn runs inside the input render; never let it crash the UI.
     return [];
   }
   const lines = Array.isArray(result) ? result : String(result).split("\n");
-  // An empty render hides the panel entirely (no blank row).
   if (lines.every((line) => line.trim().length === 0)) return [];
   return lines.map(String);
 }

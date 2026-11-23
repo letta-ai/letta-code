@@ -118,7 +118,6 @@ export function toPiMessage(message: LocalMessage): Message | undefined {
   } satisfies Message;
 }
 
-/** Provider-safe history for a request that continues after it. */
 export function toPiHistoryMessages(
   messages: readonly LocalMessage[],
 ): Message[] {
@@ -131,10 +130,6 @@ export function toPiHistoryMessages(
 export function toPiMessages(messages: readonly LocalMessage[]): Message[] {
   let normalized = toPiHistoryMessages(messages);
 
-  // Strip trailing assistant messages after normalization. Providers like
-  // Anthropic require the conversation to end with a user or tool-result
-  // message, and dropping empty text-only user messages can expose a trailing
-  // partial assistant response from a failed turn.
   while (normalized.length > 0 && normalized.at(-1)?.role === "assistant") {
     normalized = normalized.slice(0, -1);
   }

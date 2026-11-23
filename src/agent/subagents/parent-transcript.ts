@@ -1,13 +1,3 @@
-/**
- * Render a parent conversation as a readable transcript for workers that
- * cannot share Letta's conversation state (claude-code, codex, cursor, ...).
- *
- * Letta subagents fork the conversation server-side. External workers get the
- * history as JSONL instead: user and assistant messages, tool calls with
- * their arguments, and tool results. Reasoning,
- * system messages, and `<system-reminder>` blocks are omitted.
- */
-
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Backend } from "@/backend";
 
@@ -16,7 +6,6 @@ const SYSTEM_REMINDER_PATTERN =
   /<system-reminder>[\s\S]*?<\/system-reminder>\s*/g;
 
 export interface ParentTranscript {
-  /** One JSON record per supported event, in chronological order. */
   messages: string[];
   jsonl: string;
 }
@@ -39,14 +28,12 @@ interface HistoryEvent {
   status?: string;
 }
 
-/** JSON escapes keep historical text from closing the surrounding prompt tags. */
 export function serializeHistoryRecord(record: unknown): string {
   return JSON.stringify(record)
     .replace(/</g, "\\u003c")
     .replace(/>/g, "\\u003e");
 }
 
-/** Read newest in-context messages until the preview budget or context boundary. */
 export async function fetchParentConversationMessages(params: {
   backend: Pick<Backend, "listConversationMessages">;
   agentId: string;
@@ -60,7 +47,6 @@ export async function fetchParentConversationMessages(params: {
   if (contextIds?.size === 0 || (params.maxChars ?? 1) <= 0) return [];
   const messages: Message[] = [];
   let after: string | undefined;
-  // At most ten API pages, even when context IDs are stale or missing in history.
   for (let pageIndex = 0; pageIndex < (contextIds ? 10 : 1); pageIndex++) {
     params.signal?.throwIfAborted();
     const page = await params.backend.listConversationMessages(
@@ -145,7 +131,6 @@ function renderToolResult(result: {
   };
 }
 
-/** Separate known harness wrappers without guessing provenance from prose. */
 function userEvents(text: string, speaker?: string): HistoryEvent[] {
   const events: HistoryEvent[] = [];
   const human = (body: string) => {
@@ -209,7 +194,6 @@ function renderMessage(message: Message): HistoryEvent[] {
       return results.map(renderToolResult);
     }
     case "approval_response_message": {
-      // Client-side tools report their results through approval responses.
       return (message.approvals ?? []).map(
         (approval): HistoryEvent =>
           "tool_return" in approval
@@ -225,7 +209,6 @@ function renderMessage(message: Message): HistoryEvent[] {
     case "summary_message":
       return [{ type: "summary", text: message.summary }];
     default:
-      // reasoning, hidden reasoning, system, and compaction events
       return [];
   }
 }
@@ -235,8 +218,6 @@ export function renderParentTranscript(messages: Message[]): ParentTranscript {
   const projections = new Map<string, string>();
   for (const message of messages) {
     for (const event of renderMessage(message)) {
-      // Approval and tool rows can project the same execution. Preserve separate
-      // calls with identical output, and conflicting results rather than hiding them.
       if (
         event.call_id &&
         (event.type === "tool_result" || event.type === "tool_call")
@@ -261,7 +242,6 @@ export function renderParentTranscript(messages: Message[]): ParentTranscript {
   };
 }
 
-/** Bound individual preview records; earlier content is available through the CLI. */
 export function previewParentTranscript(messages: string[]): string[] {
   return messages.map((line) => {
     const event = JSON.parse(line) as HistoryEvent & {
@@ -284,7 +264,6 @@ export function previewParentTranscript(messages: string[]): string[] {
   });
 }
 
-/** Keep a complete suffix of messages within the inline character budget. */
 export function selectRecentMessages(
   messages: string[],
   maxChars: number,

@@ -259,8 +259,6 @@ describe("outbound image normalization", () => {
           otid: "cm-oversized",
         },
       ],
-      // Guard the invariant at runtime: even a stale caller that passes the
-      // deleted option cannot bypass the authoritative send-boundary pass.
       { skipImageNormalization: true } as never,
     );
     if (!requestBody.messages) {

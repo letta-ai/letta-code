@@ -1,4 +1,3 @@
-/** Browser-safe question receipts and user-message notifications. */
 export interface AskUserQuestion {
   question: string;
   header: string;
@@ -133,7 +132,6 @@ function escapeXml(value: string): string {
     .replace(/>/g, "&gt;");
 }
 
-/** Return content for a user-role message submitted through normal message delivery. */
 export function prepareAskUserQuestionNotif(
   response: AskUserQuestionResponse,
 ): string {
@@ -142,7 +140,6 @@ export function prepareAskUserQuestionNotif(
   return `<task-notification>\n<task-id>${escapeXml(parsed.toolCallId)}</task-id>\n<summary>User ${parsed.status} your questions.</summary>\n<ask-user-question-response>${escapeXml(JSON.stringify(parsed))}</ask-user-question-response>\n</task-notification>`;
 }
 
-/** Match only complete notifications; queued messages may coalesce several together. */
 export function parseAskUserQuestionNotif(
   text: string,
 ): AskUserQuestionResponse[] {

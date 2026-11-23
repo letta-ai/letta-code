@@ -9,7 +9,6 @@ import {
 import type { Skill, SkillDiscoveryResult, SkillSource } from "@/agent/skills";
 import { isolateAmbientLettaTestEnv } from "@/test-utils/test-process-env";
 
-/** Normalize path separators so assertions work on Windows too. */
 const normalize = (p: string): string => p.replace(/\\/g, "/");
 
 const baseSkill: Skill = {
@@ -691,14 +690,8 @@ describe("buildClientSkillsPayload", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Cache behavior tests
-// ---------------------------------------------------------------------------
-
 describe("client skills payload cache", () => {
-  // Each test starts with a clean cache to avoid cross-test pollution.
   async function importFresh() {
-    // Clear the global cache before re-importing so we get a fresh start.
     invalidateClientSkillsPayloadCache();
     return import("@/agent/client-skills");
   }
@@ -706,9 +699,6 @@ describe("client skills payload cache", () => {
   test("returns cached result on second call with same parameters", async () => {
     const { buildClientSkillsPayload } = await importFresh();
 
-    // Test that the cache works by calling twice without
-    // discoverSkillsFn and verifying the results are identical.
-    // We'll use temp directories with real skill files.
     const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-cache-test-"));
     const originalCwd = process.cwd();
 
@@ -732,7 +722,6 @@ describe("client skills payload cache", () => {
 
       process.chdir(projectDir);
 
-      // Clear cache to start fresh
       invalidateClientSkillsPayloadCache();
 
       const result1 = await buildClientSkillsPayload({
@@ -747,7 +736,6 @@ describe("client skills payload cache", () => {
         skillSources: ["project"],
       });
 
-      // Both calls should return identical results
       expect(result2.clientSkills).toEqual(result1.clientSkills);
       expect(result2.skillPathById).toEqual(result1.skillPathById);
       expect(result2.errors).toEqual(result1.errors);
@@ -782,10 +770,6 @@ describe("client skills payload cache", () => {
         ].join("\n"),
       );
 
-      // Set up scoped memory for agent-2 so it has a different memory root
-      // The scoped memory dir is: $HOME/.letta/agents/<agentId>/memory
-      // getMemorySkillsDirs checks existsSync on the memory root, then
-      // appends "skills" to discover skill directories.
       const agent2MemoryRoot = join(
         tempRoot,
         ".letta",
@@ -817,7 +801,6 @@ describe("client skills payload cache", () => {
 
       invalidateClientSkillsPayloadCache();
 
-      // Populate cache for both agents
       const result1 = await buildClientSkillsPayload({
         agentId: "cache-agent-1",
         skillsDirectory: join(projectDir, ".skills"),
@@ -830,8 +813,6 @@ describe("client skills payload cache", () => {
         skillSources: ["project"],
       });
 
-      // agent-2 should have the additional memory skill that agent-1 doesn't
-      // (different agentId → different scoped memory → different cache key → different result)
       expect(result2.clientSkills.length).toBeGreaterThan(
         result1.clientSkills.length,
       );
@@ -889,8 +870,6 @@ describe("client skills payload cache", () => {
         skillSources: ["bundled", "project"],
       });
 
-      // Different skill sources → different cache keys → different results
-      // (bundled source adds bundled skills)
       expect(result2.clientSkills.length).toBeGreaterThanOrEqual(
         result1.clientSkills.length,
       );
@@ -934,7 +913,6 @@ describe("client skills payload cache", () => {
         skillSources: ["project"],
       });
 
-      // Invalidate all
       invalidateClientSkillsPayloadCache();
 
       const result2 = await buildClientSkillsPayload({
@@ -943,7 +921,6 @@ describe("client skills payload cache", () => {
         skillSources: ["project"],
       });
 
-      // After invalidation, the second call re-discovers (same files → same result)
       expect(result2.clientSkills).toEqual(result1.clientSkills);
       expect(result2.skillPathById).toEqual(result1.skillPathById);
     } finally {
@@ -982,7 +959,6 @@ describe("client skills payload cache", () => {
 
       invalidateClientSkillsPayloadCache();
 
-      // Populate cache for two agents
       await buildClientSkillsPayload({
         agentId: "agent-alpha",
         skillsDirectory: join(projectDir, ".skills"),
@@ -994,14 +970,8 @@ describe("client skills payload cache", () => {
         skillSources: ["project"],
       });
 
-      // Invalidate only agent-alpha
       invalidateClientSkillsPayloadCacheForAgent("agent-alpha");
 
-      // agent-alpha should re-discover (cache was cleared)
-      // agent-beta should still be cached
-      // Both should return the same results since the files haven't changed,
-      // but the key point is that agent-alpha's cache entry was removed.
-      // We verify this indirectly: the function doesn't throw, and results match.
       const resultAlpha = await buildClientSkillsPayload({
         agentId: "agent-alpha",
         skillsDirectory: join(projectDir, ".skills"),
@@ -1059,9 +1029,7 @@ describe("client skills payload cache", () => {
       discoverSkillsFn,
     });
 
-    // The injected function runs twice for each uncached payload build.
     expect(callCount).toBe(4);
-    // Each invocation produces incrementing ids, so first result has call-1/2, second has call-3/4
     expect(result1.clientSkills.map((s) => s.name).sort()).toEqual([
       "call-1",
       "call-2",
@@ -1075,8 +1043,6 @@ describe("client skills payload cache", () => {
   test("cached result is a deep copy (mutation safe)", async () => {
     const { buildClientSkillsPayload } = await importFresh();
 
-    // Test that two consecutive calls without discoverSkillsFn
-    // return independent objects (deep-copied from cache).
     const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-cache-mut-"));
     const originalCwd = process.cwd();
 
@@ -1108,7 +1074,6 @@ describe("client skills payload cache", () => {
         skillSources: ["project"],
       });
 
-      // Mutate the returned result
       const firstSkill = result1.clientSkills[0];
       if (firstSkill) {
         firstSkill.description = "mutated";
@@ -1121,7 +1086,6 @@ describe("client skills payload cache", () => {
         skillSources: ["project"],
       });
 
-      // The second call should return the original (unmutated) cached result
       expect(result2.clientSkills[0]?.description).toBe("original");
       expect(result2.skillPathById["mutable-skill"]).not.toBe("/mutated/path");
     } finally {

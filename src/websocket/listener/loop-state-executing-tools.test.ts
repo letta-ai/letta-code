@@ -86,9 +86,6 @@ describe("loop state executing tool call ids", () => {
   test("reports an empty executing set outside client-side tool execution", () => {
     const runtime = createScopedRuntime();
 
-    // Lifecycle state can retain the last executing ids (e.g. while the
-    // continuation request is in flight); the wire snapshot must not leak
-    // them once the reported status is no longer EXECUTING_CLIENT_SIDE_TOOL.
     beginTurn(runtime, {
       initialStatus: "SENDING_API_REQUEST",
       executingToolCallIds: ["tool-call-stale"],

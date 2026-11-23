@@ -1,5 +1,3 @@
-// src/cli/app/useQueuedApprovalSubmit.ts
-
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import { type Dispatch, type MutableRefObject, useCallback } from "react";
@@ -46,16 +44,10 @@ export function useQueuedApprovalSubmit(ctx: QueuedApprovalSubmitContext) {
     setNeedsEagerApprovalCheck,
   } = ctx;
 
-  /**
-   * Check and handle any pending approvals before sending a slash command.
-   * Returns true if approvals need user input (caller should return { submitted: false }).
-   * Returns false if no approvals or all auto-handled (caller can proceed).
-   */
   // biome-ignore lint/correctness/useExhaustiveDependencies: queued approval refs are stable objects; .current is read dynamically during the check.
   const checkPendingApprovalsForSlashCommand = useCallback(async (): Promise<
     { blocked: true } | { blocked: false }
   > => {
-    // Only check eagerly when resuming a session (LET-7101)
     if (!needsEagerApprovalCheck) {
       return { blocked: false };
     }
@@ -95,7 +87,6 @@ export function useQueuedApprovalSubmit(ctx: QueuedApprovalSubmitContext) {
 
       return { blocked: false };
     } catch {
-      // If check fails, proceed anyway (don't block user)
       return { blocked: false };
     }
   }, [

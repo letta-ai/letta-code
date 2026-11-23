@@ -6,7 +6,6 @@ import {
 
 type SecretEntry = { key: string; value: string };
 
-/** Wrap the subcommand so unit tests never touch real settings state. */
 async function run(
   argv: string[],
   deps: SecretSubcommandDeps = {},
@@ -104,7 +103,6 @@ describe("secret subcommand", () => {
       expect(exit).toBe(0);
       expect(store.entries.get("GITHUB_TOKEN")).toBe("gh-secret-value");
       expect(captured.out.join("\n")).toContain("$GITHUB_TOKEN");
-      // The value must never be printed.
       expect(captured.out.join("\n")).not.toContain("gh-secret-value");
     } finally {
       captured.restore();
@@ -214,7 +212,6 @@ describe("secret subcommand", () => {
     try {
       await run(["set", "KEY", "--stdin"], {
         readStdin: async () => "value",
-        // Mirror the real store, which throws before writing when no agent resolves.
         setSecret: async () => {
           throw new Error("No agent context set. Agent ID is required.");
         },

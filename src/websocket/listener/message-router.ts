@@ -143,7 +143,6 @@ export function createListenerMessageHandler(
 
     const lifecycleMessage =
       parseListenerReadyMessage(data) ?? parseServerLifecycleMessage(data);
-    // Seal before parsing; only projected pongs are content-free.
     if (lifecycleMessage?.type !== "pong") sealStartupLogs();
     let parsedScope: ParsedRuntimeScope = null;
 

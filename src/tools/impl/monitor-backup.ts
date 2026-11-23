@@ -1,19 +1,10 @@
 import { runWithRuntimeContext } from "@/runtime-context";
 import { wake } from "./wake";
 
-/**
- * Optional backup Wake for a Monitor: a durable one-shot wake that fires if the
- * monitor stays silent for `afterSeconds`, measured from its start or its last
- * event. It goes through the same scheduler as the Wake tool, so it still fires
- * if this process dies, which is exactly when an in-process timer would not.
- */
-
 export const MIN_BACKUP_AFTER_SECONDS = 60;
 export const MAX_BACKUP_AFTER_SECONDS = 604_800;
 const MAX_WAKE_NAME_LENGTH = 80;
 const MAX_WAKE_PROMPT_LENGTH = 4000;
-// Events re-arm the backup at most this often; a burst of events becomes one
-// cancel-and-create rather than one per line.
 const DEFAULT_REARM_COALESCE_MS = 30_000;
 
 type WakeFn = typeof wake;
@@ -116,28 +107,19 @@ async function cancelBackupWake(backup: MonitorBackup): Promise<void> {
   const id = backup.wakeId;
   if (!id) return;
   backup.wakeId = null;
-  // A wake that already fired or was cancelled by hand is fine to miss.
   await runInScope(backup.scope, () => wakeImpl({ action: "cancel", id }));
 }
 
 function enqueue(backup: MonitorBackup, step: () => Promise<void>): void {
-  backup.queue = backup.queue.then(step).catch(() => {
-    // A failed re-arm leaves the previous wake (if any) armed, which only makes
-    // the backup fire early. Nothing to surface mid-stream.
-  });
+  backup.queue = backup.queue.then(step).catch(() => {});
 }
 
-/**
- * Arms the backup wake for a newly started monitor. Returns a line for the
- * Monitor tool result describing whether the backup is armed.
- */
 export async function armMonitorBackup(params: {
   taskId: string;
   description: string;
   afterSeconds: number;
   prompt?: string;
   scope: BackupScope | undefined;
-  /** Whether the monitor is still running once the wake has been created. */
   isRunning: () => boolean;
 }): Promise<string> {
   const { taskId, description, afterSeconds, scope } = params;
@@ -165,14 +147,12 @@ export async function armMonitorBackup(params: {
   }
   backups.set(taskId, backup);
   if (!params.isRunning()) {
-    // The monitor ended while the wake was being created.
     await cancelMonitorBackup(taskId);
     return "Backup wake not armed: the monitor already ended.";
   }
   return `Backup wake ${backup.wakeId} armed: it fires if this monitor is silent for ${afterSeconds}s, and each event resets the clock.`;
 }
 
-/** Called for every event the monitor emits; resets the silence clock. */
 export function noteMonitorBackupActivity(taskId: string): void {
   const backup = backups.get(taskId);
   if (!backup || backup.stopped || backup.rearmTimer) return;
@@ -189,7 +169,6 @@ export function noteMonitorBackupActivity(taskId: string): void {
   backup.rearmTimer.unref?.();
 }
 
-/** Cancels the backup when the monitor ends or is stopped on purpose. */
 export function cancelMonitorBackup(taskId: string): Promise<void> {
   const backup = backups.get(taskId);
   if (!backup) return Promise.resolve();
@@ -203,10 +182,6 @@ export function cancelMonitorBackup(taskId: string): Promise<void> {
   return backup.queue;
 }
 
-/**
- * On process exit, forget backups without cancelling them: a monitor that dies
- * with its process is exactly the case the durable backup wake is for.
- */
 export function detachMonitorBackupsForProcessExit(): void {
   for (const backup of backups.values()) {
     backup.stopped = true;

@@ -1,6 +1,3 @@
-// src/tests/keychain.test.ts
-// Tests for secrets utility functions
-
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import {
   __resetSecretWarningStateForTests,
@@ -175,7 +172,6 @@ describe("Secrets utilities", () => {
   test.skipIf(!keychainAvailablePrecompute)(
     "returns null for non-existent tokens",
     async () => {
-      // Ensure no tokens exist
       await deleteSecureTokens();
 
       const apiKey = await getApiKey();
@@ -192,14 +188,12 @@ describe("Secrets utilities", () => {
   test.skipIf(!keychainAvailablePrecompute)(
     "handles partial token storage",
     async () => {
-      // Store only API key
       await setSecureTokens({ apiKey: "sk-only-api-key" });
 
       let tokens = await getSecureTokens();
       expect(tokens.apiKey).toBe("sk-only-api-key");
       expect(tokens.refreshToken).toBeUndefined();
 
-      // Clean up and store only refresh token
       await deleteSecureTokens();
       await setSecureTokens({ refreshToken: "rt-only-refresh-token" });
 
@@ -210,13 +204,10 @@ describe("Secrets utilities", () => {
   );
 
   test("gracefully handles secrets unavailability", async () => {
-    // This test should work even if secrets are not available
     if (await isKeychainAvailable()) {
-      // If secrets are available, this is a basic functionality test
       const tokens = await getSecureTokens();
       expect(typeof tokens).toBe("object");
     } else {
-      // If secrets are not available, functions should return null or throw appropriately
       const tokens = await getSecureTokens();
       expect(tokens.apiKey).toBeUndefined();
       expect(tokens.refreshToken).toBeUndefined();
@@ -227,12 +218,10 @@ describe("Secrets utilities", () => {
       const refreshToken = await getRefreshToken();
       expect(refreshToken).toBe(null);
 
-      // Set operations should throw when secrets unavailable (handled by settings manager)
       await expect(setSecureTokens({ apiKey: "test" })).rejects.toThrow();
       await expect(setApiKey("test")).rejects.toThrow();
       await expect(setRefreshToken("test")).rejects.toThrow();
 
-      // Delete operations should not throw (no-op when secrets unavailable)
       await expect(deleteSecureTokens()).resolves.toBeUndefined();
       await expect(deleteApiKey()).resolves.toBeUndefined();
       await expect(deleteRefreshToken()).resolves.toBeUndefined();

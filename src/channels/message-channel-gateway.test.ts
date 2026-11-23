@@ -401,10 +401,6 @@ describe("external MessageChannel gateway boundary", () => {
   });
 
   test("preserves Microsoft Teams `a:`-prefixed chat ids through normalization", async () => {
-    // Teams direct-chat conversation ids natively start with `a:`. The
-    // channel-name prefix stripping that helps Slack (`channel:C123`) must
-    // not run for Teams, or the id no longer matches the turn source or the
-    // stored route and every routed reply fails account/route inference.
     const sendMessage = mock(async () => ({ messageId: "teams-response-1" }));
     const transport: ChannelMessageActionTransport = { sendMessage };
     const teamsChatId = "a:1ZYJteams-conv-1";
@@ -461,9 +457,6 @@ describe("external MessageChannel gateway boundary", () => {
       },
     );
 
-    // The action adapter is Slack's test bundle, so the display name in the
-    // success text is not meaningful here; the id-preservation assertions
-    // below are the contract under test.
     expect(result).toContain("Message sent to");
     expect(result).toContain("teams-response-1");
     expect(resolveRoutedContext).toHaveBeenCalledWith({

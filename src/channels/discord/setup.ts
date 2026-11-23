@@ -10,7 +10,6 @@ import type {
 import { ensureDiscordRuntimeInstalled } from "./runtime";
 
 function isValidBotToken(token: string): boolean {
-  // Discord bot tokens are base64-encoded and typically 59-72 chars
   return token.length >= 50 && token.includes(".");
 }
 
@@ -136,8 +135,6 @@ export async function runDiscordSetup(): Promise<boolean> {
     );
     const transcribeVoice = /^(y|yes)$/i.test(transcriptionInput.trim());
 
-    // Agent binding — required for account-bound DMs and guild @mentions.
-    // Without this, the bot won't know which agent to create conversations for.
     const envAgentId = process.env.LETTA_AGENT_ID || "";
     let agentId: string | null = null;
 

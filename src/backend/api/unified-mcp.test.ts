@@ -282,7 +282,6 @@ describe("unified MCP API adapter", () => {
       },
     };
 
-    // Unattributed call: no token, and the header must be absent entirely.
     await runUnifiedMcpTool({
       client,
       agentId: "agent-1",
@@ -294,7 +293,6 @@ describe("unified MCP API adapter", () => {
       { path: runPath, body: { args: { title: "Bug" } }, headers: undefined },
     ]);
 
-    // Attributed call: the held token rides the originator header verbatim.
     await runUnifiedMcpTool({
       client,
       agentId: "agent-1",
@@ -312,8 +310,6 @@ describe("unified MCP API adapter", () => {
       },
     });
 
-    // Tool arguments cannot advertise compatibility, borrow the preceding
-    // call's bearer, or turn an empty token into an attributed request.
     const args = {
       "x-letta-mcp-originator-token": "untrusted-argument",
       "x-letta-mcp-originator-isolation": "1",

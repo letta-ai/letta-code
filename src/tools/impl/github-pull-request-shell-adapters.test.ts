@@ -141,9 +141,7 @@ describe("GitHub PR tracking across shell adapters", () => {
     for (const process of backgroundProcesses.values()) {
       try {
         process.process.kill("SIGTERM");
-      } catch {
-        // Already exited.
-      }
+      } catch {}
       if (process.outputFile && existsSync(process.outputFile)) {
         unlinkSync(process.outputFile);
       }

@@ -15,13 +15,6 @@ import { fileURLToPath } from "node:url";
 import { LETTA_CHAT_API_KEYS_URL } from "@/cli/helpers/app-urls";
 import { createIsolatedCliTestEnv } from "@/test-utils/test-process-env";
 
-/**
- * Startup flow tests that validate flag conflict handling.
- *
- * These must remain runnable in fork PR CI (no secrets), so they should not
- * require a working Letta server or LETTA_API_KEY.
- */
-
 const projectRoot = process.cwd();
 const CLI_TIMEOUT_MS = 30_000;
 
@@ -299,7 +292,6 @@ describe("Startup Flow - Smoke", () => {
       ["-p", "Say OK", "--new", "--name", "NonExistentAgent999"],
       { expectExit: 1 },
     );
-    // Should get past flag validation regardless of whether credentials exist.
     expect(result.stderr).not.toContain("cannot be used with");
     expect(
       result.stderr.includes("NonExistentAgent999") ||
@@ -433,7 +425,6 @@ describe("Startup Flow - Smoke", () => {
       expect(result.stderr).toContain(`Unknown option '${flag}'`);
       expect(result.stderr).not.toContain("Missing LETTA_API_KEY");
     },
-    // Let the subprocess deadline fire before Bun's, with time for home cleanup.
     CLI_TIMEOUT_MS + 5_000,
   );
 

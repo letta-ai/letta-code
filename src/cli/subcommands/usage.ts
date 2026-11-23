@@ -28,7 +28,6 @@ Options:
       return 0;
     }
     await settingsManager.initialize();
-    // Reuse CLI OAuth refresh and persist rotated credentials before exiting.
     await getClient();
     await settingsManager.flush();
     const balance = await getBalanceMetadata();

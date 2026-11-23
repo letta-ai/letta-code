@@ -6,24 +6,20 @@ export type BrowserDeviceMcpOAuthErrorCode =
   | "cancelled"
   | "invalid_request";
 
-/** Start localhost-callback MCP OAuth on this device without an agent turn. */
 export interface BrowserDeviceMcpOAuthCommand {
   type: "browser_device_mcp_oauth";
   request_id: string;
   handoff_key: string;
   service: string;
   server_url: string;
-  /** Remaining monotonic operation budget minted by Chat, in milliseconds. */
   timeout_ms: number;
 }
 
-/** Cancel one in-process browser-device OAuth operation by its start request ID. */
 export interface BrowserDeviceMcpOAuthCancelCommand {
   type: "browser_device_mcp_oauth_cancel";
   operation_id: string;
 }
 
-/** Credential-free terminal result for a browser-device OAuth start command. */
 export interface BrowserDeviceMcpOAuthResponseMessage {
   type: "browser_device_mcp_oauth_response";
   request_id: string;
@@ -31,13 +27,11 @@ export interface BrowserDeviceMcpOAuthResponseMessage {
   error_code?: BrowserDeviceMcpOAuthErrorCode;
 }
 
-/** Run a slash command in an agent conversation. */
 export interface ExecuteCommandCommand {
   type: "execute_command";
   command_id: string;
   request_id: string;
   runtime: AgentRuntimeScope;
-  /** Everything after the command name. */
   args?: string;
 }
 
@@ -48,7 +42,6 @@ export interface ExecuteCommandResponseMessage {
   output: string;
 }
 
-/** Remove a queued input without stopping the active turn. */
 export interface RemoveQueueItemCommand {
   type: "remove_queue_item";
   request_id: string;

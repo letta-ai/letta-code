@@ -83,6 +83,27 @@ describe("cloud WatchPR registration", () => {
       else process.env.LETTA_CLOUD_WATCH_PR = originalFlag;
     }
   });
+  test("reports a successful registration when the initial snapshot is deferred", async () => {
+    const result = await startCloudPullRequestWatch(args, {
+      enabled: () => true,
+      request: async () => ({ id: "cmon-1" }) as never,
+    });
+    expect(result).toMatchObject({
+      taskId: "cmon-1",
+      url: args.url,
+      headSha: "",
+      persistent: false,
+    });
+    expect(result?.content[0]?.text).toContain(
+      "WatchPR started (task cmon-1).",
+    );
+    expect(result?.content[0]?.text).toContain(
+      "Keep working — do not poll or sleep.",
+    );
+    expect(result?.content[0]?.text).toContain(
+      "The current PR state will arrive with the first event.",
+    );
+  });
   test("registers with filters and falls back only when the repository is inaccessible", async () => {
     const calls: unknown[] = [];
     const result = await startCloudPullRequestWatch(args, {

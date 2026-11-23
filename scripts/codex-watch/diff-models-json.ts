@@ -1,14 +1,3 @@
-/**
- * Structured diff of openai/codex `codex-rs/models-manager/models.json`.
- *
- * We watch two surfaces: tool/schema fields that affect the tool surface
- * exposed to the model (letta-code mirrors these in src/agent/prompts/source_codex.md
- * and src/tools/*), and model instruction content (base_instructions /
- * model_messages / instructions_template), whose behavioral guidance is worth
- * reviewing even when no local mirror changes.
- */
-
-/** Tool-relevant fields lifted off each model entry in models.json. */
 export interface ModelToolConfig {
   slug: string;
   apply_patch_tool_type?: string;
@@ -20,11 +9,9 @@ export interface ModelToolConfig {
   experimental_supported_tools?: string[];
   input_modalities?: string[];
   truncation_policy?: unknown;
-  /** Tool names mentioned anywhere in the model instruction text. */
   prompt_tool_mentions: string[];
 }
 
-/** Substrings we treat as "this prompt mentions tool X". */
 const TOOL_MENTIONS = [
   "apply_patch",
   "exec_command",
@@ -50,19 +37,13 @@ export interface ModelsDiff {
   added_models: string[];
   removed_models: string[];
   field_deltas: ToolFieldDelta[];
-  /** Slugs of existing models whose instruction content changed. */
   instruction_content_deltas: string[];
-  /** Added models that ship instruction content. */
   added_models_with_instructions: string[];
-  /** True if any field_delta is in TOOL_SCHEMA_FIELDS. */
   has_tool_schema_change: boolean;
-  /** True if any prompt_tool_mentions added or removed. */
   has_prompt_tool_change: boolean;
-  /** True if any existing model's instruction content changed. */
   has_instruction_content_change: boolean;
 }
 
-/** Fields whose change implies a tool-schema update may be needed in letta-code. */
 export const TOOL_SCHEMA_FIELDS = new Set([
   "apply_patch_tool_type",
   "web_search_tool_type",
@@ -116,10 +97,6 @@ function equal(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-/**
- * Full model instruction text whose content we watch for behavioral prompt
- * changes (e.g. steering or user-input guidance), not just tool mentions.
- */
 export function extractInstructionText(model: Record<string, unknown>): string {
   const parts = [
     typeof model.base_instructions === "string" ? model.base_instructions : "",
@@ -135,7 +112,6 @@ export function extractInstructionText(model: Record<string, unknown>): string {
   return parts.filter((part) => part.length > 0).join("\n");
 }
 
-/** Compute the diff between two models.json payloads. */
 export function diffModelsJson(prev: ModelsJson, curr: ModelsJson): ModelsDiff {
   const prevBySlug = new Map<string, ModelToolConfig>();
   const currBySlug = new Map<string, ModelToolConfig>();
@@ -228,7 +204,6 @@ export interface VerdictInput {
   parse_error: boolean;
 }
 
-/** Decide which verdict best describes the upstream change set. */
 export function decideVerdict(input: VerdictInput): Verdict {
   if (input.parse_error) return "manual review required";
   if (!input.models_diff) return "manual review required";

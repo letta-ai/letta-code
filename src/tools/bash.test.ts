@@ -102,8 +102,6 @@ describe("Bash tool", () => {
   });
 
   test("recovers when runtime working directory was deleted mid-turn", async () => {
-    // Resolve symlinks/8.3 short names (macOS /var -> /private/var, Windows
-    // RUNNER~1 -> runneradmin) so the assertion matches the child's cwd.
     const fallbackDir = await realpath(
       await mkdtemp(path.join(tmpdir(), "letta-bash-fallback-")),
     );
@@ -128,8 +126,6 @@ describe("Bash tool", () => {
       expect(result.status).toBe("success");
       expect(result.content[0]?.text).toContain(fallbackDir);
       expect(result.content[0]?.text).not.toContain("Executable not found");
-      // The model must be told its cwd changed instead of silently running
-      // from a different directory.
       expect(result.content[0]?.text).toContain(
         `Note: working directory ${deletedDir} no longer exists`,
       );
@@ -244,7 +240,6 @@ describe("Bash tool", () => {
 
     expect(result.status).toBe("error");
     expect(result.content[0]?.text).toContain("wait <pid>");
-    // Nothing was started, so no leftover process can hold the conversation.
     expect(backgroundProcesses.size).toBe(before);
   });
 
@@ -369,9 +364,7 @@ describe("Bash tool", () => {
         const processEntry = backgroundProcesses.get(id);
         try {
           processEntry?.process.kill("SIGTERM");
-        } catch {
-          // Ignore already-completed processes.
-        }
+        } catch {}
         if (processEntry?.outputFile) {
           await rm(processEntry.outputFile, { force: true });
         }
@@ -382,7 +375,6 @@ describe("Bash tool", () => {
   });
 
   test("handles complex commands with pipes", async () => {
-    // Skip on Windows - pipe syntax is different
     if (process.platform === "win32") {
       return;
     }
@@ -423,14 +415,10 @@ describe("Bash tool", () => {
   });
 
   test("allows git worktree add under .letta/worktrees/", async () => {
-    // This tests the validation only — the command itself will fail
-    // because there's no git repo, but it should NOT be blocked by
-    // the worktree path check.
     const result = await runBashInTemp(
       "git worktree add -b fix/feature .letta/worktrees/my-feature main",
     );
 
-    // Should fail with a git error (not our validation error)
     expect(result.content[0]?.text).not.toContain(
       "Worktrees must be created under .letta/worktrees/",
     );

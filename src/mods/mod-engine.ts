@@ -182,11 +182,8 @@ export interface LettaModApi {
     closePanel: (id: string) => void;
     notify: (message: string) => void;
     openPanel: (panel: ModPanelOptions) => ModPanelHandle;
-    /** @deprecated Removed. Use openPanel; calls emit a migration diagnostic. */
     setStatus: (key: string, value?: unknown) => void;
-    /** @deprecated Removed. Use openPanel; calls emit a migration diagnostic. */
     clearStatus: (key: string) => void;
-    /** @deprecated Removed. Use openPanel; calls emit a migration diagnostic. */
     setStatuslineRenderer: (renderer: unknown) => void;
   };
 }

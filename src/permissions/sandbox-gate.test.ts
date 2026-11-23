@@ -17,7 +17,6 @@ test("false when the flag is off (no host probe needed)", () => {
 });
 
 test("false by default: the shell sandbox is opt-in, even with roots and a backend", () => {
-  // Same env as the passing parent case below, minus the opt-in flag.
   expect(willSandboxShell(REPO_CWD, { MEMORY_DIR: MEM }, SEATBELT)).toBe(false);
 });
 

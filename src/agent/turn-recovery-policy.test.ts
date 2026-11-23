@@ -23,8 +23,6 @@ import {
   shouldRetryRunMetadataError,
 } from "@/agent/turn-recovery-policy";
 
-// ── Classifier parity ───────────────────────────────────────────────
-
 describe("isApprovalPendingError", () => {
   test("detects real CONFLICT error", () => {
     expect(
@@ -114,8 +112,6 @@ describe("isInvalidToolCallIdsError", () => {
   });
 });
 
-// ── Pre-stream conflict routing ─────────────────────────────────────
-
 describe("classifyPreStreamConflict", () => {
   test("approval pending", () => {
     expect(
@@ -197,8 +193,6 @@ describe("getPreStreamErrorAction", () => {
     ).toBe("rethrow");
   });
 
-  // Parity: TUI and headless both pass the same (detail, retries, max) triple
-  // to this function — verifying the action is deterministic from those inputs.
   test("same inputs always produce same action (determinism)", () => {
     const detail =
       "CONFLICT: Cannot send a new message: The agent is waiting for approval on a tool call.";
@@ -396,7 +390,6 @@ describe("provider detail retry helpers", () => {
         detail: "rate limited",
       }),
     ).toBe(true);
-    // Non-recoverable 429: agents-limit-exceeded should NOT retry
     expect(
       shouldRetryPreStreamTransientError({
         status: 429,
@@ -533,8 +526,6 @@ describe("getTransientRetryDelayMs", () => {
   });
 });
 
-// ── Error text extraction ───────────────────────────────────────────
-
 describe("extractConflictDetail", () => {
   test("nested: e.error.error.detail", () => {
     const err = {
@@ -593,7 +584,6 @@ describe("extractConflictDetail", () => {
     expect(extractConflictDetail("string")).toBe("");
   });
 
-  // Parity: same APIError shape from headless and TUI → same extracted text
   test("end-to-end: extraction feeds into classifier correctly", () => {
     const sdkError = {
       error: {
@@ -628,8 +618,6 @@ describe("extractConflictDetail", () => {
     );
   });
 });
-
-// ── Stale approval payload rewrite ──────────────────────────────────
 
 describe("rebuildInputWithFreshDenials", () => {
   const userMsg = {
@@ -742,8 +730,6 @@ describe("rebuildInputWithFreshDenials", () => {
   });
 });
 
-// ── Retry gating ────────────────────────────────────────────────────
-
 describe("shouldAttemptApprovalRecovery", () => {
   test("true when detected and under budget", () => {
     expect(
@@ -795,9 +781,6 @@ describe("shouldAttemptApprovalRecovery", () => {
     ).toBe(false);
   });
 
-  // Parity: TUI uses llmApiErrorRetriesRef.current < LLM_API_ERROR_MAX_RETRIES
-  // headless uses llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES
-  // Both should produce the same result for the same inputs.
   test("parity: same inputs → same decision regardless of caller", () => {
     const tuiResult = shouldAttemptApprovalRecovery({
       approvalPendingDetected: true,
@@ -812,8 +795,6 @@ describe("shouldAttemptApprovalRecovery", () => {
     expect(tuiResult).toBe(headlessResult);
   });
 });
-
-// ── Empty response error detection (LET-7679) ────────────────────────
 
 describe("isEmptyResponseError", () => {
   test("detects empty content in response", () => {

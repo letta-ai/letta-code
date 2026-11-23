@@ -1,16 +1,3 @@
-/**
- * Extracted handler for the bootstrap_session_state control request.
- *
- * Returns a single ControlResponse containing:
- *  - resolved session metadata (agent_id, conversation_id, model, tools, memfs_enabled)
- *  - initial history page (messages, next_before, has_more)
- *  - pending approval flag
- *  - optional wall-clock timings
- *
- * Accepting minimal backend/context interfaces keeps the handler fully testable
- * without a real network or subprocess.
- */
-
 import { randomUUID } from "node:crypto";
 import type { Backend, ConversationMessageListBody } from "@/backend";
 import type {
@@ -19,10 +6,6 @@ import type {
   ControlResponse,
 } from "@/types/protocol";
 import { resolveListMessagesRoute } from "./list-messages-routing";
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Minimal interfaces — only what the handler needs
-// ─────────────────────────────────────────────────────────────────────────────
 
 export type BootstrapHandlerBackend = Pick<Backend, "listConversationMessages">;
 
@@ -40,20 +23,9 @@ export interface HandleBootstrapParams {
   sessionContext: BootstrapHandlerSessionContext;
   requestId: string;
   backend: BootstrapHandlerBackend;
-  /** Optional: flag indicating a pending approval is waiting. */
   hasPendingApproval?: boolean;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Handler
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Execute a bootstrap_session_state control request and return the ControlResponse.
- *
- * Caller is responsible for serialising + writing to stdout:
- *   console.log(JSON.stringify(await handleBootstrapSessionState(params)));
- */
 export async function handleBootstrapSessionState(
   params: HandleBootstrapParams,
 ): Promise<ControlResponse> {
@@ -71,7 +43,6 @@ export async function handleBootstrapSessionState(
   const order = bootstrapReq.order ?? "desc";
 
   try {
-    // Reuse the same routing logic as list_messages for consistency
     const route = resolveListMessagesRoute(
       { conversation_id: undefined, agent_id: sessionContext.agentId },
       sessionContext.conversationId,
@@ -88,7 +59,6 @@ export async function handleBootstrapSessionState(
     const listEnd = Date.now();
 
     const hasMore = items.length >= limit;
-    // When order=desc, newest first; oldest item is at the end of the array.
     const oldestId =
       items.length > 0
         ? (items[items.length - 1] as { id?: string })?.id

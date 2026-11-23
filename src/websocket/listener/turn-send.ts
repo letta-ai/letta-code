@@ -36,7 +36,6 @@ import type { ConversationRuntime } from "./types";
 
 type SendOptions = NonNullable<Parameters<typeof sendMessageStream>[2]>;
 
-/** Build request options and perform the first send; later continuations read current input state. */
 export async function startTurnInput(
   params: Omit<
     Parameters<typeof createTurnInputSender>[0],

@@ -76,8 +76,6 @@ describe("letta mcp connect", () => {
   });
 
   test("keeps the process alive while waiting for the OAuth callback", async () => {
-    // The real callback server is unref'd, so without a ref'd handle the
-    // one-shot CLI would exit before the browser redirect arrives.
     const originalSetInterval = globalThis.setInterval;
     const originalClearInterval = globalThis.clearInterval;
     const live = new Set<unknown>();

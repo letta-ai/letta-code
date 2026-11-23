@@ -1,22 +1,3 @@
-/**
- * Integration tests for PRQ4: TUI QueueRuntime mirror lifecycle events.
- *
- * Drives QueueRuntime directly using the same patterns as the App.tsx dual-path,
- * without requiring React or a TUI instance. Each test mirrors one App.tsx code path.
- *
- * Invariants verified:
- *  - Idle submit: enqueue → consumeItems → onEnqueued + onDequeued, no onBlocked
- *  - Busy submit: enqueue while blocked → onBlocked once; unblock → consumeItems → onDequeued
- *  - Coalesced batch: N enqueues → consumeItems(N) → mergedCount=N
- *  - No double-blocked: tryDequeue same reason N times → onBlocked fires once
- *  - Priority: interrupt_in_progress emitted when streaming also active
- *  - Approval-append (consumeQueuedMessages pattern): consumeItems fires onDequeued, not onCleared
- *  - Queue edit clear (handleEnterQueueEditMode): clear("stale_generation") → onCleared
- *  - Error clear: clear("error") → onCleared
- *  - Divergence: consumeItems(undercount) leaves length mismatch
- *  - Blocked then cleared: both events fire, queue empty
- */
-
 import { describe, expect, test } from "bun:test";
 import { getTuiBlockedReason } from "@/cli/helpers/tui-queue-adapter";
 import type {
@@ -26,8 +7,6 @@ import type {
   QueueItem,
 } from "@/queue/queue-runtime";
 import { QueueRuntime } from "@/queue/queue-runtime";
-
-// ── Helpers ───────────────────────────────────────────────────────
 
 type Recorded = {
   enqueued: Array<{ item: QueueItem; queueLen: number }>;
@@ -70,8 +49,6 @@ function enqueueTaskNotif(q: QueueRuntime, text = "<notif/>"): void {
   } as Parameters<typeof q.enqueue>[0]);
 }
 
-// ── Tests ─────────────────────────────────────────────────────────
-
 describe("idle submit — single message", () => {
   test("enqueued then consumeItems(1) fires onEnqueued + onDequeued, no blocked", () => {
     const { q, rec } = buildRuntime();
@@ -109,7 +86,6 @@ describe("busy submit — blocked on streaming", () => {
     expect(rec.blocked.at(0)?.reason).toBe("streaming");
     expect(rec.blocked.at(0)?.queueLen).toBe(1);
 
-    // Stream ends: consumeItems fires dequeued
     q.consumeItems(1);
     expect(rec.dequeued).toHaveLength(1);
     expect(rec.dequeued.at(0)?.mergedCount).toBe(1);
@@ -144,7 +120,7 @@ describe("no double-blocked — QueueRuntime dedup", () => {
     const { q, rec } = buildRuntime();
     enqueueUserMsg(q);
     q.tryDequeue("streaming");
-    q.tryDequeue("pending_approvals"); // reason changed → fires again
+    q.tryDequeue("pending_approvals");
     expect(rec.blocked).toHaveLength(2);
     expect(rec.blocked.at(1)?.reason).toBe("pending_approvals");
   });
@@ -160,7 +136,7 @@ describe("priority: interrupt_in_progress beats streaming", () => {
       queuedOverlayAction: false,
       anySelectorOpen: false,
       waitingForQueueCancel: false,
-      userCancelled: true, // interrupt_in_progress
+      userCancelled: true,
       abortControllerActive: false,
     });
     const { q, rec } = buildRuntime();
@@ -177,11 +153,10 @@ describe("approval-append path (consumeQueuedMessages mirror)", () => {
     enqueueUserMsg(q, "queued during approval");
     enqueueTaskNotif(q, "<notif/>");
 
-    // Mirror consumeQueuedMessages: messages.length = 2
     q.consumeItems(2);
     expect(rec.dequeued).toHaveLength(1);
     expect(rec.dequeued.at(0)?.mergedCount).toBe(2);
-    expect(rec.cleared).toHaveLength(0); // NOT a clear
+    expect(rec.cleared).toHaveLength(0);
   });
 });
 
@@ -195,7 +170,7 @@ describe("queue edit clear (handleEnterQueueEditMode)", () => {
     expect(rec.cleared.at(0)?.reason).toBe("stale_generation");
     expect(rec.cleared.at(0)?.count).toBe(2);
     expect(q.length).toBe(0);
-    expect(rec.dequeued).toHaveLength(0); // not a dequeue
+    expect(rec.dequeued).toHaveLength(0);
   });
 });
 
@@ -221,8 +196,8 @@ describe("divergence scenario — consumeItems undercount", () => {
     const { q } = buildRuntime();
     enqueueUserMsg(q, "first");
     enqueueUserMsg(q, "second");
-    q.consumeItems(1); // undercount — simulates drift
-    expect(q.length).toBe(1); // mismatch vs expected messageQueue.length=0
+    q.consumeItems(1);
+    expect(q.length).toBe(1);
   });
 });
 
@@ -230,8 +205,8 @@ describe("blocked then cleared", () => {
   test("both onBlocked and onCleared fire; queue ends empty", () => {
     const { q, rec } = buildRuntime();
     enqueueUserMsg(q);
-    q.tryDequeue("streaming"); // fires onBlocked
-    q.clear("error"); // fires onCleared
+    q.tryDequeue("streaming");
+    q.clear("error");
     expect(rec.blocked).toHaveLength(1);
     expect(rec.cleared).toHaveLength(1);
     expect(q.length).toBe(0);

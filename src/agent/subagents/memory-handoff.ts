@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { getBackend } from "@/backend";
 import { getTranscriptRoot } from "@/utils/transcript-paths";
 
-/** Keep the snapshot only for the lifetime of the child that can read it. */
 export async function withMemoryHandoff<T>(
   params: Parameters<typeof prepareMemoryHandoff>[0],
   run: (
@@ -20,18 +19,15 @@ export async function withMemoryHandoff<T>(
   }
 }
 
-/** Fresh workers receive the assignment, with parent history available only on demand. */
 export async function prepareMemoryHandoff(params: {
   agentId: string;
   conversationId: string;
   memoryDir: string;
   assignment: string;
   repairOnly?: boolean;
-  /** Cancelling the task must also stop a slow export, not just the child. */
   signal?: AbortSignal;
 }): Promise<{ prompt: string; transcriptPath?: string }> {
   let transcriptPath: string | undefined;
-  // Conflict repair needs the checkout and its Git state, not the parent dialogue.
   if (!params.repairOnly) {
     const messages = [];
     let after: string | undefined;
@@ -47,7 +43,6 @@ export async function prepareMemoryHandoff(params: {
         },
         params.signal ? { signal: params.signal } : undefined,
       );
-      // Both backends expose page items; only the API SDK provides an iterator.
       const items = page.getPaginatedItems();
       for (const message of items) {
         if (
@@ -58,7 +53,6 @@ export async function prepareMemoryHandoff(params: {
       }
       if (items.length < 100) break;
       const cursor = items[items.length - 1]?.id;
-      // A page whose cursor cannot advance would otherwise be fetched forever.
       if (!cursor || cursor === after) break;
       after = cursor;
     }
@@ -68,7 +62,6 @@ export async function prepareMemoryHandoff(params: {
       "memory-handoffs",
     );
     await mkdir(directory, { recursive: true, mode: 0o700 });
-    // Task counters restart with the process; never overwrite an earlier read-only snapshot.
     transcriptPath = join(directory, `${randomUUID()}.json`);
     await writeFile(transcriptPath, JSON.stringify(messages, null, 2), {
       mode: 0o444,

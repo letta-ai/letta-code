@@ -2,11 +2,6 @@ import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, normalize, resolve } from "node:path";
 
-/**
- * Resolve the process-wide config directory. Product hosts may isolate their
- * settings, credentials, and device identity without replacing HOME for every
- * child process.
- */
 export function resolveGlobalConfigDir(
   env: NodeJS.ProcessEnv = process.env,
   fallbackHome: string = homedir(),
@@ -34,7 +29,6 @@ export function hasGlobalConfigDirOverride(
   return Boolean(env.LETTA_CONFIG_DIR?.trim());
 }
 
-/** Resolve product state while preserving the legacy LETTA_HOME test/cron override. */
 export function resolveGlobalStateDir(
   env: NodeJS.ProcessEnv = process.env,
   fallbackHome: string = homedir(),

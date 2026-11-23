@@ -14,10 +14,6 @@ export interface GitContextSnapshot {
 export interface GatherGitContextOptions {
   cwd?: string;
   recentCommitLimit?: number;
-  /**
-   * Git log format string passed to `git log --format=...`.
-   * If omitted, uses `git log --oneline`.
-   */
   recentCommitFormat?: string;
   statusLineLimit?: number;
 }
@@ -35,9 +31,6 @@ function runGit(args: string[], cwd: string): string | null {
   }
 }
 
-// A git child that never exits (lock contention, a stalled network filesystem,
-// a credential prompt) would otherwise hang every caller sharing its promise,
-// including listener startup.
 const GIT_ASYNC_TIMEOUT_MS = 10_000;
 
 async function runGitAsync(
@@ -55,8 +48,6 @@ async function runGitAsync(
     });
     return stdout.trim();
   } catch (error) {
-    // Node sets `killed` when it killed the child for exceeding the timeout.
-    // An ordinary non-zero git exit still means "no value".
     if ((error as { killed?: boolean } | null)?.killed) {
       throw new Error(`git ${args[0] ?? ""} timed out after ${timeoutMs}ms`);
     }
@@ -149,21 +140,11 @@ export function gatherGitContextSnapshot(
   };
 }
 
-// ─────────────────────────────────────────────────
-//  Lightweight git context for DeviceStatus
-// ─────────────────────────────────────────────────
-
 export interface LightGitContext {
   branch: string | null;
   recent_branches: string[];
 }
 
-/**
- * Get a lightweight git context suitable for the DeviceStatus payload.
- * Fast: only runs `git branch --show-current` and `git branch --sort=-committerdate`.
- * Returns null if the cwd is not inside a git repo. Rejects (after killing the
- * child) if any git command runs longer than `timeoutMs`.
- */
 export async function getGitContextAsync(
   cwd: string,
   options: { timeoutMs?: number } = {},
@@ -179,7 +160,6 @@ export async function getGitContextAsync(
     timeoutMs,
   );
 
-  // Get up to 11 local branches sorted by most recent commit (10 + current)
   const branchList = await runGitAsync(
     [
       "branch",

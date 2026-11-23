@@ -201,8 +201,6 @@ describe("machine metadata", () => {
   });
 
   it("smokes native probes on the current CI machine within a bounded time", async () => {
-    // No fixture sources: this invokes system_profiler, PowerShell CIM, or the
-    // Linux probes on the matching CI runner. Hardware remains best effort.
     const machine = await collectMachineMetadata();
     expect(machine.architecture).toBe(process.arch);
     expect(machine.osName).toBeString();

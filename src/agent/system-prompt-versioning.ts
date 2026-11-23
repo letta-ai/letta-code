@@ -192,9 +192,6 @@ export function decideManagedSystemPromptUpdate(input: {
     };
   }
 
-  // The Cloud default is maintained by the server. Match actual prompt content
-  // before trusting a stale local "custom" label, but never replace an edited
-  // prompt or an explicitly selected non-default preset (including SDK prompts).
   if (
     isLettaCloud &&
     !(agent.tags ?? []).includes(LETTA_CODE_SUBAGENT_TAG) &&
@@ -272,8 +269,6 @@ export function decideManagedSystemPromptUpdate(input: {
       return { kind: "noop", reason: "managed prompt is current" };
     }
 
-    // Legacy preset-only settings cannot prove the prompt is still managed, so
-    // only start tracking them when they exactly match the current bundled text.
     const expectedCurrentPrompt = buildSystemPrompt(storedPreset, memoryMode);
     if (currentSystemPrompt === expectedCurrentPrompt) {
       return {

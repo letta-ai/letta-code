@@ -1,13 +1,5 @@
-/**
- * LSP Infrastructure Types
- * Based on Language Server Protocol specification
- */
-
 import type { ChildProcess } from "node:child_process";
 
-/**
- * LSP Diagnostic severity levels
- */
 export enum DiagnosticSeverity {
   Error = 1,
   Warning = 2,
@@ -15,25 +7,16 @@ export enum DiagnosticSeverity {
   Hint = 4,
 }
 
-/**
- * Position in a text document (0-based)
- */
 export interface Position {
   line: number;
   character: number;
 }
 
-/**
- * Range in a text document
- */
 export interface Range {
   start: Position;
   end: Position;
 }
 
-/**
- * LSP Diagnostic
- */
 export interface Diagnostic {
   range: Range;
   severity?: DiagnosticSeverity;
@@ -53,17 +36,11 @@ export interface Location {
   range: Range;
 }
 
-/**
- * LSP Server process handle
- */
 export interface LSPServerProcess {
   process: ChildProcess;
   initialization?: Record<string, unknown>;
 }
 
-/**
- * LSP Server definition
- */
 export interface LSPServerInfo {
   id: string;
   extensions: string[];
@@ -76,9 +53,6 @@ export interface LSPServerInfo {
   };
 }
 
-/**
- * Text document for LSP
- */
 export interface TextDocument {
   uri: string;
   languageId: string;
@@ -86,9 +60,6 @@ export interface TextDocument {
   text: string;
 }
 
-/**
- * JSON-RPC Request
- */
 export interface JsonRpcRequest {
   jsonrpc: "2.0";
   id: number | string;
@@ -96,9 +67,6 @@ export interface JsonRpcRequest {
   params?: unknown;
 }
 
-/**
- * JSON-RPC Response
- */
 export interface JsonRpcResponse {
   jsonrpc: "2.0";
   id: number | string;
@@ -110,18 +78,12 @@ export interface JsonRpcResponse {
   };
 }
 
-/**
- * JSON-RPC Notification
- */
 export interface JsonRpcNotification {
   jsonrpc: "2.0";
   method: string;
   params?: unknown;
 }
 
-/**
- * LSP Initialize params
- */
 export interface InitializeParams {
   processId: number | null;
   rootUri: string | null;
@@ -139,9 +101,6 @@ export interface ClientCapabilities {
   };
 }
 
-/**
- * LSP Initialize result
- */
 export interface InitializeResult {
   capabilities: ServerCapabilities;
   serverInfo?: {
@@ -152,7 +111,6 @@ export interface InitializeResult {
 
 export interface ServerCapabilities {
   textDocumentSync?: number | TextDocumentSyncOptions;
-  // Add more as needed
 }
 
 export interface TextDocumentSyncOptions {

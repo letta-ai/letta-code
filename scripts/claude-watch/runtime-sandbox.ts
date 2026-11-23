@@ -26,12 +26,6 @@ export interface CommandResult {
 
 export type CommandRunner = (spec: CommandSpec) => Promise<CommandResult>;
 
-/**
- * Runs untrusted package install scripts and the closed-source Claude binary in
- * a container that can see only its disposable probe root. The Docker client
- * receives only the already-minimized command environment; secret values are
- * inherited by name rather than placed in argv.
- */
 export function sandboxClaudeCommand(
   spec: CommandSpec,
   root: string,
@@ -88,7 +82,6 @@ export function sandboxClaudeCommand(
   };
 }
 
-/** Spawn with bounded output and terminate the whole process group on timeout/cap. */
 export const runBoundedCommand: CommandRunner = (spec) =>
   new Promise((resolvePromise, reject) => {
     const child = spawn(spec.command, spec.args, {
