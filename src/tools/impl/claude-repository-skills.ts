@@ -19,9 +19,9 @@ export async function stageClaudeRepositorySkills(
             return undefined;
           throw error;
         });
-        // The checkout can arrive after Claude starts. A dangling link becomes
-        // usable as soon as the checkout creates the skills directory.
-        if (info && !info.isDirectory()) continue;
+        // Outside Windows, a dangling link becomes usable when the checkout
+        // creates the skills directory. Windows junctions need an existing target.
+        if (info ? !info.isDirectory() : process.platform === "win32") continue;
         stagingRoot ??= await mkdtemp(join(tmpdir(), "letta-claude-skills-"));
         const directory = join(stagingRoot, source, basename(repo));
         const claudeDir = join(directory, ".claude");
