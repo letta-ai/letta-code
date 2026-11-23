@@ -95,7 +95,6 @@ export async function emitListenerTurnStart(options: {
       input: isTurnInputArray(event.input) ? event.input : options.input,
     };
   } catch {
-    // Mod turn_start handlers should not block sending the turn.
     return { cancelled: false, handlerCount: 0, input: options.input };
   }
 }
@@ -138,7 +137,6 @@ export async function emitListenerTurnEnd(options: {
       ? event.continue
       : undefined;
   } catch {
-    // Mod turn_end handlers should not block turn completion.
     return undefined;
   }
 }

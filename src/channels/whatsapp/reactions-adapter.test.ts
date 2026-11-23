@@ -96,7 +96,6 @@ function makeHarness(
     };
     lidEntries?: Array<{ lid: string; phone: string }>;
     deliver?: (message: InboundChannelMessage) => Promise<void> | void;
-    /** When set, sendMessage returns this as the outbound message ID. */
     outboundMessageId?: string;
   } = {},
 ) {
@@ -731,9 +730,6 @@ describe("WhatsApp reaction adapter integration", () => {
   });
 
   test("LID reaction against own outbound with target.fromMe:false is recognized", async () => {
-    // Exact live-evidence shape: Baileys delivers the reaction via a LID chat
-    // where it cannot equate Samantha's PN identity, so target.fromMe is false
-    // even though we sent the message.
     const LID = "210565536456917@lid";
     const harness = makeHarness({
       lidEntries: [{ lid: LID, phone: REACTOR }],
@@ -741,7 +737,6 @@ describe("WhatsApp reaction adapter integration", () => {
     });
     await harness.start();
 
-    // Step 1: send outbound text — populates sentMessageIds + messageStore.
     await harness.adapter.sendMessage({
       channel: "whatsapp",
       accountId: account.accountId,
@@ -749,8 +744,6 @@ describe("WhatsApp reaction adapter integration", () => {
       text: "hello",
     });
 
-    // Step 2: emit outbound upsert echo — sentMessageIds entry consumed,
-    // but messageStore entry survives with key.fromMe: true.
     await harness.emitUpsert([
       {
         key: {
@@ -763,7 +756,6 @@ describe("WhatsApp reaction adapter integration", () => {
       },
     ]);
 
-    // Step 3: emit real-shape LID reaction with target.fromMe: false.
     await harness.emit([
       reactionEntry({
         chatId: LID,
@@ -798,12 +790,9 @@ describe("WhatsApp reaction adapter integration", () => {
   });
 
   test("target stored from inbound message with key.fromMe:false remains dropped", async () => {
-    // An inbound message (fromMe: false) is stored in messageStore by the
-    // upsert handler. A reaction to it must NOT be treated as "ours."
     const harness = makeHarness();
     await harness.start();
 
-    // Simulate an inbound message arriving via upsert.
     await harness.emitUpsert([
       {
         key: {
@@ -816,11 +805,8 @@ describe("WhatsApp reaction adapter integration", () => {
         pushName: "User",
       },
     ]);
-    // The upsert handler should have delivered it as a normal inbound.
     expect(harness.delivered).toHaveLength(1);
 
-    // Now react to that inbound message — target.fromMe is false and the
-    // messageStore entry has fromMe: false. Must be dropped.
     await harness.emit([
       reactionEntry({
         targetId: "inbound-msg-1",
@@ -828,7 +814,6 @@ describe("WhatsApp reaction adapter integration", () => {
         reactionId: "react-to-inbound",
       }),
     ]);
-    // Still just the original inbound, no reaction delivered.
     expect(harness.delivered).toHaveLength(1);
   });
 });

@@ -106,12 +106,6 @@ export interface LocalBackendOptions {
   memfsEnabled?: boolean;
   modelsRuntime?: LocalPiModelsRuntime;
 }
-/**
- * Hooks the harness installs (via {@link LocalBackend.setModEventHooks}) so
- * mods can observe backend-internal lifecycle that only the local backend owns
- * (compaction and provider calls). The backend stays mod-agnostic: it invokes
- * these plain callbacks and never touches mod state.
- */
 export interface LocalBackendModEventHooks {
   onCompactStart?: (info: {
     agentId: string;
@@ -147,7 +141,6 @@ export class LocalBackend extends HeadlessBackend {
 
   constructor(options: LocalBackendOptions) {
     const localBackendRef: { current?: LocalBackend } = {};
-    // One runtime per backend: listing/turns/compaction share Models state.
     const runtime =
       options.modelsRuntime ??
       new LocalPiModelsRuntime({ storageDir: options.storageDir });
@@ -197,11 +190,6 @@ export class LocalBackend extends HeadlessBackend {
     this.piModelsRuntime = runtime;
   }
 
-  /**
-   * Late-bound because the backend is a process-global singleton constructed
-   * before the harness mod adapter exists. The harness calls this once the
-   * registry is ready to forward backend-internal events to local mods.
-   */
   setModEventHooks(hooks: LocalBackendModEventHooks | undefined): void {
     this.modEventHooks = hooks;
   }
@@ -215,9 +203,7 @@ export class LocalBackend extends HeadlessBackend {
     if (!hook) return;
     try {
       await hook({ agentId, conversationId, trigger });
-    } catch {
-      // Mod event hooks must never break compaction.
-    }
+    } catch {}
   }
 
   private async emitCompactEnd(
@@ -238,9 +224,7 @@ export class LocalBackend extends HeadlessBackend {
         contextTokensBefore: stats.context_tokens_before ?? 0,
         contextTokensAfter: stats.context_tokens_after ?? 0,
       });
-    } catch {
-      // Mod event hooks must never break compaction.
-    }
+    } catch {}
   }
 
   private async emitLlmStart(info: LlmStartInfo): Promise<void> {
@@ -248,9 +232,7 @@ export class LocalBackend extends HeadlessBackend {
     if (!hook) return;
     try {
       await hook(info);
-    } catch {
-      // Mod event hooks must never break a provider request.
-    }
+    } catch {}
   }
 
   private async emitLlmEnd(info: LlmEndInfo): Promise<void> {
@@ -258,9 +240,7 @@ export class LocalBackend extends HeadlessBackend {
     if (!hook) return;
     try {
       await hook(info);
-    } catch {
-      // Mod event hooks must never break a provider request.
-    }
+    } catch {}
   }
 
   getLocalStorageDir(): string {
@@ -280,7 +260,6 @@ export class LocalBackend extends HeadlessBackend {
     const memfsExplicitlyDisabled = isMemfsOptOutCreateTags(
       (body as Record<string, unknown>).tags,
     );
-    // Stamp local memfs agents so downstream tag checks enable memory sync.
     if (this.isLocalMemfsEnabled() && !memfsExplicitlyDisabled) {
       body = stampRootMemoryOnCreateBody(body);
       const bodyRecord = body as Record<string, unknown>;
@@ -598,15 +577,6 @@ export class LocalBackend extends HeadlessBackend {
       : undefined;
   }
 
-  /**
-   * Resolve the model that compaction should use for a conversation.
-   *
-   * A normal turn runs on the conversation's model override (set via `/model`),
-   * but compaction previously read only the agent's base model — so switching
-   * a conversation's model never changed which model compaction (and its
-   * summarizer) used. This overlays the conversation's `model` / `model_settings`
-   * onto the agent record so compaction mirrors the turn path.
-   */
   private effectiveAgentForConversation(
     conversationId: string,
     agentId: string,
@@ -714,7 +684,7 @@ export class LocalBackend extends HeadlessBackend {
       {
         ...settings,
         mode: self ? "self_compact_all" : "all",
-        prompt: settings.prompt, // not a user mode switch: keep it (#3955)
+        prompt: settings.prompt,
       },
       self,
     );
@@ -724,7 +694,6 @@ export class LocalBackend extends HeadlessBackend {
     return result;
   }
 
-  /** One compaction pass in the mode `settings` names. */
   private async compactLocalConversationPass(
     conversationId: string,
     agentId: string,
@@ -762,8 +731,6 @@ export class LocalBackend extends HeadlessBackend {
       modelsRuntime: this.piModelsRuntime,
       self,
     });
-    // Built per pass, so a sliding-window → full fallback reports the pass
-    // whose summary is stored.
     const stats: LocalCompactionStats = {
       trigger,
       context_tokens_before: estimateLocalMessageTokens(messages),
@@ -816,7 +783,6 @@ export class LocalBackend extends HeadlessBackend {
       stats,
     };
   }
-  /** The turn's request context, or the compiled prompt for manual compaction (which has no tools). */
   private async selfCompactionContext(
     conversationId: string,
     agentId: string,
@@ -894,7 +860,6 @@ export class LocalBackend extends HeadlessBackend {
     const compiled = compileLocalSystemPrompt({
       agent,
       conversationId,
-      // Scans the transcript, so only when <memory_metadata> is rendered.
       previousMessageCount: () =>
         this.store.countMessagesOutsideContext(conversationId, agentId),
       memoryDir: memfsEnabled ? this.memoryDirForAgent(agentId) : undefined,

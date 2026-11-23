@@ -31,7 +31,6 @@ describe("toDiffPreview", () => {
     if (result.mode !== "advanced") throw new Error("unreachable");
 
     expect(result.fileName).toBe("foo.ts");
-    // oldStr/newStr must NOT appear on the wire type
     expect("oldStr" in result).toBe(false);
     expect("newStr" in result).toBe(false);
 
@@ -39,8 +38,8 @@ describe("toDiffPreview", () => {
     const hunk = result.hunks[0];
     expect(hunk?.oldStart).toBe(1);
     expect(hunk?.newStart).toBe(1);
-    expect(hunk?.oldLines).toBe(1); // one remove
-    expect(hunk?.newLines).toBe(1); // one add
+    expect(hunk?.oldLines).toBe(1);
+    expect(hunk?.newLines).toBe(1);
     expect(hunk?.lines).toEqual([
       { type: "remove", content: "const a = 1;" },
       { type: "add", content: "const a = 2;" },
@@ -72,9 +71,8 @@ describe("toDiffPreview", () => {
     if (result.mode !== "advanced") throw new Error("unreachable");
 
     const hunk = result.hunks[0];
-    // context: 2 (contributes to both), remove: 2, add: 1
-    expect(hunk?.oldLines).toBe(4); // 2 context + 2 remove
-    expect(hunk?.newLines).toBe(3); // 2 context + 1 add
+    expect(hunk?.oldLines).toBe(4);
+    expect(hunk?.newLines).toBe(3);
   });
 
   it("parses empty raw lines as context", () => {

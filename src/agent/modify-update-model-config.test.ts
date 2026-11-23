@@ -56,7 +56,6 @@ describe("updateModelConfig", () => {
     expect(calls.updateConversation[0]?.body).toEqual({
       context_window_limit: 200000,
     });
-    // No model resolution needed when only the context window changes.
     expect(calls.retrieveConversation).toBe(0);
     expect(calls.retrieveAgent).toBe(0);
   });
@@ -73,7 +72,6 @@ describe("updateModelConfig", () => {
     expect(body.model).toBeUndefined();
     expect(body.context_window_limit).toBeUndefined();
     expect((body.model_settings as { effort?: string }).effort).toBe("high");
-    // Conversation has no override, so it falls back to the agent's model.
     expect(calls.retrieveAgent).toBe(1);
   });
 
@@ -105,7 +103,6 @@ describe("updateModelConfig", () => {
     expect(body.model).toBe("openai/gpt-5.5");
     expect(body.context_window_limit).toBe(400000);
     expect(body.model_settings).toBeDefined();
-    // Model supplied explicitly, so no lookup of the current model is needed.
     expect(calls.retrieveAgent).toBe(0);
     expect(calls.retrieveConversation).toBe(0);
   });

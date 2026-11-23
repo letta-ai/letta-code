@@ -3,8 +3,6 @@ import type { ReflectionMemoryWorktreeFinalizeResult } from "@/agent/memory-work
 const INITIAL_RETRY_DELAY_MS = 60_000;
 const MAX_RETRY_DELAY_MS = 30 * 60_000;
 
-// Like launch reservations, this is per agent in the current process. A
-// restart clears the delay; no successful transcript checkpoint is changed.
 const retries = new Map<
   string,
   { delayMs: number; retryAt: number; notifiedFailures: Set<string> }
@@ -20,7 +18,6 @@ export function isReflectionRetryDeferred(
   );
 }
 
-/** Record integration outcomes and decide whether to emit a chat notification. */
 export function recordReflectionIntegrationRetry(
   agentId: string,
   integration: ReflectionMemoryWorktreeFinalizeResult,
@@ -32,7 +29,6 @@ export function recordReflectionIntegrationRetry(
     retries.delete(agentId);
     return true;
   }
-  // Model/configuration failures keep their existing recovery policy.
   if (
     integration.status === "failed" &&
     integration.failurePhase !== "integration"

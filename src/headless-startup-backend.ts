@@ -17,11 +17,6 @@ function mergeRequestOptions<T>(
   return { ...options, ...actingUserOptions } as T;
 }
 
-/**
- * Remote launches resolve Cloud resources before handing execution to a
- * computer. Attribute only those startup requests to the initiating user;
- * nonempty options also keep attributed agent reads out of the ID-only cache.
- */
 export function createStartupBackend(
   backend: HeadlessStartupBackend,
   usesRemoteComputer: boolean,

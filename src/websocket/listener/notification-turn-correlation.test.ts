@@ -43,7 +43,6 @@ test("a background notification turn is correlated with the send that started th
   });
 
   try {
-    // The send's turn starts background work, which captures its scope.
     const sendTurn = createTurnCorrelation(
       runtime,
       {
@@ -64,7 +63,6 @@ test("a background notification turn is correlated with the send that started th
         }),
     );
 
-    // Later, the work completes and reports back through the queue bridge.
     addToMessageQueue({
       kind: "task_notification",
       text: "<task-notification>done</task-notification>",

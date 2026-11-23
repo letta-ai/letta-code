@@ -3,7 +3,6 @@ import { mkdir, mkdtemp, rename, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { withFileLock } from "./file-lock";
 
-/** Publish a fresh checkout only after clone, credentials, and hooks are ready. */
 export async function withRepositoryCheckout<T>(
   directory: string,
   work: (directory: string, fresh: boolean) => Promise<T>,

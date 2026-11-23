@@ -29,8 +29,6 @@ export const ShimmerText = memo(function ShimmerText({
   const prefixLen = prefix.length;
   const fullText = `${prefix}${message}…`;
 
-  // Avoid per-character ANSI styling. Rendering shimmer with a small number of
-  // <Text> spans keeps Ink's wrapping/truncation behavior stable during resize.
   const start = Math.max(0, shimmerOffset);
   const end = Math.max(start, shimmerOffset + 3);
 
@@ -86,10 +84,6 @@ export const ShimmerText = memo(function ShimmerText({
   pushRegion(shimmer, start, shimmerColor);
   pushRegion(after, end, color);
 
-  // Use chalk for ALL styling (color + bold) instead of <Text> style props.
-  // Ink's <Text bold={false}> doesn't emit SGR 22 to reset bold, and mixing
-  // chalk.bold inside <Text color> gets overwritten by Ink's ANSI handling.
-  // A single pre-formatted chalk string avoids both issues.
   const formatted = segments
     .map((seg) => {
       let styled = chalk.hex(seg.color || color)(seg.text);

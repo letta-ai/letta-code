@@ -129,7 +129,6 @@ async function requestRun(ref: GitHubPullRequestRef, signal?: AbortSignal) {
         item.number === ref.number,
     );
   } catch (error) {
-    // Old servers require at least one PR and do not understand workflow_runs.
     if (
       error instanceof APIError &&
       [400, 404, 422, 501].includes(error.status ?? 0)

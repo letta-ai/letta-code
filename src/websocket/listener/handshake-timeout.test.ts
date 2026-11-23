@@ -79,7 +79,6 @@ beforeEach(async () => {
   ) as typeof settingsManager.updateSettings;
   settingsManager.flush = mock(async () => {}) as typeof settingsManager.flush;
 
-  // Accepts TCP but never answers the HTTP upgrade, like a blackholed NAT path.
   tcpSockets = [];
   server = createServer((socket) => {
     tcpSockets.push(socket);
@@ -140,7 +139,7 @@ test(
     await waitFor(
       () => retryAttempts.includes(1) && tcpSockets.length >= 2,
       "hung handshake never errored, closed, and retried",
-      15_000, // generous vs the 100ms handshake timeout + 1s retry backoff
+      15_000,
     );
     expect(
       logs.some((line) => line.includes("control socket error")),

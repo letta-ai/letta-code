@@ -1,13 +1,5 @@
-/**
- * TypeScript/JavaScript LSP Server Definition
- */
-
 import type { LSPServerInfo } from "@/lsp/types.js";
 
-/**
- * TypeScript Language Server
- * Uses typescript-language-server + typescript
- */
 export const TypeScriptServer: LSPServerInfo = {
   id: "typescript",
   extensions: [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"],

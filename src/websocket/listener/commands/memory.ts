@@ -18,8 +18,6 @@ import type { RunDetachedListenerTask, SafeSocketSend } from "./types";
 const warnMemoryCommand = debugWarn.bind(null, "memory-commands");
 const WIKI_LINK_REGEX = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
 
-// Image assets the memory viewer can render inline. Must stay in sync with
-// the server-side memory files API's supported image set.
 const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
   ".gif": "image/gif",
   ".jpeg": "image/jpeg",
@@ -68,21 +66,8 @@ function trackListenerError(
   });
 }
 
-// Cap on how long a GUI-initiated memory write waits for the remote push
-// before responding. Common-case pushes land well under this, so the client
-// gets a response that is safely ordered after the server-of-record update
-// (LET-9481). Slower pushes fall back to responding immediately while the
-// push finishes in the background — the web UI reconciles that path with its
-// own retry loop. MUST stay below the desktop UI's 10s device-command
-// timeout (useSendDeviceCommand DEFAULT_TIMEOUT_MS), or skill install /
-// uninstall would report spurious timeout failures on slow networks.
 const MEMORY_PUSH_AWAIT_CAP_MS = 8_000;
 
-/**
- * Push pending memory commits, waiting up to `MEMORY_PUSH_AWAIT_CAP_MS` so
- * the caller can order its response/notifications after the remote update.
- * On cap expiry the push keeps running detached (failures are logged).
- */
 async function awaitMemoryPushBounded(
   commandName: string,
   agentId: string,
@@ -202,7 +187,6 @@ export async function handleListMemoryCommand(
     );
     const includeReferences = parsed.include_references === true;
 
-    // Wiki-link references only ever resolve to markdown files.
     const allPaths = new Set(
       fileNodes
         .map((node) => node.relativePath)
@@ -433,7 +417,6 @@ export function handleMemoryProtocolCommand(
     return true;
   }
 
-  // ── Enable memfs command ────────────────────────────────────────────
   if (isEnableMemfsCommand(parsed)) {
     runDetachedListenerTask("enable_memfs", async () => {
       try {
@@ -450,7 +433,6 @@ export function handleMemoryProtocolCommand(
           "listener_enable_memfs_send_failed",
           "listener_enable_memfs",
         );
-        // Push memory_updated so the UI auto-refreshes its file list
         safeSocketSend(
           socket,
           {
@@ -484,7 +466,6 @@ export function handleMemoryProtocolCommand(
     return true;
   }
 
-  // ── Memory history (git log for a specific file) ─────────────────
   if (isMemoryHistoryCommand(parsed)) {
     runDetachedListenerTask("memory_history", async () => {
       const { getScopedMemoryFilesystemRoot } = await import(
@@ -498,7 +479,6 @@ export function handleMemoryProtocolCommand(
       const limit = parsed.limit ?? 50;
 
       const gitArgs = ["log", `--max-count=${limit}`, "--format=%H|%s|%aI|%an"];
-      // When file_path is provided, scope to that file
       if (parsed.file_path) {
         gitArgs.push("--", parsed.file_path);
       }
@@ -538,7 +518,6 @@ export function handleMemoryProtocolCommand(
     return true;
   }
 
-  // ── Memory file at ref (git show for content at a commit) ────────
   if (isMemoryFileAtRefCommand(parsed)) {
     runDetachedListenerTask("memory_file_at_ref", async () => {
       const { getScopedMemoryFilesystemRoot } = await import(
@@ -591,7 +570,6 @@ export function handleMemoryProtocolCommand(
     return true;
   }
 
-  // ── Memory commit diff (git show for full commit patch) ────────────
   if (isMemoryCommitDiffCommand(parsed)) {
     runDetachedListenerTask("memory_commit_diff", async () => {
       const { getScopedMemoryFilesystemRoot } = await import(
@@ -642,7 +620,6 @@ export function handleMemoryProtocolCommand(
     return true;
   }
 
-  // ── Read a file from the MemFS working tree ───────────────────────
   if (isReadMemoryFileCommand(parsed)) {
     runDetachedListenerTask("read_memory_file", async () => {
       const encoding = parsed.encoding ?? "utf8";
@@ -676,7 +653,6 @@ export function handleMemoryProtocolCommand(
           "node:path"
         );
 
-        // Reject absolute paths or escapes outside memory root.
         if (isAbsolute(parsed.path) || parsed.path.length === 0) {
           sendFailure("path must be a non-empty relative path");
           return;
@@ -694,7 +670,6 @@ export function handleMemoryProtocolCommand(
           return;
         }
 
-        // Clone memfs on first read if it isn't local yet.
         if (!existsSync(join(memoryRoot, ".git"))) {
           const enabled = await isMemfsEnabledOnServer(parsed.agent_id);
           if (!enabled) {
@@ -746,7 +721,6 @@ export function handleMemoryProtocolCommand(
     return true;
   }
 
-  // ── Write a file into MemFS (durable agent memory write + commit) ───────
   if (isWriteMemoryFileCommand(parsed)) {
     runDetachedListenerTask("write_memory_file", async () => {
       const encoding = parsed.encoding ?? "utf8";
@@ -778,7 +752,6 @@ export function handleMemoryProtocolCommand(
         const { dirname, isAbsolute, join, normalize, relative, sep } =
           await import("node:path");
 
-        // ── Validate relative path ─────────────────────────────────────
         if (isAbsolute(parsed.path) || parsed.path.length === 0) {
           sendFailure(
             "write_memory_file: path must be a non-empty relative path",
@@ -800,7 +773,6 @@ export function handleMemoryProtocolCommand(
           return;
         }
 
-        // ── Ensure MemFS is enabled and checked out ───────────────────
         if (!existsSync(join(memoryRoot, ".git"))) {
           const enabled = await isMemfsEnabledOnServer(parsed.agent_id);
           if (!enabled) {
@@ -818,7 +790,6 @@ export function handleMemoryProtocolCommand(
           }
         }
 
-        // ── Decode + write bytes (binary-safe for base64) ──────────────
         const buffer =
           encoding === "base64"
             ? Buffer.from(parsed.content, "base64")
@@ -833,20 +804,14 @@ export function handleMemoryProtocolCommand(
             ? "local"
             : undefined;
 
-        // ── Resolve agent identity for the commit author ───────────────
         let agentName = parsed.agent_id;
         try {
           const agent = await backend.retrieveAgent(parsed.agent_id);
           if (agent.name && agent.name.trim().length > 0) {
             agentName = agent.name.trim();
           }
-        } catch {
-          // Best-effort — fall back to agent id as the author name.
-        }
+        } catch {}
 
-        // ── Commit locally; post-turn harness sync handles remote push ─
-        // Use posix separators in the pathspec — git expects forward slashes
-        // even on Windows.
         const pathspec = rel.split(sep).join("/");
         const reason =
           parsed.commit_message?.trim() || `Update memory file ${pathspec}`;
@@ -862,15 +827,6 @@ export function handleMemoryProtocolCommand(
           ...(memorySyncMode ? { syncMode: memorySyncMode } : {}),
         });
 
-        // ── Push before notifying (non-turn writes don't get post-turn ──
-        // sync). Server-of-record reads (e.g. the agent profile picture
-        // endpoint) are served from the remote memfs, so emitting
-        // memory_updated / the response before the push lands lets the UI
-        // refetch stale bytes and drop its optimistic state (LET-9481).
-        // Bounded: a slow push falls back to responding immediately with
-        // the push continuing in the background. Push failures are
-        // warn-and-continue — the local commit succeeded and a later sync
-        // will retry.
         if (commitResult.committed && !memorySyncMode) {
           await awaitMemoryPushBounded(
             "write_memory_file",
@@ -879,7 +835,6 @@ export function handleMemoryProtocolCommand(
           );
         }
 
-        // ── Notify UI so the memory view auto-refreshes ────────────────
         if (commitResult.committed) {
           safeSocketSend(
             socket,
@@ -924,7 +879,6 @@ export function handleMemoryProtocolCommand(
     return true;
   }
 
-  // ── Delete a file from MemFS (durable agent memory delete + commit) ──────
   if (isDeleteMemoryFileCommand(parsed)) {
     runDetachedListenerTask("delete_memory_file", async () => {
       const sendFailure = (error: string): void => {
@@ -956,7 +910,6 @@ export function handleMemoryProtocolCommand(
           "node:path"
         );
 
-        // ── Validate relative path ─────────────────────────────────────
         if (isAbsolute(parsed.path) || parsed.path.length === 0) {
           sendFailure(
             "delete_memory_file: path must be a non-empty relative path",
@@ -978,7 +931,6 @@ export function handleMemoryProtocolCommand(
           return;
         }
 
-        // ── Ensure MemFS is enabled and checked out ───────────────────
         if (!existsSync(join(memoryRoot, ".git"))) {
           const enabled = await isMemfsEnabledOnServer(parsed.agent_id);
           if (!enabled) {
@@ -998,7 +950,6 @@ export function handleMemoryProtocolCommand(
 
         const pathspec = rel.split(sep).join("/");
 
-        // ── Idempotent delete: missing file is a no-op success ─────────
         const removeIfPresent = async (): Promise<boolean> => {
           if (!existsSync(absolutePath)) return false;
           await unlink(absolutePath);
@@ -1029,18 +980,14 @@ export function handleMemoryProtocolCommand(
             ? "local"
             : undefined;
 
-        // ── Resolve agent identity for the commit author ───────────────
         let agentName = parsed.agent_id;
         try {
           const agent = await backend.retrieveAgent(parsed.agent_id);
           if (agent.name && agent.name.trim().length > 0) {
             agentName = agent.name.trim();
           }
-        } catch {
-          // Best-effort — fall back to agent id as the author name.
-        }
+        } catch {}
 
-        // ── Commit locally; post-turn harness sync handles remote push ─
         const reason =
           parsed.commit_message?.trim() || `Delete memory file ${pathspec}`;
         const commitResult = await commitMemoryWrite({
@@ -1055,9 +1002,6 @@ export function handleMemoryProtocolCommand(
           ...(memorySyncMode ? { syncMode: memorySyncMode } : {}),
         });
 
-        // ── Push before notifying (non-turn deletes don't get post-turn ─
-        // sync). Same bounded ordering requirement as write_memory_file:
-        // remote reads must not race the push (LET-9481).
         if (commitResult.committed && !memorySyncMode) {
           await awaitMemoryPushBounded(
             "delete_memory_file",

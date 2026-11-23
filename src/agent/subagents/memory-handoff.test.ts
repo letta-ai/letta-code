@@ -39,7 +39,6 @@ test("local backend handoff includes history beyond the first page", async () =>
     },
   );
   for await (const _chunk of stream) {
-    // Persist the real local transcript before preparing the worker handoff.
   }
   const handoff = await prepareMemoryHandoff({
     agentId: agent.id,
@@ -163,7 +162,6 @@ test("a full page whose cursor cannot advance ends the export", async () => {
   const page = Array.from({ length: 100 }, (_, index) => ({
     message_type: "user_message",
     content: `message ${index}`,
-    // No id: a backend that omits ids cannot page further.
   }));
   __testSetBackend({
     listConversationMessages: async () => {
@@ -196,7 +194,6 @@ test("cancelling the task stops the transcript export", async () => {
       options?: { signal?: AbortSignal },
     ) => {
       receivedSignal = options?.signal;
-      // A slow page: only the signal can end this request.
       await new Promise<void>((_, reject) => {
         options?.signal?.addEventListener("abort", () =>
           reject(new Error("aborted")),

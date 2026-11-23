@@ -20,13 +20,12 @@ describe("truncation utilities", () => {
       const result = truncateByChars(text, 500, "Test");
 
       expect(result.wasTruncated).toBe(true);
-      // With middle truncation, we should see beginning and end
-      expect(result.content).toContain("a".repeat(250)); // beginning
+      expect(result.content).toContain("a".repeat(250));
       expect(result.content).toContain("characters omitted");
       expect(result.content).toContain(
         "[Output truncated: showing 500 of 1,000 characters.]",
       );
-      expect(result.content.length).toBeGreaterThan(500); // Due to notice
+      expect(result.content.length).toBeGreaterThan(500);
     });
 
     test("exactly at limit does not truncate", () => {
@@ -77,7 +76,6 @@ describe("truncation utilities", () => {
 
       expect(result.wasTruncated).toBe(true);
       expect(result.content).toContain("item1");
-      // With middle truncation, we show first 25 and last 25
       expect(result.content).toContain("item25");
       expect(result.content).toContain("item76");
       expect(result.content).toContain("item100");
@@ -115,8 +113,6 @@ describe("truncation utilities", () => {
       expect(LIMITS.GREP_OUTPUT_CHARS).toBe(10_000);
       expect(LIMITS.GLOB_MAX_FILES).toBe(2_000);
       expect(LIMITS.LS_MAX_ENTRIES).toBe(1_000);
-      // Backstop must sit above per-tool clamps so already-clamped output
-      // (30K + truncation notice) passes through unchanged.
       expect(LIMITS.TOOL_RETURN_MAX_CHARS).toBeGreaterThan(
         LIMITS.BASH_OUTPUT_CHARS + 500,
       );

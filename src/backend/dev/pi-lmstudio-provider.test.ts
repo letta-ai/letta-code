@@ -38,7 +38,6 @@ describe("createLmStudioPiProvider", () => {
       fetchImpl: fakeLmStudioFetch({
         nativeModels: [
           {
-            // No vl/vision marker in the id; type "vlm" is authoritative.
             id: "qwen3.6-27b",
             object: "model",
             type: "vlm",
@@ -77,8 +76,6 @@ describe("createLmStudioPiProvider", () => {
     const vlm = models.find((m) => m.id === "qwen3.6-27b");
     expect(vlm?.provider).toBe("lmstudio");
     expect(vlm?.input).toEqual(["text", "image"]);
-    // LM Studio exposes both the loaded runtime allocation and the model's
-    // architectural maximum; the running allocation is authoritative.
     expect(vlm?.contextWindow).toBe(81920);
 
     const llm = models.find((m) => m.id === "smol-text-3b");
@@ -87,11 +84,8 @@ describe("createLmStudioPiProvider", () => {
     expect(llm?.maxTokens).toBe(8192);
 
     const unloaded = models.find((m) => m.id === "large-unloaded-27b");
-    // A stale loaded_context_length on an unloaded entry must not win; its
-    // architectural maximum falls back to the conservative harness default.
     expect(unloaded?.contextWindow).toBe(128000);
 
-    // Embedding models are excluded from the chat model list.
     expect(models.some((m) => m.id === "text-embedding-nomic")).toBe(false);
   });
 
@@ -100,7 +94,6 @@ describe("createLmStudioPiProvider", () => {
       baseURL: "http://127.0.0.1:1234/v1",
       fetchImpl: fakeLmStudioFetch({
         failNative: true,
-        // "llava" in the id must not grant image input on the fallback path.
         openAIModelIds: ["llava-1.6-7b"],
       }),
     });

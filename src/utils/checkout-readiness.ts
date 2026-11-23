@@ -56,7 +56,6 @@ export function trackCheckoutDiscovery(
   return pending;
 }
 
-/** Start once, share concurrent callers, and retain failures for access-time retry. */
 export function startCheckout(
   agentId: string,
   path: string,
@@ -74,8 +73,6 @@ export function startCheckout(
     checkout = { path: key, start, ready: false };
     agent.set(key, checkout);
   }
-  // An existing checkout stays usable while it refreshes; only an unpublished
-  // clone is not ready, since access could create its mount path first.
   if (checkout.ready && !refresh) return Promise.resolve();
   if (checkout.pending) return checkout.pending;
   checkout.ready = refresh && existsSync(join(key, ".git"));
@@ -91,15 +88,11 @@ export function startCheckout(
       },
       (error) => {
         entry.pending = undefined;
-        // A failed refresh must leave an existing checkout usable for repair.
-        // Fresh clones are published atomically, so they cannot pass this check.
         entry.ready = existsSync(join(entry.path, ".git"));
         if (entry.ready) generation++;
         throw error;
       },
     );
-  // A background failure must not become an unhandled rejection. Access still
-  // receives the rejection (and a subsequent access retries the operation).
   void entry.pending.catch(() => {});
   return entry.pending;
 }
@@ -111,7 +104,6 @@ export function isCheckoutPending(path: string): boolean {
   });
 }
 
-/** Shells and mod tools can compute paths: conservatively gate those callers. */
 export async function waitForCheckouts(
   agentId: string | undefined,
   paths?: string[],
@@ -122,10 +114,7 @@ export async function waitForCheckouts(
   if (discovery)
     await (
       discovery.pending ?? trackCheckoutDiscovery(agentId, discovery.start)
-    ).catch(() => {
-      // Discovery is best-effort. Keep known checkouts gated below, but an
-      // unavailable repository-list endpoint must not disable local tools.
-    });
+    ).catch(() => {});
   const entries = [...(checkouts.get(agentId)?.values() ?? [])];
   const cwd = within === undefined ? undefined : resolveCheckoutPath(within);
   await Promise.all(
@@ -159,7 +148,6 @@ export async function waitForToolCheckouts(
   cwd: string,
   arbitraryCode = false,
 ): Promise<void> {
-  // Provider toolsets expose both PascalCase and snake_case spellings.
   const tool = name.replaceAll("_", "").toLowerCase();
   if (arbitraryCode) {
     await waitForCheckouts(agentId);
@@ -198,12 +186,10 @@ export async function waitForToolCheckouts(
       });
   };
   visit(args);
-  // Search tools with no explicit root search the cwd.
   if (!explicitRoot && /grep|glob|search|list|^ls$/.test(tool)) paths.push(cwd);
   await waitForCheckouts(agentId, paths);
 }
 
-/** Commands wait only for pending clones they could reach by path or $MEMORY_DIR. */
 async function waitForCommandCheckouts(
   agentId: string | undefined,
   args: unknown,
@@ -224,6 +210,5 @@ async function waitForCommandCheckouts(
     .flatMap((value) => value.split(/[\s"'`;|&()<>=,]+/))
     .filter((token) => /[/\\~$]|^\.\.?$/.test(token))
     .map((token) => expandFilePath(token, cwd));
-  // A command running inside a pending checkout can write into it directly.
   await waitForCheckouts(agentId, paths, cwd);
 }

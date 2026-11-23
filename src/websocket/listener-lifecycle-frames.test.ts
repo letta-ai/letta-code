@@ -135,7 +135,6 @@ describe("isListenerPongStale", () => {
   test("returns false when a pong arrived within the timeout", () => {
     const now = 1_000_000;
     expect(isListenerPongStale(now - 30_000, now, 90_000)).toBe(false);
-    // Exactly at the boundary is not yet stale.
     expect(isListenerPongStale(now - 90_000, now, 90_000)).toBe(false);
   });
 

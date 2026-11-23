@@ -508,9 +508,7 @@ test("channel progress keeps shell error output out of toolDetails (LET-9509)", 
       runId: "run-1",
       toolCallId: "call-1",
       toolName: "Bash",
-      // Argument-derived: safe to use as a row title on rich surfaces.
       toolDetails: "Check CI run status",
-      // Output preview: detail text only, never a title.
       errorDetails:
         "Exit code: 1 run 28890486751 is still in progress; logs will be available when it is complete",
     },

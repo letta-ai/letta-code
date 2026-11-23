@@ -5,13 +5,6 @@ import {
 } from "./attachment-primitives";
 import { materializeSlackAttachment } from "./media";
 
-/**
- * Materialize one Slack attachment from its canonical source message.
- * Unlike automatic attachment ingestion, this explicit action has no hidden
- * size ceiling; it streams into the same inbound directory and returns the
- * local path. The canonical message lookup keeps file access scoped to the
- * routed Slack chat/thread instead of trusting a bare file id.
- */
 export async function downloadSlackAttachmentById(params: {
   accountId: string;
   token: string;

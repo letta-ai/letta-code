@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-/** Validates a daily skill-review batch and updates the tracker once. */
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";

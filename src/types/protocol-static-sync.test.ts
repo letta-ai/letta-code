@@ -1,10 +1,3 @@
-/**
- * Tests for the static transcript sync protocol types (LSS1).
- *
- * Verifies structural correctness, discriminant exhaustiveness, and
- * membership in the legacy WireMessage union.
- */
-
 import { describe, expect, test } from "bun:test";
 import type {
   QueueSnapshotMessage,
@@ -14,11 +7,7 @@ import type {
   WireMessage,
 } from "@/types/protocol";
 
-// ── Helpers ───────────────────────────────────────────────────────
-
 const ENVELOPE = { session_id: "sess-1", uuid: "uuid-1" } as const;
-
-// ── TranscriptBackfillMessage ─────────────────────────────────────
 
 describe("TranscriptBackfillMessage", () => {
   test("minimal empty backfill is structurally valid", () => {
@@ -50,14 +39,11 @@ describe("TranscriptBackfillMessage", () => {
       messages: [],
       is_final: true,
     };
-    // Narrowing works via the discriminant
     if (msg.type === "transcript_backfill") {
       expect(msg.is_final).toBeDefined();
     }
   });
 });
-
-// ── QueueSnapshotMessage ──────────────────────────────────────────
 
 describe("QueueSnapshotMessage", () => {
   test("empty snapshot is valid", () => {
@@ -92,8 +78,6 @@ describe("QueueSnapshotMessage", () => {
   });
 });
 
-// ── SyncCompleteMessage ───────────────────────────────────────────
-
 describe("SyncCompleteMessage", () => {
   test("had_pending_turn: false for idle connect", () => {
     const msg: SyncCompleteMessage = {
@@ -114,8 +98,6 @@ describe("SyncCompleteMessage", () => {
     expect(msg.had_pending_turn).toBe(true);
   });
 });
-
-// ── TranscriptSupplementMessage ───────────────────────────────────
 
 describe("TranscriptSupplementMessage", () => {
   test("empty supplement is valid", () => {
@@ -143,8 +125,6 @@ describe("TranscriptSupplementMessage", () => {
     expect(backfill.type).not.toBe(supplement.type);
   });
 });
-
-// ── Union membership ──────────────────────────────────────────────
 
 describe("WireMessage union membership", () => {
   test("TranscriptBackfillMessage is assignable to WireMessage", () => {
@@ -185,8 +165,6 @@ describe("WireMessage union membership", () => {
   });
 });
 
-// ── Discriminant exhaustiveness ───────────────────────────────────
-
 describe("type discriminants are unique across all four types", () => {
   test("all four sync-phase discriminants are distinct", () => {
     const types = [
@@ -200,10 +178,6 @@ describe("type discriminants are unique across all four types", () => {
   });
 
   test("none conflict with existing WireMessage discriminants", () => {
-    // Existing discriminants: system, message, stream_event, auto_approval,
-    // error, retry, recovery, result, control_response, control_request,
-    // queue_item_enqueued, queue_batch_dequeued, queue_blocked, queue_cleared,
-    // queue_item_dropped
     const existing = new Set([
       "system",
       "message",

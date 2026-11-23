@@ -9,20 +9,6 @@ import {
 } from "@/tools/manager";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 
-/**
- * A cloud channel gateway (for example the Microsoft Teams broker) registers
- * MessageChannel as a listener external tool with a composite
- * registrationKey, a runtime owner, and the registering connection id —
- * exactly what toExternalToolDefinition produces for a runtimeStart
- * external_tools group.
- *
- * These tests pin how a model-facing "MessageChannel" call resolves in the
- * two execution shapes a listener can see:
- *   1. a listener-driven turn, whose tool context is captured by
- *      prepareToolExecutionContextForScope with the turn's runtime scope; and
- *   2. a fallback execution with no captured context, which consults the
- *      global external-tools registry directly.
- */
 describe("gateway-registered MessageChannel external tool routing", () => {
   const agentId = "agent-gateway-routing";
   const conversationId = "conv-gateway-routing";
@@ -90,9 +76,6 @@ describe("gateway-registered MessageChannel external tool routing", () => {
       content: "hi",
     });
 
-    // The global registry is keyed by the composite registrationKey, so a
-    // model-facing name lookup misses and execution falls through to the local
-    // tool (or "Tool not found" when MessageChannel is not loaded).
     expect(externalCalls).toHaveLength(0);
     expect(result.status).toBe("error");
   });

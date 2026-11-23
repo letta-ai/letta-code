@@ -27,7 +27,6 @@ interface Deps {
   request?: typeof apiRequest;
 }
 
-/** Register a durable watch without starting a sandbox process or timer. */
 export async function startCloudPullRequestWatch(args: Args, deps: Deps = {}) {
   const resuming = Boolean(args.resume && isCloudMonitorId(args.resume));
   if (args.resume && !resuming) return undefined;
@@ -39,7 +38,6 @@ export async function startCloudPullRequestWatch(args: Args, deps: Deps = {}) {
       resolveBackendMode() === "api" &&
       isCloudServerUrl());
   if (!resuming && !enabled()) return undefined;
-  // Workflow-run watches keep their existing implementation.
   if (!resuming && args.url?.includes("/actions/runs/")) return undefined;
   const scope = resolveNotificationScope(args.parentScope);
   if (!scope || scope.conversationId === "default") return undefined;
@@ -98,9 +96,7 @@ export async function startCloudPullRequestWatch(args: Args, deps: Deps = {}) {
       let body: { errorCode?: string } = {};
       try {
         body = JSON.parse(error.responseText);
-      } catch {
-        /* Preserve malformed errors. */
-      }
+      } catch {}
       if (
         body.errorCode === "REPOSITORY_INACCESSIBLE" ||
         body.errorCode === "CLOUD_WATCH_PR_DISABLED"

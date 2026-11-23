@@ -1,17 +1,3 @@
-/**
- * `letta channels` CLI subcommand.
- *
- * Usage:
- *   letta channels install telegram
- *   letta channels configure telegram
- *   letta channels status
- *   letta channels route list
- *   letta channels route add --channel telegram --chat-id <id> --agent <id> --conversation <id>
- *   letta channels route remove --channel telegram --chat-id <id>
- *   letta channels pair --channel telegram --code <code> --agent <id> --conversation <id>
- *   letta channels bind --channel slack --agent <id>
- */
-
 import { parseArgs } from "node:util";
 import {
   getChannelAccount,
@@ -48,8 +34,6 @@ import type {
   SlackChannelAccount,
   SupportedChannelId,
 } from "@/channels/types";
-
-// ── Usage ───────────────────────────────────────────────────────────
 
 function printUsage(): void {
   console.log(
@@ -131,8 +115,6 @@ Output is JSON.
   );
 }
 
-// ── Args ────────────────────────────────────────────────────────────
-
 const CHANNELS_OPTIONS = {
   help: { type: "boolean", short: "h" },
   channel: { type: "string" },
@@ -203,8 +185,6 @@ function resolveSelectedAccountId(
     `Channel "${channelId}" has multiple accounts. Pass --account-id.`,
   );
 }
-
-// ── Handlers ────────────────────────────────────────────────────────
 
 async function handleInstall(channel: string): Promise<number> {
   let channelId: SupportedChannelId;
@@ -498,7 +478,6 @@ async function handlePair(
     return 1;
   }
 
-  // Load existing state
   loadRoutes(channelId);
   const { loadPairingStore: loadPairing } = await import("@/channels/pairing");
   loadPairing(channelId);
@@ -580,8 +559,6 @@ function handleBind(
   );
   return 0;
 }
-
-// ── Router ──────────────────────────────────────────────────────────
 
 export async function runChannelsSubcommand(argv: string[]): Promise<number> {
   const { values, positionals } = parseChannelsArgs(argv);

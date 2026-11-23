@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-/** Records or verifies one built-in skill review outcome. */
 
 import { readFileSync } from "node:fs";
 import {

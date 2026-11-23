@@ -8,7 +8,6 @@ import { createAuthenticatedCliTestEnv } from "@/test-utils/test-process-env";
 
 type Sandbox = { sandboxId: string; conversationId?: string | null };
 
-// Runs in the API integration job; no messages or model inference are needed.
 test.skipIf(!process.env.LETTA_API_KEY)(
   "sandbox transfers honor explicit Cloud targets instead of ambient sessions",
   async () => {
@@ -143,7 +142,6 @@ test.skipIf(!process.env.LETTA_API_KEY)(
       expect(concrete?.sandboxId).toBeTruthy();
       expect(defaultSandbox?.sandboxId).toBeTruthy();
       expect(concrete?.sandboxId).not.toBe(defaultSandbox?.sandboxId);
-      // Both default-target forms must reuse the same sandbox and preserve each file.
       for (const { target, payload, remotePath, flags } of scenarios) {
         const destination = join(home, `download-${target}.bin`);
         const download = await cli([
@@ -196,7 +194,6 @@ test.skipIf(!process.env.LETTA_API_KEY)(
         sandboxes.map((s) => s.sandboxId).sort(),
       );
     } finally {
-      // Agent deletion only cleans its default sandbox; terminate every scope first.
       try {
         if (agentId) {
           const results = await Promise.allSettled(

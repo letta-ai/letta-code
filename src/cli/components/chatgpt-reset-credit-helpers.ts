@@ -26,7 +26,6 @@ function formatExpiryDistance(
   return `expires in ${Math.ceil(hours / 24)}d`;
 }
 
-/** Credits the user can still spend, soonest-expiring first. */
 export function spendableResetCredits(
   credits: ChatGPTRateLimitResetCredits,
   now: Date = new Date(),
@@ -66,10 +65,6 @@ export function formatResetCreditLabel(
   return expiry ? `${title} · ${expiry}` : title;
 }
 
-/**
- * Copy shown after a consume attempt. A reset only lifts the ChatGPT limit;
- * the user stays in charge of resending whatever turn was rate limited.
- */
 export function resetOutcomeNotice(
   outcome: ChatGPTRateLimitResetConsumeOutcome,
   providerName: string,

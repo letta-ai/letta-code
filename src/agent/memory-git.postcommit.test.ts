@@ -1,19 +1,3 @@
-/**
- * Tests for the git post-commit hook that pushes memfs commits to an
- * additional git remote configured via `letta.memoryRepository.url`.
- *
- * Strategy:
- *   - Create a temp "source" git repo (acts as the memfs repo).
- *   - Create a temp bare repo (acts as the user's private GitHub repo).
- *   - Install the post-commit hook + set letta.memoryRepository.url to the
- *     bare repo.
- *   - Commit to source, wait briefly for the async push, verify the bare repo
- *     receives the same HEAD SHA.
- *
- * The TS-side pushToMemoryRepository helper resolves agent memory under the
- * real OS home directory, so detached handling there is covered by code review.
- */
-
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { execSync } from "node:child_process";
 import {
@@ -81,14 +65,12 @@ function installHook(dir: string): void {
 }
 
 beforeEach(() => {
-  // Source repo (memfs-style)
   sourceDir = mkdtempSync(join(tmpdir(), "memgit-post-src-"));
   git(sourceDir, "init -b main");
   writeFileSync(join(sourceDir, ".gitkeep"), "");
   git(sourceDir, "add .gitkeep");
   git(sourceDir, 'commit -m "init"');
 
-  // Remote (bare) — simulates a private GitHub repo
   remoteDir = mkdtempSync(join(tmpdir(), "memgit-post-remote-"));
   git(remoteDir, "init --bare -b main");
 
@@ -108,7 +90,6 @@ describe("post-commit memory-repository hook", () => {
     git(sourceDir, "add note.txt");
     git(sourceDir, 'commit -m "add note"');
 
-    // Wait a moment for any async work, then assert no log file got created.
     await sleep(250);
     const logPath = join(sourceDir, ".git", LOG_FILE);
     expect(existsSync(logPath)).toBe(false);
@@ -122,7 +103,6 @@ describe("post-commit memory-repository hook", () => {
     git(sourceDir, 'commit -m "add note"');
     const sourceSha = git(sourceDir, "rev-parse HEAD").trim();
 
-    // Hook pushes async — poll until the remote has the same HEAD.
     const pushed = await waitUntil(() => {
       try {
         const remoteSha = gitQuiet(remoteDir, "rev-parse main").trim();
@@ -133,8 +113,6 @@ describe("post-commit memory-repository hook", () => {
     });
     expect(pushed).toBe(true);
 
-    // On Windows the remote ref can update before the background hook finishes
-    // appending its trailing exit marker, so wait for the log to show completion.
     const logPath = join(sourceDir, ".git", LOG_FILE);
     const loggedSuccess = await waitUntil(() => {
       if (!existsSync(logPath)) return false;
@@ -180,7 +158,6 @@ describe("post-commit memory-repository hook", () => {
     expect(completed).toBe(true);
 
     const log = readFileSync(logPath, "utf-8");
-    // Failure is a non-zero exit code.
     expect(log).toMatch(/exit=(?!0$)\d+/m);
   });
 
@@ -190,7 +167,6 @@ describe("post-commit memory-repository hook", () => {
       `config --local letta.memoryRepository.url ${join(tmpdir(), "also-does-not-exist.git")}`,
     );
 
-    // The commit itself should still succeed even though the push fails.
     writeFileSync(join(sourceDir, "note.txt"), "still works");
     git(sourceDir, "add note.txt");
     const output = git(sourceDir, 'commit -m "ok even on push fail"');
@@ -199,8 +175,6 @@ describe("post-commit memory-repository hook", () => {
     const sha = git(sourceDir, "rev-parse HEAD").trim();
     expect(sha.length).toBe(40);
 
-    // The hook runs in the background. Wait for it to finish logging so
-    // Windows teardown doesn't race a still-open git process and hit EBUSY.
     const logPath = join(sourceDir, ".git", LOG_FILE);
     const completed = await waitUntil(() => {
       if (!existsSync(logPath)) return false;

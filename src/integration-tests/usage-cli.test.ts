@@ -52,9 +52,6 @@ test("usage CLI reads live credits and rejects invalid auth", async () => {
     expect(denied.stdout).toBe("");
     expect(denied.stderr).toMatch(/API error \((401|403)\)/);
 
-    // Exercise saved OAuth initialization against the real token endpoint.
-    // A deliberately invalid refresh token must fail there, not use the expired
-    // access token for the balance request.
     await mkdir(join(home, ".letta"), { recursive: true });
     await writeFile(
       join(home, ".letta", "settings.json"),

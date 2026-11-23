@@ -67,7 +67,6 @@ describe("Read tool", () => {
 
     const result = await read({ file_path: file });
 
-    // Claude Code emits `9\tline9` and `10\tline10` with no alignment padding.
     expect(result.content).toContain("\n9\tline9");
     expect(result.content).toContain("\n10\tline10");
     expect(result.content).not.toContain(" 9\tline9");
@@ -103,9 +102,6 @@ describe("Read tool", () => {
 
   test("clamps total output characters and points at overflow file", async () => {
     testDir = new TestDirectory();
-    // 1,500 lines x ~120 chars ≈ 180K chars: under the 2,000-line and
-    // 2,000-chars-per-line caps, but far over the 30K total-character clamp.
-    // This is the exact shape of the bug where one Read returned 100K+ chars.
     const line = "x".repeat(119);
     const content = Array.from({ length: 1_500 }, () => line).join("\n");
     const file = testDir.createFile("wide.txt", content);
@@ -121,7 +117,6 @@ describe("Read tool", () => {
     );
     expect(text).toContain("[Full file content written to:");
 
-    // Overflow file holds the full raw content; clean it up.
     const match = text.match(/Full file content written to: (.+\.txt)/);
     expect(match).toBeDefined();
     if (match?.[1]) {

@@ -1,12 +1,3 @@
-/**
- * Per-conversation permission mode storage.
- *
- * Mirrors the CWD isolation pattern in cwd.ts:
- * - State is stored in a Map on the long-lived ListenerRuntime (not on the
- *   ephemeral ConversationRuntime, which gets evicted between turns).
- * - A scope key derived from agentId + conversationId is used as the map key.
- */
-
 import {
   DEFAULT_PERMISSION_MODE,
   permissionMode as globalPermissionMode,
@@ -23,12 +14,6 @@ import type { ListenerRuntime } from "./types";
 
 export type ConversationPermissionModeState = {
   mode: PermissionMode;
-  /**
-   * True when the mode was chosen for this conversation (mode change or a
-   * non-default runtime_start), as opposed to inherited from a default. Explicit
-   * entries are never pruned or dropped from the persisted map, even when they
-   * equal the global default, so a later default-only mode cannot override them.
-   */
   explicit?: boolean;
 };
 
@@ -56,12 +41,6 @@ function isPrunableDefaultState(
   return !state.explicit && state.mode === globalPermissionMode.getMode();
 }
 
-/**
- * Read-only state lookup for a conversation scope.
- *
- * This helper is intended for read paths (status rendering, serialization).
- * It does not materialize new map entries for missing scopes.
- */
 export function getConversationPermissionModeState(
   runtime: ListenerRuntime,
   agentId?: string | null,
@@ -75,9 +54,6 @@ export function getConversationPermissionModeState(
     return direct;
   }
 
-  // Backward/interop fallback for default-conversation entries that were
-  // keyed without an agent id (agent:__unknown__). If we find one while a
-  // concrete agent id is available, migrate it to the canonical key.
   if (normalizedConversationId === "default") {
     const legacyDefaultKey = getPermissionModeScopeKey(null, "default");
     const legacyDefault =
@@ -95,13 +71,6 @@ export function getConversationPermissionModeState(
   return createDefaultPermissionModeState();
 }
 
-/**
- * Returns the canonical mutable state object for a conversation scope.
- *
- * This helper materializes missing entries and guarantees stable identity
- * during a turn so concurrent mode updates (websocket + tool mutations)
- * apply to the same object reference.
- */
 export function getOrCreateConversationPermissionModeStateRef(
   runtime: ListenerRuntime,
   agentId?: string | null,
@@ -134,12 +103,6 @@ export function getOrCreateConversationPermissionModeStateRef(
   return created;
 }
 
-/**
- * Remove a canonical state entry when it is equivalent to the default state.
- *
- * This should be called at turn finalization boundaries, not on each mode
- * update, to avoid breaking object identity for in-flight turns.
- */
 export function pruneConversationPermissionModeStateIfDefault(
   runtime: ListenerRuntime,
   agentId?: string | null,
@@ -157,10 +120,6 @@ export function pruneConversationPermissionModeStateIfDefault(
   return true;
 }
 
-/**
- * Load the persisted permission mode map from remote-settings.json.
- * Converts PersistedPermissionModeState → ConversationPermissionModeState.
- */
 export function loadPersistedPermissionModeMap(): Map<
   string,
   ConversationPermissionModeState
@@ -172,7 +131,6 @@ export function loadPersistedPermissionModeMap(): Map<
       return map;
     }
     for (const [key, persisted] of Object.entries(settings.permissionModeMap)) {
-      // Migrate legacy mode values ("default" → "standard", "bypassPermissions" → "unrestricted").
       const rawMode =
         migratePermissionMode(persisted.mode) ?? DEFAULT_PERMISSION_MODE;
       map.set(key, {
@@ -186,26 +144,18 @@ export function loadPersistedPermissionModeMap(): Map<
   }
 }
 
-/**
- * Persist permission mode map to remote-settings.json.
- */
 export function persistPermissionModeMapForRuntime(
   runtime: ListenerRuntime,
 ): void {
   persistPermissionModeMap(runtime.permissionModeByConversation);
 }
 
-/**
- * Serialize the permission mode map and persist to remote-settings.json.
- * Skips entries that match the current global default mode (lean map).
- */
 function persistPermissionModeMap(
   map: Map<string, ConversationPermissionModeState>,
 ): void {
   const permissionModeMap: Record<string, PersistedPermissionModeState> = {};
 
   for (const [key, state] of map) {
-    // Skip entries that are just the default starting mode with no context — lean map.
     if (!state.explicit && state.mode === DEFAULT_PERMISSION_MODE) {
       continue;
     }

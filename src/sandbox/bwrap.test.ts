@@ -41,7 +41,6 @@ const NESTED_READONLY = buildFsSandboxPolicy({
   writableRoots: ["/scope", "/scope/locked/open"],
 });
 
-/** Find the index of a flag+operands triple in the bwrap arg list. */
 function tripleIndex(args: string[], flag: string, a: string, b: string) {
   for (let i = 0; i < args.length - 2; i++) {
     if (args[i] === flag && args[i + 1] === a && args[i + 2] === b) return i;
@@ -101,10 +100,7 @@ test("base writable is bound BEFORE the tmpfs mask, self memory after", () => {
     "/home/u/.letta/agents/self/memory",
   );
   expect(base).toBeGreaterThan(-1);
-  // Base ~/.letta bound rw FIRST; the tmpfs mask runs AFTER so the nested
-  // cross-agent tree is still masked (the ancestor carve is safe here)...
   expect(mask).toBeGreaterThan(base);
-  // ...and self memory is re-bound AFTER the mask so it reappears.
   expect(self).toBeGreaterThan(mask);
 });
 

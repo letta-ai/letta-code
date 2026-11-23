@@ -148,11 +148,6 @@ const DEFAULT_LOCAL_CONVERSATION_ID_PREFIX = "local-conv-";
 const DEFAULT_LOCAL_STORED_MESSAGE_ID_PREFIX = "letta-msg-";
 const DEFAULT_LOCAL_UI_MESSAGE_ID_PREFIX = "ui-msg-";
 
-/**
- * Resident floor per conversation on disk-backed stores: the window always
- * holds every in-context message, and messages that left the context are only
- * evicted beyond this many. Doubles the cloud BACKFILL_PAGE_LIMIT (50).
- */
 export const DEFAULT_RESIDENT_MESSAGE_TAIL_LIMIT = 100;
 
 function optionalString(value: unknown): string | undefined {
@@ -238,10 +233,6 @@ export interface LocalStoreOptions {
   conversationIdPrefix?: string;
   storedMessageIdPrefix?: string;
   localMessageIdPrefix?: string;
-  /**
-   * Resident floor for disk-backed stores; in-memory stores keep the full
-   * transcript resident (no disk to page from).
-   */
   residentMessageTailLimit?: number;
 }
 
@@ -325,18 +316,14 @@ export class LocalStore {
     string,
     LocalMessage[]
   >();
-  // A conversation key is fully resident (loadedConversationKeys) or tail
-  // resident (tailResidentConversationKeys — the in-context window, disk wins).
   private readonly loadedConversationKeys = new Set<string>();
   private readonly tailResidentConversationKeys = new Set<string>();
-  // First resident message's logical index (sourceStartIndex convention).
   private readonly residentTailStartIndexByConversationKey = new Map<
     string,
     number
   >();
   private readonly residentMessageTailLimit: number;
   private readonly loadRepairedConversationKeys = new Set<string>();
-  // Unparsed transcript head bytes from a tail load, validated pre-append.
   private readonly unreadTranscriptHeadBytesByKey = new Map<string, number>();
   private readonly transcriptMetadataByConversationKey = new Map<
     string,
@@ -364,7 +351,6 @@ export class LocalStore {
     LocalCompiledSystemPrompt
   >();
   private readonly messagesById = new Map<string, StoredMessage[]>();
-  // Assistant ids with a stop_reason chunk (turn completed), for rollback.
   private readonly settledLocalMessageIds = new Set<string>();
   private conversationRecordsScanned = false;
   private conversationSeq = 0;
@@ -732,8 +718,6 @@ export class LocalStore {
     name?: string;
     is_subagent?: boolean;
   }): StoredConversation {
-    // SDK queries create their app-server processes concurrently. UUID-backed
-    // worker IDs avoid a cross-process exists-then-create race in numeric IDs.
     const conversationId = `local-conv-${randomUUID()}`;
     const executionAgentId =
       this.executionAgentIdForConversation(conversationId);
@@ -894,7 +878,6 @@ export class LocalStore {
     this.persistConversationState(forked.id, targetAgentId, {
       transcript: "rewrite",
     });
-    // Fork transcript fully persisted: keep only the bounded tail resident.
     this.demoteConversationToResidentTail(targetKey);
     return { id: forked.id };
   }
@@ -996,7 +979,6 @@ export class LocalStore {
     ).map(cloneLocalMessage);
   }
 
-  /** Stored messages of the conversation that compaction took out of context. */
   countMessagesOutsideContext(conversationId: string, agentId: string): number {
     const conversation = this.findConversation(conversationId, agentId);
     if (!conversation) return 0;
@@ -1157,7 +1139,6 @@ export class LocalStore {
       input.agentId,
     );
     const key = this.conversationKey(conversation.id, input.agentId);
-    // Ensure the resident tail first; validate its unread head pre-rewrite.
     this.residentLocalMessagesForConversation(conversation.id, input.agentId);
     this.validateUnreadTranscriptHeadOnce(key);
     const previousMessages = this.localMessagesForConversation(
@@ -1444,7 +1425,6 @@ export class LocalStore {
     agentId: string,
     toolCallId: string,
   ): LocalToolResultMessage | undefined {
-    // Only consulted for in-window tool calls; results follow their call.
     return this.residentLocalMessagesForConversation(
       conversationId,
       agentId,
@@ -1547,7 +1527,6 @@ export class LocalStore {
 
     this.rollbackUnpersistedTrailingAssistantMessage(conversation, agentId);
 
-    // Unsettled tool calls only exist at the tail; results follow their call.
     const messages = this.residentLocalMessagesForConversation(
       conversation.id,
       agentId,
@@ -1584,7 +1563,6 @@ export class LocalStore {
     );
     const last = messages.at(-1);
     if (last?.role !== "assistant") return;
-    // stop_reason means the turn completed; disk stores also check the index.
     if (this.settledLocalMessageIds.has(last.id)) return;
     if (this.sessionEntryIdsByMessageId(key).has(last.id)) return;
 
@@ -1614,7 +1592,6 @@ export class LocalStore {
   ):
     | { message: LocalAssistantMessage; content: LocalToolCallContent }
     | undefined {
-    // Tool calls are only matched here while pending or interrupted (tail).
     const messages = this.residentLocalMessagesForConversation(
       conversationId,
       agentId,
@@ -1820,10 +1797,6 @@ export class LocalStore {
     return messages;
   }
 
-  /**
-   * Index only the projections of the message matching messageId within a
-   * paged list, so deep retrieveMessage scans never pin a whole transcript.
-   */
   private indexMatchingMessageInList(
     localMessages: readonly LocalMessage[],
     agentId: string,
@@ -1920,7 +1893,6 @@ export class LocalStore {
       localMessages,
       agentId,
       resolvedConversationId,
-      // Tail-resident conversations page projections, not index them.
       { updateIndex: this.loadedConversationKeys.has(key) },
     );
   }
@@ -1934,7 +1906,6 @@ export class LocalStore {
       if (!fullyResident && !this.tailResidentConversationKeys.has(key)) {
         continue;
       }
-      // Re-project only the resident window; older messages page on demand.
       const resident = this.localMessagesByConversationKey.get(key) ?? [];
       this.projectLocalMessages(
         resident,
@@ -1975,10 +1946,6 @@ export class LocalStore {
     }
   }
 
-  /**
-   * Page the full transcript from disk and index only the retrieved
-   * message; nothing stays resident.
-   */
   private indexMessageFromConversationFullRead(
     conversation: StoredConversation,
     messageId: string,
@@ -2053,12 +2020,6 @@ export class LocalStore {
     }
   }
 
-  /**
-   * Full logical message list for readers that need the whole history
-   * (executor, compaction, fork, export). Serves from the resident array
-   * when fully resident, else pages disk and merges the resident tail.
-   * Fresh array; mutation paths use residentLocalMessagesForConversation.
-   */
   private localMessagesForConversation(
     conversationId: string,
     agentId: string,
@@ -2067,10 +2028,8 @@ export class LocalStore {
     const key = this.conversationKey(conversationId, agentId);
     const resident = this.localMessagesByConversationKey.get(key) ?? [];
     if (this.loadedConversationKeys.has(key) || !this.storageDir) {
-      // Fully resident or in-memory store: resident list is the full list.
       return [...resident];
     }
-    // Fast path: resident window covers every in-context id → skip disk read.
     if (
       residentCoversIds(
         resident,
@@ -2084,11 +2043,6 @@ export class LocalStore {
     return overlayResidentLocalMessageTail(read.messages, resident);
   }
 
-  /**
-   * The live resident message window for mutation paths (append, rollback,
-   * tool settlement, approval application, streaming chunk application).
-   * In-context window on disk-backed stores; appends mirror to the transcript.
-   */
   private residentLocalMessagesForConversation(
     conversationId: string,
     agentId: string,
@@ -2106,10 +2060,6 @@ export class LocalStore {
     return messages;
   }
 
-  /**
-   * Read and normalize the full transcript from disk without changing
-   * message residency; undefined when there is no transcript metadata.
-   */
   private readConversationMessagesFromDisk(
     key: string,
     agentId: string,
@@ -2201,7 +2151,6 @@ export class LocalStore {
     this.markConversationFullyResident(key);
   }
 
-  /** Load the full transcript for legacy formats and timestamp repair. */
   private loadConversationMessages(
     key: string,
     conversationId: string,
@@ -2259,7 +2208,6 @@ export class LocalStore {
         this.agents.get(agentId)?.model_settings,
       ),
     );
-    // Must match a full load's repaired view: it wins over disk reads for its ids.
     const toolResultClip = clipOversizedLocalToolResults(tailMessages);
     const messages = toolResultClip.messages;
     if (toolResultClip.clippedToolResultIds.length > 0) {
@@ -2267,7 +2215,6 @@ export class LocalStore {
     }
     this.localMessagesByConversationKey.set(key, messages);
     if (conversation) conversation.in_context_message_ids = liveInContextIds;
-    // Unparsed head for pre-append validation (F13); negative = empty-list mode.
     const head = activeMessageIds.length === 0 ? -headBytes : headBytes;
     if (headBytes > 0) this.unreadTranscriptHeadBytesByKey.set(key, head);
     else this.unreadTranscriptHeadBytesByKey.delete(key);
@@ -2293,7 +2240,6 @@ export class LocalStore {
     });
   }
 
-  /** Replace the resident window after a compaction rewrite; caller persists. */
   private setResidentConversationMessages(
     key: string,
     messages: LocalMessage[],
@@ -2311,7 +2257,6 @@ export class LocalStore {
     this.trimResidentConversationTail(key);
   }
 
-  /** Drop a fully resident conversation back to its bounded tail window. */
   private demoteConversationToResidentTail(key: string): void {
     if (!this.storageDir) return;
     if (!this.loadedConversationKeys.delete(key)) return;
@@ -2320,7 +2265,6 @@ export class LocalStore {
     this.trimResidentConversationTail(key);
   }
 
-  /** Evict out-of-context messages (still on disk) beyond the resident floor. */
   private trimResidentConversationTail(key: string): void {
     if (!this.storageDir) return;
     if (!this.tailResidentConversationKeys.has(key)) return;
@@ -2345,9 +2289,6 @@ export class LocalStore {
     for (const message of evicted) {
       persistedById?.delete(message.id);
       if (!conversation) continue;
-      // Lookup keys derive only from the message id, so re-projecting with an
-      // empty fallback date yields the exact keys to drop (retrieveMessage
-      // falls back to disk scans for evicted ids).
       const projected = projectLocalMessageToStoredMessages(
         message,
         conversation.agent_id,
@@ -2373,7 +2314,6 @@ export class LocalStore {
       agentId,
     );
     const key = this.conversationKey(conversationId, agentId);
-    // Post-load, pre-mutation: a corrupt head throws, nothing written.
     this.validateUnreadTranscriptHeadOnce(key);
     messages.push(message);
     this.trimResidentConversationTail(key);
@@ -2384,7 +2324,6 @@ export class LocalStore {
     });
   }
 
-  // Validate the unparsed head pre-append; a throw retains it for retries.
   private validateUnreadTranscriptHeadOnce(key: string): void {
     const storedHeadBytes = this.unreadTranscriptHeadBytesByKey.get(key);
     if (storedHeadBytes === undefined) return;
@@ -2419,7 +2358,6 @@ export class LocalStore {
       });
       return;
     }
-    // Mark settled regardless of storageDir so rollback works in-memory.
     this.settledLocalMessageIds.add(last.id);
     this.persistConversationState(conversationId, agentId, {
       transcript: "append",
@@ -2644,8 +2582,6 @@ export class LocalStore {
     if (!conversationDir) return existing;
 
     try {
-      // Filesystem timestamps (and byte lengths) can match across compactions.
-      // Compare the record itself; unchanged records retain in-flight state.
       const recordJson = readFileSync(
         join(conversationDir, "conversation.json"),
         "utf8",
@@ -2661,8 +2597,6 @@ export class LocalStore {
         conversation.agent_id,
       );
       if (loadedKey !== key) return existing;
-      // Own writes cache their serialized record, so only external changes
-      // invalidate the resident transcript window.
       if (existing && cachedJson !== undefined) {
         this.evictResidentHeadMessages(
           key,
@@ -2927,8 +2861,6 @@ export class LocalStore {
     if (
       options.transcript === "rewrite" ||
       this.loadedConversationKeys.has(key) ||
-      // Never rewrite the transcript from a bounded resident tail — it would
-      // truncate history to the window.
       (!existsSync(messagesPath) && !this.tailResidentConversationKeys.has(key))
     ) {
       if (messages.length === 0) return;

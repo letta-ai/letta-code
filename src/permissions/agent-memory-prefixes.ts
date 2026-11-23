@@ -3,7 +3,6 @@ import { getRuntimeContext } from "@/runtime-context";
 import { getRuntimeExecutionEnv } from "@/runtime-execution-settings";
 import { resolveGlobalConfigDir } from "@/utils/settings-path";
 
-/** Memory locations approved for scoped read-only shell commands. */
 export function getAllowedMemoryPrefixes(agentId: string): string[] {
   const env = getRuntimeExecutionEnv(
     process.env,

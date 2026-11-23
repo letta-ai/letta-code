@@ -5,8 +5,6 @@ import {
   resolveDiscordInboundDebounceMs,
 } from "@/channels/discord/debounce";
 
-// ── resolveDiscordInboundDebounceMs ───────────────────────────────────
-
 describe("resolveDiscordInboundDebounceMs", () => {
   test("returns disabled default when config is undefined", () => {
     expect(
@@ -127,8 +125,6 @@ describe("resolveDiscordInboundDebounceMs", () => {
   });
 });
 
-// ── buildDiscordDebounceKey ───────────────────────────────────────────
-
 describe("buildDiscordDebounceKey", () => {
   test("returns null when scope is empty", () => {
     expect(
@@ -164,8 +160,6 @@ describe("buildDiscordDebounceKey", () => {
   });
 
   test("same key for different senders in same channel (intentional merge)", () => {
-    // The key does not include senderId so that multi-sender bursts
-    // in the same channel merge into one LLM call with sender labels.
     const input = { channelId: "ch-1", threadId: null };
     expect(buildDiscordDebounceKey(input, "acct-1")).toBe(
       buildDiscordDebounceKey(input, "acct-1"),

@@ -44,8 +44,6 @@ async function cli(args: string[], baseURL = "https://api.letta.com") {
   return { stdout, stderr, code };
 }
 
-// macOS CI can exceed the 15s unit default on this first CLI subprocess.
-// Allow the same 30s subprocess budget as the neighboring model CLI tests.
 test("usage help exits before account lookup even with local default", async () => {
   const result = await cli(["usage", "--help"]);
   expect(result.code, result.stderr).toBe(0);

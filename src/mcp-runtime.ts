@@ -54,7 +54,6 @@ function getRuntime(): ClientMcpRuntime {
   return runtime;
 }
 
-/** Replace client-local MCP connections used by the interactive MCP manager. */
 export async function replaceClientMcpServers(
   agentId: string,
   configs: readonly McpServerConfig[],
@@ -125,7 +124,6 @@ function hasAuthorizationHeader(headers?: Record<string, string>): boolean {
   );
 }
 
-/** Current local MCP connection state for the selected agent. */
 export function getClientMcpServerStates(
   agentId: string,
 ): ClientMcpServerState[] {
@@ -133,7 +131,6 @@ export function getClientMcpServerStates(
   return runtime.agentId === agentId ? [...runtime.states] : [];
 }
 
-/** Close every local MCP manager connection. */
 export async function closeClientMcpServers(): Promise<void> {
   const runtime = getRuntime();
   runtime.generation++;
@@ -153,7 +150,6 @@ async function closeActiveServers(runtime: ClientMcpRuntime): Promise<void> {
   ]);
 }
 
-/** Return the CLI name for a tool from a client-connected MCP server. */
 export function formatClientMcpToolName(
   serverName: string,
   toolName: string,

@@ -12,15 +12,6 @@ import {
 } from "@/agent/approval-recovery";
 import { extractApprovals } from "@/agent/check-approval";
 
-/**
- * Tests for approval error detection helpers (LET-7101).
- *
- * These functions detect different error conditions related to approvals:
- * 1. isInvalidToolCallIdsError: Tool call IDs don't match server's pending approvals
- * 2. isApprovalPendingError: Sent user message, but server has pending approval waiting
- * 3. isConversationBusyError: Another request is being processed (409 CONFLICT)
- */
-
 describe("isInvalidToolCallIdsError", () => {
   test("detects invalid tool call IDs error", () => {
     const detail =
@@ -38,7 +29,6 @@ describe("isInvalidToolCallIdsError", () => {
   });
 
   test("returns false for 'no tool call awaiting' error", () => {
-    // This is a different desync type - server has NO pending approvals
     expect(
       isInvalidToolCallIdsError("No tool call is currently awaiting approval"),
     ).toBe(false);
@@ -59,7 +49,6 @@ describe("isInvalidToolCallIdsError", () => {
 });
 
 describe("isApprovalPendingError", () => {
-  // This is the actual error format from the Letta backend (screenshot from LET-7101)
   const REAL_ERROR_DETAIL =
     "CONFLICT: Cannot send a new message: The agent is waiting for approval on a tool call. Please approve or deny the pending request before continuing.";
 
@@ -86,7 +75,6 @@ describe("isApprovalPendingError", () => {
   });
 
   test("returns false for desync errors (opposite case)", () => {
-    // These are the OPPOSITE error - when we send approval but there's nothing pending
     expect(
       isApprovalPendingError("No tool call is currently awaiting approval"),
     ).toBe(false);
@@ -252,13 +240,7 @@ describe("getPreStreamErrorAction", () => {
   });
 });
 
-/**
- * Tests for parallel tool call approval extraction.
- * Ensures lazy recovery handles multiple simultaneous tool calls correctly.
- */
 describe("extractApprovals", () => {
-  // Helper to create a minimal Message-like object for testing
-  // We use 'as Message' cast because the real Message type is complex
   const createMessage = (overrides: {
     tool_calls?: Array<{
       tool_call_id?: string;
@@ -331,7 +313,6 @@ describe("extractApprovals", () => {
     expect(result.pendingApprovals[1]?.toolName).toBe("web_search");
     expect(result.pendingApprovals[2]?.toolCallId).toBe("call-3");
     expect(result.pendingApprovals[2]?.toolName).toBe("Read");
-    // pendingApproval is deprecated, should be first item
     expect(result.pendingApproval?.toolCallId).toBe("call-1");
   });
 
@@ -363,7 +344,6 @@ describe("extractApprovals", () => {
 
     const result = extractApprovals(msg);
 
-    // Should use tool_calls, not tool_call
     expect(result.pendingApprovals).toHaveLength(1);
     expect(result.pendingApprovals[0]?.toolCallId).toBe("call-new");
   });
@@ -372,15 +352,14 @@ describe("extractApprovals", () => {
     const msg = createMessage({
       tool_calls: [
         { tool_call_id: "call-valid", name: "Bash", arguments: "{}" },
-        { name: "Invalid", arguments: "{}" }, // Missing tool_call_id
-        { tool_call_id: "", name: "Empty", arguments: "{}" }, // Empty tool_call_id
+        { name: "Invalid", arguments: "{}" },
+        { tool_call_id: "", name: "Empty", arguments: "{}" },
         { tool_call_id: "call-valid-2", name: "Read", arguments: "{}" },
       ],
     });
 
     const result = extractApprovals(msg);
 
-    // Should only include entries with valid tool_call_id
     expect(result.pendingApprovals).toHaveLength(2);
     expect(result.pendingApprovals[0]?.toolCallId).toBe("call-valid");
     expect(result.pendingApprovals[1]?.toolCallId).toBe("call-valid-2");
@@ -409,13 +388,8 @@ describe("extractApprovals", () => {
   });
 });
 
-/**
- * Tests for extractConflictDetail - shared error-text extraction from APIError shapes.
- * Replaces duplicated inline extraction in App.tsx and headless.ts.
- */
 describe("extractConflictDetail", () => {
   test("extracts detail from nested error shape (e.error.error.detail)", () => {
-    // This is the exact error shape from the interrupt→CONFLICT screenshot
     const error = {
       error: {
         error: {
@@ -432,7 +406,6 @@ describe("extractConflictDetail", () => {
     expect(detail).toBe(
       "CONFLICT: Cannot send a new message: The agent is waiting for approval on a tool call. Please approve or deny the pending request before continuing.",
     );
-    // Extracted detail should route correctly through the classifier
     expect(isApprovalPendingError(detail)).toBe(true);
   });
 
@@ -480,10 +453,6 @@ describe("extractConflictDetail", () => {
   });
 });
 
-/**
- * Tests for rebuildInputWithFreshDenials - strips stale approval payloads
- * from the currentInput array and optionally prepends fresh denial results.
- */
 describe("rebuildInputWithFreshDenials", () => {
   test("strips stale approval and prepends fresh denials", () => {
     const input = [
@@ -510,7 +479,6 @@ describe("rebuildInputWithFreshDenials", () => {
       "Auto-denied",
     );
 
-    // Stale approval stripped, fresh denial prepended, message preserved
     expect(result).toHaveLength(2);
     expect(result[0]?.type).toBe("approval");
     const approvalPayload = result[0] as {
@@ -535,7 +503,6 @@ describe("rebuildInputWithFreshDenials", () => {
 
     const result = rebuildInputWithFreshDenials(input, [], "");
 
-    // Only message remains
     expect(result).toHaveLength(1);
     expect(result[0]?.type).toBe("message");
   });
@@ -554,7 +521,6 @@ describe("rebuildInputWithFreshDenials", () => {
       "Auto-denied",
     );
 
-    // Fresh denial prepended, message preserved
     expect(result).toHaveLength(2);
     expect(result[0]?.type).toBe("approval");
     expect(result[1]?.type).toBe("message");
@@ -597,7 +563,6 @@ describe("rebuildInputWithFreshDenials", () => {
       "denied",
     );
 
-    // Both stale approvals stripped, one fresh denial payload prepended, message kept
     expect(result).toHaveLength(2);
     expect(result[0]?.type).toBe("approval");
     const approvalPayload = result[0] as {
@@ -610,14 +575,3 @@ describe("rebuildInputWithFreshDenials", () => {
     expect(result[1]?.type).toBe("message");
   });
 });
-
-/**
- * Note: Full integration testing of lazy approval recovery requires:
- * 1. Starting CLI without --yolo
- * 2. Sending a prompt that triggers a tool call requiring approval
- * 3. Instead of approving, sending another user message
- * 4. Verifying the CONFLICT error is detected and recovery happens
- *
- * This is complex to automate reliably in unit tests.
- * Manual testing or a dedicated integration test suite is recommended.
- */

@@ -25,18 +25,6 @@ import { createTurnDurabilityOwnership } from "./turn-durability-ownership";
 import { createQueuedTurnConsumer } from "./turn-finalizer";
 import type { IncomingMessage } from "./types";
 
-/**
- * Steering: when a running turn sends its next request to the model (here,
- * the continuation after a tool returns), every input queued meanwhile goes
- * with it. Senders' Super Runs and MCP originator tokens must not hold an
- * input back; MCP access is enforced per call instead, and a turn that mixes
- * Super Runs makes its MCP calls without an originator token.
- *
- * Only the tool executor, the model send, and the Cloud MCP endpoint are
- * stubbed. The queue, the drain, the origin swap, the token store, the tool
- * execution context, and the MCP call path are the real implementations.
- */
-
 const TOKENS: Record<string, string> = {
   "run-A": "mst_a.secret-a",
   "run-B": "mst_b.secret-b",
@@ -62,7 +50,6 @@ function input(content: string, superRunId?: string): IncomingMessage {
   };
 }
 
-/** Runs one tool call of a turn started by `original`; `queued` arrives mid-tool. */
 async function runToolReturnContinuation(
   original: IncomingMessage,
   queued: IncomingMessage[],
@@ -79,7 +66,6 @@ async function runToolReturnContinuation(
     origin: "message",
     workingDirectory: process.cwd(),
   });
-  // Bind the turn's tool context to the original input, as turn setup does.
   const { contextId } = captureToolExecutionContext(process.cwd());
   contextIds.push(contextId);
   updateToolExecutionContextMcpOriginator(
@@ -127,7 +113,6 @@ async function runToolReturnContinuation(
         needsUserInput: [],
       }),
       executeApprovalBatch: async () => {
-        // The other senders' inputs arrive while the tool is running.
         for (const message of queued) {
           enqueueInboundUserMessage(runtime, message, undefined);
         }
@@ -154,7 +139,6 @@ async function runToolReturnContinuation(
   return { runtime, contextId, modelRequests };
 }
 
-/** Makes one MCP call from the turn's tool context; returns the headers sent. */
 async function nextMcpCallHeaders(contextId: string) {
   const context = getExecutionContextById(contextId);
   if (!context) throw new Error("tool context was released");
@@ -211,7 +195,6 @@ describe("steering drains queued inputs into the next model request", () => {
             input("steer", queuedRun),
           ]);
 
-        // The queued input rides the continuation right after the tool return.
         expect(modelRequests).toHaveLength(1);
         const request = JSON.stringify(modelRequests[0]);
         expect(request).toContain("tool-result");
@@ -219,7 +202,6 @@ describe("steering drains queued inputs into the next model request", () => {
         expect(runtime.queueRuntime.length).toBe(0);
         expect(runtime.queuedMessagesByItemId.size).toBe(0);
 
-        // Only a turn whose inputs all come from one Super Run keeps its token.
         const headers = await nextMcpCallHeaders(contextId);
         if (originalRun && originalRun === queuedRun) {
           expect(headers?.["x-letta-mcp-originator-token"]).toBe(

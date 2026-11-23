@@ -314,7 +314,6 @@ test("waits for a child run linked after the Super Run completed", async () => {
       receipt,
       new AbortController().signal,
       deps({
-        // The run link lands 10s after the Super Run is already complete.
         exact: async () => ({
           ...exact(),
           run_ids: clock.now() >= 10_000 ? ["run-late"] : [],

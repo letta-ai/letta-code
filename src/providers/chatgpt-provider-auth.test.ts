@@ -13,7 +13,6 @@ const originalHome = process.env.HOME;
 const originalUserProfile = process.env.USERPROFILE;
 let testHomeDir = "";
 
-// Refresh reads the device ID from settings, so isolate settings in a temp HOME.
 beforeEach(async () => {
   await settingsManager.reset();
   testHomeDir = await mkdtemp(join(tmpdir(), "letta-chatgpt-auth-home-"));

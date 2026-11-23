@@ -35,7 +35,6 @@ export interface CompileLocalSystemPromptOptions {
   memoryDir?: string;
   includeMemfs?: boolean;
   now?: Date;
-  /** A function is only called when the prompt renders `<memory_metadata>`. */
   previousMessageCount?: number | (() => number);
 }
 
@@ -130,10 +129,7 @@ function collectCommittedMemoryFiles(memoryDir: string): {
             ? frontmatter.description.trim()
             : "",
       });
-    } catch {
-      // Skip unreadable committed files. MemFS tooling surfaces validation
-      // issues at write/commit time; prompt compilation should stay best-effort.
-    }
+    } catch {}
   }
 
   return {

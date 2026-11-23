@@ -47,7 +47,6 @@ const WARN_INTERVAL_MS = 60_000;
 const MAX_TRACE_BATCH_BYTES = 8 * 1024 * 1024;
 const TRACE_BATCH_ENVELOPE_BYTES = Buffer.byteLength('{"rows":[]}');
 
-/** Status (or error name) plus a short server message; never request bodies or headers. */
 function describeUploadError(error: unknown, secrets: string[]): string {
   if (!(error instanceof Error)) return "error=unknown";
   if (!(error instanceof ApiRequestError)) return `error=${error.name}`;
@@ -56,9 +55,7 @@ function describeUploadError(error: unknown, secrets: string[]): string {
     const parsed = JSON.parse(detail) as Record<string, unknown>;
     const field = parsed.detail ?? parsed.message ?? parsed.error;
     detail = typeof field === "string" ? field : JSON.stringify(field ?? "");
-  } catch {
-    // Non-JSON body: keep the raw text.
-  }
+  } catch {}
   for (const secret of secrets)
     if (secret.length >= 4) detail = detail.split(secret).join("[redacted]");
   detail = detail.replace(/\s+/g, " ").trim();
@@ -84,7 +81,6 @@ const productionDependencies: TraceSessionDependencies = {
   },
 };
 
-/** A session owns its proxy and bounded upload queue until the CLI process exits. */
 export async function createTraceSession(
   harness: ExternalTraceRow["harness"],
   context: ExternalTraceContext | undefined,
@@ -138,7 +134,6 @@ export async function createTraceSession(
           let baseId = uploadedBaseId;
           let queuedBytes = 0;
           for (const entry of queue) {
-            // A delta is usable only if its base was uploaded or is in this batch.
             const fallback =
               entry.delta?.baseId !== baseId ? entry.delta : undefined;
             const row: ExternalTraceRow = fallback
@@ -175,8 +170,6 @@ export async function createTraceSession(
                 );
             }
           }
-          // Best effort: drop the batch, and log at most one warning per
-          // interval with metadata only (no trace contents or credentials).
           if (!success && Date.now() - lastWarnAt >= WARN_INTERVAL_MS) {
             lastWarnAt = Date.now();
             warn(

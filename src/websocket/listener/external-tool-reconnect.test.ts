@@ -47,7 +47,6 @@ type FakeSocket = LocalTransport & {
   open: boolean;
 };
 
-/** A socket whose peer answers requests only when `respond` is set. */
 function createSocket(runtime: ListenerRuntime, respond: boolean): FakeSocket {
   const socket: FakeSocket = {
     kind: "local",
@@ -102,7 +101,6 @@ async function connect(
   ]);
 }
 
-/** Mirrors the listener's transient (non-1008) close: suspend, keep the id. */
 function dropSocket(runtime: ListenerRuntime, socket: FakeSocket): void {
   socket.open = false;
   suspendListenerConnection(runtime, CONNECTION_ID);
@@ -163,7 +161,6 @@ describe("external tool calls across a websocket reconnect", () => {
 
     const call = callReply("call-reply");
     await waitFor(() => first.sent.length === 1);
-    // A transient close lands right after the frame was written.
     dropSocket(runtime, first);
 
     const second = createSocket(runtime, true);
@@ -173,7 +170,6 @@ describe("external tool calls across a websocket reconnect", () => {
     expect(result.status).toBe("success");
     expect(result.toolReturn).toBe("posted");
     expect(second.sent).toHaveLength(1);
-    // Same request_id so the server can dedupe a request that did arrive.
     expect(second.sent[0]).toEqual(first.sent[0] as never);
     expect(runtime.pendingExternalToolCalls.size).toBe(0);
   });

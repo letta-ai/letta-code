@@ -1,5 +1,3 @@
-/** `letta variable` manages plain, agent-readable values. */
-
 import { parseArgs } from "node:util";
 import { settingsManager } from "@/settings-manager";
 import { readStdin } from "@/utils/stdin";

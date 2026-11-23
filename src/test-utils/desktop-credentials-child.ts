@@ -51,7 +51,6 @@ process.on("message", async (message) => {
     "type" in message &&
     message.type === "spawn_subagent"
   ) {
-    // Exercise the real manager and OS spawn, without running an LLM turn.
     process.env.LETTA_CODE_BIN = process.execPath;
     process.env.LETTA_CODE_BIN_ARGS_JSON = JSON.stringify([probe]);
     if ("missing" in message) {

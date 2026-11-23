@@ -58,7 +58,6 @@ describe("taskNotifications", () => {
 
       const formatted = formatTaskNotification(notification);
 
-      // Quotes don't need escaping in XML text content, only in attributes
       expect(formatted).toContain('&lt;script&gt;alert("xss")&lt;/script&gt;');
       expect(formatted).not.toContain("<script>");
     });
@@ -181,14 +180,12 @@ ACTION REQUIRED: Resolve pending reflection memory merge.
 });
 
 describe("messageQueueBridge", () => {
-  // Reset the bridge before each test
   beforeEach(() => {
     setMessageQueueAdder(null);
     clearPendingMessages();
   });
 
   afterEach(() => {
-    // The bridge and its buffered messages are shared with other test files.
     setMessageQueueAdder(null);
     clearPendingMessages();
   });
@@ -216,7 +213,6 @@ describe("messageQueueBridge", () => {
   });
 
   test("addToMessageQueue does nothing when adder not set", () => {
-    // Should not throw
     expect(() =>
       addToMessageQueue({ kind: "user", text: "test message" }),
     ).not.toThrow();
@@ -237,7 +233,7 @@ describe("messageQueueBridge", () => {
 
     addToMessageQueue({ kind: "user", text: "message 1" });
     setMessageQueueAdder(null);
-    addToMessageQueue({ kind: "user", text: "message 2" }); // Buffered until reconnect.
+    addToMessageQueue({ kind: "user", text: "message 2" });
 
     expect(messages).toEqual([{ kind: "user", text: "message 1" }]);
     expect(isQueueBridgeConnected()).toBe(false);

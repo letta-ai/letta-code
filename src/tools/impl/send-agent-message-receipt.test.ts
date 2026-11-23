@@ -10,9 +10,6 @@ import {
 } from "@/test-utils/send-agent-message-fixture";
 import { send_agent_message } from "./send-agent-message";
 
-// The enqueue receipt names the conversation's agent; it drives the reported
-// agent, the recovery hints, and child-subagent tracking.
-
 test("a conversation-ID send reports the agent from the server's receipt", async () => {
   const f = fixture([], "agent-target");
   f.backend.retrieveConversation = async () => {
@@ -53,7 +50,6 @@ test("a conversation-ID send to this agent's own subagent is tracked via the rec
     }),
   );
   expect(result.status).toBe("success");
-  // The child is identified from the receipt, so the lookup follows the enqueue.
   expect(order).toEqual(["enqueue", "lookup:agent-target"]);
   expect(f.tracked).toHaveLength(1);
   expect(f.tracked[0]).toMatchObject({
