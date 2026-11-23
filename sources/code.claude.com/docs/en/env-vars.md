@@ -604,7 +604,6 @@ With fetching off, you can't:
 * Turn on the [You should know mod](https://code.claude.com/docs/en/interactive-mode.md#you-should-know-suggestions)
 * Use [the advisor tool](https://code.claude.com/docs/en/advisor.md#requirements), except with Claude Code v2.1.300 or later on Claude Platform on AWS or [Claude Models on Google Cloud (Anthropic managed)](https://code.claude.com/docs/en/feature-availability.md#availability-by-model-provider)
 * Use [MCP tasks](https://code.claude.com/docs/en/mcp.md#mcp-tasks-that-run-on-the-server)
-* Turn on [Code Mode](https://code.claude.com/docs/en/code-mode.md#requirements)
 * Have Claude read [another organization's public artifact](https://code.claude.com/docs/en/artifacts.md#read-an-artifact-shared-with-you)
 * Get the [PowerShell tool](https://code.claude.com/docs/en/tools-reference.md#powershell-tool) by default for claude.ai and Console accounts on Windows with Git Bash installed; Claude Code routes shell commands through Git Bash unless you set `CLAUDE_CODE_USE_POWERSHELL_TOOL=1`. On Windows without Git Bash, the tool stays on
 * Get [Claude-drafted feedback](https://code.claude.com/docs/en/tools-reference.md#sendfeedback-tool-behavior), which Claude Code turns on through a fetched flag

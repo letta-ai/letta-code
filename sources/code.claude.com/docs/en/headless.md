@@ -341,7 +341,7 @@ claude -p "Apply the lint fixes" --permission-mode acceptEdits
 
 Pass `--permission-prompts none` when nobody is available to answer permission prompts, for example in a scheduled job. The flag matters most when your run has a permission host: an Agent SDK app with a [`canUseTool` callback](https://code.claude.com/docs/en/agent-sdk/user-input), or an MCP tool you pass with [`--permission-prompt-tool`](https://code.claude.com/docs/en/cli-reference#cli-flags). Without the flag or the [`permissions.denyInsteadOfPrompting`](https://code.claude.com/docs/en/settings-reference#permissions-denyinsteadofprompting) setting, your run waits for that host to answer each permission request.
 
-With the flag, your run doesn't consult the host or wait on it. Anything that would prompt is denied unless a `PermissionRequest` hook allows it, Claude is told that nobody can approve the request and not to retry it, and the run continues. In a `-p` run with no host, these requests are denied either way, and the flag also tells Claude not to retry them. Permission rules, [`PermissionRequest` hooks](https://code.claude.com/docs/en/hooks#permissionrequest), and the permission mode you set still decide every call first; Claude Code denies only the requests that nothing else resolves.
+With the flag, your run doesn't consult the host or wait on it. Anything that would prompt is denied unless a `PermissionRequest` hook allows it, Claude is told that nobody can approve the request and not to retry it, and the run continues. Permission rules, [`PermissionRequest` hooks](https://code.claude.com/docs/en/hooks#permissionrequest), and the permission mode you set still decide every call first; Claude Code denies only the requests that nothing else resolves.
 
 > [!NOTE]
 >

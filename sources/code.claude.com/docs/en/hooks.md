@@ -2160,8 +2160,10 @@ Before v2.1.319, Claude Code answered a prompt without the tool's result and dro
 
 ### PermissionRequest
 
-Runs when Claude Code is about to ask you for permission to use a tool. In sessions that can't show a prompt, such as background subagents in [non-interactive mode](https://code.claude.com/docs/en/headless.md), Claude Code still runs these hooks, and if no hook returns a decision, it denies the tool call. For a call that reaches a `--permission-prompt-tool` or the Agent SDK's [`canUseTool` callback](https://code.claude.com/docs/en/agent-sdk/permissions), the hooks run alongside your host, and whichever decides first applies.
+Runs when Claude Code is about to ask you for permission to use a tool. For a call that reaches a `--permission-prompt-tool` or the Agent SDK's [`canUseTool` callback](https://code.claude.com/docs/en/agent-sdk/permissions), the hooks run alongside your host, and whichever decides first applies.
 Use [PermissionRequest decision control](#permissionrequest-decision-control) to allow or deny on behalf of the user.
+
+In a `-p` run outside [`dontAsk` mode](https://code.claude.com/docs/en/permission-modes#allow-only-pre-approved-tools-with-dontask-mode) with neither a `--permission-prompt-tool` nor a `canUseTool` callback, nobody can answer a prompt. A call that would prompt you is denied there unless something approves it, such as a PermissionRequest hook.
 
 Use this event when you need a signal the moment Claude asks for permission to use a tool. Claude Code runs a [Notification](#notification) hook with the `permission_prompt` type only after the prompt has waited about six seconds.
 
@@ -3358,7 +3360,7 @@ For git-based worktrees, Claude Code handles cleanup automatically with `git wor
   * **You exit a worktree session, or Claude calls `ExitWorktree`**: Claude Code removes the path your WorktreeCreate hook returned as `git worktree remove --force` would, so a worktree git recognizes is removed. A worktree git doesn't recognize, for example one your hook created with a non-git version control system, stays on disk.
   * **`claude remote-control` cleans up a session's worktree**: the worktree stays on disk, and the terminal running `claude remote-control` shows `worktree removal failed, kept: <path>`.
   * **You delete a background session**: see [What deleting a session removes](https://code.claude.com/docs/en/agent-view.md#what-deleting-a-session-removes).
-* **Hook exits 0**: the worktree counts as removed. Claude Code reads nothing else from the hook, so make sure your hook deleted the directory.
+* **Hook exits 0**: if the worktree's directory is still there, remove it yourself, because Claude Code doesn't fall back to git.
 * **Hook exits non-zero**: the removal fails if the directory at `worktree_path` still exists afterward, and the worktree stays on disk with no git fallback. A hook that deleted the directory before exiting non-zero counts as removed. For how the failure is reported, see [WorktreeRemove input](#worktreeremove-input).
 
 Claude Code never deletes a branch belonging to a hook-created worktree, because it only knows the path your WorktreeCreate hook returned. If your WorktreeCreate hook creates a branch, delete it in your WorktreeRemove hook. Claude Code discards a WorktreeRemove hook's [JSON output fields](#json-output), such as `systemMessage` and `continue`.
@@ -3398,7 +3400,7 @@ In addition to the [common input fields](#common-input-fields), WorktreeRemove h
 }
 ```
 
-A WorktreeRemove hook's exit code decides the outcome. When a hook exits non-zero and the directory at `worktree_path` still exists afterward, the removal fails:
+When a hook exits non-zero and the directory at `worktree_path` still exists afterward, the removal fails:
 
 * If you were deleting a background session, the session stays too. The refusal message in [agent view](https://code.claude.com/docs/en/agent-view.md#what-deleting-a-session-removes) reports how the hook ended, such as `exited 1`, quotes the start of its stderr, and says whether deleting the session again removes the directory anyway.
 * If `claude remote-control` was cleaning up a session's worktree, the terminal running it shows `worktree removal failed, kept: <path>`.
@@ -3741,7 +3743,7 @@ For form-mode elicitation, the most common case:
   "cwd": "/Users/...",
   "hook_event_name": "Elicitation",
   "mcp_server_name": "my-mcp-server",
-  "message": "Please provide your credentials",
+  "message": "Please provide your username",
   "mode": "form",
   "requested_schema": {
     "type": "object",
