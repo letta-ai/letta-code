@@ -14,12 +14,6 @@ import { handleIncomingMessage } from "./turn";
 import type { ListenerRuntime, SyncReplayOptions } from "./types";
 import { scheduleListenerWarmupsAfterSync } from "./warmup";
 
-/**
- * Everything the listener does when a connection sends `sync` (or a
- * `runtime_start` asks for the same replay): recover backend approval state
- * for the scope, resume an interrupted turn when nothing waits on a human,
- * replay the scope's state to the connection, and schedule warmups.
- */
 export async function replaySyncStateForRuntime(
   listenerRuntime: ListenerRuntime,
   socket: WebSocket,
@@ -28,7 +22,6 @@ export async function replaySyncStateForRuntime(
     recoverApprovalStateForSync?: (
       ...args: Parameters<typeof recoverApprovalStateForSync>
     ) => Promise<unknown>;
-    /** Turn processor for a recovered continuation; defaults to the real turn. */
     processIncomingMessage?: typeof handleIncomingMessage;
     recoveredContinuationDependencies?: RecoveredContinuationDependencies;
     scheduleWarmupsAfterSync?: (
@@ -44,9 +37,6 @@ export async function replaySyncStateForRuntime(
   );
   const recoverFn =
     opts?.recoverApprovalStateForSync ?? recoverApprovalStateForSync;
-  // Recovery runs only when the sender asked for it. cloud-api's readiness
-  // probes and activity claims send recover_approvals=false so a prewarmed or
-  // idle sandbox never touches a conversation it merely observes.
   if (opts?.recoverApprovals ?? true) {
     try {
       await recoverFn(syncScopedRuntime, scope, undefined, {
@@ -64,13 +54,6 @@ export async function replaySyncStateForRuntime(
     }
   }
 
-  // The execution owner asked to resume and recovery found only replay-unsafe
-  // pending approvals: nothing waits on a human, so try to finish the
-  // interrupted turn. (An observer's sync parked those denials for this
-  // listener's next user message instead and never reaches this state.) The
-  // shared recovery entry verifies ownership before acquiring the local turn
-  // lease; sync must not start a competing turn during either side of a
-  // teleport.
   if (
     syncScopedRuntime.recoveredApprovalState &&
     (syncScopedRuntime.recoveredApprovalState.autoDecisions?.length ?? 0) > 0

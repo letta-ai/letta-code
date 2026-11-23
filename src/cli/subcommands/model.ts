@@ -57,7 +57,6 @@ top-level fields and keeps the model. The command does not
 interrupt or restart an in-flight inference. All output is JSON.`);
 }
 
-/** A BYOK row owns its capability even when it shares a catalog preset handle. */
 export function structuredOutputSupport(
   entry: CatalogModel,
   byokCapabilities: ReadonlyMap<string, boolean | undefined>,
@@ -79,8 +78,6 @@ export function filterStructuredOutputRows<
 }
 
 async function printJson(value: unknown): Promise<void> {
-  // Subcommands call process.exit immediately afterward. Wait for pipe writes
-  // to finish so large catalogs cannot be truncated at the stdout buffer limit.
   await new Promise<void>((resolve, reject) => {
     process.stdout.write(`${JSON.stringify(value, null, 2)}\n`, (error) =>
       error ? reject(error) : resolve(),
@@ -134,7 +131,6 @@ export async function runModelSubcommand(argv: string[]): Promise<number> {
       throw new Error("--worker is only supported by model list");
     if (action !== "set" && values["model-settings"] !== undefined)
       throw new Error("--model-settings is only supported by model set");
-    // Validate before resolving targets so bad input never causes a write.
     const modelSettingsPatch =
       values["model-settings"] === undefined
         ? undefined
@@ -160,7 +156,6 @@ export async function runModelSubcommand(argv: string[]): Promise<number> {
       if (values.worker !== undefined) {
         if (values.byok || values.hosted || values["structured-outputs"])
           throw new Error("Backend model filters cannot be used with --worker");
-        // Agent-vault worker secrets are fetched through the configured backend.
         await settingsManager.initialize();
         const { listExternalWorkerModels } = await import(
           "@/tools/impl/external-worker-models"
@@ -173,11 +168,7 @@ export async function runModelSubcommand(argv: string[]): Promise<number> {
       await initializeModelCatalog();
       let catalog = [...models];
       const byokCapabilities = new Map<string, boolean | undefined>();
-      // The local runtime inventory is entirely user-configured, not hosted.
       if (local && values.hosted) catalog = [];
-      // Cloud hosted rows only come from /models/catalog. /models adds BYOK
-      // rows, never replacement/fallback hosted rows. Local/custom catalogs
-      // are already projected from their runtime inventory by initialization.
       if (!local) {
         const known = new Set(catalog.map((entry) => entry.handle));
         try {
@@ -190,8 +181,6 @@ export async function runModelSubcommand(argv: string[]): Promise<number> {
               );
             }
           }
-          // BYOK handles can also have catalog presets (e.g. coding plans).
-          // Use only BYOK metadata here, never the inventory's hosted/base rows.
           if (values.byok || values.hosted) {
             const byokHandles = new Set(
               available.models
@@ -213,7 +202,6 @@ export async function runModelSubcommand(argv: string[]): Promise<number> {
                   !known.has(entry.handle),
               )
               .map((entry) => ({
-                // Keep BYOK IDs selectable without colliding with hosted aliases.
                 id: entry.handle,
                 handle: entry.handle,
                 label: entry.label,
@@ -223,7 +211,6 @@ export async function runModelSubcommand(argv: string[]): Promise<number> {
               })),
           );
         } catch (error) {
-          // Never present a failed category lookup as an empty filtered result.
           if (values.byok || values.hosted || values["structured-outputs"])
             throw error;
           console.error(
@@ -280,7 +267,6 @@ export async function runModelSubcommand(argv: string[]): Promise<number> {
   }
 }
 
-/** Parse a --model-settings value; only a JSON object can be merged. */
 export function parseModelSettingsPatch(raw: string): Record<string, unknown> {
   let parsed: unknown;
   try {
@@ -363,8 +349,6 @@ async function resolveSelection(model: string, reasoning?: string) {
         `Unsupported reasoning level '${reasoning}' for ${handle}. Supported: ${levels.join(", ") || "none advertised"}`,
       );
     }
-    // Select the whole reasoning preset (including thinking budgets), not just
-    // an effort string that could leave thinking disabled or reset its budget.
     const tier = models.find(
       (entry) =>
         entry.handle === handle &&
@@ -529,8 +513,6 @@ async function runModelConfigAction(
       );
     const targetAgentId = agentId;
     let agent = await backend.retrieveAgent(targetAgentId);
-    // Write the target's model_settings: the conversation override when one
-    // is targeted, otherwise the agent default.
     const writeModelSettings = async (settings: Record<string, unknown>) => {
       if (conversation)
         await backend.updateConversation(conversation.id, {
@@ -560,8 +542,6 @@ async function runModelConfigAction(
         update.reasoning,
       );
       if (!update.model) {
-        // Keep the configured model, limits, and unrelated settings. Only
-        // replace provider-specific reasoning fields from the selected tier.
         const settings = currentModelSettings();
         const reasoningSettings = buildModelSettings(
           handle,
@@ -598,7 +578,6 @@ async function runModelConfigAction(
       agent = await backend.retrieveAgent(agentId);
     }
     if (update?.modelSettings) {
-      // Shallow merge after any model selection so explicit fields win.
       await writeModelSettings({
         ...currentModelSettings(),
         ...update.modelSettings,

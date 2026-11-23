@@ -62,8 +62,6 @@ test("recovery eligibility conflict rearms and later owned work converges", asyn
         lineageId,
       );
       if (!snapshot) throw new Error("expected recovery snapshot");
-      // A completed turn persists terminal evidence before releasing its lease.
-      // Without it, recovery correctly starts the retained work again.
       terminalStore.put(
         "agent-1",
         "conv-1",

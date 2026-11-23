@@ -32,9 +32,6 @@ import {
   unrefTimer,
 } from "./process_manager";
 
-// A watch loop runs for up to an hour (or indefinitely when persistent), so
-// the lifetime cap that guards one-shot scripts would end healthy monitors.
-// Bound the rate instead: bursts up to the bucket, then two calls per second.
 const TOOL_CALL_BURST = 120;
 const TOOL_CALL_REFILL_MS = 500;
 const MAX_RESULT_CHARS = 30_000;
@@ -49,7 +46,6 @@ export interface ScriptMonitorArgs {
   parentScope?: { agentId: string; conversationId: string };
 }
 
-/** Helpers owned by monitor.ts, passed in to keep the module graph acyclic. */
 export interface ScriptMonitorHooks {
   createOutput(path: string): { append(text: string): boolean };
   queueEvent(params: {
@@ -69,12 +65,10 @@ export interface ScriptMonitorHooks {
   timeoutEvent(timeoutMs: number): string;
 }
 
-/** One token bucket shared by tool calls and decide(), so neither can flood. */
 function createCallLimiter(signal: AbortSignal) {
   let tokens = TOOL_CALL_BURST;
   let refilledAt = Date.now();
   return <T>(call: () => Promise<T>): Promise<T> => {
-    // After stop, park instead of rejecting so a catch-all loop can't spin.
     if (signal.aborted) return new Promise<never>(() => {});
     const now = Date.now();
     const refill = Math.floor((now - refilledAt) / TOOL_CALL_REFILL_MS);
@@ -92,8 +86,6 @@ function createCallLimiter(signal: AbortSignal) {
   };
 }
 
-// Once stopped, sleep never settles. A rejection would let a script that
-// catches every error spin on microtasks and starve the event loop.
 function abortableSleep(ms: unknown, signal: AbortSignal): Promise<void> {
   const delay = Number(ms);
   if (!Number.isFinite(delay) || delay < 0) {
@@ -125,23 +117,15 @@ function formatReturnValue(value: unknown): string {
 
 async function releaseToolContext(contextId: string | null): Promise<void> {
   if (!contextId || !releaseRetainedToolContext(contextId)) return;
-  // The manager loads tool implementations; a static import would cycle.
   const manager = await import("@/tools/manager");
   manager.releaseToolExecutionContext(contextId);
 }
 
-/**
- * A JavaScript watch loop with CodeMode's tool bindings. `emit(text)` raises
- * one event through the same batching and rate limits as command stdout;
- * returning ends the monitor as completed and throwing ends it as failed.
- */
 export async function startScriptMonitor(
   args: ScriptMonitorArgs,
   hooks: ScriptMonitorHooks,
 ): Promise<{ taskId: string; outputFile: string }> {
   assertBackgroundProcessCapacity();
-  // The launching turn may end, and release its tool context, long before
-  // the loop does. Hold it until the monitor settles.
   const toolContextId = getRuntimeContext()?.toolContextId ?? null;
   if (toolContextId) retainToolContext(toolContextId);
   const controller = new AbortController();
@@ -264,9 +248,6 @@ export async function startScriptMonitor(
     });
   };
 
-  // The engine rejects every call once its signal aborts, which a catch-all
-  // loop would spin on. Give it a signal that never aborts and settle the
-  // monitor on our own abort; stopped calls and sleeps park instead.
   const stopped = new Promise<never>((_resolve, reject) => {
     controller.signal.addEventListener(
       "abort",
@@ -286,9 +267,6 @@ export async function startScriptMonitor(
     globals: {
       emit,
       sleep: (ms: unknown) => abortableSleep(ms, controller.signal),
-      // The engine's decide() rejects on its own (never-aborting) signal and
-      // has a lifetime cap meant for one-shot scripts; a watch loop instead
-      // shares the rate limit and parks once stopped, like tool calls.
       decide: (state: unknown, questions: unknown, options?: unknown) => {
         if (
           options !== undefined &&
@@ -296,8 +274,6 @@ export async function startScriptMonitor(
         ) {
           throw new Error("decide() options must be an object.");
         }
-        // Like the engine's trackCall: a script that forgets to await must
-        // not surface as an unhandled rejection (fatal for the host).
         const pending = limit(() =>
           submitWorkflowDecision(
             { ...(options as object | undefined), state, questions },

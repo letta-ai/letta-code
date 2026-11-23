@@ -18,19 +18,6 @@ import { createRuntime } from "./lifecycle";
 import { setActiveRuntime } from "./runtime";
 import type { ConversationRuntime, ListenerRuntime } from "./types";
 
-/**
- * Remote `/clear` used to create a conversation and then reassign
- * `runtime.conversationId` in place while `runtime.key` kept addressing the
- * old scope. The next accepted input was keyed in the durable ledger under the
- * stale `runtime.key` but carried a replay payload scoped to the new
- * conversation, so the whole `input-dispositions-v2.json` failed validation
- * ("Disposition replay payload identity is invalid") and every subsequent
- * read of the store threw.
- *
- * The command is gone. An old client that still sends it must get a plain
- * unsuccessful result and must not move any runtime or conversation state.
- */
-
 const REMOVED_MESSAGE =
   "/clear was removed; use /new to start a fresh conversation.";
 
@@ -58,10 +45,6 @@ function executeCommandResponses(
     .filter((message) => message.type === "execute_command_response");
 }
 
-/**
- * Record one accepted input through the production reserve/commit path, the
- * same way an inbound user message does.
- */
 function recordAcceptedInput(
   runtime: ConversationRuntime,
   clientMessageId: string,
@@ -93,8 +76,6 @@ function setupDurableListener(storageDir: string): {
   listener: ListenerRuntime;
   runtime: ConversationRuntime;
 } {
-  // A working backend is installed on purpose: the refusal must hold because
-  // the command is gone, not because conversation creation happened to fail.
   __testSetBackend(new FakeHeadlessBackend("agent-clear"));
   const listener = createRuntime();
   listener.acceptedInputDispositionLedger =
@@ -150,8 +131,6 @@ describe("removed remote /clear command", () => {
         },
       ]);
 
-      // Conversation identity is untouched, so the ledger key and the replay
-      // payload scope still agree on the next input.
       expect(runtime.conversationId).toBe(conversationIdBefore);
       expect(runtime.key).toBe(runtimeKeyBefore);
 

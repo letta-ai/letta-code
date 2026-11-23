@@ -2,7 +2,6 @@ import { execFile, execFileSync } from "node:child_process";
 import { basename } from "node:path";
 import { promisify } from "node:util";
 
-/** Signal 0 checks existence without delivering anything; EPERM means alive but not ours. */
 export function isProcessAlive(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
@@ -13,18 +12,8 @@ export function isProcessAlive(pid: number): boolean {
   }
 }
 
-/**
- * PowerShell can take many seconds to start on a busy Windows machine. Lock
- * owners record this value before they can proceed, so give up and report
- * "unknown" (pid liveness then decides) instead of stalling the caller.
- */
 const PROCESS_START_LOOKUP_TIMEOUT_MS = 5_000;
 
-/**
- * Start time of a process as the OS reports it, or null when it cannot be
- * read. Rendered in UTC with the C locale so every process on the machine
- * produces the same string for the same pid regardless of its own TZ.
- */
 export async function getProcessStartTime(pid: number): Promise<string | null> {
   if (!Number.isInteger(pid) || pid <= 0) return null;
   try {
@@ -56,12 +45,6 @@ export async function getProcessStartTime(pid: number): Promise<string | null> {
 
 let ownStartTime: Promise<string | null> | undefined;
 
-/**
- * This process's own start time, resolved once; it cannot change. A null
- * result (lookup failed or timed out, e.g. a slow PowerShell start on Windows)
- * is not cached, so the next caller retries instead of recording "unknown"
- * for the rest of the process's life.
- */
 export function getOwnProcessStartTime(): Promise<string | null> {
   if (!ownStartTime) {
     const lookup = getProcessStartTime(process.pid);
@@ -81,15 +64,9 @@ export function resetOwnProcessStartTimeForTests(): void {
 
 export interface ProcessIdentity {
   pid: number;
-  /** Start time from getProcessStartTime, so a reused pid is not mistaken for the original. */
   started?: string;
 }
 
-/**
- * Is the recorded process still the one running under that pid? Liveness
- * alone is not enough because pids are recycled; a recorded start time settles
- * it. Without one, or when the OS cannot report it, liveness decides.
- */
 export async function isSameProcessRunning(
   identity: ProcessIdentity,
 ): Promise<boolean> {
@@ -99,7 +76,6 @@ export async function isSameProcessRunning(
   return started === null || started === identity.started;
 }
 
-/** The pid's command line via `ps`, or null on Windows or when ps fails. */
 export function getProcessCommand(pid: number): string | null {
   if (process.platform === "win32") return null;
   try {
@@ -113,12 +89,6 @@ export function getProcessCommand(pid: number): string | null {
   }
 }
 
-/**
- * True only when a live pid is positively identified as non-letta, i.e. its
- * command neither mentions letta nor runs this process's entry script or
- * runtime (dev/bun-run instances). Our own pid, Windows, and a failed `ps`
- * lookup all report false so the owner stays held.
- */
 export function isPidReusedByNonLetta(
   pid: number,
   getCommand: (pid: number) => string | null = getProcessCommand,

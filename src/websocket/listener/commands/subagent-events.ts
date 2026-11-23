@@ -5,10 +5,6 @@ import type {
   ReadSubagentEventsResponse,
 } from "@/types/subagent-protocol";
 
-/**
- * Serve a caller-notified subagent's events to its parent agent,
- * oldest first, one page at a time.
- */
 export function handleReadSubagentEventsCommand(
   command: ReadSubagentEventsCommand,
 ): ReadSubagentEventsResponse {

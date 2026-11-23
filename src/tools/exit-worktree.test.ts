@@ -103,7 +103,6 @@ describe("ExitWorktree tool", () => {
     return repo;
   }
 
-  /** Create a worktree and return its path plus branch, without switching cwd. */
   async function makeWorktree(
     repo: string,
     name: string,
@@ -172,8 +171,6 @@ describe("ExitWorktree tool", () => {
     expect(result.status).toBe("success");
     expect(result.returned_to).toBe(repo);
     expect(result.removed).toBe(false);
-    // The TUI renderer parses these labeled fields; keep them in lockstep
-    // with src/cli/components/ExitWorktreeResultRenderer.tsx.
     expect(result.content[0]?.text).toContain("Left worktree.");
     expect(result.content[0]?.text).toContain(`Path: ${worktreePath}`);
     expect(result.content[0]?.text).toContain(`Branch: ${branchName}`);
@@ -214,7 +211,6 @@ describe("ExitWorktree tool", () => {
     expect(result.content[0]?.text).toContain("still holds work");
     expect(result.content[0]?.text).toContain("uncommitted change");
     expect(result.content[0]?.text).toContain("scratch.txt");
-    // Nothing was touched: the refusal must not half-exit the session.
     expect(await exists(worktreePath)).toBe(true);
   });
 

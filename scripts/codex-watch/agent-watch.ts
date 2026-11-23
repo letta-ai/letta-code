@@ -1,10 +1,4 @@
 #!/usr/bin/env bun
-/**
- * Amelia-driven Codex release watcher entrypoint.
- *
- * Uses a central tracker issue for state and only asks Amelia to review
- * non-noop releases.
- */
 
 import { appendFileSync, writeFileSync } from "node:fs";
 import {

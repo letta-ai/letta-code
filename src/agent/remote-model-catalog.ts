@@ -1,15 +1,3 @@
-/**
- * Live model catalog refresh from the cloud catalog endpoint (LET-9792).
- *
- * Hosted API backends load curated presets from GET /v1/models/catalog.
- * Custom API backends and local backends project their model inventory into
- * the same CatalogModel shape.
- *
- * Hosted catalogs are persisted at ~/.letta/cache/model-catalog.json so a
- * temporary endpoint failure keeps the last successful catalog. There is no
- * bundled catalog: the hosted endpoint or active backend runtime is canonical.
- */
-
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
@@ -25,7 +13,7 @@ import { debugLog, debugWarn } from "@/utils/debug";
 import { resolveGlobalConfigDir } from "@/utils/settings-path";
 
 const CATALOG_PATH = "/v1/models/catalog";
-const REFRESH_TTL_MS = 5 * 60 * 1000; // matches available-models cache TTL
+const REFRESH_TTL_MS = 5 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 5_000;
 const CACHE_SCHEMA_VERSION = 1;
 const LOCAL_CATALOG_SOURCE = "local:pi-ai";
@@ -40,7 +28,6 @@ let inflight: {
   token: symbol;
 } | null = null;
 
-/** Entry shape returned by GET /v1/models/catalog. */
 interface RemoteCatalogEntry {
   id: string;
   handle: string;
@@ -130,7 +117,6 @@ function isValidEntry(entry: unknown): entry is RemoteCatalogEntry {
   );
 }
 
-/** Persisted cache rows are already-mapped CatalogModels — no re-mapping. */
 function isValidCachedModel(entry: unknown): entry is CatalogModel {
   if (!hasEntryIdentity(entry)) return false;
   const candidate = entry as Record<string, unknown>;
@@ -145,14 +131,6 @@ function isValidCachedModel(entry: unknown): entry is CatalogModel {
   );
 }
 
-/**
- * Map a remote catalog entry to the shared runtime catalog shape.
- *
- * The endpoint splits preset `updateArgs` into typed fields
- * (contextWindow/maxOutputTokens) plus a `config` bag of provider knobs;
- * recombine them so every existing consumer of `model.updateArgs` keeps
- * working unchanged.
- */
 export function toCatalogModel(entry: RemoteCatalogEntry): CatalogModel {
   const updateArgs: Record<string, unknown> = { ...(entry.config ?? {}) };
   if (typeof entry.contextWindow === "number") {
@@ -177,11 +155,6 @@ export function toCatalogModel(entry: RemoteCatalogEntry): CatalogModel {
   };
 }
 
-/**
- * Replace the live catalog contents in place so existing imports of `models`
- * observe the refreshed data. Refuses obviously-broken payloads (empty, or
- * missing an Auto/default entry) so a bad deploy can't blank the selector.
- */
 export function applyCatalogModels(
   next: CatalogModel[],
   options: { requireManagedDefault?: boolean } = {},
@@ -225,12 +198,6 @@ function persistCatalogCache(entries: CatalogModel[], source: string): void {
   }
 }
 
-/**
- * Load the persisted catalog cache (last successful refresh) into the live
- * catalog. Called once at startup, before any network fetch, so temporary
- * endpoint failures keep the freshest known cloud data. Missing or malformed
- * caches leave the runtime catalog empty until the endpoint succeeds.
- */
 export function loadPersistedModelCatalog(source: string): boolean {
   try {
     const path = catalogCachePath();
@@ -249,8 +216,6 @@ export function loadPersistedModelCatalog(source: string): boolean {
     ) {
       return false;
     }
-    // Cache rows are CatalogModels persisted post-mapping; reject the whole
-    // cache on any invalid row.
     if (!parsed.models.every(isValidCachedModel)) {
       return false;
     }
@@ -302,7 +267,6 @@ function reasoningEffortForThinkingLevel(level: string): string {
   return level === "off" ? "none" : level;
 }
 
-/** Project backend model inventory into the shared runtime catalog shape. */
 export function toRuntimeCatalogModels(
   entries: readonly AvailableModel[],
 ): CatalogModel[] {
@@ -375,13 +339,6 @@ function isCloudCatalogSource(source: string): boolean {
   );
 }
 
-/**
- * Refresh the live model catalog from the cloud endpoint.
- *
- * Local mode projects backend.listModels() from pi-ai. API mode uses the
- * authenticated catalog endpoint and persisted cache. Cloud requests are
- * throttled by TTL and deduped in flight; failures never disturb a valid cache.
- */
 export async function refreshModelCatalog(options?: {
   force?: boolean;
 }): Promise<boolean> {
@@ -461,7 +418,6 @@ export async function refreshModelCatalog(options?: {
   return request;
 }
 
-/** Initialize the catalog after startup has selected its backend mode. */
 export async function initializeModelCatalog(): Promise<void> {
   await refreshModelCatalog();
   if (resolveBackendMode() !== "api") return;
@@ -469,7 +425,6 @@ export async function initializeModelCatalog(): Promise<void> {
   requireModelCatalog(baseUrl);
 }
 
-/** Fail only when Cloud has neither a valid cache nor a reachable catalog. */
 export function requireModelCatalog(baseUrl = LETTA_CLOUD_API_URL): void {
   if (isCloudCatalogSource(baseUrl) && models.length === 0) {
     throw new Error(
@@ -478,14 +433,10 @@ export function requireModelCatalog(baseUrl = LETTA_CLOUD_API_URL): void {
   }
 }
 
-/** Fire-and-forget catalog warmup (startup path). */
 export function prefetchModelCatalog(): void {
-  void refreshModelCatalog().catch(() => {
-    // Failures already logged inside refreshModelCatalog.
-  });
+  void refreshModelCatalog().catch(() => {});
 }
 
-/** Test hook: reset throttle/inflight state. */
 export function __testResetRemoteModelCatalog(): void {
   lastRefreshAt = 0;
   inflight = null;

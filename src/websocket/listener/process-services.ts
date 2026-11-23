@@ -53,7 +53,6 @@ export function installProcessEventRouting(params: {
   ) => {
     const transport = runtime.transport ?? runtime.socket;
     if (!transport || !isListenerTransportOpen(transport)) {
-      // Nothing was delivered, so the next connection starts from full state.
       clearSubagentSnapshotCache(runtime);
       return;
     }
@@ -71,8 +70,6 @@ export function installProcessEventRouting(params: {
       };
       ownerScopes.set(JSON.stringify(scope), scope);
     }
-    // A launch runtime can be evicted before its final subagent update.
-    // Keep the previous owners for one update so removal also sends empty state.
     const scopes = new Map([...previousOwnerScopes, ...ownerScopes]);
     previousOwnerScopes = ownerScopes;
     for (const conversationRuntime of runtime.conversationRuntimes.values()) {
@@ -136,7 +133,6 @@ export function installProcessEventRouting(params: {
           agent_id: scope.agentId,
           conversation_id: scope.conversationId,
         });
-        // A conversation held only for its background work can go now.
         const conversationRuntime = getConversationRuntime(
           runtime,
           scope.agentId,
@@ -193,9 +189,6 @@ export function installProcessEventRouting(params: {
     scheduleQueuePump(targetRuntime, processTransport, opts, processQueuedTurn);
   });
 
-  // One disk watcher per sandbox. Alert only the most recently active
-  // conversation so idle agents don't all wake to free space at once; the
-  // rest see the between-turns reminder on their next turn.
   runtime._stopDiskSpaceWatch?.();
   runtime._stopDiskSpaceWatch = watchSandboxDiskSpace(
     getCurrentWorkingDirectory,
@@ -217,7 +210,6 @@ export function deliverSandboxDiskAlert(
   );
 }
 
-/** A running turn counts as now; otherwise the last model response time. */
 function getMostRecentlyActiveConversation(
   runtime: ListenerRuntime,
 ): ConversationRuntime | null {

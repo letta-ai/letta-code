@@ -1,7 +1,6 @@
 import { getSupportedChannelIds } from "./plugin-registry";
 import { readRoutes } from "./routing";
 
-/** Only device-owned routes live here; Cloud-managed channels do not. */
 export function getLocalChannelTeleportError(scope: {
   agentId: string;
   conversationId: string;

@@ -13,7 +13,6 @@ export function isClientToolsetConfig(
   );
 }
 
-/** The accepted-input predicate and its rejection message use the same checks. */
 export function getInputToolSelectionError(
   payload: Record<string, unknown>,
 ): string | null {

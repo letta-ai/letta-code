@@ -35,9 +35,7 @@ import type { ToolsetName, ToolsetPreference } from "./toolset-types";
 export type { ToolsetName, ToolsetPreference } from "./toolset-types";
 
 export interface ClientToolsetConfig {
-  /** Request-scoped base toolset. Omitted preserves the runtime preference. */
   base?: ToolsetPreference;
-  /** Additional bundled client tools to load before applying the allowlist. */
   include?: string[];
 }
 
@@ -57,12 +55,6 @@ function resolveIncludedToolNames(toolNames: string[] | undefined): ToolName[] {
   });
 }
 
-/**
- * Provider types whose models speak the OpenAI API and should use the codex
- * toolset regardless of handle prefix. Handles are unreliable here: BYOK and
- * managed providers use arbitrary prefixes (e.g. "lc-openai/gpt-6-astra",
- * "chatgpt-work/gpt-5.5"), so the provider type is the authoritative signal.
- */
 const OPENAI_PROVIDER_TYPES = new Set([
   "openai",
   "openai-codex",
@@ -74,9 +66,6 @@ export function deriveToolsetFromModel(
   providerType?: string | null,
   options?: { openAICompatibleProxy?: boolean | null },
 ): "codex" | "default" {
-  // Generic OpenAI-compatible endpoints also report provider_type "openai"
-  // (with the openai_compatible_proxy marker in model_settings) but may serve
-  // non-GPT models, so they keep the default toolset.
   if (
     providerType &&
     OPENAI_PROVIDER_TYPES.has(providerType) &&
@@ -88,7 +77,6 @@ export function deriveToolsetFromModel(
   return isOpenAIModel(resolvedModel) ? "codex" : "default";
 }
 
-/** Startup uses the same preset selection and construction as each turn. */
 export async function loadStartupTools(params: {
   modelIdentifier?: string;
   toolset?: ToolsetPreference;
@@ -198,7 +186,6 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
   clientToolset?: ClientToolsetConfig;
   exclude?: ToolName[];
   clientToolAllowlist?: string[];
-  /** Connection whose copy wins when two connections register one tool name. */
   externalToolOwnerConnectionId?: string;
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
@@ -300,9 +287,7 @@ export async function prepareToolExecutionContextForScope(params: {
   conversationId?: string | null;
   actingUserId?: string;
   suppressActingUserFallback?: boolean;
-  /** Cloud super run owning this turn, when the relay delivered one. */
   mcpOriginatorSuperRunId?: string;
-  /** Client message ids that started the listener turn owning this context. */
   resolveClientMessageIds?: () => string[];
   turnStartedAt?: number;
   overrideModel?: string | null;
@@ -311,7 +296,6 @@ export async function prepareToolExecutionContextForScope(params: {
   exclude?: ToolName[];
   clientToolset?: ClientToolsetConfig;
   clientToolAllowlist?: string[];
-  /** Connection whose copy wins when two connections register one tool name. */
   externalToolOwnerConnectionId?: string;
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
@@ -320,10 +304,8 @@ export async function prepareToolExecutionContextForScope(params: {
   bundledSkills?: string[];
   workspaceSandbox?: RuntimeContextSnapshot["workspaceSandbox"];
   executionSettings?: RuntimeContextSnapshot["executionSettings"];
-  /** Foreground yield from the runtime tool policy; unset uses the default. */
   foregroundYieldMs?: number;
   cachedAgent?: AgentState | null;
-  /** Caller-owned retry/lease policy, applied only to scope metadata reads. */
   readScopeState?: <T>(read: () => Promise<T>) => Promise<T>;
   modContext?: ModContext;
   shouldEnqueueBackground?: () => Promise<boolean>;
@@ -361,7 +343,6 @@ export async function prepareToolExecutionContextForScope(params: {
     modAdapters,
   } = params;
 
-  // Per field: a base-only request keeps the saved include, and vice versa.
   const clientToolset: ClientToolsetConfig | undefined =
     mergeClientToolsetFields(
       requestClientToolset,
@@ -428,10 +409,7 @@ export async function prepareToolExecutionContextForScope(params: {
     try {
       effectiveProviderType =
         (await getModelProviderType(effectiveModel)) ?? null;
-    } catch {
-      // Model metadata is best-effort. Handle-based classification remains
-      // available when the provider inventory cannot be fetched.
-    }
+    } catch {}
   }
 
   const scopedConversationId = conversationId ?? "default";
@@ -463,9 +441,7 @@ export async function prepareToolExecutionContextForScope(params: {
       ...(suppressActingUserFallback
         ? { suppressActingUserFallback: true }
         : {}),
-      // A newly scoped execution context must never inherit ambient authority.
       mcpOriginatorSuperRunId: mcpOriginatorSuperRunId ?? null,
-      // Nor another turn's client message ids.
       resolveClientMessageIds,
       turnStartedAt,
       workingDirectory,
@@ -474,7 +450,6 @@ export async function prepareToolExecutionContextForScope(params: {
       ...(bundledSkills !== undefined ? { bundledSkills } : {}),
       ...(workspaceSandbox !== undefined ? { workspaceSandbox } : {}),
       executionSettings,
-      // Always set so a turn never inherits another conversation's yield.
       foregroundYieldMs,
     },
   });
@@ -532,23 +507,12 @@ export async function clearPersistedClientToolRules(
   }
 }
 
-/**
- * Force switch to a specific toolset regardless of model.
- *
- * @param toolsetName - The toolset to switch to
- */
 export async function forceToolsetSwitch(
   toolsetName: ToolsetName,
 ): Promise<void> {
   await loadTools(undefined, { resolvedToolset: toolsetName });
 }
 
-/**
- * Switches the loaded toolset based on the target model identifier.
- *
- * @param modelIdentifier - The model handle/id
- * @param providerType - Provider type used to refine toolset derivation
- */
 export async function switchToolsetForModel(
   modelIdentifier: string,
   providerType?: string | null,

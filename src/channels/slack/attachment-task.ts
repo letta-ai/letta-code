@@ -15,12 +15,6 @@ import {
   resolveNotificationScope,
 } from "@/utils/task-notifications";
 
-/**
- * How long an explicit Slack attachment download may run inside the tool call
- * before it yields to a background task. Mirrors the Codex-toolset
- * exec_command yield pattern: fast downloads stay a single round-trip, slow
- * ones return a task id instead of wedging the turn on MessageChannel.
- */
 export const SLACK_ATTACHMENT_DOWNLOAD_YIELD_MS = 10_000;
 
 export type SlackAttachmentDownloadOutcome =
@@ -32,16 +26,6 @@ function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/**
- * Run a Slack attachment download with a bounded synchronous window.
- *
- * The download is registered in the shared background-process registry up
- * front so TaskStop and the listener status snapshot see it from the first
- * byte. If it settles within the yield window the entry completes
- * immediately and the caller gets the direct result; otherwise the caller
- * gets the task id while the transfer keeps streaming in-process, and a task
- * notification reports the local_path (or failure) once it settles.
- */
 export async function runSlackAttachmentDownloadTask(params: {
   description: string;
   download: (signal: AbortSignal) => Promise<ChannelMessageAttachment>;
@@ -53,8 +37,6 @@ export async function runSlackAttachmentDownloadTask(params: {
   const taskId = getNextDownloadId();
   const outputFile = createBackgroundOutputFile(taskId);
   const abortController = new AbortController();
-  // Resolve now: by the time a slow download settles, the process-global agent
-  // context may point at a different conversation.
   const notificationScope = resolveNotificationScope(params.runtimeScope);
   let backgrounded = false;
   const processState: BackgroundProcess = {
@@ -78,7 +60,6 @@ export async function runSlackAttachmentDownloadTask(params: {
     status: "completed" | "failed",
     result: string,
   ) => {
-    // TaskStop suppresses the notification for a download it cancelled.
     if (!backgrounded || processState.completionNotificationSuppressed) return;
     addToMessageQueue({
       kind: "task_notification",

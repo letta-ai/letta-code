@@ -1,7 +1,3 @@
-/**
- * Splits a skill-delta reminder into the skill names listed under each
- * section, so tests can assert the diff rather than the wording.
- */
 export type SkillDeltaSections = {
   added: string[];
   updated: string[];

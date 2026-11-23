@@ -1,8 +1,3 @@
-/**
- * Server mode - Register letta-code as a listener to receive messages from Letta Cloud
- * Usage: letta server --name "george"
- */
-
 import { hostname } from "node:os";
 import type { Buffers, Line } from "@/cli/helpers/accumulator";
 import { buildAgentReference } from "@/cli/helpers/app-urls";
@@ -11,12 +6,10 @@ import { getErrorMessage } from "@/utils/error";
 import { registerWithCloudRetry } from "@/websocket/listen-register";
 import { resolveListenerRegistrationOptions } from "@/websocket/listener/auth";
 
-// tiny helper for unique ids
 function uid(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-// Helper type for command result
 type CommandLine = Extract<Line, { kind: "command" }>;
 
 let activeCommandId: string | null = null;
@@ -25,7 +18,6 @@ export function setActiveCommandId(id: string | null): void {
   activeCommandId = id;
 }
 
-// Context passed to listen handler
 export interface ListenCommandContext {
   buffersRef: { current: Buffers };
   refreshDerived: () => void;
@@ -34,7 +26,6 @@ export interface ListenCommandContext {
   conversationId: string | null;
 }
 
-// Helper to add a command result to buffers
 function addCommandResult(
   buffersRef: { current: Buffers },
   refreshDerived: () => void,
@@ -63,7 +54,6 @@ function addCommandResult(
   return cmdId;
 }
 
-// Helper to update an existing command result
 function updateCommandResult(
   buffersRef: { current: Buffers },
   refreshDerived: () => void,
@@ -92,17 +82,11 @@ interface ListenOptions {
   envName?: string;
 }
 
-/**
- * Handle /listen command
- * Usage: /listen [--computer-name "work-laptop"]
- *        /listen off
- */
 export async function handleListen(
   ctx: ListenCommandContext,
   msg: string,
   opts: ListenOptions = {},
 ): Promise<void> {
-  // Handle /listen off - stop the listener
   if (msg.trim() === "/remote off") {
     const { stopListenerClient, isListenerActive } = await import(
       "@/websocket/listen-client"
@@ -130,7 +114,6 @@ export async function handleListen(
     return;
   }
 
-  // Show usage if needed
   if (msg.includes("--help") || msg.includes("-h")) {
     addCommandResult(
       ctx.buffersRef,
@@ -155,28 +138,22 @@ export async function handleListen(
     return;
   }
 
-  // Determine connection name
   let connectionName: string;
 
   if (opts.envName) {
-    // Explicitly provided - use it and save to local project settings
     connectionName = opts.envName;
     settingsManager.setListenerEnvName(connectionName);
   } else {
-    // Not provided - check saved local project settings
     const savedName = settingsManager.getListenerEnvName();
 
     if (savedName) {
-      // Reuse saved name
       connectionName = savedName;
     } else {
-      // No saved name - use hostname and save it
       connectionName = hostname();
       settingsManager.setListenerEnvName(connectionName);
     }
   }
 
-  // Helper to build ADE connection URL
   const buildConnectionUrl = (connId: string): string => {
     if (!ctx.agentId) return "";
 
@@ -186,7 +163,6 @@ export async function handleListen(
     });
   };
 
-  // Start listen flow
   ctx.setCommandRunning(true);
 
   const cmdId = addCommandResult(
@@ -199,7 +175,6 @@ export async function handleListen(
   );
 
   try {
-    // Get device ID (stable across sessions)
     const deviceId = settingsManager.getOrCreateDeviceId();
     const deviceName = hostname();
 
@@ -220,7 +195,6 @@ export async function handleListen(
         surface: "listen",
       });
 
-    // Register with cloud, retrying transient failures with a bounded backoff.
     const registerOptions = await resolveRegisterOptions();
     const {
       connectionId,
@@ -256,10 +230,8 @@ export async function handleListen(
       "running",
     );
 
-    // Import and start WebSocket client
     const { startListenerClient } = await import("@/websocket/listen-client");
 
-    // Helper to start client with given connection details
     const startClient = async (
       connId: string,
       wsUrlValue: string,
@@ -360,7 +332,6 @@ export async function handleListen(
               },
             );
 
-            // Restart client with new connectionId
             await startClient(
               reregisterResult.connectionId,
               reregisterResult.wsUrl,

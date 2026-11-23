@@ -9,14 +9,6 @@ type ErrorLine = {
   text: string;
 };
 
-/**
- * ErrorMessageRich - Rich formatting version with two-column layout
- *
- * Features:
- * - Left column (2 chars wide) with warning marker
- * - Right column with wrapped text content
- * - Consistent with other Rich message components
- */
 export const ErrorMessage = memo(({ line }: { line: ErrorLine }) => {
   const columns = useTerminalWidth();
   const contentWidth = Math.max(0, columns - 2);

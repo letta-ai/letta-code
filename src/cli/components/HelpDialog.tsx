@@ -33,7 +33,6 @@ export function HelpDialog({ onClose }: HelpDialogProps) {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [customCommands, setCustomCommands] = useState<CommandItem[]>([]);
 
-  // Load custom commands once on mount
   useEffect(() => {
     import("@/cli/commands/custom.js").then(({ getCustomCommands }) => {
       getCustomCommands().then((customs) => {
@@ -48,7 +47,6 @@ export function HelpDialog({ onClose }: HelpDialogProps) {
     });
   }, []);
 
-  // Get all non-hidden commands, sorted by order (includes custom commands)
   const allCommands = useMemo<CommandItem[]>(() => {
     const builtins = Object.entries(commands)
       .filter(([_, cmd]) => !cmd.hidden)
@@ -60,7 +58,6 @@ export function HelpDialog({ onClose }: HelpDialogProps) {
     return [...builtins, ...customCommands].sort((a, b) => a.order - b.order);
   }, [customCommands]);
 
-  // Keyboard shortcuts
   const shortcuts = useMemo<ShortcutItem[]>(() => {
     return [
       { keys: "/", description: "Open command autocomplete" },
@@ -103,7 +100,6 @@ export function HelpDialog({ onClose }: HelpDialogProps) {
   useInput(
     useCallback(
       (input, key) => {
-        // CTRL-C: immediately close
         if (key.ctrl && input === "c") {
           onClose();
           return;
@@ -137,13 +133,11 @@ export function HelpDialog({ onClose }: HelpDialogProps) {
             return prev;
           });
         } else if (input === "j" || input === "J") {
-          // Previous page
           if (currentPage > 0) {
             setCurrentPage((prev) => prev - 1);
             setSelectedIndex(0);
           }
         } else if (input === "k" || input === "K") {
-          // Next page
           if (currentPage < totalPages - 1) {
             setCurrentPage((prev) => prev + 1);
             setSelectedIndex(0);

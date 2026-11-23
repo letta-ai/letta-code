@@ -6,7 +6,6 @@ import {
   backgroundProcesses,
 } from "./process_manager";
 
-/** Suppress every notification before stopping any producer. */
 export async function stopConversationBackground(
   scope: BackgroundRuntimeScope,
 ): Promise<void> {

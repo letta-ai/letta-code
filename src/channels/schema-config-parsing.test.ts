@@ -227,10 +227,6 @@ describe("parseChannelConfigSchema", () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────
-// Phase 1 extension: number, string-array, key-value-map
-// ─────────────────────────────────────────────────────────────────────
-
 describe("parseChannelConfigSchema > number field", () => {
   test("accepts a valid number field with bounds, default, suffix", () => {
     const parsed = parseChannelConfigSchema({

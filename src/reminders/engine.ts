@@ -37,13 +37,9 @@ export interface SharedReminderContext {
   systemInfoReminderEnabled: boolean;
   skillSources: SkillSource[];
   conversationBootstrapContent?: MessageCreate["content"];
-  /** Explicit working directory (overrides process.cwd() in session context). */
   workingDirectory?: string;
-  /** Source of the session context (varies intro text). */
   sessionContextSource?: SessionContextSource;
-  /** Reason the session context is being (re)generated. */
   sessionContextReason?: SessionContextReason;
-  /** Shell context detected at startup, if available. */
   shellContext?: ShellContext;
 }
 
@@ -69,9 +65,7 @@ async function buildAgentInfoReminder(
   try {
     const scopeAgentId = await getMcpScopeAgentId(context.agent.id);
     if (scopeAgentId !== context.agent.id) parentAgentId = scopeAgentId;
-  } catch {
-    // Parent lookup must not prevent the agent's own info reminder.
-  }
+  } catch {}
   const reminder = buildAgentInfo({
     parentAgentId,
     agentInfo: {
@@ -87,12 +81,6 @@ async function buildAgentInfoReminder(
   return reminder || null;
 }
 
-/**
- * Secret names a session can use: its own vault plus, for a subagent, the vault
- * of the agent it inherits MCP from. Shell substitution already falls back to
- * that vault (resolveSecretEnvFromCommand); listing the names keeps the agent
- * from concluding a secret is missing.
- */
 export async function listAvailableSecretNames(
   agentId: string,
   lookupParent?: ParentAgentLookup,
@@ -111,9 +99,7 @@ export async function listAvailableSecretNames(
       await ensureSecretsLoaded(scopeAgentId);
       for (const name of listSecretNames(scopeAgentId)) names.add(name);
     }
-  } catch {
-    // Unresolvable parent linkage never widens access; list own names only.
-  }
+  } catch {}
   return [...names].sort();
 }
 
@@ -164,14 +150,12 @@ async function buildSecretsInfoReminder(
 
 export interface McpServerReminderEntry {
   name: string;
-  /** Tool count when cheaply known (cloud-synced tools); null otherwise. */
   toolCount: number | null;
 }
 
 export interface McpServersReminderDependencies {
   lookupParentAgent?: ParentAgentLookup;
   getLocalServerNames?: (agentId: string) => string[];
-  /** Returns cloud-connected servers, or null when unavailable. */
   listServerSideServers?: (
     agentId: string,
     timeoutMs?: number,
@@ -182,9 +166,6 @@ async function defaultListServerSideServers(
   agentId: string,
   timeoutMs = 3_000,
 ): Promise<McpServerReminderEntry[] | null> {
-  // An unavailable backend means no server-side MCP; local names are still
-  // valid. A failed server fetch on an available backend throws instead, so a
-  // transient API error never reports an incomplete server list.
   let serverSideAvailable = false;
   try {
     const { getBackend } = await import("@/backend");
@@ -203,8 +184,6 @@ async function defaultListServerSideServers(
     typeof listUnifiedMcpServers
   >[0];
   const allServers = await listUnifiedMcpServers(client, agentId, timeoutMs);
-  // Hosted Letta Cloud cannot execute stdio-type cloud servers; do not
-  // advertise tools the agent cannot call.
   const servers =
     getServerUrl() === LETTA_CLOUD_API_URL
       ? allServers.filter((server) => server.serverType !== "stdio")
@@ -238,7 +217,6 @@ export function buildMcpServersReminderText(
 
 export interface McpServerInventory {
   entries: McpServerReminderEntry[];
-  /** False when the backend has no server-side MCP, so `entries` are local only. */
   serverSideAvailable: boolean;
 }
 
@@ -291,11 +269,6 @@ export async function buildMcpServersInfoReminderText(
     ) {
       return null;
     }
-    // Without server-side MCP an empty local list is complete, so there is
-    // nothing to announce until a server appears. The key stays null so a
-    // later list is still sent. Backends with server-side MCP, such as Letta
-    // Cloud, keep the None form: an empty server-side list can hide servers
-    // that need the user's credentials, and the guardrail line covers them.
     if (
       uniqueEntries.length === 0 &&
       !serverSideAvailable &&
@@ -397,7 +370,6 @@ async function buildPermissionModeReminder(
   const shouldEmit = (() => {
     if (context.mode === "interactive" || context.mode === "listen") {
       if (previousMode === null) {
-        // First turn: only remind if not in the default mode (unrestricted).
         return currentMode !== "unrestricted";
       }
       return previousMode !== currentMode;
@@ -577,7 +549,6 @@ export async function buildSharedReminderParts(
   const parts: ReminderTextPart[] = [];
   const appliedReminderIds: SharedReminderId[] = [];
 
-  // Incremented once per user turn; surfaced in the statusline payload.
   context.state.turnCount += 1;
 
   for (const reminder of SHARED_REMINDER_CATALOG) {

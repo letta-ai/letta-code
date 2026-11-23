@@ -14,12 +14,6 @@ import { asRecord, isNonEmptyString } from "./utils";
 
 const INITIAL_SLACK_THREAD_HISTORY_LIMIT = 20;
 
-/**
- * Slack app_mention events and thread_broadcast messages deliver their file
- * attachments inconsistently (or not at all) on the event payload, so the
- * exact message must be re-fetched to hydrate attachments before prompt
- * formatting.
- */
 function shouldHydrateCurrentSlackMessageAttachments(
   msg: InboundChannelMessage,
 ): boolean {

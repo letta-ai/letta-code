@@ -364,7 +364,6 @@ export async function runConnectSubcommand(
             }
             return match.id;
           }
-          // Default to the provider's first (default) option, e.g. browser login.
           return prompt.options[0]?.id;
         },
       });
@@ -515,8 +514,6 @@ export async function runConnectSubcommand(
         await io.ensureSettingsReady();
       }
       if (hasConnectionOptions(connectionOptions)) {
-        // The API key must be validated against the user-supplied endpoint, not
-        // the provider's default one, or third-party keys fail with a 401.
         await io.checkProviderApiKey(
           provider.byokProvider.providerType,
           apiKey,

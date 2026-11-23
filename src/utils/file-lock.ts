@@ -7,20 +7,10 @@ import {
 import { sleep } from "@/utils/sleep";
 
 export type FileLockOptions = {
-  /** A lock file older than this is treated as abandoned and reaped. */
   staleMs?: number;
-  /** Poll interval while waiting for a held lock. */
   retryMs?: number;
-  /** Give up acquiring the lock after this many ms; 0 tries once, Infinity waits. */
   timeoutMs?: number;
-  /** Stop waiting when aborted. */
   signal?: AbortSignal;
-  /**
-   * Reap a lock only when the process that wrote it is gone, never merely
-   * because it is old. A paused or slow holder then keeps the lock and
-   * waiters time out, which is the safe outcome for a critical section that
-   * must stay exclusive; age-based reaping can let two holders in.
-   */
   reapOnlyDeadOwner?: boolean;
 };
 
@@ -36,12 +26,6 @@ const DEFAULT_OPTIONS: ResolvedOptions = {
 
 const CORRUPT_LOCK_GRACE_MS = 100;
 
-/**
- * Cross-process critical section guarded by an O_EXCL lock file. The lock
- * file path is created by the caller (its parent directory must already
- * exist). Stale locks (older than `staleMs`) are reaped automatically so a
- * crashed holder cannot block the system indefinitely.
- */
 export async function withFileLock<T>(
   lockPath: string,
   fn: () => Promise<T>,
@@ -56,13 +40,6 @@ export async function withFileLock<T>(
   }
 }
 
-/**
- * Acquire the lock and return its release, or null once `timeoutMs` elapses.
- * The record is written in full to a private file and published with a hard
- * link, so a lock file is never seen half-written and a process paused
- * across a reap cannot overwrite a lock someone else has since taken.
- * Release removes the file only while it still holds this acquisition.
- */
 export async function tryAcquireFileLock(
   lockPath: string,
   options?: FileLockOptions,
@@ -91,11 +68,6 @@ async function ownerRecord(): Promise<string> {
   });
 }
 
-/**
- * Create `path` holding `payload` only if it does not exist. The record is
- * written to a private file and published with a hard link, so it is never
- * seen half-written and cannot overwrite a file that appeared meanwhile.
- */
 async function publishExclusive(
   path: string,
   payload: string,
@@ -113,13 +85,6 @@ async function publishExclusive(
   }
 }
 
-/**
- * Remove the lock only while it still holds this acquisition. Under
- * age-based reaping a live holder can be reaped and replaced at any moment,
- * so the check and the unlink run under the reap marker, serialized with
- * reapers; a holder that is never reaped alive (`reapOnlyDeadOwner`) needs
- * no marker.
- */
 async function releaseIfHeld(
   lockPath: string,
   payload: string,
@@ -130,9 +95,7 @@ async function releaseIfHeld(
       if ((await readFile(lockPath, "utf-8")) === payload) {
         await unlink(lockPath);
       }
-    } catch {
-      // Already gone (reaped by another process, or unlink raced).
-    }
+    } catch {}
   };
   if (opts.reapOnlyDeadOwner) return remove();
   for (;;) {
@@ -156,7 +119,6 @@ async function tryReapStaleLock(
   try {
     raw = await readFile(lockPath, "utf-8");
   } catch {
-    // Lock vanished between EEXIST and read - retry immediately.
     return true;
   }
   let acquiredAt: unknown;
@@ -173,12 +135,8 @@ async function tryReapStaleLock(
     try {
       mtimeMs = (await stat(lockPath)).mtimeMs;
     } catch {
-      // Lock vanished between read and stat - retry immediately.
       return true;
     }
-    // An older writer may still create the file before filling it. Give a
-    // live writer a short grace period before treating corrupt/empty content
-    // as an abandoned acquisition.
     if (Date.now() - mtimeMs <= CORRUPT_LOCK_GRACE_MS) {
       return false;
     }
@@ -197,12 +155,6 @@ async function tryReapStaleLock(
   return removeIfUnchanged(lockPath, raw);
 }
 
-/**
- * Remove a lock file only if it still holds the stale content the caller
- * judged, and only while holding the exclusive reap marker. Two contenders
- * that both judged the old lock dead therefore cannot have the second one
- * delete the fresh lock the first just acquired.
- */
 async function removeIfUnchanged(
   lockPath: string,
   expected: string,
@@ -220,20 +172,12 @@ async function removeIfUnchanged(
     await unlink(lockPath);
     return true;
   } catch {
-    // Another reaper got there first.
     return true;
   } finally {
     await marker();
   }
 }
 
-/**
- * The reap marker serializes everyone who may delete `lockPath`. It is
- * published atomically, so it is never seen empty, and it is cleared only
- * when the reaper that wrote it is gone. A marker left by a crashed reaper is
- * removed with a content check; that removal is the one step here without
- * its own marker, and it can only race after a reaper crash.
- */
 async function acquireReapMarker(
   lockPath: string,
 ): Promise<(() => Promise<void>) | null> {
@@ -245,9 +189,7 @@ async function acquireReapMarker(
         if ((await readFile(reapPath, "utf-8")) === payload) {
           await unlink(reapPath);
         }
-      } catch {
-        // Already gone.
-      }
+      } catch {}
     };
   }
   let raw: string;
@@ -259,9 +201,7 @@ async function acquireReapMarker(
   let owner: { pid?: unknown; started?: unknown } = {};
   try {
     owner = JSON.parse(raw) as { pid?: unknown; started?: unknown };
-  } catch {
-    // Not one of ours; leave it to the corrupt-lock path on the next attempt.
-  }
+  } catch {}
   const alive =
     typeof owner.pid === "number" &&
     (await isSameProcessRunning({
@@ -271,8 +211,6 @@ async function acquireReapMarker(
   if (alive) return null;
   try {
     if ((await readFile(reapPath, "utf-8")) === raw) await unlink(reapPath);
-  } catch {
-    // Another contender cleared it.
-  }
+  } catch {}
   return null;
 }

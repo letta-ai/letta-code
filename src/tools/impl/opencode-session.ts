@@ -40,7 +40,6 @@ interface Turn {
   startedAt: number;
   generation: number;
   onToolCall?: ExternalToolCallListener;
-  /** Repeated updates are deduped by the task's log. */
   onToolResult?: ExternalWorkerListeners["onToolResult"];
   seen: Set<string>;
 }
@@ -87,7 +86,6 @@ function dispose(session: Session, error?: string): Promise<void> {
   if (session.stopping) return session.stopping;
   clearTimeout(session.idleTimer);
   if (sessions.get(session.id) === session) sessions.delete(session.id);
-  // A stopped task must not report completion while its shell children still run.
   session.stopping = session.server.close().then(() => {
     if (session.active)
       finish(session, session.active, {
@@ -124,7 +122,6 @@ function onEvent(session: Session, event: OpenCodeEvent): void {
   const part = event.properties.part;
   const sessionID = event.properties.sessionID ?? part?.sessionID;
   if (sessionID !== session.id) return;
-  // Never silently approve permissions or leave a noninteractive worker waiting.
   if (event.type === "permission.asked" || event.type === "question.asked") {
     dispose(
       session,
@@ -351,7 +348,6 @@ export async function sendOpenCodeMessage(
     options.signal?.throwIfAborted();
     const active = session.active;
     if (active) {
-      // Ignore the aborted request's result; the replacement owns this same task.
       active.generation++;
       try {
         await session.server.request(`/session/${session.id}/abort`, {});

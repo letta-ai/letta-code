@@ -1,5 +1,3 @@
-// src/cli/app/useReasoningCycle.ts
-
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import {
@@ -233,11 +231,6 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
     withCommandLock,
   } = ctx;
 
-  // Reasoning tier cycling (Tab hotkey in InputRich.tsx)
-  //
-  // We update the footer immediately (optimistic local state) and debounce the
-  // actual server update so users can rapidly cycle tiers.
-
   // biome-ignore lint/correctness/useExhaustiveDependencies: reasoning refs are stable objects; .current is read dynamically when flushing.
   const flushPendingReasoningEffort = useCallback(async () => {
     const desired = reasoningCycleDesiredRef.current;
@@ -246,8 +239,6 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
     if (reasoningCycleInFlightRef.current) return;
     if (!agentId) return;
 
-    // Don't change model settings mid-run.
-    // If a flush is requested while busy, ensure we still apply once the run completes.
     if (isAgentBusy()) {
       if (reasoningCycleTimerRef.current) {
         clearTimeout(reasoningCycleTimerRef.current);
@@ -259,7 +250,6 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
       return;
     }
 
-    // Clear any pending timer; we're flushing now.
     if (reasoningCycleTimerRef.current) {
       clearTimeout(reasoningCycleTimerRef.current);
       reasoningCycleTimerRef.current = null;
@@ -271,17 +261,7 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
         const cmd = commandRunner.start("/reasoning", "Setting reasoning...");
 
         try {
-          // "default" is a virtual sentinel for the agent's primary history. When
-          // active, reasoning tier changes must update the agent itself so the next
-          // agent sync doesn't snap back.
           const isDefaultConversation = conversationIdRef.current === "default";
-          // Reasoning changes preserve the current context window (keeps 1M
-          // dual-listing variants and custom /context-limit values intact) by
-          // RE-SENDING it explicitly via contextWindowOverride — omitting the
-          // field would make the server re-derive it from the handle and
-          // clamp it to a legacy global default (128k). A current value that
-          // looks like that server clamp is NOT preserved, so poisoned agents
-          // heal instead of re-poisoning themselves. See LET-9786.
           const preservedContextWindow = preservableContextWindow(
             llmConfigRef.current?.context_window,
             desired.modelHandle,
@@ -372,7 +352,6 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
             );
           }
 
-          // The API may not echo reasoning_effort back; preserve explicit desired effort.
           setLlmConfig({
             ...(updatedAgent?.llm_config ??
               llmConfigRef.current ??
@@ -393,7 +372,6 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
           setCurrentModelId(desired.modelId);
           setCurrentModelHandle(desired.modelHandle);
 
-          // Clear pending state.
           reasoningCycleDesiredRef.current = null;
           reasoningCycleLastConfirmedRef.current = null;
           reasoningCycleLastConfirmedAgentStateRef.current = null;
@@ -412,13 +390,11 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
           const errorDetails = formatErrorDetails(error, agentId);
           cmd.fail(`Failed to set reasoning: ${errorDetails}`);
 
-          // Revert optimistic UI if we have a confirmed config snapshot.
           if (reasoningCycleLastConfirmedRef.current) {
             const prev = reasoningCycleLastConfirmedRef.current;
             reasoningCycleDesiredRef.current = null;
             reasoningCycleLastConfirmedRef.current = null;
             setLlmConfig(prev);
-            // Also revert the agentState optimistic patch
             if (
               reasoningCyclePatchedAgentStateRef.current &&
               reasoningCycleLastConfirmedAgentStateRef.current
@@ -488,7 +464,6 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
       );
       if (!modelHandle) return;
 
-      // Derive current effort from effective model settings (conversation override aware)
       const currentEffort = deriveReasoningEffort(
         modelSettingsForEffort,
         current,
@@ -516,7 +491,6 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
           capabilities?.get(modelHandle) ?? capabilities?.get(tierLookupHandle),
       });
 
-      // Only enable cycling when there are multiple tiers for the same handle.
       if (tiers.length < 2) return;
 
       const anthropicXHighEffort = supportsDistinctAnthropicXHighEffort(
@@ -550,7 +524,6 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
         modelSettingsForEffort,
       );
 
-      // Snapshot the last confirmed config once per burst so we can revert on failure.
       if (!reasoningCycleLastConfirmedRef.current) {
         reasoningCycleLastConfirmedRef.current = current ?? null;
         reasoningCycleLastConfirmedAgentStateRef.current =
@@ -559,11 +532,9 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
             : (agentStateRef.current ?? null);
       }
 
-      // Optimistic UI update (footer changes immediately).
       setLlmConfig((prev: LlmConfig | null) =>
         prev ? ({ ...prev, reasoning_effort: next.effort } as LlmConfig) : prev,
       );
-      // Patch agentState.model_settings only when operating on agent defaults.
       if (!hasConversationModelOverrideRef.current) {
         reasoningCyclePatchedAgentStateRef.current = true;
         setAgentState((prev: AgentState | null | undefined) => {
@@ -593,7 +564,6 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
             ms.provider_type === "anthropic" ||
             ms.provider_type === "bedrock"
           ) {
-            // Preserve distinct xhigh on supported newer Anthropic models; legacy models map it to backend max.
             return {
               ...prev,
               model_settings: {
@@ -611,7 +581,6 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
       }
       setCurrentModelId(next.id);
 
-      // Debounce the server update.
       reasoningCycleDesiredRef.current = {
         modelHandle,
         effort: next.effort,

@@ -1,4 +1,3 @@
-// Machine god AI themed thinking verbs
 const THINKING_VERBS = Object.freeze([
   "thinking",
   "processing",
@@ -104,18 +103,15 @@ const PAST_TENSE_VERBS: Record<ThinkingVerb, string> = {
   internalizing: "internalized",
 };
 
-// Get a random thinking verb (e.g., "thinking", "processing")
 function getRandomVerb(): string {
   const index = Math.floor(Math.random() * THINKING_VERBS.length);
   return THINKING_VERBS[index] ?? "thinking";
 }
 
-// Get a random thinking verb phrase (e.g., "is thinking", "is processing")
 export function getRandomThinkingVerb(): string {
   return `is ${getRandomVerb()}`;
 }
 
-// Get a random past tense verb (e.g., "thought", "processed")
 export function getRandomPastTenseVerb(): string {
   const verb = getRandomVerb() as ThinkingVerb;
   return PAST_TENSE_VERBS[verb] ?? "completed";

@@ -1,19 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createStreamStallReconciler } from "@/cli/helpers/stream-stall-reconciler";
 
-/**
- * Regression tests for the mid-stream stall reconciler.
- *
- * Production failure mode: a turn's message stream goes silent BEFORE the
- * terminal SSE sequence (dead socket, lost frames). The run completes
- * server-side — e.g. with requires_approval and a pending approval request —
- * but the client iterator neither yields nor throws, so the turn wedges in
- * PROCESSING_API_RESPONSE with zero executing tools and the approval never
- * surfaces. The reconciler detects sustained silence (the server pings every
- * ~20s, so silence means a dead read), confirms the run ended server-side,
- * and aborts the dead read so the resume path replays the lost tail.
- */
-
 const originalInterval = process.env.LETTA_STREAM_STALL_RECONCILE_MS;
 const originalStatusTimeout = process.env.LETTA_STREAM_STALL_STATUS_TIMEOUT_MS;
 
@@ -91,7 +78,6 @@ describe("createStreamStallReconciler", () => {
     await waitMs(70);
     expect(harness.aborts()).toBe(0);
     expect(harness.reconciler.fired()).toBe(false);
-    // It re-armed and kept checking rather than giving up.
     expect(harness.statusCalls()).toBeGreaterThanOrEqual(2);
     harness.reconciler.clear();
   });
@@ -180,9 +166,8 @@ describe("createStreamStallReconciler", () => {
     const harness = makeReconciler({ runId: "run-1", status: "completed" });
     harness.reconciler.arm();
     await waitMs(25);
-    harness.reconciler.arm(); // chunk arrived
+    harness.reconciler.arm();
     await waitMs(25);
-    // 50ms total elapsed but never 40ms of continuous silence.
     expect(harness.aborts()).toBe(0);
     harness.reconciler.clear();
   });
@@ -202,7 +187,7 @@ describe("createStreamStallReconciler", () => {
     const harness = makeReconciler({ runId: "run-1", status: "completed" });
     harness.reconciler.arm();
     await waitMs(40);
-    harness.reconciler.arm(); // stray re-arm after firing must be a no-op
+    harness.reconciler.arm();
     await waitMs(40);
     expect(harness.aborts()).toBe(1);
     harness.reconciler.clear();
@@ -243,7 +228,6 @@ describe("createStreamStallReconciler", () => {
       getStopReason: () => stopReason,
       canResumeWithoutRunId: () => false,
       retrieveRunStatus: async () => {
-        // The terminal chunk lands while the status lookup is in flight.
         stopReason = "requires_approval";
         return "completed";
       },

@@ -20,7 +20,7 @@ export const PlanRenderer: React.FC<PlanRendererProps> = ({
   explanation,
 }) => {
   const columns = useTerminalWidth();
-  const prefixWidth = 5; // `  └  ` or `     `
+  const prefixWidth = 5;
   const contentWidth = Math.max(0, columns - prefixWidth);
 
   return (
@@ -40,24 +40,20 @@ export const PlanRenderer: React.FC<PlanRendererProps> = ({
       {plan.map((item, index) => {
         const checkbox = item.status === "completed" ? "☒" : "☐";
 
-        // Format based on status
         let textElement: React.ReactNode;
         if (item.status === "completed") {
-          // Green with strikethrough
           textElement = (
             <Text color={colors.todo.completed} strikethrough wrap="wrap">
               {checkbox} {item.step}
             </Text>
           );
         } else if (item.status === "in_progress") {
-          // Blue bold
           textElement = (
             <Text color={colors.todo.inProgress} bold wrap="wrap">
               {checkbox} {item.step}
             </Text>
           );
         } else {
-          // Plain text for pending
           textElement = (
             <Text wrap="wrap">
               {checkbox} {item.step}
@@ -65,7 +61,6 @@ export const PlanRenderer: React.FC<PlanRendererProps> = ({
           );
         }
 
-        // First item (or first after explanation) gets the prefix, others get indentation
         const prefix =
           index === 0 && !explanation ? `  ${CLI_GLYPHS.result}  ` : "     ";
 

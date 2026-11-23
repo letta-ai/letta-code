@@ -80,12 +80,10 @@ test("slow lease retry claims the scheduler once the lease frees", () => {
     expect(slowRetries).toHaveLength(1);
     expect(isSchedulerRunning()).toBe(false);
 
-    // Still held: retry stays silent.
     slowRetries[0]?.();
     expect(isSchedulerRunning()).toBe(false);
     expect(logged).toHaveLength(2);
 
-    // Lease frees: next slow retry claims it and logs once.
     writeFileSync(
       cronPath,
       JSON.stringify({ version: 1, scheduler_owner: null, tasks: [] }),

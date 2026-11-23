@@ -1,4 +1,3 @@
-/** Bound stop acknowledgement without leaving a timeout alive after exit. */
 export async function confirmProcessExit(
   exit: Promise<unknown>,
   name: string,

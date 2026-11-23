@@ -45,8 +45,6 @@ export async function runMonitorsSubcommand(
       );
       const tool =
         record.kind === "github_pull_request" ? "WatchPR" : "Monitor";
-      // This CLI is a separate process. Sandbox/cron commands use server APIs,
-      // not a local listener tool-execution channel; the harness must own it.
       print(
         `Run this tool call in the original conversation's running harness:\n${tool}(${JSON.stringify({ resume: record.monitor_id })})`,
       );
@@ -76,7 +74,6 @@ export async function runMonitorsSubcommand(
     }
     const list = deps.list ?? listMonitorStates;
     const records = [];
-    // List's API is cursor-paginated; walk only this explicit user's request.
     for (;;) {
       const page = await list(scope);
       records.push(...page);

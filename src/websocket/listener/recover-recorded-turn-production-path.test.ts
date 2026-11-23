@@ -66,7 +66,6 @@ async function eventually(
   }
 }
 
-/** Waits for recovered turns, including any started while waiting. */
 async function settleTurns(
   turns: Set<Promise<unknown>>,
   timeoutMs = 5_000,
@@ -334,8 +333,6 @@ test("real recovered turns retire an ACKed predecessor before processing its ind
   } finally {
     listener.intentionallyClosed = true;
     setActiveRuntime(null);
-    // A recovered turn can still be streaming (or resuming its stream) here;
-    // clearing the backend first would send that resume to the real API.
     try {
       await settleTurns(recoveredTurns);
     } finally {

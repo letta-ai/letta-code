@@ -5,13 +5,11 @@ import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { MarkdownDisplay } from "./MarkdownDisplay.js";
 import { Text } from "./Text";
 
-// Helper function to normalize text - copied from old codebase
-// NOTE: Less aggressive than before to preserve spacing when content is split across chunks
 const normalize = (s: string) =>
   s
     .replace(/\r\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
-    .replace(/^\n+/g, ""); // Only trim leading newlines, preserve trailing ones
+    .replace(/^\n+/g, "");
 
 type AssistantLine = {
   kind: "assistant";
@@ -21,16 +19,6 @@ type AssistantLine = {
   isContinuation?: boolean;
 };
 
-/**
- * AssistantMessageRich - Rich formatting version with two-column layout
- * This is a direct port from the old letta-code codebase to preserve the exact styling
- *
- * Features:
- * - Left column (2 chars wide) with bullet point marker (unless continuation)
- * - Right column with wrapped text content
- * - Proper text normalization
- * - Support for markdown rendering (when MarkdownDisplay is available)
- */
 export const AssistantMessage = memo(({ line }: { line: AssistantLine }) => {
   const columns = useTerminalWidth();
   const contentWidth = Math.max(0, columns - 2);

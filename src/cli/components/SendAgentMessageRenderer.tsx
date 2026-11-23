@@ -51,11 +51,6 @@ function conversationAddress(value: unknown): value is string {
   );
 }
 
-/** Parse the full receipt, never the generic renderer's clipped JSON preview.
- * Return null for unknown contracts so ordinary tool errors/details survive.
- * Receipt status is authoritative even when historical approval backfill marks
- * every tool response successful. This is presentation only: no polling/state.
- */
 export function parseSendAgentMessageDisplay(
   line: SendLine,
 ): SendDisplay | null {
@@ -100,8 +95,6 @@ export function parseSendAgentMessageDisplay(
     return null;
   }
 
-  // Use a resolved destination as a pair, not a mixture of receipt and request
-  // addresses (agent-only calls acquire a new conversation during submission).
   if (receipt.agent_id !== undefined || receipt.conversation_id !== undefined) {
     if (
       !agentAddress(receipt.agent_id) ||
