@@ -124,7 +124,6 @@ test("an explicit agent_id is passed through for an unreadable conversation", as
 });
 
 test("an explicit agent_id with a conversation is forwarded without a read", async () => {
-  // The server reports the conversation's real agent in the enqueue receipt.
   const f = recordingBackend("agent-owner");
   expect(
     await resolveAgentMessageDestination(

@@ -31,7 +31,6 @@ describe("client_skills baseline store", () => {
     const api = clientSkillsBackendIdentity(new APIBackend());
     expect(typeof api).toBe("string");
     expect(api).not.toStartWith("local:");
-    // Fakes with no durable identity stay in memory only.
     expect(clientSkillsBackendIdentity({})).toBeNull();
   });
 
@@ -55,7 +54,6 @@ describe("client_skills baseline store", () => {
     expect(left.has("stale.json")).toBe(false);
     expect(left.has("old.tmp")).toBe(false);
     expect(left.has("fresh.tmp")).toBe(true);
-    // The two least recently written baselines were dropped.
     expect(left.has("f501.json")).toBe(false);
     expect(left.has("f500.json")).toBe(false);
     expect(left.has("f499.json")).toBe(true);

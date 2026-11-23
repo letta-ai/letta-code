@@ -80,9 +80,7 @@ test("flush batches retain native session/task IDs and acting-user attribution",
   const previous = process.env.LETTA_CODE_TELEM;
   process.env.LETTA_CODE_TELEM = "1";
   const upstream = createServer(async (req, res) => {
-    // Drain the POST body before replying so the connection can be reused.
     for await (const _chunk of req) {
-      /* consume the request */
     }
     res.writeHead(200, { "content-type": "application/json" });
     res.end('{"model":"test","usage":{"input_tokens":1,"output_tokens":2}}');
@@ -140,9 +138,7 @@ test("failed uploads warn once and later traces compact when their delta base is
   const previous = process.env.LETTA_CODE_TELEM;
   process.env.LETTA_CODE_TELEM = "1";
   const upstream = createServer(async (req, res) => {
-    // Drain the POST body before replying so the connection can be reused.
     for await (const _chunk of req) {
-      /* consume the request */
     }
     res.writeHead(200, { "content-type": "application/json" });
     res.end('{"model":"test"}');
@@ -154,7 +150,6 @@ test("failed uploads warn once and later traces compact when their delta base is
   const warnings: string[] = [];
   let uploads = 0;
   let capturedFallback: ExternalTraceRow | undefined;
-  // Expand the captured request with redaction without a large loopback POST.
   const base = { role: "user", content: "x".repeat(190000) };
   const appended = { role: "assistant", content: "b".repeat(300000) };
   const trace = await createTraceSession(
@@ -183,7 +178,6 @@ test("failed uploads warn once and later traces compact when their delta base is
     },
   );
   try {
-    // Two size-triggered batches (10 rows each), each failing all retries.
     for (let batch = 0; batch < 2; batch++) {
       for (let i = 0; i < 10; i++) {
         const messages =
@@ -228,11 +222,9 @@ test("failed uploads warn once and later traces compact when their delta base is
 test("splits batches when the encoded upload would exceed 8 MiB", async () => {
   const previous = process.env.LETTA_CODE_TELEM;
   process.env.LETTA_CODE_TELEM = "1";
-  // Quotes require escaping again when the captured JSON is embedded in a row.
   const payload = JSON.stringify({ text: '"'.repeat(700000) });
   const upstream = createServer(async (req, res) => {
     for await (const _chunk of req) {
-      /* consume the request */
     }
     res.end(payload);
   }).listen(0, "127.0.0.1");

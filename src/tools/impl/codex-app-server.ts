@@ -82,7 +82,6 @@ interface TurnWaiter {
   errors: Array<Record<string, unknown>>;
 }
 
-/** Deduplicates item IDs and text across capacity retries. */
 interface ReportedText {
   itemIds: Set<string>;
   texts: Set<string>;
@@ -115,9 +114,7 @@ export interface CodexTurnOptions
   signal?: AbortSignal;
   resumeThreadId?: string;
   onStarted?: (threadId: string, turnId: string) => void;
-  /** Called once per tool-like thread item (command, patch, MCP, search). */
   onToolCall?: ExternalToolCallListener;
-  /** Called once per completed `agentMessage` item with non-empty text. */
   onText?: ExternalTextListener;
   beforeStart?: (threadId: string) => Promise<void>;
 }
@@ -126,7 +123,6 @@ export interface CodexTurnHandle {
   threadId: string;
   turnId: string;
   completion: Promise<SubagentResult>;
-  /** Interrupt the current attempt and stop capacity retries. */
   interrupt: () => Promise<void>;
 }
 
@@ -146,14 +142,12 @@ export interface CodexAppServerDependencies {
   }) => CodexAppServerTransport;
   env?: NodeJS.ProcessEnv;
   idleTimeoutMs?: number;
-  /** Backoff timer between capacity retries (injectable for tests). */
   sleep?: (ms: number) => Promise<unknown>;
 }
 
 const sessions = new Map<string, CodexSession>();
 const sessionCreations = new Map<string, Promise<CodexSession>>();
 const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60_000;
-/** Read the native catalog without creating a thread or starting a turn. */
 export async function listCodexModels(
   cwd: string,
   env: NodeJS.ProcessEnv,
@@ -184,8 +178,6 @@ export async function listCodexModels(
     () => {},
     () => {},
   );
-  // A failed start (e.g. ENOENT) otherwise surfaces as EPIPE on the first
-  // stdin write, hiding the real cause.
   let startError: Error | undefined;
   running.process.once("error", (error: NodeJS.ErrnoException) => {
     startError =
@@ -248,7 +240,6 @@ function spawnTransport(options: {
     stdin: child.stdin,
     stdout: child.stdout,
     stderr: child.stderr,
-    // On Windows the child may be cmd.exe wrapping codex.cmd; kill the tree.
     kill: () => controller.abort(),
     exited: completion.then((exit) => ({
       code: exit.exitCode,
@@ -412,9 +403,7 @@ function recordToolItem(waiter: TurnWaiter, item: Record<string, unknown>) {
   waiter.seenToolCallIds.add(call.id);
   try {
     waiter.onToolCall(call);
-  } catch {
-    // Progress display must not break the turn.
-  }
+  } catch {}
 }
 
 function recordTextItem(waiter: TurnWaiter, item: Record<string, unknown>) {
@@ -432,9 +421,7 @@ function recordTextItem(waiter: TurnWaiter, item: Record<string, unknown>) {
   reportedText.texts.add(item.text.trim());
   try {
     waiter.onText(item.text);
-  } catch {
-    // Progress display must not break the turn.
-  }
+  } catch {}
 }
 
 function recordItem(
@@ -456,7 +443,6 @@ function recordItem(
     recordTextItem(session.activeWaiter, item);
   }
   if (completed) {
-    // Completed tool items carry their full output; reasoning its summary.
     const result = describeCodexToolResult(item);
     if (result) emitProgress(session.activeWaiter.onToolResult, result);
     const reasoning = codexReasoningText(item);
@@ -512,7 +498,6 @@ function recordError(
   const turnId = readString(params, "turnId");
   if (turnId !== session.activeTurnId || !session.activeWaiter) return false;
   const error = asRecord(params.error);
-  // `willRetry` notices are progress ("Reconnecting... 1/5"), not the failure.
   if (error && params.willRetry !== true) {
     session.activeWaiter.errors.push(error);
   }
@@ -574,10 +559,6 @@ function scheduleIdleSessionCleanup(session: CodexSession): void {
 export const CODEX_NOT_SIGNED_IN_ERROR =
   "Codex is not signed in. Run `codex login` on this computer.";
 
-/**
- * Codex reports `requiresOpenaiAuth: false` when its model provider needs no
- * OpenAI login, such as the Letta proxy used by managed sandboxes.
- */
 async function assertCodexSignedIn(client: CodexAppServerClient) {
   const timeout = Promise.withResolvers<null>();
   const timer = setTimeout(() => timeout.resolve(null), 10_000);
@@ -591,7 +572,6 @@ async function assertCodexSignedIn(client: CodexAppServerClient) {
   } catch (error) {
     if (error instanceof Error && error.message === CODEX_NOT_SIGNED_IN_ERROR)
       throw error;
-    // Codex without account/read: the turn itself reports provider failures.
   } finally {
     clearTimeout(timer);
   }
@@ -617,7 +597,6 @@ async function createSession(
       transport,
       (message) => {
         if (!session) pendingNotifications.push(message);
-        // Replay swaps in a new queue, so always push to the current one.
         else if (!handleNotification(session, message)) {
           session.pendingNotifications.push(message);
         }
@@ -731,8 +710,6 @@ async function startTurnAttempt(
     cwd: session.cwd,
     model: session.model,
     approvalPolicy: "never",
-    // Unattended subagent: no approval relay exists, so run without the
-    // workspace sandbox rather than failing writes outside cwd.
     sandboxPolicy: { type: "dangerFullAccess" },
   });
   const turn = asRecord(response.turn);
@@ -790,8 +767,6 @@ async function startTurnUnlocked(
   const abort = () => void interrupt().catch(() => undefined);
   signal?.addEventListener("abort", abort, { once: true });
   if (signal?.aborted) abort();
-  // A 409 means the provider had no capacity for this request. Replay the same
-  // prompt on the same thread only while doing so cannot repeat side effects.
   const completion = (async (): Promise<SubagentResult> => {
     let attempt = first;
     for (let retry = 0; ; retry++) {
@@ -821,7 +796,6 @@ async function startTurnUnlocked(
           return next;
         });
       } catch {
-        // The session closed or another turn started during backoff.
         return capacityResult(outcome.result);
       }
       if (interrupted || signal?.aborted) abort();
@@ -928,7 +902,6 @@ export async function sendCodexMessage(
           } catch (error) {
             if (delivery.queued) throw error;
             await waitForRejectedCodexSteer(session, activeTurnId, error);
-            // The matching turn completed while steering. Start exactly one new turn.
           }
         }
         options.signal?.throwIfAborted();

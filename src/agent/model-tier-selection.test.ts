@@ -182,7 +182,6 @@ describe("getModelInfoForLlmConfig", () => {
   test("falls back to first handle match when effort missing", () => {
     const handle = "openai/gpt-5.4";
     const info = getModelInfoForLlmConfig(handle, null);
-    // the fixture order lists gpt-5.4-none first.
     expect(info?.id).toBe("gpt-5.4-none");
   });
 
@@ -195,7 +194,6 @@ describe("getModelInfoForLlmConfig", () => {
     });
     expect(withEffort?.id).toBe("opus-4.8-1m");
 
-    // With 1M context_window but no effort → still a 1M variant (not 200k "opus")
     const noEffort = getModelInfoForLlmConfig(handle, {
       context_window: 950000,
     });
@@ -587,7 +585,7 @@ describe("getReasoningTierOptionsForHandle", () => {
     expect(options.map((option) => option.modelId)).toEqual([
       "opus-4.8-low",
       "opus-4.8-medium",
-      "opus", // featured entry uses high; wins first-seen dedup
+      "opus",
       "opus-4.8-xhigh",
       "opus-4.8-max",
     ]);

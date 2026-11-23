@@ -884,8 +884,6 @@ test.each([
         lineageId: "lineage-reassigned",
         terminalIdentity: "terminal-existing",
       };
-      // Simulate a crash after terminalStore.put committed but before the
-      // prepared journal could be cleared.
       terminalStore.put(
         runtime.agentId,
         runtime.conversationId,

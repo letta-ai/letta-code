@@ -9,8 +9,6 @@ type ServerCommand =
   | { kind: "app-server"; argv: string[] }
   | { kind: "registered-app-server"; argv: string[]; appServerArgv: string[] };
 
-// Computer-registration options that may accompany --listen. The App Server
-// then runs on the registered computer's runtime instead of its own.
 const REGISTRATION_OPTIONS = new Set([
   "--computer-name",
   "--env-name",

@@ -11,13 +11,11 @@ describe("unescapeOverEscapedString", () => {
   });
 
   test("handles already correct escapes", () => {
-    // A string with proper escapes should pass through
     const input = "line1\nline2";
     expect(unescapeOverEscapedString(input)).toBe("line1\nline2");
   });
 
   test("fixes over-escaped newlines (\\\\n -> \\n)", () => {
-    // Input has literal backslash + n that should become newline
     const input = "line1\\nline2";
     expect(unescapeOverEscapedString(input)).toBe("line1\nline2");
   });
@@ -43,7 +41,6 @@ describe("unescapeOverEscapedString", () => {
   });
 
   test("fixes over-escaped backslashes before other escapes", () => {
-    // \\\\n (double-escaped newline) should become \n
     const input = "line1\\\\nline2";
     expect(unescapeOverEscapedString(input)).toBe("line1\nline2");
   });
@@ -56,13 +53,11 @@ describe("unescapeOverEscapedString", () => {
   });
 
   test("handles over-escaped backticks in template literals", () => {
-    // LLMs often over-escape backticks - we fix those
     const input = "const msg = \\`Hello World\\`;";
     expect(unescapeOverEscapedString(input)).toBe("const msg = `Hello World`;");
   });
 
   test("preserves \\$ to avoid over-correcting shell/regex contexts", () => {
-    // \$ should NOT be unescaped - it's often intentional in shell scripts
     const input = "echo \\$HOME";
     expect(unescapeOverEscapedString(input)).toBe("echo \\$HOME");
   });

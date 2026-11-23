@@ -245,7 +245,6 @@ export function bindChannelAccountLive(
     isWhatsAppChannelAccount(existing) ||
     isSignalChannelAccount(existing)
   ) {
-    // Slack, Discord, WhatsApp, and Signal use a top-level agentId.
     updated = upsertChannelAccount(channelId, {
       ...existing,
       agentId,
@@ -286,7 +285,6 @@ export function unbindChannelAccountLive(
     isWhatsAppChannelAccount(existing) ||
     isSignalChannelAccount(existing)
   ) {
-    // Slack, Discord, WhatsApp, and Signal use a top-level agentId.
     updated = upsertChannelAccount(channelId, {
       ...existing,
       agentId: null,

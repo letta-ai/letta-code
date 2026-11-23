@@ -19,9 +19,7 @@ class MockSocket {
     this.sentPayloads.push(data);
   }
 
-  close(): void {
-    // no-op for tests
-  }
+  close(): void {}
 
   removeAllListeners(): this {
     return this;
@@ -89,8 +87,6 @@ describe("memory_palace listener protocol pathway", () => {
   });
 
   test("set_experiment toggles memory_palace and projects it into device status", async () => {
-    // Object-level stubs (not mock.module) so experiment overrides never touch
-    // the real user settings file, mirroring listen-client-protocol.test.ts.
     const originalGetSettings = settingsManager.getSettings;
     const originalUpdateSettings = settingsManager.updateSettings;
     const globalSettings = { autoConversationTitles: false } as Settings;

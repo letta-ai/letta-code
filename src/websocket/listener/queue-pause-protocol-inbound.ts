@@ -1,7 +1,6 @@
 import type { ResumeQueueCommand } from "@/types/queue-update-protocol";
 import { isRuntimeScope } from "./protocol-validation";
 
-/** Wire validator for `resume_queue` (release interrupt-parked queue items). */
 export function isResumeQueueCommand(
   value: unknown,
 ): value is ResumeQueueCommand {

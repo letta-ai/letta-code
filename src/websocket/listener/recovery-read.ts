@@ -6,7 +6,6 @@ import {
 } from "@/agent/turn-recovery-policy";
 import { LLM_API_ERROR_MAX_RETRIES } from "./constants";
 
-/** Retry only reads: replaying recovery itself could repeat tool side effects. */
 export async function retryApprovalRecoveryRead<T>(
   read: () => Promise<T>,
   assertCurrent: () => void,

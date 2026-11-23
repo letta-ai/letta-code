@@ -1,13 +1,3 @@
-/**
- * Pure personality preset definitions and content builders.
- *
- * This module must stay free of Node/backend imports: it is bundled into the
- * browser-safe `@letta-ai/letta-code/agent-presets` package export so that
- * other surfaces (e.g. the chat web app) can build byte-identical agent
- * creation payloads. Filesystem application of personalities lives in
- * `personality.ts`.
- */
-
 import { parseMdxFrontmatter } from "./memory";
 import { MEMORY_PROMPTS, SYSTEM_PROMPTS } from "./prompt-assets";
 
@@ -23,9 +13,7 @@ export interface PersonalityOption {
   id: "blank" | "kawaii" | "codex" | "claude" | "linus" | "memo" | "tutorial";
   label: string;
   description: string;
-  /** Model ID or handle to use when no explicit model is provided. */
   defaultModel?: string;
-  /** Binary files seeded into MemFS after the initial checkout. */
   defaultMemoryFiles?: readonly PersonalityDefaultMemoryFile[];
 }
 
@@ -415,14 +403,6 @@ export interface PersonalityMemoryBlock {
   description?: string;
 }
 
-/**
- * Build the memory blocks a new agent gets for a personality: the default
- * blocks with persona/human values replaced by the personality's content,
- * plus the onboarding block for personalities that support it.
- *
- * Shared by the CLI create path (`buildCreateAgentOptionsForPersonality`) and
- * the exported wire payload builder (`buildCreateAgentRequestForPersonality`).
- */
 export function buildPersonalityMemoryBlocks(
   personalityId: PersonalityId,
   defaultMemoryBlocks: Array<{

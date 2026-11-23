@@ -258,9 +258,6 @@ describe("LocalBackend context pressure", () => {
         "You are the self-compaction agent.",
       );
       expect(compaction?.tools?.map((tool) => tool.name)).toEqual(["Bash"]);
-      // The user's message has not reached the model yet, so the prompt
-      // joins it: nothing is written in the model's name, and no two user
-      // messages follow each other.
       expect(compaction?.messages.map((message) => message.role)).toEqual([
         "user",
       ]);
@@ -275,7 +272,6 @@ describe("LocalBackend context pressure", () => {
         "self summary",
       );
 
-      // Manual compaction has no turn: the compiled prompt, and no tools.
       await backend.compactConversationMessages(conversation.id, {
         agent_id: agent.id,
       } as never);
@@ -340,7 +336,6 @@ describe("LocalBackend context pressure", () => {
       });
       expect(chunks).toContainEqual(summaryMessage);
 
-      // The stored transcript keeps the source, including after a reload.
       const reloaded = new LocalBackend({ storageDir, memfsEnabled: false });
       for (const reader of [backend, reloaded]) {
         const page = await reader.listConversationMessages(conversation.id, {

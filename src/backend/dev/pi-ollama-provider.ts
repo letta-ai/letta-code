@@ -9,7 +9,6 @@ import {
 export const OLLAMA_PI_PROVIDER_ID = "ollama";
 export const OLLAMA_CLOUD_PI_PROVIDER_ID = "ollama-cloud";
 
-/** Ollama assigns the `latest` tag when a model handle omits one. */
 export function normalizeOllamaModelId(modelId: string): string {
   const leaf = modelId.slice(modelId.lastIndexOf("/") + 1);
   return leaf.includes(":") || leaf.includes("@")
@@ -18,12 +17,10 @@ export function normalizeOllamaModelId(modelId: string): string {
 }
 
 export interface OllamaPiProviderOptions {
-  /** Base URL as configured; `/v1` is appended/stripped as needed. */
   baseURL: string;
   apiKey?: string;
   fetchImpl?: typeof fetch;
   discoveryTimeoutMs?: number;
-  /** Defaults to the local Ollama provider; Ollama Cloud reuses this factory. */
   providerId?: string;
   name?: string;
 }
@@ -63,26 +60,8 @@ function parseOllamaTags(data: unknown): OllamaTagEntry[] {
     .filter((entry): entry is OllamaTagEntry => entry !== undefined);
 }
 
-/**
- * Runtime context windows from `GET /api/ps`, keyed by model id.
- *
- * `/api/show` reports the architectural maximum baked into the GGUF, which is
- * what the model *could* support — not what the daemon will actually serve.
- * Ollama serves `OLLAMA_CONTEXT_LENGTH` (or a per-request `num_ctx`, which the
- * OpenAI-compatible surface we stream through does not accept) and silently
- * truncates any prompt longer than that: no error, no warning, and the reported
- * prompt token count reflects the post-truncation prompt. Publishing the GGUF
- * maximum therefore hands the harness a window several times larger than
- * reality, so compaction never fires and the oldest part of the prompt — the
- * compiled system prompt carrying persona and memory — is dropped on the floor.
- *
- * `/api/ps` reports `context_length` per *loaded* model, which is the window
- * the engine will actually serve for it. Prefer it whenever it is available.
- */
 interface OllamaPsEntry {
-  /** `name` and `model`, plus Ollama's implicit `:latest` when a tag is omitted. */
   ids: string[];
-  /** The id Ollama displays, for refusal text. */
   displayId?: string;
   contextLength?: number;
 }
@@ -131,11 +110,6 @@ export function parseOllamaRunningContexts(data: unknown): Map<string, number> {
 
 const OLLAMA_STATUS_TIMEOUT_MS = 2_000;
 const OLLAMA_MODEL_LOAD_TIMEOUT_MS = 120_000;
-/**
- * Holds the preflight load across the `/api/ps` read and the chat request that
- * follows. `OLLAMA_KEEP_ALIVE=0` would otherwise unload the model the moment
- * the empty generate returns, so `/api/ps` cannot see it.
- */
 const OLLAMA_PREFLIGHT_KEEP_ALIVE = "5m";
 const OLLAMA_SERVED_CONTEXT_OVERRIDE_ENV = "LETTA_OLLAMA_CONTEXT_LENGTH";
 
@@ -145,7 +119,6 @@ export interface ResolveOllamaServedContextOptions {
   apiKey?: string;
   fetchImpl?: typeof fetch;
   signal?: AbortSignal;
-  /** Defaults to `process.env`. Tests inject a fake env. */
   env?: Record<string, string | undefined>;
 }
 
@@ -225,8 +198,6 @@ async function fetchOllamaNative<T>(
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
-    // Keep the abort deadline active through body consumption and parsing.
-    // Fetch resolves at headers, while Ollama's load completes with the body.
     return await options.consume(response);
   } finally {
     clearTimeout(timeout);
@@ -234,19 +205,6 @@ async function fetchOllamaNative<T>(
   }
 }
 
-/**
- * Resolve turn-time serving truth for one exact Ollama model. Catalog metadata
- * cannot answer this for an unloaded model. A model already loaded by another
- * client can also use that client's `num_ctx`, while our OpenAI-compatible
- * request uses the daemon default. Use Ollama's documented empty generate
- * request to load the selected model with the same default our turn will use,
- * then require `/api/ps` to report that exact identity before dispatch.
- *
- * The generate request pins `keep_alive` so `OLLAMA_KEEP_ALIVE=0` cannot unload
- * the model before `/api/ps`. A missing `context_length` is not replaced with
- * GGUF metadata. `LETTA_OLLAMA_CONTEXT_LENGTH` is the only override, and only
- * when the user states the window the daemon actually serves.
- */
 export async function resolveOllamaServedContext(
   options: ResolveOllamaServedContextOptions,
 ): Promise<number> {
@@ -322,8 +280,6 @@ function parseOllamaShow(
   const architecturalContextLength = architecture
     ? modelInfo?.[`${architecture}.context_length`]
     : undefined;
-  // Runtime window wins: it is what the daemon will serve. The GGUF maximum is
-  // only a fallback for models that are not currently loaded.
   const contextLength =
     runtimeContextLength ??
     (typeof architecturalContextLength === "number" &&
@@ -338,33 +294,15 @@ function parseOllamaShow(
   };
 }
 
-/**
- * Ollama capability discovery: `/api/tags` lists installed models and
- * `POST /api/show` reports authoritative capabilities per model
- * (`["completion", "vision", "tools", "thinking"]`) plus engine context
- * maximum. The shared provider applies the conservative harness default;
- * model names are never consulted for capabilities.
- */
 const ollamaDiscover: LocalEndpointDiscover = async (context) => {
   const tags = await context.fetchJson(`${context.nativeBaseURL}/api/tags`);
   const entries = parseOllamaTags(tags);
-  // Loaded-model runtime windows. Best-effort: an endpoint that does not serve
-  // /api/ps (or fails it) falls back to GGUF metadata, the previous behavior.
   const runtimeContexts = await context
     .fetchJson(`${context.nativeBaseURL}/api/ps`)
     .then(parseOllamaRunningContexts)
     .catch(() => new Map<string, number>());
   return Promise.all(
     entries.map(async ({ id: modelId, digest }) => {
-      // /api/show reads GGUF metadata from disk, which can take seconds for
-      // large models. The tag digest identifies the installed blob, so an
-      // unchanged digest means the last-known published Model is current. The
-      // runtime window is part of the fingerprint because it changes without
-      // the blob changing — loading a model, or restarting the daemon with a
-      // different OLLAMA_CONTEXT_LENGTH, must republish the Model.
-      // `/api/ps` is runtime truth only for the exact loaded model. Another
-      // model may have been loaded with a per-request num_ctx, so its value says
-      // nothing reliable about this artifact or the daemon default.
       const runtimeContextLength = runtimeContexts.get(modelId);
       const fingerprint = digest
         ? `${digest}:${runtimeContextLength ?? "-"}`
@@ -390,20 +328,12 @@ const ollamaDiscover: LocalEndpointDiscover = async (context) => {
           parseOllamaShow(modelId, show, runtimeContextLength),
         );
       } catch {
-        // Metadata fetch failed for this one model: keep its last-known
-        // published Model rather than guessing capabilities. A never-seen
-        // model is published text-only until /api/show succeeds.
         return known ?? context.buildModel({ id: modelId });
       }
     }),
   );
 };
 
-/**
- * Real dynamic pi-ai Provider for an Ollama endpoint (local daemon or
- * Ollama Cloud — both speak the same native API). See
- * `createLocalEndpointPiProvider` for the shared refresh/auth semantics.
- */
 export function createOllamaPiProvider(
   options: OllamaPiProviderOptions,
 ): Provider<"openai-completions"> {

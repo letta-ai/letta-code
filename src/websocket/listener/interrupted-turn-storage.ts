@@ -25,8 +25,6 @@ export function fsyncInterruptedTurnDirectory(
   directory: string,
   platform: NodeJS.Platform = process.platform,
 ): void {
-  // Windows cannot open directories. The temp file itself is still flushed by
-  // writeFileSync, while POSIX additionally commits directory entry changes.
   if (platform === "win32") return;
   const fd = openSync(directory, "r");
   try {

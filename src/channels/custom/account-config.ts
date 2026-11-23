@@ -1,24 +1,6 @@
 import type { ChannelAccountConfigAdapter } from "@/channels/plugin-types";
 import type { CustomChannelAccount } from "@/channels/types";
 
-/**
- * Account config adapter for the first-party "custom" channel.
- *
- * The "custom" channel forwards outbound agent messages to a user-configured
- * webhook URL. Each account stores:
- *   url            — webhook endpoint that receives outbound messages
- *   bot_token      — sent as `Authorization: Bearer <bot_token>` (write-only)
- *   auth           — sent as `X-Letta-Auth: <auth>` (write-only)
- *   agent_id       — agent this app is bound to
- *   accounts_json  — user-supplied JSON describing accounts on the remote service
- *   configs_json   — user-supplied JSON of arbitrary configuration values
- *   metadata_json  — user-supplied JSON of additional plugin configuration
- *                    (anything that doesn't fit accounts_json / configs_json);
- *                    plugins are free to read and interpret this however they want
- *
- * Tokens never round-trip back to the client; snapshots only expose
- * `has_bot_token` / `has_auth` boolean flags.
- */
 const CUSTOM_CONFIG_KEYS = new Set([
   "url",
   "bot_token",
@@ -71,10 +53,6 @@ export const customAccountConfigAdapter: ChannelAccountConfigAdapter<CustomChann
     },
 
     toAccountPatch(config) {
-      // The "custom" channel doesn't use ChannelPluginAccountPatch fields;
-      // everything is preserved on the generic `config` bag via mergeAccountPatch.
-      // Returning {} signals "no specific field changes" — the caller already
-      // applies `patch.config` directly to `account.config`.
       void config;
       return {};
     },
@@ -96,8 +74,6 @@ export const customAccountConfigAdapter: ChannelAccountConfigAdapter<CustomChann
     },
 
     shouldRefreshDisplayName() {
-      // Display name is user-supplied (no token-based auto-derivation), so
-      // we never need to refresh it from a config patch.
       return false;
     },
   };

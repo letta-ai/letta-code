@@ -2,7 +2,6 @@ import { debugLog } from "@/utils/debug";
 import type { ListenerTransport } from "./transport";
 import type { ListenerRuntime, StartListenerOptions } from "./types";
 
-/** Heartbeats prove transport liveness, not that startup has finished. */
 export function startListenerStartupDeadline(
   runtime: ListenerRuntime,
   transport: ListenerTransport,
@@ -26,8 +25,6 @@ export function startListenerStartupDeadline(
       if (opts.onLog) opts.onLog(message);
       else debugLog("Listen", message);
     } finally {
-      // terminate forces close even when the peer never completes a close handshake.
-      // The normal control close handler tears down the stream and retries.
       socket.terminate();
     }
   }, deadlineMs);

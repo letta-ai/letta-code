@@ -33,9 +33,7 @@ function getFeedbackDeviceId(): string {
     if (deviceId) {
       return deviceId;
     }
-  } catch {
-    // Fall back below.
-  }
+  } catch {}
   return randomUUID();
 }
 
@@ -140,7 +138,5 @@ export function maybeSendReflectionThresholdFeedback(
         surface: options.surface,
       }),
     });
-  })().catch(() => {
-    // Feedback alerts are best-effort and should never affect reflection flow.
-  });
+  })().catch(() => {});
 }

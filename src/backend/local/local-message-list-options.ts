@@ -1,4 +1,3 @@
-/** Option parsing for local message list requests (`limit`, `order`, cursors). */
 import type {
   AgentMessageListBody,
   ConversationMessageListBody,

@@ -18,7 +18,6 @@ afterEach(() => {
   __resetClaudeSessionsForTests();
 });
 
-/** Starts a turn that is mid tool call and steers it; Claude never acks. */
 async function steerWithoutAck(options: { acknowledgesInputs: boolean }) {
   const fixture = trackedFixture();
   let completed = false;
@@ -71,7 +70,6 @@ describe("Claude steer queued behind an unacknowledged interrupt", () => {
       type: "control_response",
       response: { subtype: "success", request_id: control.request_id },
     });
-    // The late interrupt stops the long tool call and ends the old turn.
     fixture.emit({
       type: "result",
       is_error: true,
@@ -81,7 +79,6 @@ describe("Claude steer queued behind an unacknowledged interrupt", () => {
     await Bun.sleep(0);
     expect(completed()).toBe(false);
     expect(fixture.writes).toHaveLength(3);
-    // Claude then dequeues the steer and runs it as the next turn.
     fixture.echo(2);
     fixture.emit({ type: "stream_event", event: { type: "message_start" } });
     fixture.emit({ type: "result", is_error: false, result: "new" });
@@ -95,8 +92,6 @@ describe("Claude steer queued behind an unacknowledged interrupt", () => {
       const { fixture, running, completed } = await steerWithoutAck({
         acknowledgesInputs,
       });
-      // Before the queued turn starts, the old turn makes another model request
-      // and then ends on the late interrupt.
       fixture.emit({ type: "stream_event", event: { type: "message_start" } });
       fixture.emit({ type: "result", is_error: true, result: "interrupted" });
       await Bun.sleep(0);
@@ -112,7 +107,6 @@ describe("Claude steer queued behind an unacknowledged interrupt", () => {
     const { fixture, running } = await steerWithoutAck({
       acknowledgesInputs: true,
     });
-    // The tool call finished first and Claude folded the prompt into the turn.
     fixture.echo(2);
     fixture.emit({ type: "stream_event", event: { type: "message_start" } });
     fixture.emit({ type: "result", is_error: false, result: "new" });

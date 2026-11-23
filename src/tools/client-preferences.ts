@@ -4,7 +4,6 @@ import { isRecord } from "@/utils/type-guards";
 import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
 import { getInternalToolName, getServerToolName } from "./tool-name-mapping";
 
-/** Validate and canonicalize before comparing or persisting a snapshot. */
 export function normalizeClientPreferences(value: unknown): ClientPreferences {
   if (!isRecord(value) || Object.keys(value).some((key) => key !== "toolset")) {
     throw new Error(
@@ -47,7 +46,6 @@ export function isClientPreferences(
   }
 }
 
-/** Conversation-local settings also cover agent-free and virtual-default scopes. */
 export function getStoredClientPreferences(
   agentId: string | null,
   conversationId?: string | null,
@@ -58,7 +56,6 @@ export function getStoredClientPreferences(
       conversationId || "default",
     );
   } catch {
-    // Tool construction is also used before settings initialization.
     return {};
   }
 }

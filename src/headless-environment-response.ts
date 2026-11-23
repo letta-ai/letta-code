@@ -65,7 +65,6 @@ export function buildEnvironmentResponseMetadata(params: {
   };
 }
 
-/** One wire envelope for accepted, completed, and failed listener launches. */
 export function buildEnvironmentLaunchResult(
   base: {
     sessionId: string;
@@ -126,13 +125,6 @@ type EnvironmentRouting = {
   environment: EnvironmentConnection;
 };
 
-/**
- * Resolve `--computer` (or the inherited listener) to a connection for a
- * listener launch. Failures such as an offline, unknown, or ambiguous
- * computer come back as `{ error }` so the caller can report them; a thrown
- * error here escapes as an unhandled rejection, which the fatal handler turns
- * into a bare exit 1 with no message.
- */
 export async function resolveListenerLaunchTarget(input: {
   selector: string;
   agentId: string | null | undefined;
@@ -211,17 +203,6 @@ export function getEnvironmentRoutedMessagingUnsupportedReason(
   } and does not advertise computer-routed headless messaging support. Update that runtime or omit --computer to use same-computer messaging.`;
 }
 
-/**
- * Build the POST body for an environment-routed turn.
- *
- * Includes the local client-tool restriction (the `--tools` flag, stored in
- * toolFilter) as `client_tool_allowlist` so the remote listener enforces the
- * same toolset the local turn would have used. `null` (no filter) omits the
- * field and preserves the listener's normal toolset; an empty list travels as
- * an empty array, which the listener treats as "no client tools". Older cloud
- * servers strip the field, which degrades to the previous behavior (the
- * listener's own toolset) rather than failing.
- */
 export function buildEnvironmentCreateMessageBody(params: {
   agentId: string;
   conversationId: string | null;
@@ -314,19 +295,12 @@ function messageSequenceId(message: LettaMessage): number | null {
   return typeof sequenceId === "number" ? sequenceId : null;
 }
 
-/** Absolute ceiling on an environment-routed turn. */
 const DEFAULT_MAX_WAIT_MS = 60 * 60_000;
-/** Give up when nothing observable happens for this long. */
 const DEFAULT_INACTIVITY_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_ONLINE_CHECK_INTERVAL_MS = 30_000;
 const DEFAULT_RUN_STATUS_INTERVAL_MS = 10_000;
-/** A completed run should have written its assistant message; allow a short lag. */
 const COMPLETED_WITHOUT_TEXT_GRACE_MS = 15_000;
 
-/**
- * Ceiling for waiting on an environment-routed turn. Overridable with
- * LETTA_ENVIRONMENT_TIMEOUT_MS (milliseconds); defaults to one hour.
- */
 export function resolveEnvironmentMaxWaitMs(): number {
   const raw = process.env.LETTA_ENVIRONMENT_TIMEOUT_MS;
   if (raw) {
@@ -342,65 +316,25 @@ function isTerminalRunStatus(status: string | undefined): boolean {
   );
 }
 
-/**
- * Which liveness signal drives the wait.
- *
- * - "unknown": the runtime-status route has not answered yet; run-based
- *   checks still apply so an old server is covered from the first poll.
- * - "runtime-status": the server exposes the per-conversation runtime-status
- *   record (the super-run architecture's read surface); it is the liveness
- *   and turn-over signal, and per-run polling stops.
- * - "runs": the route returned 404 (older server or the feed kill switch is
- *   off); the run-based inference is the only signal.
- */
 type EnvironmentWaitMode = "unknown" | "runtime-status" | "runs";
 
-/**
- * The turn is over when the conversation has no runtime work left (IDLE), or
- * when the owning listener reports WAITING_ON_INPUT. The second clause
- * matters because the outer state stays ACTIVE while the listener holds
- * unrelated work for the conversation (an armed Monitor, a background
- * subagent): the loop status is the turn's own signal.
- */
 function isRuntimeTurnOver(status: AgentRuntimeStatusEntry): boolean {
   return (
     status.state === "IDLE" || status.loop_state?.status === "WAITING_ON_INPUT"
   );
 }
 
-/**
- * Wait for the assistant reply of an environment-routed turn.
- *
- * The remote turn runs on another machine; this poller only observes the
- * conversation through the API. The primary liveness signal is the server's
- * per-conversation runtime-status record (GET
- * /v1/agents/:agentId/runtime-status): a non-IDLE state is progress, and the
- * turn is over when the record goes IDLE or the owning listener reports
- * WAITING_ON_INPUT. When the route 404s (older server or the feed kill
- * switch), the wait falls back to inferring liveness from the turn's runs.
- * Either way it keeps waiting while there is evidence the turn is alive and
- * fails when:
- *
- * - the device goes offline (checked every `onlineCheckIntervalMs` when
- *   `deviceId` is provided);
- * - the turn ends (record IDLE / run terminal) without an assistant reply;
- * - nothing observable happens for `inactivityTimeoutMs`; or
- * - the absolute ceiling `maxWaitMs` is hit (default one hour, overridable
- *   with LETTA_ENVIRONMENT_TIMEOUT_MS).
- */
 export async function waitForEnvironmentAssistantMessage(params: {
   backend: Backend;
   agentId: string;
   conversationId: string;
   otid: string;
-  /** Device to liveness-check while waiting. Omitting skips online checks. */
   deviceId?: string;
   maxWaitMs?: number;
   inactivityTimeoutMs?: number;
   pollIntervalMs?: number;
   onlineCheckIntervalMs?: number;
   runStatusIntervalMs?: number;
-  /** Injectable for deterministic tests. */
   deps?: {
     now?: () => number;
     sleep?: (ms: number) => Promise<void>;
@@ -456,7 +390,6 @@ export async function waitForEnvironmentAssistantMessage(params: {
 
     const messages = pageItems<LettaMessage>(page);
 
-    // Any new message in the conversation counts as progress.
     for (const message of messages) {
       const sequenceId = messageSequenceId(message);
       if (
@@ -477,15 +410,10 @@ export async function waitForEnvironmentAssistantMessage(params: {
       inputSequenceId = inputMessage ? messageSequenceId(inputMessage) : null;
     }
 
-    // Reply selection needs the OTID anchor and the next-user-turn bound in
-    // both modes: the runtime-status record says when the turn is over, but
-    // not which assistant message answers this input.
     let assistant: LettaMessage | undefined;
     let newestRunId: string | null = null;
     if (inputSequenceId !== null) {
       const anchorSequenceId = inputSequenceId;
-      // Approval continuations get new run IDs, so use the input's OTID as the
-      // turn anchor and follow messages only until the next user turn begins.
       const newerMessages = messages.filter((message) => {
         const sequenceId = messageSequenceId(message);
         return sequenceId !== null && sequenceId > anchorSequenceId;
@@ -515,8 +443,6 @@ export async function waitForEnvironmentAssistantMessage(params: {
         .sort(
           (a, b) => (messageSequenceId(b) ?? 0) - (messageSequenceId(a) ?? 0),
         )[0];
-      // Tool calls and reasoning also carry the turn's run_id, so a run can be
-      // observed (and liveness-checked) before any assistant message exists.
       newestRunId =
         messageRunId(assistant) ??
         turnMessages
@@ -528,12 +454,6 @@ export async function waitForEnvironmentAssistantMessage(params: {
         null;
     }
 
-    // Primary signal: the conversation's runtime-status record. A non-IDLE
-    // state is progress (covers long tool calls, approval pauses, and delivery
-    // gaps that produce no new messages); IDLE or the owner reporting
-    // WAITING_ON_INPUT means the turn is over. 404 pins the wait to the
-    // run-based fallback; other errors are transient and leave the remaining
-    // signals in charge.
     if (mode !== "runs") {
       const shouldCheckRuntimeStatus =
         assistant !== undefined ||
@@ -550,8 +470,6 @@ export async function waitForEnvironmentAssistantMessage(params: {
           if (error instanceof ApiRequestError && error.status === 404) {
             mode = "runs";
           }
-          // Any other failure is transient: the message, run, and device
-          // signals still apply this iteration.
         }
         if (snapshot) {
           mode = "runtime-status";
@@ -567,21 +485,15 @@ export async function waitForEnvironmentAssistantMessage(params: {
           } else if (status && inputSequenceId !== null) {
             const text = assistant ? extractMessageText(assistant).trim() : "";
             if (text.length > 0) {
-              // Best-effort stop reason: the turn is already over, so one
-              // lookup suffices and a failure only drops the field.
               let stopReason: StopReasonType | null = null;
               if (newestRunId) {
                 try {
                   const run = await params.backend.retrieveRun(newestRunId);
                   stopReason = run.stop_reason ?? null;
-                } catch {
-                  // Field is informational; the reply is already in hand.
-                }
+                } catch {}
               }
               return { text, stopReason };
             }
-            // Turn over without a reply: allow a short lag for the assistant
-            // message to land, then give up.
             runtimeTurnOverAt ??= now();
             if (now() - runtimeTurnOverAt >= COMPLETED_WITHOUT_TEXT_GRACE_MS) {
               throw new Error(
@@ -603,8 +515,6 @@ export async function waitForEnvironmentAssistantMessage(params: {
         lastRunStatusCheckAt = now();
         const run = await params.backend.retrieveRun(newestRunId);
         if (!isTerminalRunStatus(run.status)) {
-          // The run is still executing; that is progress even when the
-          // conversation has been quiet (e.g. one long tool call).
           lastProgressAt = now();
         } else if (run.stop_reason !== "requires_approval") {
           const text = assistant ? extractMessageText(assistant).trim() : "";
@@ -617,8 +527,6 @@ export async function waitForEnvironmentAssistantMessage(params: {
                 (run.stop_reason ? ` (stop reason: ${run.stop_reason})` : ""),
             );
           }
-          // Completed without text: allow a short lag for the assistant
-          // message to land, then give up.
           completedWithoutTextAt ??= now();
           if (
             now() - completedWithoutTextAt >=
@@ -638,9 +546,7 @@ export async function waitForEnvironmentAssistantMessage(params: {
       try {
         const connection = await fetchEnvironment(params.deviceId);
         offline = !isEnvironmentOnline(connection);
-      } catch {
-        // Transient lookup failure; the other liveness checks still apply.
-      }
+      } catch {}
       if (offline) {
         throw new Error(
           `Environment device ${params.deviceId} went offline before the turn completed`,

@@ -382,13 +382,9 @@ describe("refreshAccessToken abort bound (evil-shub round-9 P1)", () => {
       );
     }) as unknown as typeof fetch;
 
-    // No caller signal: the static ceiling still bounds the fetch — the
-    // single-flight waiters can never hang forever on a dead connection.
     await refreshAccessToken("refresh-token", "device-id", "device-name");
     expect(seenSignals[0]).toBeInstanceOf(AbortSignal);
 
-    // A caller signal composes: aborting it aborts the signal the fetch
-    // received (AbortSignal.any fan-in).
     const controller = new AbortController();
     const pending = refreshAccessToken(
       "refresh-token",
@@ -397,7 +393,7 @@ describe("refreshAccessToken abort bound (evil-shub round-9 P1)", () => {
       controller.signal,
     );
     controller.abort(new Error("budget exceeded"));
-    await pending; // the mock resolves regardless; the signal wiring is the assertion
+    await pending;
     expect(seenSignals[1]).toBeInstanceOf(AbortSignal);
     expect(seenSignals[1]?.aborted).toBe(true);
   });

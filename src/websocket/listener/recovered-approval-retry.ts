@@ -36,7 +36,6 @@ function retryDelay(attempt: number): number {
   return Math.floor(ceiling / 2 + Math.random() * (ceiling / 2));
 }
 
-/** Coalesce claim-loss recovery after the stale lease has unwound to idle. */
 export function scheduleRecoveredApprovalRetry(
   runtime: ConversationRuntime,
   retry: () => Promise<unknown>,

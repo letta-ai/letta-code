@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
 
-/** Run git with a deadline that also reaps its HTTP/SSH helper processes. */
 export async function execGit(
   args: string[],
   options: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number },
@@ -57,7 +56,6 @@ export async function execGit(
   function terminate(): void {
     if (!child.pid) return;
     if (process.platform === "win32") {
-      // Killing only git.exe leaves git-remote-http.exe holding cwd open.
       termination = new Promise<void>((resolve) => {
         const killer = spawn(
           "taskkill.exe",

@@ -65,7 +65,6 @@ describe("mcp servers info reminder", () => {
     expect(state.lastSentMcpServerNamesKey).toBeNull();
     expect(await buildReminder(state, deps)).toBeNull();
 
-    // Compaction re-arms the reminder but still has nothing to announce.
     markPostCompactionContextRemindersPending(state);
     expect(await buildReminder(state, deps)).toBeNull();
   });
@@ -110,7 +109,6 @@ describe("mcp servers info reminder", () => {
     );
     expect(await buildReminder(state, deps)).toBeNull();
 
-    // Servers were announced in this session, so compaction re-sends None.
     markPostCompactionContextRemindersPending(state);
     expect(await buildReminder(state, deps)).toContain(
       "MCP servers with available tools: None",
@@ -176,7 +174,6 @@ describe("mcp servers info reminder", () => {
       "MCP servers with available tools: exa (2 tools), betterstack (111 tools)",
     );
 
-    // Unchanged lists do not add duplicate reminders.
     expect(await buildReminder(state, deps)).toBeNull();
 
     servers = [];

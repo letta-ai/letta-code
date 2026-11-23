@@ -1,4 +1,3 @@
-// Real Cursor SDK/provider, selected from Cursor's live catalog by the CI job.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -31,8 +30,6 @@ beforeAll(async () => {
   model = await resolveCursorTestModel(cwd);
   process.env.HOME = root;
   await settingsManager.initialize();
-  // Resolving the model reads Cursor's live catalog over the network, which
-  // can take longer than bun's 5s default hook timeout.
 }, 60_000);
 
 afterAll(async () => {
@@ -58,7 +55,6 @@ test("Cursor edits files, streams tool calls, and resumes history and checkout t
     onToolCall: (call) => tools.push(call.name),
   });
   expect(first.success, first.error).toBe(true);
-  // Cursor reports the Auto selection under its canonical "default" ID.
   expect(first.model).toBe(model === "auto" ? "default" : model);
   expect(first.agentId).toBe(handle);
   expect(tools.length).toBeGreaterThan(0);
@@ -66,7 +62,6 @@ test("Cursor edits files, streams tool calls, and resumes history and checkout t
     "CURSOR_PROOF_731",
   );
   await closeCursorSessions();
-  // A changed parent cwd must not move a persisted native session.
   await runWithRuntimeContext(
     {
       agentId: parentAgentId,
@@ -123,7 +118,6 @@ test("Cursor in-flight messages execute once whether delivered as steering or a 
     prompt:
       "Append exactly one line containing STEERED_941 to steered.txt, then reply DONE. Do not repeat the append.",
   });
-  // Both are documented SDK outcomes. Assert the delivery's actual task contract.
   if (receipt.mode === "steered") expect(receipt.completion).toBeUndefined();
   else expect(receipt.completion).toBeDefined();
   const result = await first;

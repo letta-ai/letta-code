@@ -229,7 +229,6 @@ describe("classifyApprovals", () => {
     permissionMode.setMode("unrestricted");
     process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
 
-    // Shape of a payload truncated mid-string on the way to the client.
     const truncated = '{"command":"echo hello';
 
     const result = await classifyApprovals(

@@ -1,17 +1,3 @@
-/**
- * Tests for list_messages protocol — types, routing semantics, and
- * error-response construction.
- *
- * Organised in three suites:
- *
- * 1. Type / wire-shape tests — pure TypeScript structural checks.
- * 2. Routing semantics — tests against resolveListMessagesRoute() covering
- *    all four meaningful input combinations.
- * 3. Error propagation — verify error control_response envelope shape and
- *    message extraction.
- *
- * No live Letta API calls are made here; those are in the manual smoke suite.
- */
 import { describe, expect, test } from "bun:test";
 import { resolveListMessagesRoute } from "@/agent/list-messages-routing";
 import type {
@@ -20,10 +6,6 @@ import type {
   ListMessagesControlRequest,
   ListMessagesResponsePayload,
 } from "@/types/protocol";
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 1. Wire-shape / type tests
-// ─────────────────────────────────────────────────────────────────────────────
 
 describe("list_messages protocol — wire shapes", () => {
   test("ListMessagesControlRequest accepts all optional fields", () => {
@@ -127,23 +109,14 @@ describe("list_messages protocol — wire shapes", () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 2. Routing semantics (resolveListMessagesRoute)
-// ─────────────────────────────────────────────────────────────────────────────
-
 describe("list_messages routing — resolveListMessagesRoute", () => {
   const SESSION_AGENT = "agent-session-default";
   const SESSION_CONV = "conv-session-abc";
 
-  /**
-   * Case A: explicit conversation_id in request.
-   * Must use conversations.messages.list with the explicit id,
-   * regardless of what the session's conversation is.
-   */
   test("A — explicit conversation_id → conversations API with that id", () => {
     const route = resolveListMessagesRoute(
       { conversation_id: "conv-explicit-xyz" },
-      "default", // session is on default — must be ignored
+      "default",
       SESSION_AGENT,
     );
     expect(route.kind).toBe("conversations");
@@ -155,7 +128,7 @@ describe("list_messages routing — resolveListMessagesRoute", () => {
   test("A — explicit conversation_id overrides non-default session conv", () => {
     const route = resolveListMessagesRoute(
       { conversation_id: "conv-override" },
-      "conv-session-other", // different from explicit — must be ignored
+      "conv-session-other",
       SESSION_AGENT,
     );
     expect(route.kind).toBe("conversations");
@@ -164,17 +137,8 @@ describe("list_messages routing — resolveListMessagesRoute", () => {
     }
   });
 
-  /**
-   * Case B: no conversation_id in request, session is on a named conversation.
-   * Must use conversations.messages.list with the session's conversation id.
-   * This is the backfill case for non-default conversations created mid-session.
-   */
   test("B — omitted conversation_id + non-default session → conversations API with session convId", () => {
-    const route = resolveListMessagesRoute(
-      {}, // no conversation_id
-      SESSION_CONV, // session has a real conversation
-      SESSION_AGENT,
-    );
+    const route = resolveListMessagesRoute({}, SESSION_CONV, SESSION_AGENT);
     expect(route.kind).toBe("conversations");
     if (route.kind === "conversations") {
       expect(route.conversationId).toBe(SESSION_CONV);
@@ -190,16 +154,8 @@ describe("list_messages routing — resolveListMessagesRoute", () => {
     }
   });
 
-  /**
-   * Case C: no conversation_id in request, session is on the default conversation.
-   * Keeps conversation_id="default" and passes agent_id separately.
-   */
   test("C — omitted conversation_id + session default → conversations API with default + session agentId", () => {
-    const route = resolveListMessagesRoute(
-      {}, // no conversation_id
-      "default", // session is on default conversation
-      SESSION_AGENT,
-    );
+    const route = resolveListMessagesRoute({}, "default", SESSION_AGENT);
     expect(route.kind).toBe("conversations");
     expect(route.conversationId).toBe("default");
     expect(route.agentId).toBe(SESSION_AGENT);
@@ -213,7 +169,6 @@ describe("list_messages routing — resolveListMessagesRoute", () => {
     );
     expect(route.kind).toBe("conversations");
     expect(route.conversationId).toBe("default");
-    // Request's agent_id takes priority over session agent when on default conv
     expect(route.agentId).toBe("agent-override-id");
   });
 
@@ -228,14 +183,11 @@ describe("list_messages routing — resolveListMessagesRoute", () => {
     expect(route.agentId).toBe("agent-session-fallback");
   });
 
-  /**
-   * All paths use the conversations API.
-   */
   test("conversations path for any non-default conversation string", () => {
     const convIds = [
       "conv-00000000-0000-0000-0000-000000000000",
       "some-arbitrary-id",
-      " ", // whitespace — unusual but should still use conversations path
+      " ",
     ];
     for (const id of convIds) {
       const route = resolveListMessagesRoute({}, id, SESSION_AGENT);
@@ -244,12 +196,7 @@ describe("list_messages routing — resolveListMessagesRoute", () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 3. Error propagation — envelope construction
-// ─────────────────────────────────────────────────────────────────────────────
-
 describe("list_messages — error control_response construction", () => {
-  /** Simulates what the headless handler does in the catch block. */
   function buildErrorResponse(
     err: unknown,
     requestId: string,

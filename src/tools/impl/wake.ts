@@ -453,7 +453,6 @@ export async function wake(
   }
 }
 
-/** Cancel only schedules belonging to the stopped conversation. */
 export async function cancelConversationWakes(
   scope: WakeScope,
   deps: WakeDeps = {},

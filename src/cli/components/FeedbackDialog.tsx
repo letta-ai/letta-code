@@ -27,7 +27,6 @@ export function FeedbackDialog({
   const [error, setError] = useState("");
 
   useInput((_input, key) => {
-    // CTRL-C: immediately cancel
     if (key.ctrl && _input === "c") {
       onCancel();
       return;
@@ -53,7 +52,6 @@ export function FeedbackDialog({
 
   return (
     <Box flexDirection="column">
-      {/* Command header */}
       <Text dimColor>{"> /feedback"}</Text>
       <Text dimColor>{solidLine}</Text>
 

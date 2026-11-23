@@ -13,20 +13,6 @@ import {
   finalizeReflectionMemoryWorktree,
 } from "@/agent/memory-worktree";
 
-/**
- * Regression tests for operator machines with commit signing enabled
- * globally (`commit.gpgsign=true`). The agent's committer identity
- * (`<agentId>@letta.com`) has no signing key, so any signing attempt fails
- * with "gpg: signing failed: No secret key" and blocked memory init:
- *
- *   Command failed: git -c user.name=Tutor -c user.email=agent-local-...@letta.com
- *     commit --allow-empty -m chore: initialize empty local memory
- *   error: gpg failed to sign the data
- *
- * The suite points GIT_CONFIG_GLOBAL at a config that demands signing with
- * a nonexistent gpg binary, so any signing attempt fails loudly.
- */
-
 const AGENT_ID = "agent-local-signing-test";
 
 let tempDir: string;
@@ -62,7 +48,6 @@ afterEach(() => {
   rmSync(tempDir, { recursive: true, force: true });
 });
 
-/** Test-setup git runner: disables signing explicitly for seed commits. */
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", ["-c", "commit.gpgsign=false", ...args], {
     cwd,
@@ -97,7 +82,6 @@ describe("memory git commit signing", () => {
     expect(head).not.toBeNull();
     const subject = git(memoryDir, ["log", "-1", "--pretty=%s"]).trim();
     expect(subject).toBe("chore: initialize empty local memory");
-    // Repo-local default keeps direct `git commit` runs unsigned too.
     const localGpgSign = git(memoryDir, [
       "config",
       "--local",
@@ -184,7 +168,6 @@ describe("memory git commit signing", () => {
     });
 
     expect(result.committed).toBe(true);
-    // Deliberate operator override is respected (set-if-unset semantics).
     const localGpgSign = git(memoryDir, [
       "config",
       "--local",
@@ -195,8 +178,6 @@ describe("memory git commit signing", () => {
   });
 
   test("reflection worktree merge commits succeed when global config demands signing", async () => {
-    // Plain repo without harness-managed local config, so the merge result
-    // pins memory-worktree's own signing opt-out rather than repo config.
     const memoryDir = join(tempDir, "agent", "memory");
     git(tempDir, ["init", "-b", "main", memoryDir]);
     writeFileSync(join(memoryDir, "persona.md"), "base\n", "utf-8");
@@ -215,8 +196,6 @@ describe("memory git commit signing", () => {
     git(worktree.worktreeDir, ["add", "persona.md"]);
     git(worktree.worktreeDir, ["commit", "-m", "chore: reflection update"]);
 
-    // Advance the parent so the merge is a true merge commit (the case
-    // where git attempts to sign).
     writeFileSync(join(memoryDir, "notes.md"), "parent change\n", "utf-8");
     git(memoryDir, ["add", "notes.md"]);
     git(memoryDir, ["commit", "-m", "parent update"]);

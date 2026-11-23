@@ -14,9 +14,6 @@ import {
 const handles: BrowserDiscoveryServerHandle[] = [];
 const blockers: Server[] = [];
 const tempDirs: string[] = [];
-// Cold Node starts on loaded Windows runners can take several seconds. A
-// fixture kept alive by a leaked handle never exits, so this still catches
-// the leak, within the unit runner's 15 second test timeout.
 const NODE_FIXTURE_TIMEOUT_MS = 10_000;
 
 afterEach(async () => {
@@ -153,9 +150,6 @@ describe("browser discovery server", () => {
       `Discovery takeover blocker did not close port ${port}`,
     );
     blockers.splice(blockers.indexOf(blocker), 1);
-    // Keep a referenced watchdog while waiting: the production retry timer is
-    // intentionally unref'd, and Bun on Windows does not schedule it when the
-    // test harness is otherwise the only remaining owner of the event loop.
     const address = await withTimeout(
       handle.ready,
       2_000,
@@ -367,9 +361,6 @@ async function readFirstLine(
     let output = "";
     const timeout = setTimeout(() => {
       cleanup();
-      // Windows CI has stalled here past 10s while later Node fixtures in
-      // the same job start in about 1s. Say whether Node was still running
-      // and what reached the pipe, to tell a stalled Node from a missed event.
       const alive = child.pid !== undefined && isProcessAlive(child.pid);
       reject(
         new Error(

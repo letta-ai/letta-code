@@ -94,8 +94,11 @@ describe("headless backend lifecycle wiring", () => {
   test("interactive ready-state agent config refresh uses Backend", () => {
     const source = readInteractiveAppSource();
 
-    const start = source.indexOf("// Fetch llmConfig when agent is ready");
-    const end = source.indexOf("// Update project settings", start);
+    const start = source.indexOf("const fetchConfig = async () => {");
+    const end = source.indexOf(
+      "}, [loadingState, agentId, initialAgentState]);",
+      start,
+    );
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
 

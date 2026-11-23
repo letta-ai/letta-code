@@ -79,7 +79,6 @@ describe("runtime_start default permission mode", () => {
       conversation_id: "default",
     });
 
-    // Simulate a listener restart: the new runtime loads the persisted map.
     const restarted = createRuntime();
     await runtimeStart(restarted, {
       agent_id: agentId,

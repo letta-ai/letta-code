@@ -36,10 +36,6 @@ export interface MemorySubagentCompletionDeps {
   recompileAgentSystemPromptImpl?: RecompileAgentSystemPromptFn;
 }
 
-/**
- * Finalize a memory-writing subagent by recompiling the parent agent's
- * system prompt and returning the user-facing completion text.
- */
 export async function handleMemorySubagentCompletion(
   args: MemorySubagentCompletionArgs,
   deps: MemorySubagentCompletionDeps,
@@ -73,8 +69,6 @@ export async function handleMemorySubagentCompletion(
             );
           } while (deps.recompileQueuedByConversation.has(conversationId));
         })().finally(() => {
-          // Cleanup runs only after the shared promise settles, so every
-          // concurrent caller awaits the same full recompile lifecycle.
           deps.recompileQueuedByConversation.delete(conversationId);
           deps.recompileByConversation.delete(conversationId);
         });

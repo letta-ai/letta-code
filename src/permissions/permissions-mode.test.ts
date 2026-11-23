@@ -5,15 +5,10 @@ import { cliPermissions } from "@/permissions/cli-permissions-instance";
 import { permissionMode } from "@/permissions/mode";
 import type { PermissionRules } from "@/permissions/types";
 
-// Clean up after each test
 afterEach(() => {
   permissionMode.reset();
   cliPermissions.clear();
 });
-
-// ============================================================================
-// Permission Mode: default
-// ============================================================================
 
 test("default mode - no overrides", () => {
   permissionMode.setMode("standard");
@@ -26,12 +21,11 @@ test("default mode - no overrides", () => {
 
   const result = checkPermission(
     "Bash",
-    { command: "curl http://example.com" }, // Use non-read-only command
+    { command: "curl http://example.com" },
     permissions,
     "/Users/test/project",
   );
 
-  // Should fall back to tool default (ask for Bash)
   expect(result.decision).toBe("ask");
   expect(result.reason).toBe("Default behavior for tool");
 });
@@ -49,7 +43,7 @@ test("default mode - treats Agent like Task for safe subagent auto-approval", ()
     "Agent",
     {
       subagent_type: "recall",
-      harness: "codex", // Ignored: the recall preset owns the launch settings.
+      harness: "codex",
       prompt: "find prior notes",
       description: "Search history",
     },
@@ -78,10 +72,6 @@ test("default mode - auto-approves the sandboxed memory worker", () => {
   expect(result.decision).toBe("allow");
   expect(result.reason).toBe("Default behavior for tool");
 });
-
-// ============================================================================
-// Permission Mode: unrestricted
-// ============================================================================
 
 test("unrestricted mode - allows all tools", () => {
   permissionMode.setMode("unrestricted");
@@ -126,7 +116,6 @@ test("unrestricted mode - does NOT override deny rules", () => {
     "/Users/test/project",
   );
 
-  // Deny rules take precedence even in unrestricted mode
   expect(result.decision).toBe("deny");
   expect(result.reason).toBe("Matched deny rule");
 });
@@ -193,10 +182,6 @@ test("unrestricted mode - regular ask rules still auto-allow", () => {
   expect(result.decision).toBe("allow");
   expect(result.reason).toBe("Permission mode: unrestricted");
 });
-
-// ============================================================================
-// Permission Mode: acceptEdits
-// ============================================================================
 
 test("acceptEdits mode - allows Write", () => {
   permissionMode.setMode("acceptEdits");
@@ -294,19 +279,14 @@ test("acceptEdits mode - does NOT allow Bash", () => {
 
   const result = checkPermission(
     "Bash",
-    { command: "curl http://example.com" }, // Use non-read-only command
+    { command: "curl http://example.com" },
     permissions,
     "/Users/test/project",
   );
 
-  // Bash is not an edit tool, should fall back to default
   expect(result.decision).toBe("ask");
   expect(result.reason).toBe("Default behavior for tool");
 });
-
-// ============================================================================
-// Permission Mode: strict
-// ============================================================================
 
 test("strict mode - Read within working directory defaults to ask (no auto-allow)", () => {
   permissionMode.setMode("strict");
@@ -324,7 +304,6 @@ test("strict mode - Read within working directory defaults to ask (no auto-allow
     "/Users/test/project",
   );
 
-  // In standard mode this would auto-allow, but strict mode forces "ask"
   expect(result.decision).toBe("ask");
   expect(result.reason).toBe("Default behavior for tool");
 });
@@ -385,7 +364,6 @@ test("strict mode - read-only shell command defaults to ask (no auto-allow)", ()
     "/Users/test/project",
   );
 
-  // In standard mode, read-only shell commands auto-allow; strict mode forces "ask"
   expect(result.decision).toBe("ask");
   expect(result.reason).toBe("Default behavior for tool");
 });
@@ -406,7 +384,6 @@ test("strict mode - Skill tool defaults to ask (no auto-allow)", () => {
     "/Users/test/project",
   );
 
-  // In standard mode, Skill auto-allows; strict mode forces "ask"
   expect(result.decision).toBe("ask");
   expect(result.reason).toBe("Default behavior for tool");
 });
@@ -447,7 +424,6 @@ test("strict mode - does NOT override deny rules", () => {
     "/Users/test/project",
   );
 
-  // Deny rules still take precedence
   expect(result.decision).toBe("deny");
   expect(result.reason).toBe("Matched deny rule");
 });
@@ -469,7 +445,6 @@ test("strict mode - does NOT override alwaysAsk rules", () => {
     "/Users/test/project",
   );
 
-  // alwaysAsk rules still take precedence
   expect(result.decision).toBe("alwaysAsk");
   expect(result.reason).toBe("Matched alwaysAsk rule");
 });
@@ -490,7 +465,6 @@ test("strict mode - explicit allow rules still work", () => {
     "/Users/test/project",
   );
 
-  // Explicit allow rules still work
   expect(result.decision).toBe("allow");
   expect(result.reason).toBe("Matched allow rule");
 });
@@ -512,15 +486,10 @@ test("strict mode - CLI --allowedTools still work", () => {
     "/Users/test/project",
   );
 
-  // CLI --allowedTools still allows the tool
   expect(result.decision).toBe("allow");
   expect(result.matchedRule).toContain("(CLI)");
   expect(result.reason).toBe("Matched --allowedTools flag");
 });
-
-// ============================================================================
-// Default decisions for tools that only touch agent-owned state
-// ============================================================================
 
 const NO_RULES: PermissionRules = { allow: [], deny: [], ask: [] };
 
@@ -546,7 +515,6 @@ test.each([
   ["ReadLSP", "file_path"],
 ])("%s runs without asking only inside the working directory", (tool, key) => {
   permissionMode.setMode("standard");
-  // resolve() keeps these absolute on every platform (drive-rooted on Windows).
   const project = resolve("/Users/test/project");
 
   const inside = checkPermission(
@@ -568,7 +536,6 @@ test.each([
 });
 
 test("standard mode - SetWorkingDirectory still asks", () => {
-  // Moving the working directory widens where file tools run without asking.
   permissionMode.setMode("standard");
   const result = checkPermission(
     "SetWorkingDirectory",

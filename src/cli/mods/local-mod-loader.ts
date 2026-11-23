@@ -28,8 +28,6 @@ function getDefaultBuiltinCommandIds(): Set<string> {
 }
 
 function getDefaultReservedToolNames(): Set<string> {
-  // Removed built-ins stay reserved so a mod cannot inherit their permission
-  // aliases and approval rendering.
   const reserved = new Set<string>(getRemovedToolNames());
   for (const toolName of getAllLettaToolNames()) {
     reserved.add(toolName);

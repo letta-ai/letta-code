@@ -54,7 +54,6 @@ afterEach(async () => {
     processState.completionNotificationSuppressed = true;
     processState.process.kill("SIGKILL");
   }
-  // Let aborted scripts settle and close their MCP sessions.
   await Bun.sleep(50);
   backgroundProcesses.clear();
   setMessageQueueAdder(null);
@@ -81,7 +80,6 @@ async function waitFor(condition: () => boolean, timeoutMs = 8000) {
   }
 }
 
-/** Launches Monitor through the real manager, as a model tool call would. */
 async function launch(
   input: Record<string, unknown>,
   mode: "unrestricted" | "strict" = "unrestricted",
@@ -109,7 +107,6 @@ async function launch(
         { toolContextId: contextId },
       ),
   );
-  // Successful launches return a text content array; errors return a string.
   const text =
     typeof result.toolReturn === "string"
       ? result.toolReturn
@@ -150,7 +147,6 @@ while (true) {
   await waitFor(() => queued.some((m) => m.text.includes("<status>completed")));
 
   const texts = queued.map((m) => m.text).join("\n");
-  // Each status change is one event, despite many polls of the same state.
   expect(texts.match(/<event>status: queued/g)).toHaveLength(1);
   expect(texts.match(/<event>status: running/g)).toHaveLength(1);
   expect(texts).toContain('{"final":"done"}');
@@ -180,7 +176,6 @@ while (true) {
 }`,
   });
   await waitFor(() => queued.some((m) => m.text.includes("Echo: poll 0")));
-  // The TUI releases the turn's context when the turn ends.
   releaseToolExecutionContext(contextId);
   expect(getExecutionContextById(contextId)).toBeDefined();
   await waitFor(() => queued.some((m) => m.text.includes("Echo: poll 3")));
@@ -191,7 +186,6 @@ while (true) {
   await waitFor(() => getExecutionContextById(contextId) === undefined);
   const count = queued.length;
   await Bun.sleep(100);
-  // Stopping is silent and ends the loop.
   expect(queued.length).toBe(count);
   expect(backgroundProcesses.get(taskId)?.status).toBe("failed");
 }, 20000);
@@ -228,7 +222,6 @@ while (true) {
   await waitFor(() => queued.length > 0);
   releaseToolExecutionContext(contextId);
   expect((await task_stop({ task_id: taskId })).killed).toBe(true);
-  // A spinning loop would starve these timers and the run's cleanup.
   await waitFor(() => getExecutionContextById(contextId) === undefined);
   expect(backgroundProcesses.get(taskId)?.status).toBe("failed");
 });

@@ -11,7 +11,6 @@ import { getConversationWorkingDirectory } from "@/websocket/listener/cwd";
 import { toSubagentLaunchArgs } from "@/websocket/listener/subagent-protocol-inbound";
 import type { ConversationRuntime } from "@/websocket/listener/types";
 
-/** A sideband launch never acquires or changes the parent's turn lease. */
 export async function handleLaunchSubagentCommand(
   command: LaunchSubagentCommand,
   parent: ConversationRuntime,
@@ -37,7 +36,6 @@ export async function handleLaunchSubagentCommand(
   const aborted = Promise.withResolvers<never>();
   const onAbort = () => aborted.reject(signal.reason);
   signal.addEventListener("abort", onAbort, { once: true });
-  // Finish startup before the client's default 30-second request deadline.
   const timeout = setTimeout(() => {
     controller.abort(new Error("Subagent launch timed out"));
   }, startupTimeoutMs);
@@ -77,8 +75,6 @@ export async function handleLaunchSubagentCommand(
             launch(
               {
                 ...toSubagentLaunchArgs(command.args),
-                // Forwarded launches have already reached their destination.
-                // Its default computer could route the same command back here.
                 ...(command.notify === "caller" &&
                   command.args.computer === undefined && { computer: "local" }),
                 signal,

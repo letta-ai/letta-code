@@ -1,21 +1,5 @@
-/**
- * Cloud schedules client (`/v1/agents/:agent_id/schedule` endpoints).
- *
- * These routes are served by the Letta API (cloud-api), not the OSS core
- * server. Cloud schedules are durable: the schedule definition lives in the
- * Letta API's database and fires from a cloud worker, which injects the
- * scheduled turn into the agent's managed cloud sandbox (`use_sandbox: true`)
- * or, when `target_device_id` is set, into that registered device's live
- * listener (if the device is offline at fire time, that occurrence fails with
- * TARGET_DEVICE_UNAVAILABLE; there is no sandbox fallback). Either way they
- * survive local process/device/sandbox termination, unlike runtime-local
- * crons in ~/.letta/crons.json.
- */
-
 import { actingUserRequestOptions } from "@/agent/acting-user";
 import { ApiRequestError, apiRequest } from "./request";
-
-// ── Wire types (mirror the cloud scheduledMessages contract) ────────
 
 export type CloudScheduleSpec =
   | { type: "recurring"; cron_expression: string }
@@ -32,11 +16,6 @@ export interface CreateCloudScheduleInput {
   conversation_id?: string;
   messages: CloudScheduleMessage[];
   schedule: CloudScheduleSpec;
-  /**
-   * Optional execution target: a registered environment deviceId (e.g. a
-   * Railway/VPS listener). When the device is offline at fire time, that
-   * occurrence fails (TARGET_DEVICE_UNAVAILABLE) and does not run.
-   */
   target_device_id?: string;
 }
 
@@ -81,8 +60,6 @@ export interface ListCloudScheduleHistoryResponse {
   next_offset: number | null;
 }
 
-// ── Requests ────────────────────────────────────────────────────────
-
 function schedulePath(agentId: string): string {
   return `/v1/agents/${encodeURIComponent(agentId)}/schedule`;
 }
@@ -97,10 +74,6 @@ export async function createCloudSchedule(
     schedulePath(agentId),
     {
       ...input,
-      // Cloud schedules created by the CLI always use harness delivery:
-      // execution runs in the agent's managed sandbox, or on the device named
-      // by `target_device_id` (LET-9821); offline device = failed occurrence.
-      // The server requires use_sandbox for device targets either way.
       use_sandbox: true,
     },
     actingUserRequestOptions(actingUserId),
@@ -197,18 +170,11 @@ function isUnsupportedFilterError(error: unknown): boolean {
   );
 }
 
-/**
- * Lists every schedule matching exact predicates. New servers filter before
- * pagination; older servers safely fall back to the legacy unfiltered scan.
- */
 export async function listCloudSchedulesByExactMatch(
   agentId: string,
   filter: ExactCloudScheduleFilter,
   request: ListCloudSchedulesRequest = listCloudSchedules,
 ): Promise<CloudSchedule[]> {
-  // The API currently stores some default-conversation schedules as NULL. Until
-  // the server defines how `conversation_id=default` treats those rows, retain
-  // the legacy normalization so they cannot disappear from client lookups.
   const canUseFilter = filter.conversationId !== "default";
   if (canUseFilter) {
     try {

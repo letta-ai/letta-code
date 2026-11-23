@@ -1,10 +1,3 @@
-/**
- * Per-task cron run history backed by JSONL files next to crons.json.
- *
- * This mirrors the reference shape: job state stays in one JSON file, while
- * each job/task gets an append-only `runs/<id>.jsonl` history file.
- */
-
 import {
   appendFileSync,
   chmodSync,
@@ -94,17 +87,13 @@ export function getCronRunLogPath(jobId: string): string {
 function setSecureDirMode(dirPath: string): void {
   try {
     chmodSync(dirPath, 0o700);
-  } catch {
-    // Best effort on platforms/filesystems that do not support chmod.
-  }
+  } catch {}
 }
 
 function setSecureFileMode(filePath: string): void {
   try {
     chmodSync(filePath, 0o600);
-  } catch {
-    // Best effort on platforms/filesystems that do not support chmod.
-  }
+  } catch {}
 }
 
 function pruneIfNeeded(
@@ -204,9 +193,7 @@ function parseAllRunLogEntries(
         windowStart: obj.windowStart,
         windowEnd: obj.windowEnd,
       });
-    } catch {
-      // Ignore invalid lines.
-    }
+    } catch {}
   }
   return entries;
 }

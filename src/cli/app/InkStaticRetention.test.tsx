@@ -3,13 +3,6 @@ import { Writable } from "node:stream";
 import { Box, render, Static, Text, useApp } from "ink";
 import { useEffect, useState } from "react";
 
-// Regression coverage for LET-13141: the patched Ink runtime must retain only
-// a bounded tail of the committed static transcript for one-shot repaints.
-// Overflow must not replay that tail, must not clear the screen (2J erases
-// on-screen transcript rows in xterm-like terminals and copies every live
-// frame into tmux history), must not append another live copy every
-// streaming frame, and must skip identical frames.
-
 const RETAIN_LIMIT = 2 * 1024 * 1024;
 const OVERFLOW_SLACK = 256 * 1024;
 const EARLY_MARKER = "EARLY-STATIC-MARKER";
@@ -38,7 +31,6 @@ class CaptureStream extends Writable {
 }
 
 async function waitForRender(): Promise<void> {
-  // onRender is throttled at 32ms; wait past the trailing edge.
   await new Promise((resolve) => setTimeout(resolve, 80));
 }
 
@@ -84,20 +76,10 @@ function countOccurrences(haystack: string, needle: string): number {
 }
 
 type VtOptions = {
-  // tmux scroll-on-clear (its default): 2J first copies the viewport, up to
-  // its last non-blank row, into scrollback.
   clearSavesToScrollback?: boolean;
-  // Terminal height changes, applied before the chunk at index `at`.
   resizes?: Array<{ at: number; rows: number }>;
 };
 
-// Minimal VT model covering what Ink and log-update emit: text with deferred
-// autowrap, LF (with ONLCR), CR, cursor up/column/position, and erase in
-// line/display. By default 2J erases the viewport without copying it to
-// scrollback (xterm.js); 3J wipes scrollback; rows that scroll off the top
-// are preserved. Growing pulls history back into the top of the viewport
-// (tmux, xterm.js with the cursor on the last row); shrinking drops blank
-// rows below the cursor, then pushes top rows into history.
 function replayVt(
   chunks: string[],
   rows: number,
@@ -204,8 +186,6 @@ function replayVt(
     } else if (command === "K") {
       eraseLine(args);
     }
-    // SGR and private modes (cursor visibility, synchronized output) do not
-    // move text.
   };
 
   chunks.forEach((chunk, chunkIndex) => {
@@ -254,8 +234,6 @@ function expectBoundedNewestTail(write: string) {
   expect(write).toContain(CLEAR_SCREEN);
   expect(write).toContain(CURSOR_HOME);
   expect(write).not.toContain(CLEAR_SCROLLBACK);
-  // retainStaticOutput prepends SGR reset at the seam so dropped prefix style
-  // cannot leak. After 2J+H the one-shot repaint must start with that reset.
   expect(write).toContain(`${CLEAR_SCREEN}${CURSOR_HOME}${SGR_RESET}`);
   expect(write).toContain(LATE_MARKER);
   expect(write).not.toContain(EARLY_MARKER);
@@ -341,8 +319,6 @@ test("overflow scrolls new static into scrollback and replaces live in place", a
   expect(viewport).not.toContain(LIVE_TOP_MARKER);
   expect(viewport).not.toContain("live 4");
   expect(viewport).not.toContain("live 3");
-  // Each overflow frame rewrites the previous (clipped) live frame in place;
-  // those ticks must not accumulate in scrollback.
   expect(countOccurrences(combined, "live 3")).toBe(0);
   expect(countOccurrences(combined, "live 4")).toBe(0);
   expect(countOccurrences(combined, "live 5")).toBe(1);
@@ -443,7 +419,6 @@ function expectTranscriptRowsOnce(
       .map((item) => [item.text, countOccurrences(screen, item.text)] as const)
       .filter(([, count]) => count !== 1),
   ).toEqual([]);
-  // No live-frame copy may land in history.
   expect(
     vt.scrollback
       .split("\n")
@@ -466,8 +441,6 @@ test("live area jumping past the terminal height keeps on-screen transcript rows
   );
   await waitForRender();
 
-  // T22-T29 are still on screen above the 3-row live area when it jumps to
-  // 20 rows in a 12-row terminal; then the live area shrinks back.
   rerender(<RowsHarness items={items} live={liveRows(20, 1)} />);
   await waitForRender();
   rerender(<RowsHarness items={items} live={liveRows(3, 2)} />);
@@ -498,8 +471,6 @@ test("growing the terminal while the live area overflows keeps transcript rows",
   rerender(<RowsHarness items={items} live={liveRows(20, 1)} />);
   await waitForRender();
 
-  // Growing pulls T22-T29 back from history onto the screen above the live
-  // area; later overflow frames must not erase them.
   const resizes = [{ at: stdout.chunks.length, rows: 20 }];
   stdout.rows = 20;
   stdout.emit("resize");
@@ -534,7 +505,6 @@ test("repeated overflow frames add no live copies to scrollback when clear saves
   }
   unmount();
 
-  // tmux (scroll-on-clear) copies the screen into history on every 2J.
   const vt = replayVt(stdout.chunks, stdout.rows, stdout.columns, {
     clearSavesToScrollback: true,
   });

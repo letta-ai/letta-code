@@ -1,7 +1,5 @@
 import { appendFileSync } from "node:fs";
 
-// Only HTTP is replaced. The test runs index.ts, settings, pinned-name lookup,
-// argument forwarding, and the enqueue path unchanged in a separate process.
 const agent = {
   id: "agent-named-target",
   name: "Named Recipient",
@@ -70,7 +68,6 @@ globalThis.fetch = Object.assign(
         { status: 202 },
       );
     }
-    // No network fallback, particularly for unexpected writes or model calls.
     return Response.json(
       { message: `Unimplemented fixture endpoint: ${url.pathname}` },
       { status: 404 },

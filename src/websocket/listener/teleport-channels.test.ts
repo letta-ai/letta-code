@@ -159,7 +159,7 @@ test.each(["telegram", "slack", "discord"])(
     });
 
     await f.request();
-    await f.request(); // A repeated rejection must not become a pending handoff.
+    await f.request();
     expect(f.sent).toContainEqual(
       expect.objectContaining({
         type: "teleport_ready",
@@ -247,8 +247,6 @@ test.each(["routing.json", "routing.yaml"])(
       expect.objectContaining({ type: "teleport_ready", success: false }),
     );
 
-    // The gateway writes the file in a different process, so it cannot clear
-    // any routes cached in this listener.
     writeFileSync(
       getChannelRoutingPath("telegram"),
       JSON.stringify({ routes: [] }),

@@ -97,10 +97,6 @@ export type ModConversationMessage = MessageCreate | ApprovalCreate;
 export interface ModConversationSendMessageOptions {
   background?: boolean;
   overrideModel?: string;
-  /**
-   * @deprecated Image normalization is always enforced at the send boundary.
-   * This option is retained as an ignored compatibility shim for existing mods.
-   */
   skipImageNormalization?: boolean;
   streamTokens?: boolean;
   workingDirectory?: string;
@@ -113,25 +109,15 @@ export interface ModConversationSendMessageRequestOptions {
 }
 
 export interface ModConversationHistoryOptions {
-  /** Maximum number of recent messages to return. Defaults to 100. */
   limit?: number;
-  /** Return chronological (asc, default) or newest-first (desc) messages. */
   order?: "asc" | "desc";
-  /** Include error messages and error statuses. Defaults to true. */
   includeErrors?: boolean;
 }
 
 export interface ModUpdateLlmConfigOptions {
-  /** Model handle, e.g. "anthropic/claude-opus-4-8". Omit to keep the current model. */
   model?: string;
-  /** Reasoning effort tier. Omit to leave reasoning settings untouched. */
   reasoningEffort?: ModelReasoningEffort | null;
-  /** Context window limit. Omit to leave the current limit untouched. */
   contextWindow?: number;
-  /**
-   * Whether the change applies to this conversation only (default) or to the
-   * agent's default config. Conversation scope avoids mutating the agent default.
-   */
   scope?: "conversation" | "agent";
 }
 
@@ -141,18 +127,12 @@ export interface ModConversationHandle {
     options?: ModConversationForkOptions,
   ) => Promise<ModConversationHandle>;
   getHistory: (options?: ModConversationHistoryOptions) => Promise<Message[]>;
-  /** Persist a new conversation title and refresh active local UI consumers. */
   updateTitle?: (title: string) => Promise<void>;
   sendMessageStream: (
     messages: ModConversationMessage[],
     options?: ModConversationSendMessageOptions,
     requestOptions?: ModConversationSendMessageRequestOptions,
   ) => Promise<AsyncIterable<LettaStreamingResponse>>;
-  /**
-   * Update the model, reasoning effort, and/or context window for this
-   * conversation (or the agent default with scope: "agent"). Only the fields you
-   * pass change; others are preserved. Works for local and cloud agents.
-   */
   updateLlmConfig: (options: ModUpdateLlmConfigOptions) => Promise<void>;
 }
 
@@ -468,29 +448,16 @@ export type ModCommandResult =
   | { type: "output"; output: string; success?: boolean }
   | { type: "handled" };
 
-/** Live mod context (`cwd`, workspace, agent, model, cost, etc.) plus panel helpers. */
 export interface ModPanelRenderContext extends ModContext {
-  /** Visible width available to the panel, in columns. */
   width: number;
-  /** Lay out a left and right segment across `width` (ANSI-aware). */
   row: (left: string, right: string, width: number) => string;
-  /** Spread parts evenly across `width` (ANSI-aware). */
   columns: (parts: string[], width: number) => string;
-  /** Build a terminal hyperlink string. */
   link: (label: string, url: string) => string;
-  /** Chalk instance for coloring panel output. */
   chalk: ChalkInstance;
 }
 
 export type ModPanelRender = (ctx: ModPanelRenderContext) => string | string[];
 
-/**
- * Panels are placed by a signed `order` around the input:
- * `> 1` renders above the input (highest at the top), `1` replaces the default
- * product-status row, `0` is the primary line just below the input (overrides
- * the built-in agent · model line), and `< 0` stacks below the primary line.
- * A panel whose render is empty is hidden.
- */
 export interface ModPanelOptions {
   id: string;
   render: ModPanelRender;

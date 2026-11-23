@@ -1,12 +1,3 @@
-/**
- * Live API regression test for Cloud model availability.
- *
- * Runs only when:
- * - LETTA_RUN_API_INTEGRATION_TESTS=true
- * - LETTA_API_KEY is set
- * - LETTA_BASE_URL points to Letta Cloud (api.letta.com)
- */
-
 import { describe, expect, test } from "bun:test";
 import Letta from "@letta-ai/letta-client";
 

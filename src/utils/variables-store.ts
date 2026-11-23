@@ -1,4 +1,3 @@
-/** Plain agent variables are intentionally kept out of secret storage and redaction. */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { isLocalAgentId } from "@/agent/agent-id";

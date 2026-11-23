@@ -20,7 +20,6 @@ interface ProviderManageViewProps {
   optionIndex: number;
 }
 
-/** Connected-account list and manage menu for one provider in /connect. */
 export function ProviderManageView({
   displayName,
   connectedRecords,

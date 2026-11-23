@@ -3,7 +3,6 @@ import { CloudReadinessError } from "./cloud-readiness-retry";
 const delay = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-/** Retry only a rejected capability preflight, never an ambiguous POST outcome. */
 export async function initiateFixtureTeleport<T>(
   initiate: () => Promise<T>,
   wait = delay,
@@ -24,7 +23,6 @@ export async function initiateFixtureTeleport<T>(
   }
 }
 
-/** Deletion is idempotent; missing fixtures are already clean. */
 export async function deleteCloudFixture(
   remove: () => Promise<unknown>,
   wait = delay,

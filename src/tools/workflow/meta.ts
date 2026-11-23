@@ -1,18 +1,8 @@
-/**
- * Extraction and validation of the `export const meta = {...}` literal that
- * must open every workflow script.
- *
- * The literal is evaluated in an empty vm context, so any identifier
- * reference, function call, or interpolation inside it throws — this is what
- * enforces the "pure literal" rule.
- */
-
 import vm from "node:vm";
 import type { WorkflowMeta } from "./types.ts";
 
 const META_PATTERN = /export\s+const\s+meta\s*=\s*\{/;
 
-/** Find the meta literal's object text via a balanced-brace scan. */
 function extractMetaLiteral(script: string): { literal: string; end: number } {
   const match = META_PATTERN.exec(script);
   if (!match) {
@@ -65,13 +55,10 @@ function isKebabCase(value: string): boolean {
   return /^[a-z0-9]+(-[a-z0-9]+)*$/.test(value);
 }
 
-/** Parse and validate the meta block. Throws with a precise message. */
 export function parseWorkflowMeta(script: string): WorkflowMeta {
   const { literal } = extractMetaLiteral(script);
   let parsed: unknown;
   try {
-    // Empty context: any non-literal expression (identifier, call, spread of
-    // a variable) references an undefined global and throws here.
     parsed = new vm.Script(`(${literal})`).runInContext(vm.createContext({}), {
       timeout: 1000,
     });
@@ -109,7 +96,6 @@ export function parseWorkflowMeta(script: string): WorkflowMeta {
   return meta as unknown as WorkflowMeta;
 }
 
-/** Rewrite `export const meta` so the body can run inside a vm script. */
 export function stripMetaExport(script: string): string {
   return script.replace(META_PATTERN, (m) => m.replace(/^export\s+/, ""));
 }

@@ -54,9 +54,6 @@ describe("WS event redaction", () => {
   });
 
   test("redacts MCP originator token material while keeping its run id", () => {
-    // USER_SCOPED_MCP_CONNECTIONS: the relay delivers bearer originator
-    // tokens on top-level input frames. They must never reach debug logs or
-    // serialized event dumps; the super run id is not secret and stays.
     expect(
       redactWsEventForLogging({
         type: "input",

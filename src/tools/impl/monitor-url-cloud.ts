@@ -9,7 +9,6 @@ import { buildMonitorResult } from "./monitor-result";
 export const URL_MONITOR_MIN_INTERVAL_SECONDS = 60;
 const DEFAULT_URL_MONITOR_TIMEOUT_MS = 86_400_000;
 
-/** Compared-value condition; every given test must hold. */
 export interface UrlMonitorMatch {
   equals?: string[];
   contains?: string;
@@ -48,7 +47,6 @@ type Request = typeof apiRequest;
 export interface CloudUrlMonitorDeps {
   isCloud?: () => boolean;
   request?: Request;
-  /** The conversation TaskStop runs in. */
   scope?: () => { conversationId: string } | undefined;
 }
 
@@ -56,7 +54,6 @@ function isLettaCloud(): boolean {
   return resolveBackendMode() === "api" && isCloudServerUrl();
 }
 
-/** Cloud monitor ids are `cmon-…`; local monitor ids are `monitor_<uuid>`. */
 export function isCloudMonitorId(taskId: string): boolean {
   return taskId.startsWith("cmon-");
 }
@@ -65,15 +62,11 @@ function cloudMonitorsPath(conversationId: string): string {
   return `/v1/conversations/${encodeURIComponent(conversationId)}/cloud-monitors`;
 }
 
-/** The default conversation has no conversation id Cloud can scope to. */
 function isSavedConversation(conversationId: string): boolean {
   return conversationId !== "" && conversationId !== "default";
 }
 
-// Matches the forms Cloud fills: $NAME and ${NAME}.
 const SECRET_REFERENCE = /\$(?:\{[A-Z_][A-Z0-9_]*\}|[A-Z_][A-Z0-9_]*)/;
-// Headers that carry credentials must reference a secret instead of holding
-// one, so a raw token is never sent to or stored by Cloud.
 const CREDENTIAL_HEADER = /auth|cookie|token|secret|key|password|session/i;
 
 interface CloudUrlSource {
@@ -144,7 +137,6 @@ function validateMatch(match: unknown): UrlMonitorMatch | undefined {
   return result;
 }
 
-/** The Cloud source for validated url arguments. */
 function buildCloudSource(args: UrlMonitorArgs, url: string): CloudUrlSource {
   const source: CloudUrlSource = {
     type: "url",
@@ -182,7 +174,6 @@ function validateUrlMonitorArgs(args: UrlMonitorArgs): string {
   if (typeof args.description !== "string") {
     throw new Error("Monitor description is required");
   }
-  // Empty unused source fields count as absent, as for the local sources.
   const otherSource =
     (typeof args.command === "string" && args.command.length > 0) ||
     (typeof args.script === "string" && args.script.trim() !== "") ||
@@ -232,11 +223,6 @@ function validateUrlMonitorArgs(args: UrlMonitorArgs): string {
   return parsed.toString();
 }
 
-/**
- * Registers a url monitor with Letta Cloud, which polls the URL itself and
- * notifies this conversation when the HTTP status or body changes. Nothing
- * runs locally: there is no background process, timer, or output file.
- */
 export async function startCloudUrlMonitor(
   args: UrlMonitorArgs,
   deps: CloudUrlMonitorDeps = {},
@@ -274,11 +260,6 @@ export async function startCloudUrlMonitor(
   return buildMonitorResult(taskId, timeoutMs, false);
 }
 
-/**
- * TaskStop for a Cloud monitor: deletes it, which stops its polling. Cloud
- * monitors belong to a conversation, so this stops one started in the
- * current conversation.
- */
 export async function stopCloudUrlMonitor(
   taskId: string,
   deps: CloudUrlMonitorDeps = {},
@@ -312,7 +293,6 @@ export async function stopCloudUrlMonitor(
     }
     throw error;
   }
-  // As with a local monitor, only a running monitor can be stopped.
   if (stopped.status !== "cancelled") {
     return {
       killed: false,

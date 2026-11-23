@@ -21,13 +21,6 @@ import { settingsManager } from "@/settings-manager";
 
 await settingsManager.initialize();
 
-/**
- * Remote catalog refresh semantics (LET-9792).
- *
- * Cloud mode accepts only a valid endpoint/cache payload. Local mode projects
- * pi-ai inventory into the same live array, preserving array identity.
- */
-
 const originalFetch = globalThis.fetch;
 const originalBaseUrl = process.env.LETTA_BASE_URL;
 const originalApiKey = process.env.LETTA_API_KEY;
@@ -192,7 +185,7 @@ describe("applyCatalogModels", () => {
   });
 
   test("replaces catalog contents in place", () => {
-    const reference = models; // simulate an existing import-time capture
+    const reference = models;
     const applied = applyCatalogModels([
       {
         id: "auto",
@@ -369,7 +362,7 @@ describe("refreshModelCatalog", () => {
     });
     expect(await refreshModelCatalog({ force: true })).toBe(true);
 
-    restoreSnapshot(); // simulate a fresh process before cache hydration
+    restoreSnapshot();
     expect(models.find((m) => m.id === "persisted-model")).toBeUndefined();
 
     expect(loadPersistedModelCatalog("https://api.letta.com")).toBe(true);

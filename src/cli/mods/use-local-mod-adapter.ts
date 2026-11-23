@@ -12,7 +12,7 @@ export interface LocalModAdapter {
   context: ModContext;
   events: ModAdapter["events"];
   getBackend: ModAdapter["getBackend"];
-  hadModPanels: boolean; // Used to prevent flicker on reload
+  hadModPanels: boolean;
   hasModSources: boolean;
   engine: ModAdapter["engine"];
   isLoading: boolean;

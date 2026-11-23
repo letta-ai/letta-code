@@ -6,8 +6,6 @@ import {
   QueueRuntime,
 } from "@/queue/queue-runtime";
 
-// ── Helpers ───────────────────────────────────────────────────────
-
 function makeMsg(text = "hello"): Omit<MessageQueueItem, "id" | "enqueuedAt"> {
   return { kind: "message", source: "user", content: text };
 }
@@ -41,8 +39,6 @@ function makeContinue(
   return { kind: "mod_continue", source: "system", text };
 }
 
-// ── Enqueue ───────────────────────────────────────────────────────
-
 describe("enqueue basics", () => {
   test("adds item, assigns ID, returns item, length increases", () => {
     const q = new QueueRuntime();
@@ -67,7 +63,6 @@ describe("enqueue basics", () => {
 
   test("multimodal content preserved through round-trip", () => {
     const q = new QueueRuntime();
-    // Use an array of text parts to verify multipart content is preserved
     const content: MessageQueueItem["content"] = [
       { type: "text" as const, text: "part one" },
       { type: "text" as const, text: "part two" },
@@ -96,7 +91,7 @@ describe("bounded buffer — soft limit", () => {
     const a = q.enqueue(makeMsg("a"));
     expect(a).not.toBeNull();
     q.enqueue(makeMsg("b"));
-    q.enqueue(makeMsg("c")); // triggers drop of "a"
+    q.enqueue(makeMsg("c"));
 
     expect(dropped).toHaveLength(1);
     expect((dropped.at(0) as MessageQueueItem).content).toBe("a");
@@ -112,9 +107,9 @@ describe("bounded buffer — soft limit", () => {
       callbacks: { onDropped: (item) => dropped.push(item) },
     });
     q.enqueue(makeMsg("a"));
-    q.enqueue(makeMsg("b")); // full
-    q.enqueue(makeMsg("c")); // drops "a"
-    q.enqueue(makeMsg("d")); // drops "b"
+    q.enqueue(makeMsg("b"));
+    q.enqueue(makeMsg("c"));
+    q.enqueue(makeMsg("d"));
     expect(dropped).toHaveLength(2);
     expect(q.length).toBe(2);
   });
@@ -122,19 +117,17 @@ describe("bounded buffer — soft limit", () => {
 
 describe("bounded buffer — hard ceiling", () => {
   test("hard ceiling rejects before the soft-limit drop", () => {
-    // maxItems == hardMaxItems: the hard ceiling check runs first, so the new
-    // item is rejected instead of evicting the oldest one.
     const dropped: string[] = [];
     const q = new QueueRuntime({
       maxItems: 1,
       hardMaxItems: 1,
       callbacks: { onDropped: (_item, reason) => dropped.push(reason) },
     });
-    q.enqueue(makeMsg("a")); // length 1 = at hard ceiling
-    const rejected = q.enqueue(makeMsg("b")); // hard ceiling — rejected
+    q.enqueue(makeMsg("a"));
+    const rejected = q.enqueue(makeMsg("b"));
     expect(rejected).toBeNull();
     expect(dropped).toEqual(["buffer_limit"]);
-    expect(q.length).toBe(1); // unchanged
+    expect(q.length).toBe(1);
   });
 
   test("durability refusal never reports a phantom as durably dropped", () => {
@@ -154,8 +147,6 @@ describe("bounded buffer — hard ceiling", () => {
     expect(q.length).toBe(1);
   });
 });
-
-// ── Dequeue — coalescable ─────────────────────────────────────────
 
 describe("dequeue coalescable items", () => {
   test("returns all contiguous coalescable items as one batch", () => {
@@ -277,8 +268,6 @@ describe("dequeue coalescable items", () => {
   });
 });
 
-// ── Blocked ───────────────────────────────────────────────────────
-
 describe("blocked state", () => {
   test("tryDequeue(streaming) returns null, fires onBlocked", () => {
     const blocked: string[] = [];
@@ -320,9 +309,9 @@ describe("blocked state", () => {
     });
     q.enqueue(makeMsg());
     q.tryDequeue("streaming");
-    q.tryDequeue(null); // unblocks, dequeues
+    q.tryDequeue(null);
     q.enqueue(makeMsg());
-    q.tryDequeue("streaming"); // should fire again
+    q.tryDequeue("streaming");
     expect(blocked).toHaveLength(2);
   });
 
@@ -341,16 +330,14 @@ describe("blocked state", () => {
       callbacks: { onBlocked: (r) => blocked.push(r) },
     });
     q.enqueue(makeMsg());
-    q.tryDequeue("streaming"); // emits "streaming"
-    q.tryDequeue(null); // dequeues, queue empty, resets epoch
-    q.enqueue(makeMsg()); // refills under same block
-    q.tryDequeue("streaming"); // should emit "streaming" again
+    q.tryDequeue("streaming");
+    q.tryDequeue(null);
+    q.enqueue(makeMsg());
+    q.tryDequeue("streaming");
     expect(blocked).toHaveLength(2);
     expect(blocked).toEqual(["streaming", "streaming"]);
   });
 });
-
-// ── Clear ─────────────────────────────────────────────────────────
 
 describe("clear", () => {
   test("removes all items and fires onCleared with count", () => {
@@ -375,8 +362,6 @@ describe("clear", () => {
   });
 });
 
-// ── Callback safety ───────────────────────────────────────────────
-
 describe("callback safety", () => {
   test("callback that throws does not corrupt queue state", () => {
     const q = new QueueRuntime({
@@ -388,7 +373,7 @@ describe("callback safety", () => {
     });
     const item = q.enqueue(makeMsg());
     expect(item).not.toBeNull();
-    expect(q.length).toBe(1); // state intact despite callback throw
+    expect(q.length).toBe(1);
   });
 
   test("subsequent operations work after callback throw", () => {
@@ -402,16 +387,14 @@ describe("callback safety", () => {
       },
     });
     q.enqueue(makeMsg("a"));
-    q.tryDequeue(null); // throws in callback
+    q.tryDequeue(null);
     q.enqueue(makeMsg("b"));
-    const batch = q.tryDequeue(null); // should work fine
+    const batch = q.tryDequeue(null);
     expect(batch).not.toBeNull();
     expect(batch?.items).toHaveLength(1);
     expect(throwCount).toBe(2);
   });
 });
-
-// ── IDs ───────────────────────────────────────────────────────────
 
 describe("IDs and accessors", () => {
   test("IDs are monotonically increasing within a runtime instance", () => {
@@ -436,11 +419,9 @@ describe("IDs and accessors", () => {
     q.enqueue(makeMsg("b"));
     const peeked = q.peek();
     expect(peeked).toHaveLength(2);
-    expect(q.length).toBe(2); // unchanged
+    expect(q.length).toBe(2);
   });
 });
-
-// ── consumeItems ──────────────────────────────────────────────────
 
 describe("consumeItems", () => {
   test("removes exactly n items and fires onDequeued with correct batch", () => {
@@ -477,7 +458,7 @@ describe("consumeItems", () => {
     const q = new QueueRuntime();
     q.enqueue(makeMsg());
     expect(q.consumeItems(0)).toBeNull();
-    expect(q.length).toBe(1); // unchanged
+    expect(q.length).toBe(1);
   });
 
   test("resets blockedEmittedForNonEmpty when queue drains", () => {
@@ -486,15 +467,13 @@ describe("consumeItems", () => {
       callbacks: { onBlocked: (r) => blocked.push(r) },
     });
     q.enqueue(makeMsg("a"));
-    q.tryDequeue("runtime_busy"); // emits blocked
-    q.consumeItems(1); // drains queue
+    q.tryDequeue("runtime_busy");
+    q.consumeItems(1);
     q.enqueue(makeMsg("b"));
-    q.tryDequeue("runtime_busy"); // should emit blocked again (epoch reset on drain)
+    q.tryDequeue("runtime_busy");
     expect(blocked).toHaveLength(2);
   });
 });
-
-// ── resetBlockedState ─────────────────────────────────────────────
 
 describe("resetBlockedState", () => {
   test("allows same reason to re-emit onBlocked after reset", () => {
@@ -503,10 +482,10 @@ describe("resetBlockedState", () => {
       callbacks: { onBlocked: (r) => blocked.push(r) },
     });
     q.enqueue(makeMsg());
-    q.tryDequeue("runtime_busy"); // first blocked emit
-    q.tryDequeue("runtime_busy"); // same reason — no second emit
+    q.tryDequeue("runtime_busy");
+    q.tryDequeue("runtime_busy");
     q.resetBlockedState();
-    q.tryDequeue("runtime_busy"); // after reset — emits again
+    q.tryDequeue("runtime_busy");
     expect(blocked).toHaveLength(2);
     expect(blocked).toEqual(["runtime_busy", "runtime_busy"]);
   });
@@ -516,13 +495,11 @@ describe("resetBlockedState", () => {
     const q = new QueueRuntime({
       callbacks: { onBlocked: (r) => blocked.push(r) },
     });
-    q.resetBlockedState(); // no-op on empty
+    q.resetBlockedState();
     q.tryDequeue("runtime_busy");
     expect(blocked).toHaveLength(0);
   });
 });
-
-// ── removeItem ─────────────────────────────────────────────────────
 
 describe("removeItem", () => {
   test("removes item by ID and returns it", () => {
@@ -576,7 +553,6 @@ describe("removeItem", () => {
     q.removeItem(second?.id ?? "");
     expect(q.length).toBe(2);
 
-    // Verify order is preserved
     const batch = q.consumeItems(2);
     expect((batch?.items.at(0) as MessageQueueItem | undefined)?.content).toBe(
       "first",
@@ -615,15 +591,12 @@ describe("removeItem", () => {
     });
     const item = q.enqueue(makeMsg());
 
-    // Fire blocked once
     q.tryDequeue("streaming");
     expect(blocked).toHaveLength(1);
 
-    // Remove the item, making queue empty
     q.removeItem(item?.id ?? "");
     expect(q.length).toBe(0);
 
-    // Add new item and block again — should emit blocked
     q.enqueue(makeMsg());
     q.tryDequeue("streaming");
     expect(blocked).toHaveLength(2);

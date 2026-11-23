@@ -412,7 +412,6 @@ describe("MemFS v2 pre-commit hook", () => {
     writeFileSync(join(repo, "skills", "demo", "SKILL.md"), "Skill.\n");
     execFileSync("git", ["add", "."], { cwd: repo });
     execFileSync("git", ["commit", "-qm", "seed memory"], { cwd: repo });
-    // B passes the limit through a path that skipped the hook.
     writeFileSync(join(repo, "b.md"), v2Memory("b".repeat(100), "B"));
     execFileSync("git", ["add", "b.md"], { cwd: repo });
     execFileSync("git", ["commit", "-qm", "grow b without hook"], {
@@ -775,8 +774,6 @@ describe("shared-memory pre-commit hook", () => {
       );
     }
     execFileSync("git", ["add", "."], { cwd: repo });
-    // Seed the tracked tree before installing the hook. The tested commit only
-    // stages a non-Markdown file, but v2 validation must still scan the tree.
     execFileSync("git", ["commit", "-qm", "seed many memory files"], {
       cwd: repo,
     });

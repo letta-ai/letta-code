@@ -12,7 +12,6 @@ export const TASK_HARNESSES = [
   ...EXTERNAL_CODING_AGENT_TYPES,
 ] as const;
 
-/** A named preset owns launch settings; retain the assignment, computer, and harness metadata. */
 export function applySubagentPreset<T extends Partial<SubagentLaunchArgs>>(
   args: T,
 ): T {
@@ -28,7 +27,6 @@ export function applySubagentPreset<T extends Partial<SubagentLaunchArgs>>(
   };
 }
 
-/** Presets own context; existing targets resume without an implicit fork. */
 export function shouldForkTaskContext(args: {
   fork_context?: unknown;
   subagent_type?: unknown;
@@ -48,7 +46,6 @@ type TaskAgentSelection =
   | { kind: "external"; type: ExternalCodingAgentType }
   | { kind: "letta"; subagentType: string };
 
-/** Resolve a preset first, otherwise the explicitly selected runner and context. */
 export function resolveTaskAgentSelection(args: {
   harness?: unknown;
   subagent_type?: unknown;
@@ -90,7 +87,6 @@ export function resolveTaskAgentSelection(args: {
   };
 }
 
-/** The subagent_type values to suggest, given the loaded Letta config names. */
 export function listSubagentTypes(configNames: string[]): string {
   return (
     configNames
@@ -99,7 +95,6 @@ export function listSubagentTypes(configNames: string[]): string {
   );
 }
 
-/** Config for an App Server-prepared conversation (`subagent_type: custom`). */
 export function preparedConversationConfig(): SubagentConfig {
   return {
     name: "custom",

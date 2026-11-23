@@ -70,7 +70,6 @@ test("reads each announced event once, in full, a page at a time", async () => {
     };
   });
   progress.recordSnapshot(snapshot({ event_seq: 2 }));
-  // The snapshot lists name the same call and text; they are not repeated.
   await progress.finish(snapshot({ event_seq: 3 }));
 
   expect(reads).toEqual([0, 2]);
@@ -91,7 +90,6 @@ test("reads each announced event once, in full, a page at a time", async () => {
 
 test("falls back to the snapshot lists from an older computer or failed reads", async () => {
   const file = open();
-  // An older computer announces no event_seq.
   followRemoteSubagentEvents(SUBAGENT, async () => {
     throw new Error("unreachable");
   }).recordSnapshot(snapshot({}));

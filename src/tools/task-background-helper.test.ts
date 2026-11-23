@@ -327,10 +327,8 @@ describe("spawnBackgroundSubagentTask", () => {
       "init done",
     );
     expect(completeSubagentImpl).toHaveBeenCalledTimes(1);
-    // No notification queued
     expect(queueMessages.length).toBe(0);
     expect(formatTaskNotificationImpl).not.toHaveBeenCalled();
-    // Hooks still run
     expect(runSubagentStopHooksImpl).toHaveBeenCalledTimes(1);
   });
 
