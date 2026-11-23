@@ -1,5 +1,3 @@
-// Import useInput from vendored Ink for bracketed paste support
-
 import { EventEmitter } from "node:events";
 import { stdin } from "node:process";
 import chalk from "chalk";
@@ -71,7 +69,6 @@ import { StreamingStatusSpinner } from "./spinners/StreamingStatusSpinner.js";
 import { Text } from "./Text";
 import { handleTranscriptDisplayShortcut } from "./transcript-display-state";
 
-// Window for double-escape to clear input
 const ESC_CLEAR_WINDOW_MS = 2500;
 const FOOTER_WIDTH_STREAMING_DELTA = 2;
 const EMPTY_COMPOSER_PROMPT_ROTATION_MS = 6000;
@@ -315,8 +312,6 @@ function shouldTransientHintBlankRightColumn({
   if (!hint) return false;
   if (customStatuslineActive) return true;
 
-  // With the built-in default, bash and permission modes render on the left
-  // while the default renderer owns the right label, so they can coexist.
   return hint.type !== "bash-mode" && hint.type !== "permission-mode";
 }
 
@@ -375,10 +370,6 @@ function BlankStatuslineRow({
   );
 }
 
-/**
- * Bottom statusline slot. Safety states and transient host hints may preempt the
- * row; otherwise custom mods own the idle row before the built-in default.
- */
 const StatuslineSlot = memo(function StatuslineSlot({
   ctrlCPressed,
   escapePressed,
@@ -430,7 +421,6 @@ const StatuslineSlot = memo(function StatuslineSlot({
     rightColumnWidth,
   };
 
-  // The order-0 "primary" panel overrides the built-in agent · model line.
   const panels = modAdapter.registry?.ui.panels ?? {};
   const primaryPanel = Object.values(panels)
     .filter((panel) => panel.order === 0)
@@ -556,9 +546,6 @@ const StreamingStatus = memo(function StreamingStatus({
   shouldAnimate: boolean;
 }) {
   const phaseVisual = getPhaseVisual(executionPhase);
-  // While the user is actively resizing the terminal, Ink can struggle to
-  // clear/redraw rapidly-changing animated output (spinner/shimmer).
-  // Freeze animations briefly during resize to keep output stable.
   const [isResizing, setIsResizing] = useState(false);
   const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastWidthRef = useRef<number>(terminalWidth);
@@ -588,8 +575,6 @@ const StreamingStatus = memo(function StreamingStatus({
 
   const animate = shouldAnimate && !isResizing;
 
-  // Context-usage tier drives both the spinner animation and its column
-  // width — wider as the conversation fills up.
   const contextRatio =
     contextWindowSize && contextWindowSize > 0
       ? usedContextTokens / contextWindowSize
@@ -597,10 +582,6 @@ const StreamingStatus = memo(function StreamingStatus({
   const contextTier = contextTierFromRatio(contextRatio);
   const spinnerColumnWidth = spinnerWidthForTier(contextTier) + 1;
 
-  // Bump a counter on each false→true streaming edge. The spinner reads
-  // it as `pool[streamSeed % pool.length]`, so consecutive streams rotate
-  // through the tier's pool deterministically (round-robin) without any
-  // fiber remount.
   const [streamSeed, setStreamSeed] = useState(0);
   const prevStreamingRef = useRef(false);
   useEffect(() => {
@@ -610,7 +591,6 @@ const StreamingStatus = memo(function StreamingStatus({
     prevStreamingRef.current = streaming;
   }, [streaming]);
 
-  // Include agent name length (+1 for space) and trailing ellipsis in cycle
   const agentPrefixLength = agentName ? agentName.length + 1 : 0;
   const shimmerTextLength = agentPrefixLength + thinkingMessage.length + 1;
   const isLive = streaming && visible && animate;
@@ -627,7 +607,6 @@ const StreamingStatus = memo(function StreamingStatus({
   const [tipMessage, setTipMessage] = useState("");
   const streamStartRef = useRef<number | null>(null);
 
-  // Elapsed time tracking: pause updates during resize, but do not reset.
   useEffect(() => {
     if (!streaming || !visible || isResizing) {
       return;
@@ -660,9 +639,6 @@ const StreamingStatus = memo(function StreamingStatus({
     }
   }, [streaming, visible, includeSystemPromptUpgradeTip]);
 
-  // Gate visibility on the actual count so the counter appears the instant
-  // the real total crosses the threshold; render the smoothed value so it
-  // animates up rather than popping in mid-number.
   const actualEstimatedTokens = bytesToTokens(tokenCount);
   const estimatedTokens = bytesToTokens(displayedTokenBytes);
   const totalElapsedMs = elapsedBaseMs + elapsedMs;
@@ -679,9 +655,6 @@ const StreamingStatus = memo(function StreamingStatus({
     return "↑\u0338";
   }, [networkPhase]);
   const showErrorArrow = networkArrow === "↑\u0338";
-  // Avoid painting into the terminal's last column; some terminals will soft-wrap
-  // padded Ink rows at the edge which breaks Ink's line-clearing accounting and
-  // leaves duplicate status rows behind during streaming/resizes.
   const statusContentWidth = Math.max(
     0,
     terminalWidth - 1 - spinnerColumnWidth,
@@ -725,9 +698,6 @@ const StreamingStatus = memo(function StreamingStatus({
     Math.min(maxMessageWidth, Math.max(minMessageWidth, statusLabelWidth)),
   );
 
-  // Build the status hint text (esc to interrupt · 2m · 1.2k ↑)
-  // Uses chalk.dim to match reasoning text styling
-  // Memoized to prevent unnecessary re-renders during shimmer updates
   const statusHintText = useMemo(() => {
     const hintColor = chalk.hex(colors.subagent.hint);
     const hintBold = hintColor.bold;
@@ -796,12 +766,8 @@ const StreamingStatus = memo(function StreamingStatus({
   );
 });
 
-// Increase max listeners to accommodate multiple useInput hooks
-// (5 in this component + autocomplete components)
 stdin.setMaxListeners(20);
 
-// Also set default max listeners on EventEmitter prototype to prevent warnings
-// from any EventEmitters that might not have their limit set properly
 EventEmitter.defaultMaxListeners = 20;
 
 export function Input({
@@ -879,7 +845,6 @@ export function Input({
   queueMode?: "immediate" | "defer";
   deferModeSupported?: boolean;
   interruptRequested?: boolean;
-  /** A background task's remote stop failed and Esc retries it while idle. */
   hasStopFailedTasks?: boolean;
   agentId?: string;
   agentName?: string | null;
@@ -928,20 +893,14 @@ export function Input({
   const [cursorPos, setCursorPos] = useState<number | undefined>(undefined);
   const [currentCursorPosition, setCurrentCursorPosition] = useState(0);
 
-  // Terminal width is sourced from App.tsx to avoid duplicate resize subscriptions.
   const columns = terminalWidth;
 
-  // During shrink drags, Ink's incremental clear can leave stale rows behind.
-  // The worst offender is the full-width divider line, which wraps as the
-  // terminal shrinks and appears to "spam" into the transcript.
-  // Hide dividers during shrink gestures; restore after the width settles.
   const [suppressDividers, setSuppressDividers] = useState(false);
   const resizeDividersTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
   const lastColumnsRef = useRef(columns);
 
-  // Bash mode state (declared early so prompt width can feed into contentWidth)
   const [isBashMode, setIsBashMode] = useState(false);
   const [bashExitArmed, setBashExitArmed] = useState(false);
 
@@ -976,7 +935,7 @@ export function Input({
   }, []);
 
   const promptChar = isBashMode ? "!" : statusLinePrompt || ">";
-  const promptVisualWidth = stringWidth(promptChar) + 1; // +1 for trailing space
+  const promptVisualWidth = stringWidth(promptChar) + 1;
   const contentWidth = Math.max(0, columns - promptVisualWidth);
 
   const interactionEnabled = visible && inputEnabled && !inputDisabled;
@@ -1008,7 +967,7 @@ export function Input({
   const inputRowLines = useMemo(() => {
     return Math.max(1, getVisualLines(value, contentWidth).length);
   }, [value, contentWidth]);
-  const inputChromeHeight = inputRowLines + 3; // top divider + input rows + bottom divider + footer
+  const inputChromeHeight = inputRowLines + 3;
   const computedFooterRightColumnWidth = useMemo(
     () => Math.max(28, Math.min(72, Math.floor(columns * 0.45))),
     [columns],
@@ -1024,9 +983,6 @@ export function Input({
       return;
     }
 
-    // While streaming, keep the right column width stable to avoid occasional
-    // right-edge jitter. Allow significant shrink (terminal got smaller),
-    // defer growth until streaming ends.
     if (computedFooterRightColumnWidth >= footerRightColumnWidth) {
       const growthDelta =
         computedFooterRightColumnWidth - footerRightColumnWidth;
@@ -1064,34 +1020,22 @@ export function Input({
     debugFlicker,
   ]);
 
-  // Command history
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [temporaryInput, setTemporaryInput] = useState("");
 
-  // Track if we just moved to a boundary (for two-step history navigation)
   const [atStartBoundary, setAtStartBoundary] = useState(false);
   const [atEndBoundary, setAtEndBoundary] = useState(false);
 
-  // Track preferred column for vertical navigation (sticky column behavior)
   const [preferredColumn, setPreferredColumn] = useState<number | null>(null);
 
-  // Display text currently owned by the submit handler; its registry entries
-  // must survive until the handler resolves or restores them.
   const inFlightSubmitTextRef = useRef<string | null>(null);
   const [draftDiscards] = useState(createDraftPlaceholderDiscards);
-  // Live holders: a drop site zeroes one, then releases in the same tick.
   const temporaryInputRef = useRef(temporaryInput);
   temporaryInputRef.current = temporaryInput;
   const restoredInputRef = useRef(restoredInput);
   restoredInputRef.current = restoredInput;
 
-  // Free registry entries dropped from the draft (input cleared, placeholder
-  // edited out, draft replaced) unless a live holder still references them:
-  // the parked history draft, queued messages, a pending restored input, or
-  // the in-flight submission. History is excluded on purpose - after a
-  // successful submit the handler frees its entries, so recalled history
-  // placeholders already degrade to literal text.
   const releaseDiscardedDraftPlaceholders = useCallback(
     (discarded: string, next: string) => {
       draftDiscards.release(discarded, [
@@ -1105,8 +1049,6 @@ export function Input({
     [messageQueue, draftDiscards],
   );
 
-  // Drop the parked history draft and release it against `next`, the draft
-  // replacing it. Down-restore omits `next`: the parked draft is live again.
   const clearParkedDraft = useCallback(
     (next?: string) => {
       const parked = temporaryInputRef.current;
@@ -1117,13 +1059,11 @@ export function Input({
     [releaseDiscardedDraftPlaceholders],
   );
 
-  // Restore input from error (only if current value is empty)
   useEffect(() => {
     if (restoredInput && value === "") {
       setValue(restoredInput);
       onRestoredInputConsumed?.();
     } else if (restoredInput && value !== "") {
-      // Input has content, don't clobber - drop the restored value instead
       restoredInputRef.current = null;
       releaseDiscardedDraftPlaceholders(restoredInput, value);
       onRestoredInputConsumed?.();
@@ -1180,7 +1120,6 @@ export function Input({
     if (isBashMode) return false;
     setIsBashMode(true);
     showStatuslineTransientHint({ type: "bash-mode" });
-    // Arm immediately so initial empty backspace exits in one press.
     setBashExitArmed(true);
     return true;
   }, [isBashMode, showStatuslineTransientHint]);
@@ -1196,7 +1135,6 @@ export function Input({
     return true;
   }, [isBashMode, bashExitArmed]);
 
-  // Reset cursor position after it's been applied
   useEffect(() => {
     if (cursorPos !== undefined) {
       const timer = setTimeout(() => setCursorPos(undefined), 0);
@@ -1205,21 +1143,18 @@ export function Input({
     return undefined;
   }, [cursorPos]);
 
-  // Reset bash exit arming when leaving bash mode
   useEffect(() => {
     if (!isBashMode && bashExitArmed) {
       setBashExitArmed(false);
     }
   }, [isBashMode, bashExitArmed]);
 
-  // If user types after first backspace-at-empty, disarm exit intent
   useEffect(() => {
     if (bashExitArmed && value.length > 0) {
       setBashExitArmed(false);
     }
   }, [value, bashExitArmed]);
 
-  // Reset boundary flags and preferred column when cursor moves or value changes
   useEffect(() => {
     if (currentCursorPosition !== 0) {
       setAtStartBoundary(false);
@@ -1227,11 +1162,9 @@ export function Input({
     if (currentCursorPosition !== value.length) {
       setAtEndBoundary(false);
     }
-    // Reset preferred column - it will be set again when vertical navigation starts
     setPreferredColumn(null);
   }, [currentCursorPosition, value.length]);
 
-  // Sync with external mode changes.
   useEffect(() => {
     if (externalMode !== undefined) {
       setCurrentMode(externalMode);
@@ -1267,59 +1200,45 @@ export function Input({
     };
   }, []);
 
-  // Get server URL (same logic as client.ts)
   const settings = settingsManager.getSettings();
   const serverUrl =
     process.env.LETTA_BASE_URL ||
     settings.env?.LETTA_BASE_URL ||
     LETTA_CLOUD_API_URL;
 
-  // Handle profile confirmation: Enter confirms, any other key cancels
-  // When onEscapeCancel is provided, TextInput is unfocused so we handle all keys here
   useInput((_input, key) => {
     if (!interactionEnabled) return;
     if (!onEscapeCancel) return;
 
-    // Enter key confirms the action - trigger submit with empty input
     if (key.return) {
       onSubmit("");
       return;
     }
 
-    // Any other key cancels
     onEscapeCancel();
   });
 
-  // Handle escape key for interrupt (when streaming) or double-escape-to-clear (when not)
   useInput((_input, key) => {
     if (!interactionEnabled) return;
-    // Debug logging for escape key detection
     if (process.env.LETTA_DEBUG_KEYS === "1" && key.escape) {
       // eslint-disable-next-line no-console
       console.error(
         `[debug:InputRich:escape] escape=${key.escape} visible=${visible} onEscapeCancel=${!!onEscapeCancel} streaming=${streaming}`,
       );
     }
-    // Skip if onEscapeCancel is provided - handled by the confirmation handler above
     if (onEscapeCancel) return;
 
     if (key.escape) {
-      // When bash command running, use Esc to interrupt (LET-7199)
       if (bashRunning && onBashInterrupt) {
         onBashInterrupt();
         return;
       }
 
-      // Esc interrupts; a second Esc mid-unwind escalates, so keep forwarding.
-      // Idle Esc also forwards when a background task's remote stop failed:
-      // the interrupt handler retries its stop through the restored row.
       if (
         (streaming || interruptRequested || hasStopFailedTasks) &&
         onInterrupt
       ) {
         onInterrupt();
-        // Don't load queued messages into input - let the dequeue effect
-        // in App.tsx process them automatically after the interrupt completes.
         return;
       }
 
@@ -1327,16 +1246,13 @@ export function Input({
         return;
       }
 
-      // When input is non-empty, use double-escape to clear
       if (value) {
         if (escapePressed) {
-          // Second escape - clear input (discard: release dropped placeholders)
           releaseDiscardedDraftPlaceholders(value, "");
           setValue("");
           setEscapePressed(false);
           if (escapeTimerRef.current) clearTimeout(escapeTimerRef.current);
         } else {
-          // First escape - start timer to allow double-escape to clear
           setEscapePressed(true);
           if (escapeTimerRef.current) clearTimeout(escapeTimerRef.current);
           escapeTimerRef.current = setTimeout(() => {
@@ -1348,8 +1264,6 @@ export function Input({
   });
 
   useInput((input, key) => {
-    // Handle CTRL-D to toggle queue defer mode — works even while agent is running
-    // since that's exactly when messages are queued and the toggle is useful.
     if (
       input === "d" &&
       key.ctrl &&
@@ -1366,22 +1280,15 @@ export function Input({
       return;
     }
     if (handleTranscriptDisplayShortcut(input, key)) return;
-    // Handle CTRL-C for double-ctrl-c-to-exit
-    // In bash mode, CTRL-C wipes input but doesn't exit bash mode
     if (input === "c" && key.ctrl) {
-      // If a bash command is running, Ctrl+C interrupts it (same as Esc)
       if (bashRunning && onBashInterrupt) {
         onBashInterrupt();
         return;
       }
 
       if (ctrlCPressed) {
-        // Second CTRL-C - call onExit callback which handles stats and exit
         if (onExit) onExit();
       } else {
-        // First CTRL-C - wipe input and start 1-second timer
-        // Note: In bash mode, this clears input but keeps bash mode active
-        // Discard: release placeholders dropped with the wiped input
         releaseDiscardedDraftPlaceholders(value, "");
         setValue("");
         setBashExitArmed(false);
@@ -1394,15 +1301,9 @@ export function Input({
     }
   });
 
-  // Note: bash mode entry/exit is implemented inside PasteAwareTextInput so we can
-  // consume the keystroke before it renders (no flicker).
-
-  // Handle Shift+Tab for permission mode cycling
   useInput((_input, key) => {
     if (!interactionEnabled) return;
 
-    // Tab (no shift): cycle reasoning effort tiers for the current model (when idle).
-    // Only trigger when autocomplete is NOT active.
     if (
       key.tab &&
       !key.shift &&
@@ -1414,7 +1315,6 @@ export function Input({
       return;
     }
 
-    // Debug logging for shift+tab detection
     if (process.env.LETTA_DEBUG_KEYS === "1" && (key.shift || key.tab)) {
       // eslint-disable-next-line no-console
       console.error(
@@ -1423,7 +1323,6 @@ export function Input({
     }
 
     if (key.shift && key.tab) {
-      // Cycle through permission modes
       const modes: PermissionMode[] = [
         "unrestricted",
         "acceptEdits",
@@ -1433,68 +1332,53 @@ export function Input({
       const nextIndex = (currentIndex + 1) % modes.length;
       const nextMode = modes[nextIndex] ?? "unrestricted";
 
-      // Update both singleton and local state
       permissionMode.setMode(nextMode);
       setCurrentMode(nextMode);
 
-      // Notify parent of mode change
       if (onPermissionModeChange) {
         onPermissionModeChange(nextMode);
       }
     }
   });
 
-  // Handle up/down arrow keys for wrapped text navigation and command history
   useInput((_input, key) => {
     if (!interactionEnabled) return;
-    // Don't interfere with autocomplete navigation, BUT allow history navigation
-    // when we're already browsing history (historyIndex !== -1)
     if (isAutocompleteActive && historyIndex === -1) {
       return;
     }
 
     if (key.upArrow || key.downArrow) {
-      // Calculate visual lines accounting for both soft wrapping and hard newlines
       const visualLines = getVisualLines(value, contentWidth);
       const { lineIndex, column } = findCursorLine(
         currentCursorPosition,
         visualLines,
       );
 
-      // Use preferred column if set (for sticky column behavior), otherwise current column
       const targetColumn = preferredColumn ?? column;
 
       if (key.upArrow) {
         const targetLine = visualLines[lineIndex - 1];
         if (lineIndex > 0 && targetLine) {
-          // Not on first visual line - move cursor up one visual line
-          // Set preferred column if not already set
           if (preferredColumn === null) {
             setPreferredColumn(column);
           }
           const targetLineLength = targetLine.end - targetLine.start;
           const newColumn = Math.min(targetColumn, targetLineLength);
           setCursorPos(targetLine.start + newColumn);
-          setAtStartBoundary(false); // Reset boundary flag
-          return; // Don't trigger history
+          setAtStartBoundary(false);
+          return;
         }
 
-        // On first wrapped line
-        // First press: move to start, second press: queue edit or history
-        // Skip the two-step behavior if already browsing history - go straight to navigation
         if (
           currentCursorPosition > 0 &&
           !atStartBoundary &&
           historyIndex === -1
         ) {
-          // First press - move cursor to start
           setCursorPos(0);
           setAtStartBoundary(true);
           return;
         }
 
-        // Check if we should load queued messages into input for editing.
-        // Fire when already at position 0 (empty input or after first Up moved us here).
         if (
           messageQueue &&
           messageQueue.filter((m) => m.kind === "user").length > 0 &&
@@ -1504,8 +1388,6 @@ export function Input({
           setAtStartBoundary(false);
           const combined = onQueueEdit();
           if (combined) {
-            // The current draft is replaced by the queued texts: release
-            // placeholders only the discarded draft still referenced.
             releaseDiscardedDraftPlaceholders(value, combined);
             setValue(combined);
             setCursorPos(combined.length);
@@ -1513,78 +1395,64 @@ export function Input({
           return;
         }
 
-        // Otherwise, trigger history navigation
         if (history.length === 0) return;
 
-        setAtStartBoundary(false); // Reset for next time
+        setAtStartBoundary(false);
 
         if (historyIndex === -1) {
-          // Starting to navigate history - save current input
           setTemporaryInput(value);
-          // Go to most recent command
           setHistoryIndex(history.length - 1);
           const historyEntry = history[history.length - 1] ?? "";
           setValue(historyEntry);
-          setCursorPos(historyEntry.length); // Cursor at end (traditional terminal behavior)
+          setCursorPos(historyEntry.length);
         } else if (historyIndex > 0) {
-          // Go to older command
           setHistoryIndex(historyIndex - 1);
           const olderEntry = history[historyIndex - 1] ?? "";
           setValue(olderEntry);
-          setCursorPos(olderEntry.length); // Cursor at end (traditional terminal behavior)
+          setCursorPos(olderEntry.length);
         }
       } else if (key.downArrow) {
         const targetLine = visualLines[lineIndex + 1];
         if (lineIndex < visualLines.length - 1 && targetLine) {
-          // Not on last visual line - move cursor down one visual line
-          // Set preferred column if not already set
           if (preferredColumn === null) {
             setPreferredColumn(column);
           }
           const targetLineLength = targetLine.end - targetLine.start;
           const newColumn = Math.min(targetColumn, targetLineLength);
           setCursorPos(targetLine.start + newColumn);
-          setAtEndBoundary(false); // Reset boundary flag
-          return; // Don't trigger history
+          setAtEndBoundary(false);
+          return;
         }
 
-        // On last wrapped line
-        // First press: move to end, second press: navigate history
-        // Skip the two-step behavior if already browsing history - go straight to navigation
         if (
           currentCursorPosition < value.length &&
           !atEndBoundary &&
           historyIndex === -1
         ) {
-          // First press - move cursor to end
           setCursorPos(value.length);
           setAtEndBoundary(true);
           return;
         }
 
-        // Second press or already at end - trigger history navigation
-        setAtEndBoundary(false); // Reset for next time
+        setAtEndBoundary(false);
 
-        if (historyIndex === -1) return; // Not in history mode
+        if (historyIndex === -1) return;
 
         if (historyIndex < history.length - 1) {
-          // Go to newer command
           setHistoryIndex(historyIndex + 1);
           const newerEntry = history[historyIndex + 1] ?? "";
           setValue(newerEntry);
-          setCursorPos(newerEntry.length); // Cursor at end (traditional terminal behavior)
+          setCursorPos(newerEntry.length);
         } else {
-          // At the end of history - restore temporary input
           setHistoryIndex(-1);
           setValue(temporaryInput);
-          setCursorPos(temporaryInput.length); // Cursor at end for user's draft
+          setCursorPos(temporaryInput.length);
           clearParkedDraft();
         }
       }
     }
   });
 
-  // Reset escape and ctrl-c state when user types (value changes)
   useEffect(() => {
     if (value !== previousValueRef.current && value !== "") {
       setEscapePressed(false);
@@ -1592,7 +1460,6 @@ export function Input({
       setCtrlCPressed(false);
       if (ctrlCTimerRef.current) clearTimeout(ctrlCTimerRef.current);
     }
-    // Reset boundary flags when value changes (user is typing)
     if (value !== previousValueRef.current) {
       setAtStartBoundary(false);
       setAtEndBoundary(false);
@@ -1600,17 +1467,13 @@ export function Input({
     previousValueRef.current = value;
   }, [value]);
 
-  // Exit history mode when user starts typing
   useEffect(() => {
-    // If user is in history mode and the value changes (they're typing)
-    // Exit history mode but keep the modified text
     if (historyIndex !== -1 && value !== history[historyIndex]) {
       setHistoryIndex(-1);
       clearParkedDraft(value);
     }
   }, [value, historyIndex, history, clearParkedDraft]);
 
-  // Clean up timers on unmount
   useEffect(() => {
     return () => {
       if (escapeTimerRef.current) clearTimeout(escapeTimerRef.current);
@@ -1622,38 +1485,30 @@ export function Input({
   }, []);
 
   const handleSubmit = useCallback(async () => {
-    // Don't submit if autocomplete is active with matches
     if (isAutocompleteActive) {
       return;
     }
 
     const previousValue = value;
 
-    // Handle bash mode submission
     if (isBashMode) {
       if (!previousValue.trim()) return;
 
-      // Input locking - don't accept new commands while one is running (LET-7199)
       if (bashRunning) return;
 
-      // Add to history if not empty and not a duplicate of the last entry
       setHistory((prev) => appendInputHistory(prev, previousValue));
 
       setHistoryIndex(-1);
       clearParkedDraft("");
 
-      // Bash runs the display text verbatim and never resolves placeholders,
-      // so the submitted text's registry entries are dead from here on.
       releaseDiscardedDraftPlaceholders(previousValue, "");
-      setValue(""); // Clear immediately for responsiveness
-      // Stay in bash mode - user exits with backspace on empty input
+      setValue("");
       if (onBashSubmit) {
         await onBashSubmit(previousValue);
       }
       return;
     }
 
-    // Add to history if not empty and not a duplicate of the last entry
     if (previousValue.trim()) {
       setHistory((prev) => appendInputHistory(prev, previousValue));
     }
@@ -1661,13 +1516,10 @@ export function Input({
     setHistoryIndex(-1);
     clearParkedDraft(previousValue);
 
-    setValue(""); // Clear immediately for responsiveness
-    // Keep the submission's placeholder entries alive while the handler owns
-    // the text (queuing, content-part build, or failure restore).
+    setValue("");
     inFlightSubmitTextRef.current = previousValue;
     try {
       const result = await onSubmit(previousValue);
-      // If message was NOT submitted (e.g. pending approval), restore it
       if (!result.submitted) {
         setValue(previousValue);
       }
@@ -1695,14 +1547,10 @@ export function Input({
     [],
   );
 
-  // Handle slash command selection from autocomplete (Enter key - execute)
   const handleCommandSelect = useCallback(
     async (selectedCommand: string) => {
-      // For slash commands, submit immediately when selected via Enter
-      // This provides a better UX - pressing Enter on /model should open the model selector
       const commandToSubmit = selectedCommand.trim();
 
-      // Add to history if not a duplicate of the last entry
       if (commandToSubmit) {
         setHistory((prev) => appendInputHistory(prev, commandToSubmit));
       }
@@ -1710,20 +1558,15 @@ export function Input({
       setHistoryIndex(-1);
       clearParkedDraft(commandToSubmit);
 
-      // The selected command replaces the current draft
       releaseDiscardedDraftPlaceholders(value, commandToSubmit);
-      setValue(""); // Clear immediately for responsiveness
+      setValue("");
       await onSubmit(commandToSubmit);
     },
     [onSubmit, value, releaseDiscardedDraftPlaceholders, clearParkedDraft],
   );
 
-  // Handle slash command autocomplete (Tab key - fill text only)
   const handleCommandAutocomplete = useCallback(
     (selectedCommand: string) => {
-      // Just fill in the command text without executing
-      // User can then press Enter to execute or continue typing arguments
-      // The filled command replaces the current draft
       releaseDiscardedDraftPlaceholders(value, selectedCommand);
       setValue(selectedCommand);
       setCursorPos(selectedCommand.length);
@@ -1731,9 +1574,6 @@ export function Input({
     [value, releaseDiscardedDraftPlaceholders],
   );
 
-  // Edits only note placeholders that left the draft: a kill-buffer yank or a
-  // retyped bracket can restore them, so the release boundaries above free
-  // them later, once no live holder references them.
   const handleDraftChange = useCallback(
     (nextValue: string) => {
       draftDiscards.noteEdit(value, nextValue);
@@ -1742,15 +1582,12 @@ export function Input({
     [value, draftDiscards],
   );
 
-  // Get display name and color for permission mode
-  // Memoized to prevent unnecessary footer re-renders
   const modeInfo = useMemo<{
     name: string;
     color: string;
     glyph?: string;
     showExitHint?: boolean;
   } | null>(() => {
-    // Fall through to permission modes
     switch (currentMode) {
       case "acceptEdits":
         return { name: "accept edits", color: colors.status.processing };
@@ -1761,7 +1598,6 @@ export function Input({
           glyph: "▶",
         };
       case "unrestricted":
-        // Default mode — show nothing so the built-in idle row owns the space.
         return null;
       default:
         return null;
@@ -1785,7 +1621,6 @@ export function Input({
     });
   }, [currentMode, showStatuslineTransientHint]);
 
-  // Create a horizontal line using box-drawing characters.
   const horizontalLine = useMemo(
     () => "─".repeat(Math.max(0, columns)),
     [columns],
@@ -1875,10 +1710,6 @@ export function Input({
     subagentLifecycleTick,
   } = useProductStatusPanels({ modContext, modAdapter, shouldAnimate });
 
-  // Decoupled from input churn (value/cursorPos) so panel content only
-  // re-renders when the panels themselves change, mirroring how BtwPane
-  // stays flash-free. Folding this into lowerPane would rebuild it on every
-  // keystroke.
   const modPanelRow = useMemo(() => {
     void subagentLifecycleSnapshot;
     void subagentLifecycleTick;
@@ -1924,7 +1755,6 @@ export function Input({
   const lowerPane = useMemo(() => {
     return (
       <>
-        {/* Queue display - show whenever there are queued messages */}
         {messageQueue && messageQueue.length > 0 && (
           <QueuedMessages messages={messageQueue} queueMode={queueMode} />
         )}
@@ -1933,7 +1763,6 @@ export function Input({
           <Box flexDirection="column">
             {modPanelRow}
 
-            {/* Top horizontal divider */}
             {!suppressDividers && (
               <Text
                 dimColor={!isBashMode}
@@ -1943,7 +1772,6 @@ export function Input({
               </Text>
             )}
 
-            {/* Two-column layout for input, matching message components */}
             <Box flexDirection="row">
               <Box width={promptVisualWidth} flexShrink={0}>
                 <Text
@@ -1973,7 +1801,6 @@ export function Input({
               </Box>
             </Box>
 
-            {/* Bottom horizontal divider */}
             {!suppressDividers && (
               <Text
                 dimColor={!isBashMode}
@@ -1983,11 +1810,6 @@ export function Input({
               </Text>
             )}
 
-            {/*
-              During shrink drags Ink's incremental clear is most fragile.
-              Hide the entire footer chrome (assist + footer) until the width
-              settles to avoid "printing" wrapped rows into the transcript.
-            */}
             {!suppressDividers && (
               <InputAssist
                 currentInput={value}
@@ -2095,7 +1917,6 @@ export function Input({
     statuslineTransientHint,
   ]);
 
-  // If not visible, render nothing but keep component mounted to preserve state
   if (!visible) {
     return null;
   }

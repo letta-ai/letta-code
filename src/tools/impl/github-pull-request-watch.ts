@@ -26,11 +26,6 @@ class PullRequestChangedDuringReadError extends Error {}
 interface GhRunOptions {
   cwd: string;
   signal?: AbortSignal;
-  /**
-   * `owner/repo` the command targets. `gh api graphql` carries no repository
-   * in its arguments, so wrappers that pick credentials per repository (such
-   * as the Letta Cloud sandbox gh wrapper) need it from `GH_REPO`.
-   */
   repo?: string;
 }
 

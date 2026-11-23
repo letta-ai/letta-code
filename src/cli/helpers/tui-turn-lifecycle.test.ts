@@ -85,7 +85,6 @@ describe("finishTuiTurn — normal completion", () => {
     expect(h.abortControllerRef.current).toBeNull();
     expect(h.processingConversationRef.current).toBe(0);
     expect(h.bumps()).toBe(1);
-    // Not an interrupt: the cancel guard is left alone.
     expect(h.userCancelledRef.current).toBe(true);
     expect(h.interruptRequested).toEqual([]);
   });

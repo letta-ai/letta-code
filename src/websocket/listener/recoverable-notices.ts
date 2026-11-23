@@ -76,9 +76,7 @@ function mirrorRecoverableNoticeToDesktopDebugPanel(message: string): void {
 
   try {
     process.stderr.write(`${DESKTOP_DEBUG_PANEL_INFO_PREFIX} ${message}\n`);
-  } catch {
-    // Best-effort only.
-  }
+  } catch {}
 }
 
 function toStructuredApiError(
@@ -276,7 +274,6 @@ export function getTranscriptLoopErrorMessage(
   return decision.visibility === "transcript" ? decision.message : undefined;
 }
 
-/** Match the plain error that interactive consumers receive from loop_error. */
 export function getConsumerLoopErrorMessage(
   params: Parameters<typeof getLoopErrorNoticeDecision>[0],
 ): string | undefined {

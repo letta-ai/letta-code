@@ -1,7 +1,6 @@
 import { statSync } from "node:fs";
 import { getScopedMemoryFilesystemRoot } from "./memory-filesystem";
 
-/** Only advertise memory that is available on this machine. */
 export function buildParentMemoryNote(
   parentAgentId: string,
 ): string | undefined {

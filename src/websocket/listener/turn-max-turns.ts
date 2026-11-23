@@ -6,12 +6,6 @@ import type { ListenerTransport } from "./transport";
 import type { finishListenerTurn } from "./turn-terminal";
 import type { ConversationRuntime } from "./types";
 
-/**
- * Ends the turn with max_steps once the runtime's max_turns cap is reached.
- * A pending approval at the cap is not executed: its tool calls are queued as
- * denials (sent ahead of the next turn's input) and the turn ends with max_steps.
- * Returns true when the turn was finished.
- */
 export function finishTurnIfMaxTurnsReached(params: {
   runtime: ConversationRuntime;
   socket: ListenerTransport;

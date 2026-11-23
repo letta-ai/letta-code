@@ -22,7 +22,6 @@ const runtime = {
   conversation_id: scope.conversationId,
 };
 
-/** A computer connection that accepts one launch and can drop on demand. */
 class DroppableComputer {
   private readonly messageHandlers = new Set<AppServerMessageHandler>();
   private readonly disconnectHandlers = new Set<AppServerDisconnectHandler>();
@@ -125,7 +124,6 @@ describe("TaskStop while a remote follower is reconnecting", () => {
         connect: () => {
           if (connects++ === 0) return Promise.resolve(first.asClient());
           reconnecting.resolve();
-          // The computer accepts the TCP connection but never opens it.
           return new Promise<AppServerClient>(() => {});
         },
       },
@@ -139,7 +137,6 @@ describe("TaskStop while a remote follower is reconnecting", () => {
       { task_id: launched.task_id },
       {
         stopRemoteExternal: async () => ({ stopped: true }),
-        // Far longer than the abort should take, so the bound isn't what returns.
         completionTimeoutMs: 2_000,
       },
     );

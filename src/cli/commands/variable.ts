@@ -1,9 +1,3 @@
-/**
- * /variable command handler for managing variables.
- * Variables are stored per agent and can be referenced via $VARIABLE_NAME syntax
- * in shell commands.
- */
-
 import {
   deleteVariableOnServer,
   refreshAndListVariables,
@@ -14,13 +8,6 @@ export interface VariableCommandResult {
   output: string;
 }
 
-/**
- * Handle the /variable command.
- * Usage:
- *   /variable set KEY value  - Set a variable
- *   /variable list           - List available variable names
- *   /variable unset KEY      - Unset a variable
- */
 export async function handleVariableCommand(
   args: string[],
 ): Promise<VariableCommandResult> {
@@ -40,7 +27,6 @@ export async function handleVariableCommand(
 
       const normalizedKey = key.toUpperCase();
 
-      // Validate key format (must be valid for $VARIABLE_NAME pattern)
       if (!/^[A-Z_][A-Z0-9_]*$/.test(normalizedKey)) {
         return {
           output: `Invalid variable name '${key}'. Use uppercase letters, numbers, and underscores only. Must start with a letter or underscore.`,

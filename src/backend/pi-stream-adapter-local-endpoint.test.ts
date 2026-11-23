@@ -60,9 +60,6 @@ describe("PiStreamAdapter local endpoint payloads", () => {
     let capturedPayload: unknown;
     let loaded = false;
     const server = createServer(async (req, res) => {
-      // Native Ollama discovery endpoints: the runtime-managed provider
-      // publishes models from /api/tags + /api/show instead of fabricating
-      // them, so the model must exist here to be resolvable for the turn.
       if (req.method === "GET" && req.url === "/api/tags") {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ models: [{ name: "deepseek-r1:8b" }] }));
@@ -209,10 +206,6 @@ describe("PiStreamAdapter local endpoint payloads", () => {
     }
   });
 
-  // Local engines truncate an oversized prompt silently instead of erroring, so
-  // the visible symptom is an agent whose persona and memory have gone missing.
-  // Compaction cannot recover it — the system prompt and tool schemas are not
-  // history — so the turn must fail with something the user can act on.
   test("loads an unloaded implicit-latest model and uses its exact served window", async () => {
     let chatRequests = 0;
     let psRequests = 0;
@@ -292,20 +285,16 @@ describe("PiStreamAdapter local endpoint payloads", () => {
             agent: {
               ...baseInput.agent,
               model: "ollama/deepseek-r1",
-              // Simulate the architectural value persisted at selection.
               model_settings: {
                 provider_type: "ollama",
                 context_window_limit: 128000,
               },
             },
-            // Roughly 25k tokens of system prompt against the observed 8k window.
             systemPrompt: "x".repeat(100_000),
           }),
         ),
       ).rejects.toThrow(/context window/i);
 
-      // The request must never reach the engine: sending it would mean handing
-      // over a prompt we already know will be clipped.
       expect(chatRequests).toBe(0);
       expect(psRequests).toBeGreaterThanOrEqual(1);
       expect(loadBodies.length).toBeGreaterThanOrEqual(1);

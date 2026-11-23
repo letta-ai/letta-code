@@ -75,3 +75,15 @@ test.each([false, true])(
   },
   15_000,
 );
+
+test.skipIf(
+  process.platform !== "linux" || !process.env.LETTA_TEST_BUILT_ARTIFACT,
+)(
+  "one-shot shutdown with a silent provider or full pipe",
+  async () => {
+    await Bun.$`python3 scripts/integration/headless-sigterm.py`.cwd(
+      resolve(import.meta.dir, ".."),
+    );
+  },
+  180_000,
+);

@@ -1,11 +1,3 @@
-/**
- * Approval recovery helpers.
- *
- * Pure policy logic lives in `./turn-recovery-policy.ts` and is re-exported
- * here for backward compatibility. Async helpers that require backend access
- * stay in this module.
- */
-
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
@@ -68,7 +60,6 @@ export type {
   PreStreamErrorOptions,
   RetryDelayCategory,
 } from "./turn-recovery-policy";
-// ── Re-export pure policy helpers (single source of truth) ──────────
 export {
   buildFreshDenialApprovals,
   classifyPreStreamConflict,
@@ -95,7 +86,6 @@ export {
   shouldRetryRunMetadataError,
 } from "./turn-recovery-policy";
 
-/** Call only at final fallthrough, after own-request replay and blocker waiting. */
 export function reportBusyRetryExhausted(
   detail: unknown,
   retries: number,
@@ -107,8 +97,6 @@ export function reportBusyRetryExhausted(
     });
   }
 }
-
-// ── Async helpers (network side effects — stay here) ────────────────
 
 async function sleepWithAbort(
   delayMs: number,
@@ -130,11 +118,6 @@ async function sleepWithAbort(
   });
 }
 
-/**
- * Wait for a server-named conversation lock owner to finish. Callers keep one
- * absolute deadline across successive blocker ids so healthy rotating runs do
- * not consume the generic three-attempt fallback budget or wait forever.
- */
 export async function waitForConversationBusyRun(
   runId: string,
   signal?: AbortSignal,
@@ -235,7 +218,6 @@ export async function waitForConversationBusyRunOrThrow(
   return result === "settled";
 }
 
-/** Resume only the rejected request's OTID; a missing lookup is not success. */
 export async function resumeConversationBusyRequest(
   conversationId: string,
   agentId: string | undefined,

@@ -301,7 +301,6 @@ describe("rotateChatGPTPlanOnQuotaLimit", () => {
       const repeatedRotation = await rotateChatGPTPlanOnQuotaLimit({
         agentId: "agent-rotation",
         conversationId: "conv-first",
-        // Simulate the TUI's render-time handle still naming the first plan.
         currentHandle: PRIMARY_HANDLE,
         error: { error_code: "usage_limit_reached" },
         exhaustedProviders: firstTurnExhausted,
@@ -391,7 +390,6 @@ describe("rotateChatGPTPlanOnQuotaLimit", () => {
         expect(helpers.conversationUpdates).toHaveLength(1);
         const payload = helpers.conversationUpdates[0]?.payload;
         expect(payload?.model).toBe(SIBLING_HANDLE);
-        // Account changes must not change the selected settings or window.
         expect(payload?.model_settings?.reasoning?.reasoning_effort).toBe(
           "medium",
         );
@@ -666,7 +664,6 @@ describe("selectChatGPTQuotaFailoverHandle", () => {
   });
 
   test("only matches siblings with the same model suffix", () => {
-    // chatgpt-mia has no gpt-5.2-codex, so jin is the only candidate
     expect(select("chatgpt-caren/gpt-5.2-codex", [], () => 0)).toBe(
       "chatgpt-jin/gpt-5.2-codex",
     );

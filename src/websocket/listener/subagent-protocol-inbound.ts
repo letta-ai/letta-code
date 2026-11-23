@@ -78,7 +78,6 @@ export function isLaunchSubagentCommand(
     !isCloudRepositoryNames(args.cloud_skill_repositories)
   )
     return false;
-  // launchSubagent validates the MCP selection's contents.
   if (
     args.mcp !== undefined &&
     (!args.mcp || typeof args.mcp !== "object" || Array.isArray(args.mcp))
@@ -92,8 +91,6 @@ export function isLaunchSubagentCommand(
   );
 }
 
-// The external worker names an older client could send as `subagent_type`.
-// Frozen: new workers are only selectable through `harness`.
 const LEGACY_EXTERNAL_SUBAGENT_TYPES = new Set([
   "claude-code",
   "codex",
@@ -101,18 +98,6 @@ const LEGACY_EXTERNAL_SUBAGENT_TYPES = new Set([
   "opencode",
 ]);
 
-/**
- * Translate wire launch arguments into Agent launch arguments.
- *
- * A command with `harness` or `fork_context` uses the current shape and passes
- * through unchanged. A command with only `subagent_type` may come from an older
- * client, where that field had its original meaning, so its value is mapped:
- * an external worker name becomes `harness`, `fork` becomes
- * `fork_context: true`, `general-purpose` becomes the default agent, and any
- * other name stays a Letta `subagent_type`. Those clients never forked an
- * external worker or `general-purpose`, so both map to `fork_context: false`
- * rather than inheriting the current fork-by-default.
- */
 export function toSubagentLaunchArgs(
   args: LaunchSubagentWireArgs,
 ): SubagentLaunchArgs {

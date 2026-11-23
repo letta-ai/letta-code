@@ -469,11 +469,6 @@ class ChannelRichDraftStreamerImpl implements ChannelRichDraftStreamer {
   }
 }
 
-/**
- * Best-effort extraction of a rate-limit retry hint from adapter send errors.
- * Understands common bot-API shapes (`parameters.retry_after` seconds nested
- * under response/payload/error) plus a `retry_after`-style message fallback.
- */
 function extractRetryAfterMs(error: unknown): number | null {
   const candidates = findRetryAfterCandidates(error);
   for (const candidate of candidates) {

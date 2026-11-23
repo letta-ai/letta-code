@@ -19,7 +19,6 @@ import {
 interface ExitWorktreeArgs {
   action?: string;
   discard_changes?: boolean;
-  /** Injected by executeTool so the in-flight turn's cwd snapshot is updated. */
   _executionContextId?: string;
 }
 
@@ -42,13 +41,6 @@ function textResult(
   return { content: [{ type: "text", text }], status, ...extra };
 }
 
-/**
- * Uncommitted work and commits that exist only on this worktree's branch.
- *
- * Both are checked because they are lost by different mechanisms: `git
- * worktree remove` discards the dirty tree, and deleting the branch orphans
- * its commits. A worktree can be clean and still hold hours of committed work.
- */
 async function collectUnsavedWork(
   worktreePath: string,
   repoRoot: string,
@@ -66,8 +58,6 @@ async function collectUnsavedWork(
     );
   }
 
-  // Best-effort: if the base ref cannot be resolved we would rather remove
-  // without a commit warning than block a legitimate exit on a git edge case.
   try {
     const baseRef = await resolveDefaultBaseRef(repoRoot);
     const unmerged = await gitStdout(
@@ -83,9 +73,7 @@ async function collectUnsavedWork(
           .join("\n")}${lines.length > 10 ? "\n  ..." : ""}`,
       );
     }
-  } catch {
-    // Ignore: reported as no unmerged commits.
-  }
+  } catch {}
 
   return warnings;
 }
@@ -104,10 +92,6 @@ async function resolveCurrentBranch(
   }
 }
 
-/**
- * Labeled-field result, matching the EnterWorktree message shape so the TUI
- * can render a compact summary instead of the raw tool return.
- */
 function buildExitWorktreeMessage(params: {
   removed: boolean;
   worktreePath: string;
@@ -141,15 +125,6 @@ function buildExitWorktreeMessage(params: {
   return lines.join("\n");
 }
 
-/**
- * Leave the worktree this conversation is in and return to the primary
- * checkout, optionally deleting the worktree and its branch.
- *
- * Scope is the *current* working directory rather than a recorded session:
- * EnterWorktree can also switch into a worktree another conversation created,
- * and after a restart there is no in-memory session to consult. If the cwd is
- * not a managed worktree under `.letta/worktrees/`, this is a no-op.
- */
 export async function exit_worktree(
   rawArgs: Record<string, unknown>,
 ): Promise<ExitWorktreeResult> {
@@ -195,7 +170,6 @@ export async function exit_worktree(
       );
     }
 
-    // The worktree root, not the cwd, which may be a subdirectory of it.
     const worktreePath = repoRoot;
     const branchName = await resolveCurrentBranch(worktreePath);
 
@@ -215,9 +189,6 @@ export async function exit_worktree(
       }
     }
 
-    // Leave before removing. `git worktree remove` deletes the directory the
-    // session (and any persistent shell) is sitting in, which strands the cwd
-    // and wedges later commands — see letta-ai/letta-code#3253.
     const switchedCwd = await switchSessionToWorktree({
       worktreePath: primaryRoot,
       shouldSwitchCwd: true,
@@ -255,8 +226,6 @@ export async function exit_worktree(
           );
           branchNote = `deleted ${branchName}`;
         } catch (error) {
-          // The worktree is already gone; surface the branch as a leftover
-          // rather than failing an otherwise completed removal.
           branchNote = `⚠ kept ${branchName} (${formatGitFailure(error)})`;
         }
       }

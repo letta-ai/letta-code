@@ -2,19 +2,6 @@ import type { LocalMessage } from "@/backend/local/local-message";
 import type { ProviderTurnInput } from "./provider-turn-executor";
 import { estimateProviderRequestBytes } from "./provider-turn-executor";
 
-// Classifier threshold for oversized request payloads. This is a transport
-// limit, not a token limit: providers accept image-heavy requests whose
-// semantic token cost is small, but large raw bodies cause generic transport
-// failures (connection errors, SSE header timeouts) instead of clean,
-// classifiable overflow errors. When a retryable transport error occurs and
-// the serialized payload exceeds this threshold, we treat it as context
-// overflow (compact + retry) instead of retrying the same oversized payload.
-// It never blocks a request preemptively. Empirically (local-conv-48): ~7MB
-// of in-context images still succeeded against Anthropic at ~400k context
-// tokens, while ~11.8MB failed with "Connection error." on every provider.
-// 8MB keeps headroom under Anthropic's documented 32MB cap while staying
-// above known-good payloads. Local networks can fail below that threshold, so
-// LETTA_LOCAL_REQUEST_BYTE_LIMIT can lower the reactive classifier in dev.
 const DEFAULT_LOCAL_PROVIDER_REQUEST_BYTE_LIMIT = 8_000_000;
 const LOCAL_PROVIDER_REQUEST_BYTE_LIMIT_ENV = "LETTA_LOCAL_REQUEST_BYTE_LIMIT";
 
@@ -34,17 +21,6 @@ function localProviderRequestByteTarget(
   return Math.floor(limit * 0.75);
 }
 
-// Letta Code addition with no Pi analog. Pi compacts reactively on clean,
-// classifiable provider overflow errors (`isContextOverflow`, including
-// Anthropic 413 `request_too_large`). But oversized payloads frequently kill
-// the transport from a local device before any classifiable response arrives
-// ("Connection error.", SSE header timeouts), which the retry classifier
-// treats as transient — retrying the same oversized payload forever. Pi has
-// the same gap (earendil-works/pi #2810, #4642, #5369: "permanently bricking
-// sessions"). When a retryable transport failure occurs and the payload is
-// measurably oversized, classify it as context overflow so it enters the same
-// compaction path instead of the retry loop. This only ever runs after a real
-// provider failure; it never preemptively blocks a request.
 export function isOversizedPayloadTransportFailure(
   input: ProviderTurnInput,
 ): boolean {
@@ -100,9 +76,6 @@ function imageElisionCandidates(
       });
     });
   });
-  // Prefer removing older images first; within a single message, remove larger
-  // blobs first. If the request is still too large, this naturally proceeds to
-  // newer images as needed.
   return candidates.sort(
     (a, b) =>
       a.messageIndex - b.messageIndex ||

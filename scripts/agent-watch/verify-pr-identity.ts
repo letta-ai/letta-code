@@ -132,10 +132,7 @@ export function findWatcherPullRequests(
       foundExactHint = candidates.some((pullRequest) =>
         pullRequest.body?.includes(args.marker),
       );
-    } catch {
-      // Search is only an acceleration hint. The authoritative list below must
-      // still prove presence, absence, and uniqueness.
-    }
+    } catch {}
     if (foundExactHint) break;
     if (attempt + 1 < SEARCH_ATTEMPTS) waitForSearchIndex();
   }

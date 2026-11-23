@@ -66,8 +66,6 @@ afterEach(() => {
   }
 });
 
-// Run the production producer, bridge, listener routing and approval continuation.
-// A release file / WebSocket event controls completion; no timed race with a tool.
 for (const producer of [
   "exec_command",
   "Bash",
@@ -162,7 +160,6 @@ for (const producer of [
           producer === "WebSocket" && address && typeof address !== "string"
             ? { ws: { url: `ws://127.0.0.1:${address.port}` } }
             : { command };
-        // The captured tool context, not the caller's current turn, owns this work.
         const result = await runWithRuntimeContext(
           { actingUserId: "unrelated-user" },
           () =>
@@ -195,7 +192,6 @@ for (const producer of [
             for (const client of wsServer.clients)
               client.send("background complete");
           } else writeFileSync(releaseFile, "go");
-          // Shell monitors emit an event and a terminal notice. Both must steer.
           await waitFor(
             () =>
               runtime.queueRuntime.length === (producer === "Monitor" ? 2 : 1),
@@ -274,7 +270,6 @@ for (const producer of [
                 { ...options, preparedToolContext: prepared, skillSources: [] },
               );
               for await (const _event of stream) {
-                /* Read the SDK response. */
               }
               return {
                 kind: "terminal",

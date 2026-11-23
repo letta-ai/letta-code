@@ -35,7 +35,6 @@ function applyFileLimit(files: string[], workingDirectory: string): GlobResult {
     { workingDirectory },
   );
 
-  // Split the content back into an array of file paths + notice
   const resultFiles = content.split("\n");
 
   return {
@@ -49,7 +48,6 @@ export async function glob(args: GlobArgs): Promise<GlobResult> {
   validateRequiredParams(args, ["pattern"], "Glob");
   const { pattern, path: searchPath, signal } = args;
 
-  // Explicit check for undefined/empty pattern (validateRequiredParams only checks key existence)
   if (!pattern) {
     throw new Error("Glob tool missing required parameter: pattern");
   }
@@ -67,12 +65,6 @@ export async function glob(args: GlobArgs): Promise<GlobResult> {
       : path.resolve(userCwd, searchPath)
     : userCwd;
 
-  // Build ripgrep args for file listing
-  // --files: list files instead of searching content
-  // --glob: filter by pattern
-  // --hidden: include hidden files (dotfiles)
-  // --follow: follow symlinks
-  // --no-messages: suppress error messages for unreadable dirs
   const rgArgs = [
     "--files",
     "--hidden",
@@ -85,7 +77,7 @@ export async function glob(args: GlobArgs): Promise<GlobResult> {
 
   try {
     const { stdout } = await execFileAsync(rgPath, rgArgs, {
-      maxBuffer: 50 * 1024 * 1024, // 50MB buffer for large file lists
+      maxBuffer: 50 * 1024 * 1024,
       cwd: userCwd,
       signal,
     });
@@ -102,12 +94,10 @@ export async function glob(args: GlobArgs): Promise<GlobResult> {
       code?: string | number;
     };
 
-    // ripgrep exits with code 1 when no files match - that's not an error
     if (err.code === 1 || err.code === "1") {
       return { files: [] };
     }
 
-    // If stdout has content despite error, use it (partial results)
     if (err.stdout?.trim()) {
       const files = err.stdout.trim().split("\n").filter(Boolean).sort();
       return applyFileLimit(files, userCwd);

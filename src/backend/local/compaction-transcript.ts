@@ -1,9 +1,6 @@
 import { isRecord } from "@/utils/type-guards";
 import type { LocalMessage } from "./local-message";
 
-// Formats history as the plain-text transcript that a transcript summary
-// request sends as its single user message.
-
 export const LOCAL_SUMMARY_TOOL_RETURN_TRUNCATION_CHARS = 2_000;
 
 function stringifyUnknown(value: unknown): string {

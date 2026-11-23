@@ -58,6 +58,14 @@ tests.
 
 These are the rules enforced by CI and the pre-commit hook, with the reasoning behind each. Understanding the *why* lets you make good decisions in ambiguous cases the rules don't explicitly cover.
 
+### No code comments
+
+**Rule:** Omit prose comments, JSDoc, and section comments. Keep only directives that tools or runtimes read, such as shebangs and lint suppressions.
+
+**Why:** The code and Git history are the source of truth for behavior and the reasoning behind changes.
+
+---
+
 ### No `../` parent imports — use `@/`
 
 **Rule:** All cross-directory imports must use the `@/` alias (`@/` maps to `src/`). Relative parent paths (`../`) are banned and blocked by pre-commit.
@@ -182,6 +190,15 @@ utils/         ← bottom: no domain deps
 - Use `_prefix` for intentionally unused parameters (`_event`, `_index`).
 - Use `void x` to discard a value without creating a binding.
 - TypeScript exempts `_`-prefixed names from the check, but NOT function declarations (`function _foo()` is still flagged — use `void` instead).
+
+---
+
+### Unit test design
+
+**Rule:** Isolated unit tests must guard a security boundary, money math, untrusted-input parsing, concurrency or ordering, or a lint rule's specification.
+Skip prompt, string, or constant equality checks, snapshots, flag truth tables that repeat branches, mock-call plumbing, UI render checks, and trivial helper tests.
+
+**Why:** Tests should catch regressions in behavior rather than pin implementation details.
 
 ---
 

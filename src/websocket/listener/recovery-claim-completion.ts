@@ -11,10 +11,6 @@ type RecoveryClaimCompletionStore = Pick<
   "markRecoveryClaimCompletionPending" | "retireRecoveryClaimCompletion"
 >;
 
-/**
- * Retire an acknowledged recovery claim without deleting evidence written by a
- * different lineage while the remote completion request was in flight.
- */
 export type RecoveryClaimRetirement =
   | "removed"
   | "preserved"
@@ -37,7 +33,6 @@ export function retireAcknowledgedRecoveryClaim(
   }
 }
 
-/** Durably move one exact running recovery lineage to completion-pending. */
 export function markRecoveryClaimCompletionPending(
   store: RecoveryClaimCompletionStore,
   record: InterruptedTurnRecord,

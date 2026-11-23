@@ -63,8 +63,6 @@ describe("getSpawnerListenerInstanceId", () => {
 
     expect(getSpawnerListenerInstanceId()).toBe("desktop-primary:install-42");
     expect(process.env[LISTENER_INSTANCE_ID_ENV]).toBeUndefined();
-    // Re-registration gets the process-owned cache after the transport env
-    // variable is gone.
     expect(getSpawnerListenerInstanceId()).toBe("desktop-primary:install-42");
   });
 

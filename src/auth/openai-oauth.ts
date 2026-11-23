@@ -1,9 +1,3 @@
-/**
- * OAuth 2.0 utilities for ChatGPT OAuth authentication
- * Uses Authorization Code Flow with PKCE and local callback server
- * Compatible with Codex CLI authentication flow
- */
-
 import http from "node:http";
 
 export const OPENAI_OAUTH_CONFIG = {
@@ -33,9 +27,6 @@ export interface OAuthCallbackResult {
   state: string;
 }
 
-/**
- * Render a minimal OAuth callback page with ASCII art
- */
 function renderOAuthPage(options: {
   success: boolean;
   title: string;
@@ -45,7 +36,6 @@ function renderOAuthPage(options: {
 }): string {
   const { title, message, autoClose } = options;
 
-  // ASCII art logo (escaped for HTML)
   const asciiLogo = `  ██████     ██╗     ███████╗████████╗████████╗ █████╗ 
 ██      ██   ██║     ██╔════╝╚══██╔══╝╚══██╔══╝██╔══██╗
 ██  ▇▇  ██   ██║     █████╗     ██║      ██║   ███████║
@@ -115,18 +105,12 @@ function renderOAuthPage(options: {
 </html>`;
 }
 
-/**
- * Generate PKCE code verifier (43-128 characters of unreserved URI characters)
- */
 export function generateCodeVerifier(): string {
   const array = new Uint8Array(32);
   crypto.getRandomValues(array);
   return base64UrlEncode(array);
 }
 
-/**
- * Generate PKCE code challenge from verifier using SHA-256
- */
 export async function generateCodeChallenge(verifier: string): Promise<string> {
   const encoder = new TextEncoder();
   const data = encoder.encode(verifier);
@@ -134,9 +118,6 @@ export async function generateCodeChallenge(verifier: string): Promise<string> {
   return base64UrlEncode(new Uint8Array(digest));
 }
 
-/**
- * Generate cryptographically secure state parameter (32-byte hex)
- */
 export function generateState(): string {
   const array = new Uint8Array(32);
   crypto.getRandomValues(array);
@@ -145,17 +126,11 @@ export function generateState(): string {
     .join("");
 }
 
-/**
- * Base64 URL encode (RFC 4648)
- */
 function base64UrlEncode(buffer: Uint8Array): string {
   const base64 = btoa(String.fromCharCode(...buffer));
   return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-/**
- * Decode JWT payload (no signature verification - for local extraction only)
- */
 function decodeJwtPayload(token: string): Record<string, unknown> {
   const parts = token.split(".");
   if (parts.length !== 3) {
@@ -165,21 +140,15 @@ function decodeJwtPayload(token: string): Record<string, unknown> {
   if (!payload) {
     throw new Error("Missing JWT payload");
   }
-  // Handle base64url encoding
   const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
   const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
   const decoded = atob(padded);
   return JSON.parse(decoded);
 }
 
-/**
- * Extract ChatGPT Account ID from access token JWT
- * The account ID is in the custom claim: https://api.openai.com/auth.chatgpt_account_id
- */
 export function extractAccountIdFromToken(accessToken: string): string {
   try {
     const payload = decodeJwtPayload(accessToken);
-    // The account ID is in the custom claim path
     const authClaim = payload["https://api.openai.com/auth"] as
       | Record<string, unknown>
       | undefined;
@@ -194,9 +163,6 @@ export function extractAccountIdFromToken(accessToken: string): string {
   }
 }
 
-/**
- * Generate PKCE code verifier and challenge
- */
 export async function generatePKCE(): Promise<{
   codeVerifier: string;
   codeChallenge: string;
@@ -206,10 +172,6 @@ export async function generatePKCE(): Promise<{
   return { codeVerifier, codeChallenge };
 }
 
-/**
- * Start a local HTTP server to receive OAuth callback
- * Returns a promise that resolves with the authorization code when received
- */
 export function startLocalOAuthServer(
   expectedState: string,
   port = OPENAI_OAUTH_CONFIG.defaultPort,
@@ -310,7 +272,6 @@ export function startLocalOAuthServer(
           return;
         }
 
-        // Success!
         res.writeHead(200, { "Content-Type": "text/html" });
         res.end(
           renderOAuthPage({
@@ -350,11 +311,8 @@ export function startLocalOAuthServer(
       signal.addEventListener("abort", onAbort, { once: true });
     }
 
-    server.listen(port, "127.0.0.1", () => {
-      // Server started successfully, waiting for callback
-    });
+    server.listen(port, "127.0.0.1", () => {});
 
-    // Timeout after 5 minutes
     timeout = setTimeout(
       () => {
         server.close();
@@ -369,10 +327,6 @@ export function startLocalOAuthServer(
   });
 }
 
-/**
- * Start OAuth flow - returns authorization URL and PKCE values
- * Also starts local server to receive callback
- */
 export async function startOpenAIOAuth(
   port = OPENAI_OAUTH_CONFIG.defaultPort,
 ): Promise<{
@@ -408,9 +362,6 @@ export async function startOpenAIOAuth(
   };
 }
 
-/**
- * Exchange authorization code for tokens
- */
 export async function exchangeCodeForTokens(
   code: string,
   codeVerifier: string,

@@ -33,16 +33,6 @@ import {
   type SkillSource,
 } from "./skills";
 
-// ---------------------------------------------------------------------------
-// Cache layer
-// ---------------------------------------------------------------------------
-
-/**
- * In-memory cache for `buildClientSkillsPayload` results.
- *
- * Stored on `globalThis` via `Symbol.for()` so it survives Bun's bundler
- * deduplication (same pattern as secretsStore).
- */
 const CLIENT_SKILLS_CACHE_KEY = Symbol.for("@letta/clientSkillsCache");
 const CLIENT_SKILLS_CACHE_GENERATION_KEY = Symbol.for(
   "@letta/clientSkillsCacheGeneration",
@@ -101,21 +91,6 @@ function getWatcher(): ClientSkillsWatcher {
   return global[CLIENT_SKILLS_WATCHER_KEY];
 }
 
-/**
- * Compute a cache key from the parameters that influence skill discovery.
- *
- * We include:
- *  - agentId
- *  - sorted skill sources
- *  - cwd (affects `.agents/skills` and `.skills` resolution)
- *  - configured skills directory
- *  - legacy and primary project skills directories
- *  - resolved memory skills dirs (scoped or env-fallback)
- *  - attached shared-memory skill dirs and attachment-resolution errors
- *
- * Filesystem changes invalidate this cache through ClientSkillsWatcher rather
- * than adding a recursive filesystem revision to this request-time key.
- */
 function computeCacheKey(components: {
   agentId: string | undefined;
   skillSources: SkillSource[];
@@ -190,10 +165,6 @@ function getSkillRoots(components: {
   return [...roots];
 }
 
-/**
- * Deep-clone a `BuildClientSkillsPayloadResult` so callers cannot
- * accidentally mutate the cached object.
- */
 function cloneResult(
   result: BuildClientSkillsPayloadResult,
 ): BuildClientSkillsPayloadResult {
@@ -205,33 +176,18 @@ function cloneResult(
   };
 }
 
-/**
- * Invalidate the entire client skills payload cache.
- *
- * Useful when the process-wide skill configuration changes
- * (e.g. cwd switch, env var change, or global skill source update).
- */
 export function invalidateClientSkillsPayloadCache(): void {
   advanceCacheGeneration();
   getCache().clear();
   invalidateAttachedRepositoriesCache();
 }
 
-/**
- * Invalidate cache entries for a specific agent.
- *
- * Useful when an agent's memory skills are updated (e.g. skill
- * creation/deletion via the Skill tool) and the next
- * `sendMessageStream` call must re-discover.
- */
 export function invalidateClientSkillsPayloadCacheForAgent(
   agentId: string,
 ): void {
   advanceCacheGeneration();
   const cache = getCache();
   for (const [k, entry] of cache) {
-    // The agentId is the first component of the key before the first "|".
-    // We also check the stored entry for safety.
     if (entry.key.startsWith(`${agentId}|`) || k.startsWith(`${agentId}|`)) {
       cache.delete(k);
     }
@@ -239,19 +195,10 @@ export function invalidateClientSkillsPayloadCacheForAgent(
   invalidateAttachedRepositoriesCache(agentId);
 }
 
-/**
- * Metadata-only skill-delta reminder for changes since a conversation's last
- * accepted send. `client_skills` stays frozen between compactions, so this
- * reminder supersedes the list in the system prompt: it names what was added,
- * updated, and removed, then gives the complete current list by name.
- * Descriptions for skills not in the delta are already in the system prompt
- * or an earlier reminder, so they are not repeated.
- */
 export function buildClientSkillsUpdateReminder(
   previous: BuildClientSkillsPayloadResult["clientSkills"] | undefined,
   current: BuildClientSkillsPayloadResult["clientSkills"],
 ): string | null {
-  // The initial request already supplies the complete catalog in client_skills.
   if (!previous) return null;
   const previousByName = new Map(previous.map((skill) => [skill.name, skill]));
   const currentNames = new Set(current.map((skill) => skill.name));
@@ -294,7 +241,6 @@ export function buildClientSkillsUpdateReminder(
           ]),
           "</available_skills>",
         ];
-  // Keep this metadata-only. Skill bodies stay lazy-loaded through Skill.
   return [
     "<system-reminder>",
     "The available skills have changed. This update supersedes the skills list in your system prompt and any earlier skill update.",
@@ -313,10 +259,6 @@ export function buildClientSkillsUpdateReminder(
     "</system-reminder>",
   ].join("\n");
 }
-
-// ---------------------------------------------------------------------------
-// Skill discovery helpers
-// ---------------------------------------------------------------------------
 
 function getMemorySkillsDirs(agentId?: string): string[] {
   const dirs = new Set<string>();
@@ -350,9 +292,6 @@ async function discoverMemorySkills(
 
   for (const dir of getMemorySkillsDirs(agentId)) {
     try {
-      // Reuse the canonical skill parser by scanning this path as a project scope.
-      // We remap source to "agent" so agent memory stays ahead of attached
-      // shared memory, global skills, and bundled skills.
       const discovery = await discoverSkills(dir, undefined, {
         sources: ["project"],
         skipBundled: true,
@@ -380,10 +319,6 @@ async function discoverMemorySkills(
   };
 }
 
-// ---------------------------------------------------------------------------
-// Public types
-// ---------------------------------------------------------------------------
-
 export type ClientSkill = NonNullable<
   ConversationMessageCreateParams["client_skills"]
 >[number];
@@ -393,7 +328,6 @@ export interface BuildClientSkillsPayloadOptions {
   workingDirectory?: string;
   skillsDirectory?: string | null;
   skillSources?: SkillSource[];
-  /** Bundled skill IDs to expose when skillSources omits "bundled". */
   bundledSkills?: string[];
   attachedRepositories?: readonly AttachedAgentRepository[];
   cloudSkillRepositories?: readonly string[];
@@ -407,10 +341,6 @@ export interface BuildClientSkillsPayloadResult {
   skillPathById: Record<string, string>;
   errors: SkillDiscoveryError[];
 }
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
 
 function toClientSkill(skill: Skill): ClientSkill {
   return {
@@ -451,7 +381,6 @@ function resolveSkillDiscoveryContext(
     PROJECT_SKILLS_DIR,
   );
   const skillSources = options.skillSources ?? getSkillSources();
-  // The allowlist only adds bundled skills that the sources would otherwise drop.
   const bundledSkills = skillSources.includes("bundled")
     ? undefined
     : (options.bundledSkills ?? getBundledSkillAllowlist());
@@ -473,7 +402,6 @@ export interface DiscoverClientSideSkillsOptions {
   workingDirectory?: string;
   skillsDirectory?: string | null;
   skillSources?: SkillSource[];
-  /** Bundled skill IDs to expose when skillSources omits "bundled". */
   bundledSkills?: string[];
   attachedRepositories?: readonly AttachedAgentRepository[];
   cloudSkillRepositories?: readonly string[];
@@ -641,11 +569,6 @@ async function collectClientSideSkills(
   };
 }
 
-/**
- * Discover all client-side skills from the same roots used for `client_skills`.
- * This intentionally returns both model-invocable and manual-only skills; callers
- * decide whether to filter for model invocation or slash-command invocation.
- */
 export async function discoverClientSideSkills(
   options: DiscoverClientSideSkillsOptions = {},
 ): Promise<SkillDiscoveryResult> {
@@ -675,21 +598,6 @@ export async function discoverClientSideSkills(
   });
 }
 
-// ---------------------------------------------------------------------------
-// Core function (with cache)
-// ---------------------------------------------------------------------------
-
-/**
- * Build `client_skills` payload for conversations.messages.create.
- *
- * This discovers client-side skills using the same source selection rules as the
- * Skill tool and headless startup flow, then converts them into the server-facing
- * schema expected by the API. Ordering is deterministic by skill id.
- *
- * Results are cached in-memory keyed by agent id, skill sources, cwd, and
- * resolved skill roots so that repeated calls (e.g. during approval
- * continuations) skip redundant filesystem discovery.
- */
 export async function buildClientSkillsPayload(
   options: BuildClientSkillsPayloadOptions = {},
 ): Promise<BuildClientSkillsPayloadResult> {
@@ -704,8 +612,6 @@ export async function buildClientSkillsPayload(
   } = resolveSkillDiscoveryContext(options);
   const discoverSkillsFn = options.discoverSkillsFn ?? discoverSkills;
 
-  // When a custom discoverSkillsFn is provided (tests / DI), bypass the cache
-  // so the injected function is always called.
   const useCache = !options.discoverSkillsFn;
 
   const memorySkillsDirs = getMemorySkillsDirs(options.agentId);
@@ -786,7 +692,6 @@ export async function buildClientSkillsPayload(
       path: skill.path,
       source: skill.source,
     })),
-    // Explicit preloads (subagent `skills:`) may name skills hidden from model invocation.
     skillPathById: Object.fromEntries(
       discovery.skills
         .filter(

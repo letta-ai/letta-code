@@ -58,8 +58,6 @@ describe("standalone listener single-instance wiring", () => {
     delete process.env.LETTA_LISTENER_INSTANCE_ID;
     delete process.env.LETTA_DESKTOP_MODE;
 
-    // Registration precedes channel startup. Fail locally rather than waiting
-    // for Cloud to reject the fake API key before validating a channel name.
     registrationFetch = spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("fixture registration denied", { status: 401 }),
     );
@@ -204,7 +202,6 @@ describe("standalone listener single-instance wiring", () => {
     process.env.LETTA_LISTENER_DEVICE_ID = "desktop:install-1:user-1";
     process.env.LETTA_LISTENER_INSTANCE_ID = "desktop-primary:install-1";
     const exitCode = await runListenSubcommand(["--env-name", "My Desktop"]);
-    // Stop at the fake registration response, before opening a WebSocket.
     expect(exitCode).toBe(1);
     expect(registrationFetch).toHaveBeenCalledTimes(1);
     expect(errors.join("\n")).toContain("fixture registration denied");

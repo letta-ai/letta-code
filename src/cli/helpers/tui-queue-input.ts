@@ -9,7 +9,6 @@ import {
   toQueuedMsg,
 } from "./queued-message-parts";
 
-/** Keep the scheduled origin when converting to the TUI's mid-turn queue shape. */
 export function toTuiQueuedMessage(
   item: MessageQueueItem | TaskNotificationQueueItem,
 ): QueuedMessage {
@@ -17,7 +16,6 @@ export function toTuiQueuedMessage(
   return item.source === "cron" ? { ...message, source: "cron" } : message;
 }
 
-/** Text for restoration, rich input, and origin must all describe the same batch. */
 export function prepareTuiQueueSubmit(batch: DequeuedBatch) {
   return {
     text: batch.items

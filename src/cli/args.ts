@@ -118,8 +118,6 @@ export const CLI_FLAG_CATALOG = {
     mode: "headless",
     help: { description: "Headless prompt mode" },
   },
-  // Advanced/internal flags intentionally hidden from --help output.
-  // They remain in the shared catalog for strict parsing parity.
   run: { parser: { type: "boolean" }, mode: "headless" },
   "dev-backend": { parser: { type: "string" }, mode: "headless" },
   backend: {
@@ -233,7 +231,6 @@ export const CLI_FLAG_CATALOG = {
     },
   },
   "pre-load-skills": { parser: { type: "string" }, mode: "headless" },
-  // Internal headless metadata tag assignment (not part of primary user help).
   tags: { parser: { type: "string" }, mode: "headless" },
   memfs: {
     parser: { type: "boolean" },
@@ -254,13 +251,6 @@ export const CLI_FLAG_CATALOG = {
       description: "Run an existing agent without MemFS enablement or sync",
     },
   },
-  // DEPRECATED no-op, intentionally hidden from help. Accepted for backward
-  // compatibility: older parent processes (pre-mandatory-memfs) spawn
-  // subagents with --no-memfs, and after an auto-update the child binary on
-  // disk is newer than the still-running parent. Rejecting the flag broke
-  // reflection subagents during that version skew (LET-9436). Subagent
-  // statelessness now derives from LETTA_CODE_AGENT_ROLE=subagent, so the
-  // flag is simply ignored.
   "no-memfs": {
     parser: { type: "boolean" },
     mode: "both",
@@ -348,7 +338,6 @@ const CLI_FLAG_ENTRIES = Object.entries(CLI_FLAG_CATALOG) as Array<
 export const CLI_OPTIONS = Object.fromEntries(
   CLI_FLAG_ENTRIES.map(([name, definition]) => [name, definition.parser]),
 ) as CliCatalogOptionDescriptors;
-// Column width for left-aligned flag labels in generated --help output.
 const HELP_LABEL_WIDTH = 24;
 
 function formatHelpFlagLabel(

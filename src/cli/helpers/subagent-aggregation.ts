@@ -1,8 +1,3 @@
-/**
- * Subagent aggregation utilities for grouping Task tool calls.
- * Extracts subagent grouping logic from App.tsx commitEligibleLines.
- */
-
 import {
   getSubagentByToolCallId,
   getSubagents,
@@ -12,33 +7,22 @@ import type { StaticSubagent } from "@/cli/components/SubagentGroupStatic.js";
 import type { Line } from "./accumulator.js";
 import { isTaskTool } from "./tool-name-mapping.js";
 
-/**
- * A finished Task tool call info
- */
 export interface TaskToolCallInfo {
   lineId: string;
   toolCallId: string;
 }
 
-/**
- * Static item for a group of completed subagents
- */
 export interface SubagentGroupItem {
   kind: "subagent_group";
   id: string;
   agents: StaticSubagent[];
 }
 
-/**
- * Checks if there are any in-progress Task tool calls in the buffer
- */
 export function hasInProgressTaskToolCalls(
   order: string[],
   byId: Map<string, Line>,
   _emittedIds: Set<string>,
 ): boolean {
-  // If any foreground subagent is running, treat Task tools as in-progress.
-  // Background subagents shouldn't block grouping into the static area.
   const hasForegroundRunning = getSubagents().some(
     (agent) =>
       !agent.isBackground &&
@@ -71,10 +55,6 @@ export function hasInProgressTaskToolCalls(
   return false;
 }
 
-/**
- * Collects finished Task tool calls that are ready for grouping.
- * Only returns results when all Task tool calls are finished.
- */
 export function collectFinishedTaskToolCalls(
   order: string[],
   byId: Map<string, Line>,
@@ -98,7 +78,6 @@ export function collectFinishedTaskToolCalls(
       ln.phase === "finished" &&
       ln.toolCallId
     ) {
-      // Check if we have subagent data in the state store
       const subagent = getSubagentByToolCallId(ln.toolCallId);
       if (
         subagent &&
@@ -118,10 +97,6 @@ export function collectFinishedTaskToolCalls(
   return finished;
 }
 
-/**
- * Creates a subagent_group static item from collected Task tool calls.
- * Looks up subagent data from the state store.
- */
 export function createSubagentGroupItem(
   taskToolCalls: TaskToolCallInfo[],
 ): SubagentGroupItem {

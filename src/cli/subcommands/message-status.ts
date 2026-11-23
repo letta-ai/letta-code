@@ -3,7 +3,6 @@ import { getAgentRuntimeStatus } from "@/backend/api/agents";
 import { getLatestConversationSuperRun } from "@/backend/api/conversation-enqueue";
 import { ApiRequestError } from "@/backend/api/request";
 
-/** Inspection works for any readable conversation, without a local Task ID. */
 export async function readMessageStatus(
   conversationId: string,
   agentId: string | undefined,

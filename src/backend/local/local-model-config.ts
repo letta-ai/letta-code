@@ -59,11 +59,6 @@ interface LocalModelListEntry {
 
 interface ListLocalModelsOptions {
   fetch?: typeof fetch;
-  /**
-   * Per-backend pi-ai Models runtime that owns all dynamic model discovery.
-   * When omitted, a call-scoped runtime is created (honoring `fetch`), so
-   * /model and turn execution always read provider-published Model objects.
-   */
   modelsRuntime?: LocalPiModelsRuntime;
 }
 
@@ -130,8 +125,6 @@ export function localModelSettingsForHandle(
     : stripProviderHandlePrefix(handle, provider as PiProvider);
   if (!modelId) return undefined;
 
-  // Settings derive from the same runtime-published Model that listing and
-  // turn execution resolve — no registration or static-catalog re-reads.
   const runtime =
     modelsRuntime ?? new LocalPiModelsRuntime({ storageDir: undefined });
   const runtimeProviderId = registeredName
@@ -186,10 +179,6 @@ export function resolveLocalModelConfig(
   };
 }
 
-/**
- * Catalog handles for a static built-in provider, read from the runtime's
- * registered provider (the same Model objects turn execution resolves).
- */
 function catalogHandlesForProvider(
   provider: PiProvider,
   modelsRuntime: LocalPiModelsRuntime,
@@ -264,9 +253,6 @@ export async function listLocalModels(
   storageDir?: string,
   options: ListLocalModelsOptions = {},
 ) {
-  // The Models runtime owns all dynamic discovery. The backend threads its
-  // instance; direct callers (tests, library use) get a call-scoped one that
-  // honors an injected fetch.
   const modelsRuntime =
     options.modelsRuntime ??
     new LocalPiModelsRuntime({
@@ -275,8 +261,6 @@ export async function listLocalModels(
     });
   const records = listLocalProviderRecords(storageDir);
   const providerNames = localProviderNamesFromRecords(records);
-  // One collection-wide refresh (pi-ai 0.81 semantics): configured dynamic
-  // providers re-fetch, per-provider failures keep last-known lists.
   await modelsRuntime.refreshAll();
   const configured = resolveLocalModelConfig(storageDir);
   const models: LocalModelListEntry[] = [];
@@ -343,8 +327,6 @@ export async function listLocalModels(
     });
   };
 
-  // Only add the configured model if its provider is actually reachable
-  // (has keys/env configured). Otherwise we'd show models the user can't use.
   const configuredProviderIsConfigured = listConfiguredPiProviders(
     providerNames,
   ).includes(configured.provider);
@@ -357,9 +339,6 @@ export async function listLocalModels(
     addModel(configured.provider, configured.model);
   }
   const configuredProviders = new Set(listConfiguredPiProviders(providerNames));
-  // One discovery projection for every provider class: configured built-ins,
-  // auto-detectable local endpoints, and configured mod registrations all
-  // resolve through the runtime-managed branch below or the runtime catalog.
   const providersToDiscover = new Set<PiProvider | string>([
     ...configuredProviders,
     ...PI_PROVIDER_SPECS.filter((provider) =>
@@ -402,8 +381,6 @@ export async function listLocalModels(
       addModel(result.provider, model);
     }
     for (const model of result.runtimeModels ?? []) {
-      // A mod registration keeps its own name as the provider type, even
-      // when it overrides a built-in provider id.
       const registeredName = getRegisteredPiProvider(result.provider)
         ? String(result.provider)
         : undefined;
