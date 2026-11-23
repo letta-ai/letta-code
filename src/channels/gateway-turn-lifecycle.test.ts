@@ -218,3 +218,28 @@ test("submits Git attribution for the sender who started the delivery", async ()
   ]);
   gateway.close();
 });
+
+test("skips sources without valid attribution in a mixed delivery", async () => {
+  const client = new FakeClient();
+  const gateway = new ChannelGateway(client, makeHooks().hooks);
+  await gateway.submit(
+    makeDelivery({
+      sources: [
+        makeSource({ conversationPermalink: "https://example.com/bot" }),
+        makeSource({ senderName: " " }),
+        makeSource({
+          senderName: "Alice",
+          conversationPermalink: "https://example.com/human",
+        }),
+        makeSource({ senderName: "Bob" }),
+      ],
+    }),
+  );
+  expect(client.submittedInputs[0]?.payload).toMatchObject({
+    git_attribution: {
+      requester: "Alice",
+      conversation: "https://example.com/human",
+    },
+  });
+  gateway.close();
+});

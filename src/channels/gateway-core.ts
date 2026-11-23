@@ -243,12 +243,15 @@ export class ChannelGateway {
         ]);
         await this.performRuntimeRegistration(state, delivery);
       });
-      const source = delivery.sources[0];
-      const gitAttribution = readGitAttribution({
-        requester: source?.senderName,
-        conversation:
-          source?.conversationPermalink ?? delivery.runtime.conversation_id,
-      });
+      let gitAttribution: ReturnType<typeof readGitAttribution>;
+      for (const source of delivery.sources) {
+        gitAttribution = readGitAttribution({
+          requester: source.senderName,
+          conversation:
+            source.conversationPermalink ?? delivery.runtime.conversation_id,
+        });
+        if (gitAttribution) break;
+      }
       const response = await this.client.submitInput({
         runtime: delivery.runtime,
         payload: {
