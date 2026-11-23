@@ -8,7 +8,6 @@ export interface QueuedDelivery<T> {
   ) => Promise<Result>;
 }
 
-/** Return a queued receipt while the original operation continues. */
 export function withQueuedDelivery<T>(
   operation: (delivery: QueuedDelivery<T>) => Promise<T>,
   onLateFailure: (error: unknown) => void,

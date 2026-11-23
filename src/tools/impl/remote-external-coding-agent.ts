@@ -869,7 +869,6 @@ async function deliverRemoteExternalCodingAgentMessage(
     return { delivery: response.delivery };
   }
   const resuming = response.delivery === "resuming";
-  // An early receipt can precede the first snapshot for this tool call.
   if (!resuming) follower.markLaunched();
   const completion = followRemoteFollowUp(
     follower,

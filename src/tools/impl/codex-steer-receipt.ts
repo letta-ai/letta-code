@@ -39,7 +39,6 @@ export async function withSessionLock<T>(
   }
 }
 
-/** Let the completion notification reach its original waiter before starting again. */
 export async function recoverRejectedSteer(
   session: { activeTurnId?: string },
   turnId: string,

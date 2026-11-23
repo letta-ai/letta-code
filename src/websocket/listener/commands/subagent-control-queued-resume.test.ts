@@ -148,7 +148,6 @@ test.each(["environment setup", "thread/resume", "turn/start"])(
       { ...parentScope, cloudSkillRepositories: ["api"] },
       "http://localhost:8283",
     );
-    // The original task can still be marked running when its native turn is gone.
     if (slowMethod === "turn/start") registerRunningTask(agentId);
     const stdin = new PassThrough();
     const stdout = new PassThrough();
@@ -390,7 +389,6 @@ test.each([false, true])(
       releaseEnv.resolve();
     }
     await deliverySettled.promise;
-    // Let the listener handle the settled native delivery.
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(steers).toBe(1);
     expect(starts).toBe(1);
