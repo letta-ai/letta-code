@@ -104,22 +104,16 @@ describe("host-extra command definitions", () => {
   test("shared names win on collision; colliding extras and aliases are dropped", () => {
     const merged = listChannelSlashCommands({
       extraCommands: [
-        // Collides with a shared command name (case-insensitively).
         { name: "Model", kind: "direct", summary: "host model override" },
-        // Collides with a shared alias.
         { name: "reflect", kind: "direct", summary: "host reflect override" },
-        // Collides with a Slack mention-only shared command.
         { name: "new", kind: "direct", summary: "host new override" },
-        // Survives, but its colliding alias is filtered.
         {
           name: "agent",
           aliases: ["status", "who"],
           kind: "direct",
           summary: "Show the connected agent.",
         },
-        // Collides with the earlier surviving extra.
         { name: "agent", kind: "direct", summary: "duplicate extra" },
-        // Collides with the earlier surviving extra's alias.
         { name: "who", kind: "direct", summary: "alias collision" },
       ],
     });

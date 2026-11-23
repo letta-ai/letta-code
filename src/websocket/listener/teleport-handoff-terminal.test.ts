@@ -67,10 +67,6 @@ function makeOptions(): StartListenerOptions {
   };
 }
 
-/**
- * Drive a Slack-originated source turn through the production finalizer while
- * a teleport is pending, and return the frames the source connection emitted.
- */
 function yieldSourceTurnToTeleport(
   drained: boolean,
   lateDuplicate = false,
@@ -246,8 +242,6 @@ test("an active-turn teleport handoff publishes readiness without a source turn_
     const { runtime, socket } = yieldSourceTurnToTeleport(false, true);
     const types = socket.sent.map((message) => message.type);
 
-    // Channel gateways retire the turn's delivery on turn_finished. The turn
-    // continues on the destination, so the source must hand off without one.
     expect(types).toContain("teleport_ready");
     expect(types).not.toContain("turn_finished");
     expect(socket.sent).toContainEqual(
@@ -263,7 +257,6 @@ test("an active-turn teleport handoff publishes readiness without a source turn_
       }),
     );
 
-    // Nothing durable is left to replay as a terminal on a later reconnect.
     expect(
       createTurnFinishedStore().read(AGENT_ID, CONVERSATION_ID)?.terminals ??
         [],

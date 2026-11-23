@@ -2,7 +2,6 @@ import { detectMemoryFormat } from "@/agent/memory-format";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { getTranscriptRoot } from "@/utils/transcript-paths";
 
-/** Start a normal primary-agent investigation in the current conversation. */
 export function buildDoctorMessage(options: {
   agentId: string;
   conversationId: string | null;

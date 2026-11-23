@@ -1,18 +1,3 @@
-/**
- * Pure channel slash-command surface: the command list, parsing, help text,
- * and unknown-command messaging shared by every channel host.
- *
- * This module must stay free of host-local dependencies (plugin registry,
- * adapters, feedback handlers) so external channel hosts — e.g. Letta Cloud's
- * Slack gateway — can render the exact same command surface as
- * `letta server --channel`. Command execution stays host-injected via
- * `ChannelSlashCommandHandlers`.
- *
- * Hosts with commands beyond the shared surface (e.g. Cloud's `/agent`,
- * `/config`, `/convo`) declare them via `ChannelSlashCommandSurfaceOptions`
- * so listing, help, and unknown-command rendering include them first-class.
- */
-
 import type { ChannelModelPickerData, InboundChannelMessage } from "./types";
 
 export type ChannelSlashCommandKind = "direct" | "agent-scoped";
@@ -30,37 +15,8 @@ export type ChannelSlashCommandDefinition = {
   summary: string;
 };
 
-/**
- * Host-extra command surface options. External channel hosts (e.g. Letta
- * Cloud's Slack gateway with `/agent`, `/config`, `/convo`) pass their extra
- * definitions here so listing, help text, and unknown-command rendering
- * include them without any host-side merging.
- *
- * Semantics:
- * - Extras never override the shared surface: an extra whose name collides
- *   (case-insensitively) with a shared command name or alias, a Slack
- *   mention-only command name (`detach`, `new`), or an earlier extra is
- *   dropped, and extra aliases that collide are filtered.
- *   Shared-wins keeps hosts upgrade-safe when the shared surface later
- *   absorbs a command a host had been providing as an extra.
- * - Ordering is stable: shared commands first, in their fixed order, then the
- *   surviving extras in the order the host provided them. Help output renders
- *   extras in a labeled section (`extraCommandsLabel`).
- * - Omitting the options (or passing no extras) keeps every rendered string
- *   byte-identical to the extras-free surface.
- *
- * Parsing needs no extras hook: `parseChannelSlashCommand` /
- * `parseChannelBangCommand` already accept any command-shaped token so hosts
- * can dispatch extras (and render unknown-command replies) from the parsed
- * name.
- */
 export type ChannelSlashCommandSurfaceOptions = {
-  /** Host-specific command definitions appended after the shared surface. */
   extraCommands?: readonly ChannelSlashCommandDefinition[];
-  /**
-   * Section label for extras in help output, e.g. "Cloud-only commands".
-   * Defaults to "Host commands".
-   */
   extraCommandsLabel?: string;
 };
 
@@ -111,7 +67,6 @@ export type ChannelSlashCommandHandlers = {
   ) => Promise<ChannelSlashCommandHandlerResult>;
 };
 
-/** Resolves a channel id (e.g. "slack") to its human display name. */
 export type ChannelDisplayNameResolver = (channelId: string) => string;
 
 const DEFAULT_CHANNEL_DISPLAY_NAMES: Readonly<Record<string, string>> = {
@@ -123,11 +78,6 @@ const DEFAULT_CHANNEL_DISPLAY_NAMES: Readonly<Record<string, string>> = {
   whatsapp: "WhatsApp",
 };
 
-/**
- * Default display-name resolver: first-party channel display names, falling
- * back to the raw channel id. Hosts with a richer registry (e.g. user-installed
- * channel plugins) should inject their own resolver.
- */
 export function defaultChannelDisplayName(channelId: string): string {
   return DEFAULT_CHANNEL_DISPLAY_NAMES[channelId] ?? channelId;
 }
@@ -209,12 +159,6 @@ function copyDefinition(
   };
 }
 
-/**
- * Applies the shared-wins dedupe documented on
- * `ChannelSlashCommandSurfaceOptions`: returns the surviving host extras (as
- * fresh copies) with colliding definitions dropped and colliding aliases
- * filtered.
- */
 function dedupedExtraCommands(
   options?: ChannelSlashCommandSurfaceOptions,
 ): ChannelSlashCommandDefinition[] {
@@ -223,9 +167,6 @@ function dedupedExtraCommands(
     return [];
   }
 
-  // Slack mention-only command names (e.g. "detach", "new") are part of the
-  // shared surface even though they are not in the definition list, so they
-  // are reserved too.
   const takenNames = new Set<string>(SLACK_MENTION_COMMAND_NAMES);
   for (const definition of CHANNEL_SLASH_COMMANDS) {
     takenNames.add(definition.name.toLowerCase());
@@ -322,8 +263,6 @@ function parseChannelCommand(
     return null;
   }
 
-  // Debounced channel input can stack duplicate Slack event copies. If a later
-  // line is another channel command, never treat it as the first command's arg.
   const laterCommand = remainingLines.find((line) =>
     Boolean(parseAnySingleLineChannelCommand(line)),
   );
@@ -467,8 +406,6 @@ export function buildUnsupportedChannelCommandMessage(
   const displayName = resolveDisplayName(channelId);
   const isBang = command.raw.startsWith("!");
   const commandKind = isBang ? "bang" : "slash";
-  // Bang commands are the legacy Slack-mention alias set; host extras are
-  // slash-only, so the bang list never includes them.
   const supportedCommands = isBang
     ? supportedBangCommandsText()
     : channelId === "slack"

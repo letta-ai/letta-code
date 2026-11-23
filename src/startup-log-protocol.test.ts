@@ -11,7 +11,6 @@ const unixTest = process.platform === "win32" ? test.skip : test;
 
 beforeAll(() => {
   if (process.platform === "win32") return;
-  // Exercise the published build pipeline, not a mocked or test-only entrypoint.
   const result = spawnSync("bun", ["run", "build"], {
     cwd: root,
     encoding: "utf8",
@@ -48,7 +47,6 @@ for (const runtime of ["bun", "node"]) {
           },
           websocket: {
             open(socket) {
-              // Send immediately, without waiting for any ready/Connected prose.
               socket.send(
                 JSON.stringify({
                   type: "input",

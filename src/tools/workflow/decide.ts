@@ -175,7 +175,6 @@ class InvalidDecisionAnswerError extends Error {
   }
 }
 
-/** Submit one typed Jev decision; only an invalid answer is retried once. */
 export async function submitWorkflowDecision(
   input: unknown,
   signal: AbortSignal,
@@ -191,7 +190,6 @@ export async function submitWorkflowDecision(
   const body: RecordValue = {
     ...request,
     model: DEFAULT_JEV_MODEL,
-    // Jev is the only supported model; never silently switch provider.
     provider: { ...request.provider, allow_fallbacks: false },
   };
   for (let attempt = 0; attempt < 2; attempt++) {

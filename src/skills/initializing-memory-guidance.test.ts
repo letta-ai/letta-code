@@ -2,18 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { validateMemoryTreeConstraints } from "@/memory-constraints";
 import rootGuidance from "@/skills/builtin/initializing-memory/SKILL.md";
 
-/** Fenced blocks in the skill, in document order. */
 function fencedBlocks(guidance: string): string[] {
   return [...guidance.matchAll(/```[a-z]*\n([\s\S]*?)```/g)].map(
     (match) => match[1] ?? "",
   );
 }
 
-/**
- * Read an ASCII directory listing the way a reader does: indentation and
- * branch glyphs give depth, a trailing `/` marks a directory, and `#` starts a
- * comment. Returns the memory file paths the drawing depicts.
- */
 function filesInTree(block: string): string[] {
   const directories: string[] = [];
   const files: string[] = [];
@@ -33,7 +27,6 @@ function filesInTree(block: string): string[] {
   return files;
 }
 
-/** Tree reader over paths alone; character limits need no content here. */
 function readerFor(paths: string[]) {
   return {
     listFiles: async () => paths.map((path) => ({ path, mode: "100644" })),

@@ -68,21 +68,13 @@ describe("telemetry flush batching", () => {
 
     telemetry.trackUserInput("hello", "user", "model-1");
 
-    // Fire three flushes back to back — they should all share the same POST,
-    // which is the core defense against the 429 route_rps_rate_limit_exceeded
-    // race we hit on shutdown when SIGINT + normal-exit handlers both flush.
     const a = telemetry.flush();
     const b = telemetry.flush();
     const c = telemetry.flush();
 
-    // Yield long enough for performFlush's `await resolveTelemetryApiKey()`
-    // microtask to complete and the underlying fetch to be issued — but the
-    // fetch itself is hung on `pending`, so the in-flight guard still
-    // applies to b and c.
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
-    // Resolve the single in-flight request and let all three callers settle.
     deferred.resolve(new Response(null, { status: 200 }));
     await Promise.all([a, b, c]);
 
@@ -109,8 +101,6 @@ describe("telemetry flush batching", () => {
     const fetchMock = mock(async () => {
       if (firstCall) {
         firstCall = false;
-        // Simulate a trackError happening (e.g. uncaughtException handler)
-        // while the first POST is in flight.
         telemetry.trackUserInput("late", "user", "model-1");
       }
       return new Response(null, { status: 200 });
@@ -122,8 +112,6 @@ describe("telemetry flush batching", () => {
     const drainable = telemetry as unknown as { drain: () => Promise<void> };
     await drainable.drain();
 
-    // First flush sent 1 event, then drain noticed the late event and flushed
-    // again. Queue should be empty after drain returns.
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(telemetryState.events).toHaveLength(0);
   });
@@ -137,13 +125,10 @@ describe("telemetry flush batching", () => {
 
     await telemetry.flush();
 
-    // 500 → submitTelemetryMetadata throws → performFlush re-queues.
     expect(telemetryState.events).toHaveLength(1);
   });
 
   test("permanent 4xx rejection drops the failed group instead of re-queueing it", async () => {
-    // Letta Cloud's schema rejects channel_gateway_lifecycle with HTTP 400; a
-    // re-queued copy would fail every later batch for the same acting user.
     const sentTypes: string[][] = [];
     const fetchMock = mock(
       async (_url: string | URL | Request, init?: RequestInit) => {
@@ -173,7 +158,6 @@ describe("telemetry flush batching", () => {
     telemetry.trackUserInput("hello", "user", "model-1");
     await telemetry.flush();
 
-    // The rejected event is never re-sent, so the next batch is delivered.
     expect(sentTypes).toEqual([["channel_gateway_lifecycle"], ["user_input"]]);
     expect(telemetryState.events).toHaveLength(0);
   });
@@ -214,8 +198,6 @@ describe("telemetry flush batching", () => {
     const fetchMock = mock(async () => new Response(null, { status: 500 }));
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    // Simulate a long-unreachable endpoint: the queue has grown past the cap
-    // by the time the next failed batch is re-queued.
     const overflow = 10;
     telemetryState.events = Array.from(
       { length: MAX_QUEUED_EVENTS + overflow },
@@ -230,7 +212,6 @@ describe("telemetry flush batching", () => {
 
     const events = telemetryState.events as { data: { seq: number } }[];
     expect(events).toHaveLength(MAX_QUEUED_EVENTS);
-    // The oldest events were dropped; re-queued order is otherwise preserved.
     expect(events[0]?.data.seq).toBe(overflow);
     expect(events[events.length - 1]?.data.seq).toBe(
       MAX_QUEUED_EVENTS + overflow - 1,
@@ -238,8 +219,6 @@ describe("telemetry flush batching", () => {
   });
 
   test("track drops the oldest event when the queue is already at the cap", () => {
-    // Park a never-resolving flush so track()'s batch-size trigger returns
-    // the in-flight promise instead of draining the queue mid-assertion.
     telemetryState.inflightFlush = new Promise<void>(() => {});
 
     telemetryState.events = Array.from(
@@ -258,8 +237,8 @@ describe("telemetry flush batching", () => {
       data: { seq?: number };
     }[];
     expect(events).toHaveLength(MAX_QUEUED_EVENTS);
-    expect(events[0]?.data.seq).toBe(1); // oldest dropped
-    expect(events[events.length - 1]?.type).toBe("user_input"); // newest kept
+    expect(events[0]?.data.seq).toBe(1);
+    expect(events[events.length - 1]?.type).toBe("user_input");
   });
 });
 
@@ -294,10 +273,6 @@ describe("reflection telemetry correlation", () => {
   });
 
   test("both reflection_start and reflection_end carry subagent_id for in-flight tracking", () => {
-    // Mirrors the post-deferred-emit launcher: by the time
-    // trackReflectionStart fires (after the background agent-id wait), we
-    // have a real subagent_id, so in-flight reflections are identifiable
-    // even if reflection_end never lands (crash / early exit / long-running).
     telemetry.trackReflectionStart("step-count", {
       subagentId: "agent-resolved-in-background",
       conversationId: "conv-1",
@@ -325,8 +300,6 @@ describe("reflection telemetry correlation", () => {
     expect(startEvent.type).toBe("reflection_start");
     expect(endEvent.type).toBe("reflection_end");
 
-    // The key invariant: subagent_id is populated on both, so dashboards can
-    // identify the subagent from reflection_start alone (no JOIN needed).
     expect(startEvent.data.subagent_id).toBe("agent-resolved-in-background");
     expect(endEvent.data.subagent_id).toBe("agent-resolved-in-background");
   });
@@ -386,9 +359,6 @@ describe("reflection telemetry correlation", () => {
   });
 
   test("reflection_start falls back to undefined subagent_id if wait times out", () => {
-    // Worst case: background wait times out before agent ID is assigned. We
-    // still emit the event (with undefined subagent_id) rather than dropping
-    // it, so we have at least a launch record.
     telemetry.trackReflectionStart("step-count", {
       subagentId: undefined,
       conversationId: "conv-1",

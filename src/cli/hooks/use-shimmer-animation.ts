@@ -1,11 +1,3 @@
-// React hook that drives the streaming-row shimmer for a given phase.
-//
-// Returns the current bright-cell offset and base color. The position is
-// carried in a ref across phase transitions so a direction or speed change
-// continues from wherever the cell currently is, instead of snapping to the
-// off-screen edge of the new direction. The overlay color uses phase-local
-// time so each phase entry starts at the curve's anchor, not mid-cycle.
-
 import { useEffect, useRef, useState } from "react";
 import {
   effectiveBaseColor,
@@ -52,14 +44,10 @@ export function useShimmerAnimation({
 
       const dir = phaseVisual.direction === "ltr" ? 1 : -1;
       const raw = positionRef.current + (dt * dir) / phaseVisual.tickMs;
-      // Wrap into [minPos, maxPos) so the sweep loops smoothly.
       const wrapped =
         ((((raw - minPos) % cycleLen) + cycleLen) % cycleLen) + minPos;
       positionRef.current = wrapped;
 
-      // For sweepless phases, hide the bright cell off-screen — the breathe
-      // overlay alone carries the row's animation. Position still ticks so a
-      // later phase that does sweep picks up smoothly from a fresh state.
       const renderedOffset =
         phaseVisual.hasSweep === false ? OFFSCREEN : Math.floor(wrapped);
       setOffset(renderedOffset);

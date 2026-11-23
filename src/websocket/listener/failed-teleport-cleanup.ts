@@ -76,9 +76,6 @@ function runCleanupPass(listener: ListenerRuntime, state: CleanupState): void {
     if (entry.nextAttemptAt > now) continue;
     let completed = false;
     try {
-      // The admitted failure owns only the predecessor observed before its
-      // durable disposition commit. A false CAS means that exact revision is
-      // already gone; never reread and retarget an inheriting successor.
       entry.store.remove(
         entry.pending.agentId,
         entry.pending.conversationId,
@@ -88,8 +85,6 @@ function runCleanupPass(listener: ListenerRuntime, state: CleanupState): void {
     } catch {
       entry.attempts += 1;
       if (entry.attempts >= entry.maxAttempts) {
-        // Keep the durable teleport evidence intact. A later process restart can
-        // prove the accepted failure disposition and retry this CAS cleanup.
         completed = true;
       } else {
         entry.nextAttemptAt =

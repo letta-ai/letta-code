@@ -146,8 +146,6 @@ describe("provider mod selector refresh", () => {
       {
         stdout,
         stdin: createInputStream(),
-        // Ink suppresses dynamic output writes when CI=true unless debug mode
-        // is enabled, so captured selector frames would otherwise stay empty.
         debug: true,
         patchConsole: false,
         exitOnCtrlC: false,
@@ -223,8 +221,6 @@ describe("provider mod selector refresh", () => {
     const instance = render(<ProviderSelector onCancel={() => {}} />, {
       stdout,
       stdin: createInputStream(),
-      // See the ModelSelector render above: CI mode only emits dynamic frames
-      // to a captured stream when Ink debug rendering is enabled.
       debug: true,
       patchConsole: false,
       exitOnCtrlC: false,

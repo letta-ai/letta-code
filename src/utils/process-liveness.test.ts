@@ -69,7 +69,6 @@ test.skipIf(process.platform === "win32")(
     const started = await getOwnProcessStartTime();
     expect(started).not.toBeNull();
     expect(started).toBe(await getProcessStartTime(process.pid));
-    // A successful lookup is cached for the life of the process.
     expect(await getOwnProcessStartTime()).toBe(started);
   },
 );
@@ -90,11 +89,9 @@ test("a reused pid is reclaimable only when positively identified as non-letta",
     isPidReusedByNonLetta(pid, () => command);
   expect(reused("/usr/libexec/unrelated --flag")).toBe(true);
   expect(reused("node /usr/local/bin/letta server")).toBe(false);
-  // Dev/bun-run instances: same runtime or entry script, no "letta" in argv.
   expect(reused(`${process.execPath} run src/index.ts`)).toBe(false);
   expect(reused(`/elsewhere/${basename(process.execPath)} x.ts`)).toBe(false);
   expect(reused(`/usr/bin/env ${process.argv[1]}`)).toBe(false);
-  // A failed lookup and our own pid keep the owner held.
   expect(reused(null)).toBe(false);
   expect(reused("/usr/libexec/unrelated", process.pid)).toBe(false);
 });

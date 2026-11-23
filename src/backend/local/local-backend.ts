@@ -13,10 +13,10 @@ import type {
   ConversationCreateBody,
   ConversationMessageCompactBody,
   ConversationMessageCreateBody,
-  ConversationMessageListBody,
   ConversationMessageStreamBody,
   ConversationRecompileBody,
 } from "@/backend/backend";
+import { notifyConversationCompacted } from "@/backend/compaction-events";
 import {
   HEADLESS_BACKEND_CAPABILITIES,
   HeadlessBackend,
@@ -45,7 +45,6 @@ import {
   isLocalSlidingWindowCompactionPlanningError,
   isLocalSlidingWindowMode,
   type LocalCompactionResult,
-  type LocalCompactionStats,
   type LocalCompleteFunction,
   type LocalSelfCompactionContext,
   packageLocalSummaryMessage,
@@ -67,7 +66,7 @@ import {
   createLocalExecutor,
   type LocalBackendExecutionMode,
 } from "./local-executor-factory";
-import type { LocalMessage } from "./local-message";
+import type { LocalCompactionStats, LocalMessage } from "./local-message";
 import {
   listLocalModels,
   localModelSettingsForHandle,
@@ -102,12 +101,6 @@ export interface LocalBackendOptions {
   memfsEnabled?: boolean;
   modelsRuntime?: LocalPiModelsRuntime;
 }
-/**
- * Hooks the harness installs (via {@link LocalBackend.setModEventHooks}) so
- * mods can observe backend-internal lifecycle that only the local backend owns
- * (compaction and provider calls). The backend stays mod-agnostic: it invokes
- * these plain callbacks and never touches mod state.
- */
 export interface LocalBackendModEventHooks {
   onCompactStart?: (info: {
     agentId: string;
@@ -156,7 +149,6 @@ export class LocalBackend extends HeadlessBackend {
 
   constructor(options: LocalBackendOptions) {
     const localBackendRef: { current?: LocalBackend } = {};
-    // One runtime per backend: listing/turns/compaction share Models state.
     const runtime =
       options.modelsRuntime ??
       new LocalPiModelsRuntime({ storageDir: options.storageDir });
@@ -206,11 +198,6 @@ export class LocalBackend extends HeadlessBackend {
     this.piModelsRuntime = runtime;
   }
 
-  /**
-   * Late-bound because the backend is a process-global singleton constructed
-   * before the harness mod adapter exists. The harness calls this once the
-   * registry is ready to forward backend-internal events to local mods.
-   */
   setModEventHooks(hooks: LocalBackendModEventHooks | undefined): void {
     this.modEventHooks = hooks;
   }
@@ -224,9 +211,7 @@ export class LocalBackend extends HeadlessBackend {
     if (!hook) return;
     try {
       await hook({ agentId, conversationId, trigger });
-    } catch {
-      // Mod event hooks must never break compaction.
-    }
+    } catch {}
   }
 
   private async emitCompactEnd(
@@ -247,9 +232,7 @@ export class LocalBackend extends HeadlessBackend {
         contextTokensBefore: stats.context_tokens_before ?? 0,
         contextTokensAfter: stats.context_tokens_after ?? 0,
       });
-    } catch {
-      // Mod event hooks must never break compaction.
-    }
+    } catch {}
   }
 
   private async emitLlmStart(info: LlmStartInfo): Promise<void> {
@@ -257,9 +240,7 @@ export class LocalBackend extends HeadlessBackend {
     if (!hook) return;
     try {
       await hook(info);
-    } catch {
-      // Mod event hooks must never break a provider request.
-    }
+    } catch {}
   }
 
   private async emitLlmEnd(info: LlmEndInfo): Promise<void> {
@@ -267,9 +248,7 @@ export class LocalBackend extends HeadlessBackend {
     if (!hook) return;
     try {
       await hook(info);
-    } catch {
-      // Mod event hooks must never break a provider request.
-    }
+    } catch {}
   }
 
   getLocalStorageDir(): string {
@@ -289,7 +268,6 @@ export class LocalBackend extends HeadlessBackend {
     const memfsExplicitlyDisabled = isMemfsOptOutCreateTags(
       (body as Record<string, unknown>).tags,
     );
-    // Stamp local memfs agents so downstream tag checks enable memory sync.
     if (this.isLocalMemfsEnabled() && !memfsExplicitlyDisabled) {
       body = stampRootMemoryOnCreateBody(body);
       const bodyRecord = body as Record<string, unknown>;
@@ -423,6 +401,7 @@ export class LocalBackend extends HeadlessBackend {
       "manual",
       body,
     );
+    notifyConversationCompacted({ backend: this, conversationId, agentId });
     return {
       num_messages_before: result.numMessagesBefore,
       num_messages_after: result.numMessagesAfter,
@@ -455,7 +434,6 @@ export class LocalBackend extends HeadlessBackend {
       input.conversationId,
       input.agentId,
       input.agent,
-      input.history.length,
     );
     const clientSkills = Array.isArray(
       (input.body as Record<string, unknown>).client_skills,
@@ -590,15 +568,6 @@ export class LocalBackend extends HeadlessBackend {
       : undefined;
   }
 
-  /**
-   * Resolve the model that compaction should use for a conversation.
-   *
-   * A normal turn runs on the conversation's model override (set via `/model`),
-   * but compaction previously read only the agent's base model — so switching
-   * a conversation's model never changed which model compaction (and its
-   * summarizer) used. This overlays the conversation's `model` / `model_settings`
-   * onto the agent record so compaction mirrors the turn path.
-   */
   private effectiveAgentForConversation(
     conversationId: string,
     agentId: string,
@@ -706,7 +675,7 @@ export class LocalBackend extends HeadlessBackend {
       {
         ...settings,
         mode: self ? "self_compact_all" : "all",
-        prompt: settings.prompt, // not a user mode switch: keep it (#3955)
+        prompt: settings.prompt,
       },
       self,
     );
@@ -716,7 +685,6 @@ export class LocalBackend extends HeadlessBackend {
     return result;
   }
 
-  /** One compaction pass in the mode `settings` names. */
   private async compactLocalConversationPass(
     conversationId: string,
     agentId: string,
@@ -743,7 +711,7 @@ export class LocalBackend extends HeadlessBackend {
     const summarize = slidingWindow
       ? summarizeLocalMessagesSlidingWindow
       : summarizeLocalMessagesAll;
-    const summary = await summarize({
+    const { summary, source } = await summarize({
       conversationId,
       agent,
       messages: plan.messagesToSummarize,
@@ -761,6 +729,7 @@ export class LocalBackend extends HeadlessBackend {
       context_window: contextWindow,
       messages_count_before: messages.length,
       messages_count_after: 1 + plan.messagesToKeep.length,
+      ...(source ? { summary_source: source } : {}),
     };
     if (!slidingWindow) {
       assertLocalPressureBudget(
@@ -805,7 +774,6 @@ export class LocalBackend extends HeadlessBackend {
       stats,
     };
   }
-  /** The turn's request context, or the compiled prompt for manual compaction (which has no tools). */
   private async selfCompactionContext(
     conversationId: string,
     agentId: string,
@@ -827,7 +795,6 @@ export class LocalBackend extends HeadlessBackend {
     conversationId: string,
     agentId: string,
     agent = this.store.retrieveAgentRecord(agentId),
-    previousMessageCount = 0,
   ): Promise<LocalCompiledSystemPrompt> {
     const existing = this.store.getCompiledSystemPrompt(
       conversationId,
@@ -850,10 +817,7 @@ export class LocalBackend extends HeadlessBackend {
       const compiled = await this.compileAndMaybePersistSystemPrompt(
         conversationId,
         agentId,
-        {
-          dryRun: true,
-          previousMessageCount,
-        },
+        { dryRun: true },
       );
       if (compiled.memfsRevision !== existing.memfsRevision) {
         const midConversationSystemPrompt =
@@ -871,30 +835,24 @@ export class LocalBackend extends HeadlessBackend {
 
     return this.compileAndMaybePersistSystemPrompt(conversationId, agentId, {
       dryRun: false,
-      previousMessageCount,
     });
   }
 
   private async compileAndMaybePersistSystemPrompt(
     conversationId: string,
     agentId: string,
-    options: { dryRun: boolean; previousMessageCount?: number },
+    options: { dryRun: boolean },
   ): Promise<LocalCompiledSystemPrompt> {
     const agent = this.store.retrieveAgentRecord(agentId);
     const memfsEnabled = this.isMemfsEnabledForAgent(agentId);
     if (memfsEnabled) {
       await this.ensureLocalMemoryRepo(agentId, [], agent.name);
     }
-    const previousMessageCount =
-      options.previousMessageCount ??
-      this.store.listConversationMessages(conversationId, {
-        agent_id: agentId,
-        order: "asc",
-      } as ConversationMessageListBody).length;
     const compiled = compileLocalSystemPrompt({
       agent,
       conversationId,
-      previousMessageCount,
+      previousMessageCount: () =>
+        this.store.countMessagesOutsideContext(conversationId, agentId),
       memoryDir: memfsEnabled ? this.memoryDirForAgent(agentId) : undefined,
       includeMemfs: memfsEnabled,
     });

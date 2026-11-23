@@ -18,13 +18,10 @@ function shouldTrackFatalError(
   errorType: FatalErrorType,
   message: string,
 ): boolean {
-  // Broken pipe/TTY failures are generally caused by a closed output stream
-  // rather than an actionable application failure.
   if (/\b(EPIPE|EIO|EBADF)\b/.test(message)) {
     return false;
   }
 
-  // Rate limits surfacing as unhandled rejections are expected under load.
   return !(
     errorType === "unhandled_rejection" &&
     /\b429\b/.test(message) &&
@@ -46,7 +43,6 @@ async function drainWithTimeout(
       }),
     ]);
   } catch {
-    // Fatal telemetry is best-effort and must never delay termination.
   } finally {
     if (timeout) {
       clearTimeout(timeout);
@@ -54,10 +50,6 @@ async function drainWithTimeout(
   }
 }
 
-/**
- * Installs one-shot fatal handlers that preserve process-failure semantics
- * while giving telemetry a bounded opportunity to flush.
- */
 export function installFatalErrorHandlers(
   options: FatalErrorHandlerOptions,
 ): () => void {
@@ -68,8 +60,6 @@ export function installFatalErrorHandlers(
     errorType: FatalErrorType,
     error: unknown,
   ): void => {
-    // Set this synchronously so another listener or an early event-loop exit
-    // cannot turn the fatal failure into a successful process result.
     process.exitCode = 1;
 
     if (handlingFatalError) {
@@ -81,9 +71,7 @@ export function installFatalErrorHandlers(
     if (shouldTrackFatalError(errorType, message)) {
       try {
         options.trackError(errorType, message, `process_${errorType}`);
-      } catch {
-        // Tracking must not interfere with the fatal path.
-      }
+      } catch {}
     }
 
     void drainWithTimeout(options.drain, timeoutMs).finally(() => {

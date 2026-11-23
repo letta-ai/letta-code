@@ -414,7 +414,6 @@ test("post-start claim loss never completes without a durable terminal", async (
     lostCallbacks[0]?.();
     lostCallbacks[0]?.();
     expect(terminalGuards[0]?.()).toBe(false);
-    // A successor must not begin until the detached predecessor has unwound.
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(starts).toBe(1);
     pendingTurns.shift()?.();
@@ -912,7 +911,6 @@ test("restart sends saved results with the same request identity, never an unrel
     setCwd: () => {},
   };
   try {
-    // Empty disk on a fresh/prewarmed machine cannot authorize a turn.
     await recoverRecordedTurns(runtime, deps);
     expect(sent).toHaveLength(0);
     store.write(record);

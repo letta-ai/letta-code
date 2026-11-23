@@ -1,10 +1,10 @@
-/**
- * Full-history transcript reads. Streams messages.jsonl and drops image bytes
- * of messages outside the conversation's context as each row is parsed, so a
- * long image-heavy history is not pinned in memory. The file is never written.
- */
 import { isRecord } from "@/utils/type-guards";
-import { forEachJsonlRow } from "./local-transcript";
+import {
+  forEachJsonlRow,
+  isLocalTranscriptAppendEntry,
+  LOCAL_TRANSCRIPT_LEGACY_MESSAGE_FORMAT,
+  type LocalTranscriptMessageFormat,
+} from "./local-transcript";
 
 export const LOCAL_OMITTED_IMAGE_PLACEHOLDER =
   "[image omitted: not in context]";
@@ -36,13 +36,6 @@ function omitImagesOutsideContext(
   };
 }
 
-/**
- * Read every transcript row for a full-history load. Image bytes of messages
- * outside `in_context_message_ids` are replaced with a short text placeholder
- * as each row is parsed, so a long image-heavy history does not pin every
- * base64 payload in memory. In memory only: messages.jsonl is never
- * rewritten. An empty id list means every message is in context.
- */
 export function readLocalTranscriptRowsForHistory(
   path: string,
   inContextMessageIds: readonly string[],
@@ -60,4 +53,30 @@ export function readLocalTranscriptRowsForHistory(
     }
   });
   return rows;
+}
+
+export function countLocalTranscriptMessagesOutsideContext(
+  path: string,
+  messageFormat: LocalTranscriptMessageFormat,
+  inContextMessageIds: readonly string[],
+): number {
+  if (inContextMessageIds.length === 0) return 0;
+  const inContextIds = new Set(inContextMessageIds);
+  const outsideContextIds = new Set<string>();
+  forEachJsonlRow<unknown>(path, (row) => {
+    const message =
+      messageFormat === LOCAL_TRANSCRIPT_LEGACY_MESSAGE_FORMAT
+        ? row
+        : isLocalTranscriptAppendEntry(row)
+          ? row.message
+          : undefined;
+    if (
+      isRecord(message) &&
+      typeof message.id === "string" &&
+      !inContextIds.has(message.id)
+    ) {
+      outsideContextIds.add(message.id);
+    }
+  });
+  return outsideContextIds.size;
 }

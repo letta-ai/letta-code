@@ -6,10 +6,6 @@ import {
 } from "@earendil-works/pi-ai";
 import { streamSimple } from "@earendil-works/pi-ai/api/openai-completions";
 
-// LiteLLM embeds Gemini thought signatures in tool_call ids (~180 chars).
-// pi-ai caps replayed ids at 40 for provider "openai"; Letta Code keeps that
-// provider id for user `openai` providers with a custom base URL, so the cap
-// must only apply to real OpenAI/Azure hosts (patches/@earendil-works%2Fpi-ai).
 const LONG_ID = `call_${"x".repeat(175)}`;
 
 function openAIModel(baseUrl: string): Model<"openai-completions"> {
@@ -33,7 +29,6 @@ const context: Context = {
     { role: "user", content: "List files", timestamp: 1 },
     {
       role: "assistant",
-      // Replayed from a different model so pi-ai normalizes the id.
       api: "openai-completions",
       provider: "litellm",
       model: "previous-model",
@@ -66,14 +61,12 @@ async function replayedToolCallIds(baseUrl: string) {
   let payload: { messages: Array<Record<string, unknown>> } | undefined;
   const events = streamSimple(openAIModel(baseUrl), normalizeContext(context), {
     apiKey: "unused-test-key",
-    // Stop after real request conversion, before any network request.
     onPayload: (request) => {
       payload = request as typeof payload;
       throw new Error("captured request without inference");
     },
   });
   for await (const _event of events) {
-    // Drain until the captured-payload error ends the stream.
   }
   const assistant = payload?.messages.find((m) => m.role === "assistant") as
     | { tool_calls: Array<{ id: string }> }

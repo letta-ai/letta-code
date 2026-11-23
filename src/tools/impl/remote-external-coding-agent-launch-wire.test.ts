@@ -44,7 +44,6 @@ function environment(externalForkContext: boolean): EnvironmentConnection {
   };
 }
 
-/** A computer that records each launch and refuses it the way a destination does. */
 function refusingComputer(error = PARENT_READ_DENIED) {
   const launches: LaunchSubagentCommand[] = [];
   const messages: SubagentMessageCommand[] = [];
@@ -132,7 +131,6 @@ test.each([
   await launch(computer.client, options);
   const wire = computer.launches[0]?.args;
   if (!wire) throw new Error("No launch was sent");
-  // The mapping and fork decision the destination listener applies.
   const received = toSubagentLaunchArgs(wire);
   expect(received.harness).toBe("claude-code");
   expect(shouldForkTaskContext(received)).toBe(options.forkContext === true);
@@ -148,7 +146,6 @@ test("a 0.34.51 listener receives an explicit no-fork launch", async () => {
   });
   const wire = computer.launches[0]?.args;
   if (!wire) throw new Error("No launch was sent");
-  // Older listeners do not apply today's legacy no-fork mapping.
   expect(wire.fork_context).toBe(false);
   const received = toSubagentLaunchArgs(wire);
   expect(received.harness).toBe("claude-code");
@@ -352,7 +349,6 @@ test.each([
       expect(second.launches[0]?.tool_call_id).toBe(
         first.launches[0]?.tool_call_id,
       );
-      // The replacement's capabilities determine the wire format.
       expect(first.launches[0]?.args.subagent_type).toBe("claude-code");
       expect(second.launches[0]?.args.fork_context).toBe(false);
       onReplacementMessage?.(

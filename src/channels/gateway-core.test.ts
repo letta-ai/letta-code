@@ -18,8 +18,6 @@ import {
 } from "./gateway-test-support";
 import type { ChannelTurnSource } from "./types";
 
-// ── Tests ────────────────────────────────────────────────────────
-
 test("direct started input activates sources immediately", async () => {
   const client = new FakeClient();
   const { hooks, lifecycleEvents } = makeHooks();
@@ -33,9 +31,7 @@ test("direct started input activates sources immediately", async () => {
     client_preferences: {},
   });
 
-  // Should emit queued lifecycle for each source
   expect(lifecycleEvents.filter((e) => e.type === "queued")).toHaveLength(1);
-  // Should emit processing lifecycle
   expect(lifecycleEvents.filter((e) => e.type === "processing")).toHaveLength(
     1,
   );
@@ -112,7 +108,6 @@ test("queued input activates when dequeued via update_queue", async () => {
     makeDelivery({ sources: [source], clientMessageId: "cm-queued-1" }),
   );
 
-  // Should have queued but not processing yet
   expect(lifecycleEvents.filter((e) => e.type === "queued")).toHaveLength(1);
   expect(lifecycleEvents.filter((e) => e.type === "processing")).toHaveLength(
     0,
@@ -127,7 +122,6 @@ test("queued input activates when dequeued via update_queue", async () => {
     ]) as unknown as WsProtocolMessage,
   );
 
-  // Now processing should be activated
   expect(lifecycleEvents.filter((e) => e.type === "processing")).toHaveLength(
     1,
   );
@@ -399,18 +393,15 @@ test("source steering does not merge sources from a new turn into an active turn
   const source1 = makeSource({ channel: "telegram", chatId: "chat-1" });
   const source2 = makeSource({ channel: "slack", chatId: "chat-2" });
 
-  // First turn starts immediately (default disposition is "started")
   await gateway.submit(
     makeDelivery({ sources: [source1], clientMessageId: "cm-a" }),
   );
 
-  // Switch to "queued" so the second turn is queued while first is active
   client.inputResponse.disposition = "queued";
   await gateway.submit(
     makeDelivery({ sources: [source2], clientMessageId: "cm-b" }),
   );
 
-  // The active turn should still only have source1
   const processingEvents = lifecycleEvents.filter(
     (e) => e.type === "processing",
   );
@@ -420,10 +411,8 @@ test("source steering does not merge sources from a new turn into an active turn
     expect(firstProcessing.sources).toEqual([source1]);
   }
 
-  // Finish the first turn
   client.emit(makeTurnFinished("end_turn"));
 
-  // Dequeue the second turn
   client.emit(
     makeQueueUpdate([], TEST_RUNTIME, [
       { client_message_id: "cm-b", disposition: "dequeued" },
@@ -431,7 +420,6 @@ test("source steering does not merge sources from a new turn into an active turn
   );
   await Bun.sleep(0);
 
-  // Now the second turn should be processing with only source2 (not merged)
   const allProcessing = lifecycleEvents.filter((e) => e.type === "processing");
   expect(allProcessing).toHaveLength(2);
   const secondProcessing = allProcessing[1];
@@ -515,7 +503,6 @@ test("MessageChannel external tool execution routes to hooks.executeExternalTool
   const source = makeSource({ channel: "telegram", chatId: "chat-1" });
   await gateway.submit(makeDelivery({ sources: [source] }));
 
-  // Simulate external tool call request from the server
   const toolRequest: ExternalToolCallRequestMessage = {
     type: "external_tool_call_request",
     request_id: "ext-1",
@@ -527,7 +514,6 @@ test("MessageChannel external tool execution routes to hooks.executeExternalTool
 
   client.emitExternalToolCall(toolRequest);
 
-  // Wait for async handler to complete
   await new Promise((resolve) => setTimeout(resolve, 10));
 
   expect(collector.externalToolResults).toHaveLength(1);
@@ -576,7 +562,6 @@ test("approval response is forwarded via submitApprovalResponse", async () => {
   const accepted = await gateway.submitApprovalResponse(TEST_RUNTIME, approval);
   expect(accepted).toBe(true);
 
-  // Verify the input was submitted with approval_response payload
   expect(client.submittedInputs).toHaveLength(1);
   const submitted = client.submittedInputs[0];
   expect(submitted?.payload).toMatchObject({
@@ -619,11 +604,9 @@ test("runtime registration happens before input submission", async () => {
 
   await gateway.submit(makeDelivery({ clientMessageId: "cm-reg-1" }));
 
-  // runtimeStart should have been called before submitInput
   expect(client.startedRuntimes).toHaveLength(1);
   expect(client.submittedInputs).toHaveLength(1);
 
-  // The runtime start should include the external tool registration
   const startOpts = client.startedRuntimes[0];
   expect(startOpts?.agent_id).toBe("agent-1");
   expect(startOpts?.conversation_id).toBe("conv-1");
@@ -853,11 +836,9 @@ test("runtime registration is skipped when signature matches", async () => {
   const { hooks } = makeHooks();
   const gateway = new ChannelGateway(client, hooks);
 
-  // First submit triggers registration
   await gateway.submit(makeDelivery({ clientMessageId: "cm-1" }));
   expect(client.startedRuntimes).toHaveLength(1);
 
-  // Second submit with same delivery params should not re-register
   await gateway.submit(makeDelivery({ clientMessageId: "cm-2" }));
   expect(client.startedRuntimes).toHaveLength(1);
 
@@ -914,7 +895,6 @@ test("control request with single source dispatches to onControlRequest", async 
   const source = makeSource({ channel: "telegram", chatId: "chat-1" });
   await gateway.submit(makeDelivery({ sources: [source] }));
 
-  // Simulate a control request (approval) from the server
   client.emit({
     type: "control_request",
     request_id: "ctrl-1",
@@ -981,10 +961,7 @@ test("close disposes all listeners and clears state", async () => {
 
   gateway.close();
 
-  // After close, emitting messages should not trigger any hooks
-  // (listeners are disposed)
   client.emit(makeTurnFinished("end_turn"));
 
-  // client.close() should have been called
   expect(client.closeCalls).toBe(1);
 });

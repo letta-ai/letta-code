@@ -60,11 +60,8 @@ export interface StartChannelGatewaySupervisorOptions {
   onRestartExhausted?: (error: Error) => void;
   onLifecycleEvent?: (event: ChannelGatewayLifecycleEvent) => void;
   onServiceEvent?: (event: ServiceEvent) => void;
-  /** Override restart timing for deterministic embedding/tests. */
   restartPolicy?: Partial<ChannelGatewayRestartPolicy>;
-  /** Override the executable used to launch the gateway (embedding/tests). */
   launcher?: { command: string; args?: string[] };
-  /** Override child creation for deterministic supervisor protocol tests. */
   spawnProcess?: typeof spawn;
 }
 

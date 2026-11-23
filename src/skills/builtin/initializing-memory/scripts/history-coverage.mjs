@@ -1,15 +1,4 @@
 #!/usr/bin/env node
-// Account for every exported session after the analysis Workflow ran.
-// Compares the cohorts and ledger written by prepare-history.mjs against the
-// Workflow journal(s): a session counts as analyzed only when some history
-// subagent returned JSON whose `sessionsRead` array names its sessionId.
-//
-// Usage:
-//   node history-coverage.mjs --prepared <dir> --journal <journal.jsonl>
-//     [--journal <journal.jsonl> ...] [--retry-out <file>] [--retry-size 5]
-//
-// Prints a coverage report. With --retry-out, writes { historyCohorts } with
-// the unread sessions split into smaller cohorts for a follow-up Workflow run.
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -90,8 +79,6 @@ for (const cohort of historyCohorts) {
 
 const unreadCount = unread.reduce((n, c) => n + c.sessions.length, 0);
 const inCohorts = analyzed + unreadCount;
-// Sessions the ledger assigned but that were later dropped from cohorts.json
-// (for example deprioritized by hand) were never sent to the Workflow.
 const droppedFromCohorts = Math.max(0, ledger.assigned - inCohorts);
 const report = {
   manifestSessions: ledger.manifestSessions,

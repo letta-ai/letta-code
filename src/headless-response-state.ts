@@ -5,7 +5,6 @@ import type { ApprovalResult } from "@/agent/approval-execution";
 
 type HeadlessInput = Array<MessageCreate | ApprovalCreate>;
 
-/** Eligibility belongs to one freshly executed batch, not to the whole turn. */
 export function createHeadlessResponseState() {
   let reusableInput: HeadlessInput | null = null;
   return {
@@ -20,8 +19,6 @@ export function createHeadlessResponseState() {
       return input;
     },
     consume(input: HeadlessInput): boolean {
-      // Replaced/recovered input cannot inherit eligibility. Consume before
-      // sending so even a rejected request cannot reuse it on a retry.
       const canReuse = input === reusableInput;
       reusableInput = null;
       return canReuse;

@@ -14,64 +14,35 @@ export type RuntimePermissionMode =
   | "strict";
 
 export interface RuntimeWorkspaceSandbox {
-  /** Runtime-owned writable workspace. */
   root: string;
-  /** Parent tree whose peer workspaces must stay hidden. */
   isolationRoot: string;
 }
 
 export interface RuntimeContextSnapshot {
-  /** Epoch milliseconds when the current turn input arrived. */
   turnStartedAt?: number;
   sessionSource?: RuntimeSessionSource;
-  /** Listener transport connection that owns the current turn, when present. */
   connectionId?: string | null;
-  /** Registered listener device that owns the current turn, when present. */
   environmentDeviceId?: string | null;
   agentId?: string | null;
   agentName?: string | null;
   /** Parent address for tools running in an agentless subagent conversation. */
   detachedParentAddress?: { agentId: string; conversationId?: string };
   conversationId?: string | null;
-  /** Authenticated Cloud user responsible for the current turn. */
   actingUserId?: string;
-  /**
-   * Cloud super run the current turn belongs to, when the relay delivered
-   * one. Carries NO credential: the MCP originator token itself stays in the
-   * agent-layer token store and is looked up by this id at MCP tool-run time.
-   */
   mcpOriginatorSuperRunId?: string | null;
-  /**
-   * Resolve the execution context's current origin after a queued-turn swap.
-   * Internal-only function reference; never exported to child environments.
-   */
   resolveMcpOriginatorSuperRunId?: () => string | null | undefined;
-  /**
-   * Resolve the client message ids that started the current listener turn,
-   * so background work can tag its later notification turns with them.
-   * Internal-only function reference; never exported to child environments.
-   */
   resolveClientMessageIds?: () => string[];
-  /** Explicitly disable inherited process/runtime acting-user attribution. */
   suppressActingUserFallback?: boolean;
   skillsDirectory?: string | null;
   skillSources?: SkillSource[];
-  /** Bundled skill IDs exposed when skillSources omits "bundled". */
   bundledSkills?: string[];
   workingDirectory?: string | null;
-  /**
-   * Set when the runtime-scoped working directory was found deleted and
-   * repaired to a fallback mid-turn. Holds the original (now missing) path
-   * until a shell tool consumes it to surface a note to the model.
-   */
   workingDirectoryRecoveredFrom?: string | null;
   toolContextId?: string | null;
-  /** Model-facing tool names from the current turn's filtered tool context. */
   clientToolNames?: string[];
   permissionMode?: RuntimePermissionMode;
   workspaceSandbox?: RuntimeWorkspaceSandbox;
   executionSettings?: RuntimeExecutionSettings;
-  /** Foreground yield from the runtime tool policy; unset uses the default. */
   foregroundYieldMs?: number;
 }
 
@@ -81,7 +52,6 @@ export function getRuntimeContext(): RuntimeContextSnapshot | undefined {
   return runtimeContextStorage.getStore();
 }
 
-/** Preserve startup classification for tools and inherited CLI commands. */
 export function getRuntimeSessionSource(): RuntimeSessionSource | undefined {
   const source =
     getRuntimeContext()?.sessionSource ??
@@ -93,14 +63,12 @@ export function getRuntimeSessionSource(): RuntimeSessionSource | undefined {
     : undefined;
 }
 
-/** Resolve the current turn's customer, including inherited headless env scope. */
 export function getRuntimeActingUserId(): string | undefined {
   const context = getRuntimeContext();
   if (context?.suppressActingUserFallback) return undefined;
   return resolveActingUserId(undefined, context?.actingUserId);
 }
 
-/** Capture actor inheritance as a tri-state value for delayed work. */
 export function getRuntimeActingUserAttribution(): string | null | undefined {
   if (getRuntimeContext()?.suppressActingUserFallback) return null;
   return getRuntimeActingUserId();
@@ -165,8 +133,6 @@ export function getFallbackWorkingDirectory(): string {
     return fallback;
   }
 
-  // Extremely defensive fallback for pathological environments where every
-  // candidate disappeared. The caller will still surface a clear cwd error.
   return process.platform === "win32" ? "C:\\" : "/";
 }
 
@@ -196,11 +162,6 @@ export function getCurrentWorkingDirectory(): string {
   return fallback;
 }
 
-/**
- * Returns (and clears) the original path of a working directory that was
- * repaired mid-turn because it no longer existed, or null when no recovery
- * happened. Shell tools use this to tell the model its cwd changed.
- */
 export function consumeWorkingDirectoryRecovery(): string | null {
   const runtimeContext = runtimeContextStorage.getStore();
   const recoveredFrom = runtimeContext?.workingDirectoryRecoveredFrom;

@@ -97,23 +97,12 @@ export function getLocalProviderAuthPath(
   return join(storageDir, "providers", "auth.json");
 }
 
-// An OAuth refresh (a network call) can run while holding the lock, so the
-// lock is reaped only when its holder process is gone, never by age:
-// age-based reaping could let a second process refresh the same rotating
-// token while a slow holder is still mid-refresh. A live but hung holder
-// then makes waiters fail after `timeoutMs` instead of double-refreshing.
 const AUTH_FILE_LOCK_OPTIONS: FileLockOptions = {
   reapOnlyDeadOwner: true,
   retryMs: 50,
   timeoutMs: 120_000,
 };
 
-/**
- * Run a read-modify-write of auth.json exclusively across every process
- * sharing the storage dir (e.g. a channel listener and an App Server), so
- * two processes cannot both spend the same rotating OAuth refresh token.
- * Callers must re-read the record inside `fn`. Not reentrant.
- */
 export function withLocalProviderAuthLock<T>(
   fn: () => Promise<T>,
   storageDir?: string,
@@ -145,8 +134,6 @@ function readAuthFile(storageDir?: string): LocalProviderAuthFile {
 function writeAuthFile(file: LocalProviderAuthFile, storageDir?: string): void {
   const path = getLocalProviderAuthPath(storageDir);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  // Publish a complete snapshot: readers in other processes never see a
-  // half-written file, and a failed write leaves the previous file intact.
   const temporaryPath = `${path}.${randomUUID()}.tmp`;
   const fd = openSync(temporaryPath, "wx", 0o600);
   try {
@@ -160,9 +147,7 @@ function writeAuthFile(file: LocalProviderAuthFile, storageDir?: string): void {
   } finally {
     try {
       unlinkSync(temporaryPath);
-    } catch {
-      // Usually already renamed. Cleanup must not mask a failed write/rename.
-    }
+    } catch {}
   }
 }
 
@@ -223,7 +208,6 @@ export function getLocalProviderRecordById(
   const direct = providerName ? providers[providerName] : undefined;
   if (direct?.id === providerIdValue) return direct;
 
-  // Keep legacy auth files with non-derived IDs readable.
   return (
     Object.values(providers).find(
       (provider) => provider.id === providerIdValue,
@@ -528,23 +512,16 @@ export async function getLocalOAuthApiKey(input: {
   const record = localOAuthRecord(input.providerNames, input.storageDir);
   if (!record || record.auth.type !== "oauth") return undefined;
 
-  // pi-ai 0.81: OAuth lives on the provider (Provider.auth.oauth). Refresh
-  // expired tokens through the provider's own flow, then derive request auth
-  // (apiKey plus per-credential baseUrl/headers, e.g. GitHub Copilot).
   const oauth = getProviderOAuthAuth(input.providerId);
   if (!oauth) return undefined;
 
   let credentials = toPiOAuthCredentials(record.auth);
   if (Date.now() >= credentials.expires) {
-    // Refresh under the cross-process auth lock, re-reading first: another
-    // process may already have spent this refresh token and stored the
-    // rotated credentials.
     const refreshed = await withLocalProviderAuthLock(async () => {
       const current = localOAuthRecord(input.providerNames, input.storageDir);
       if (!current || current.auth.type !== "oauth") return undefined;
       const currentCredentials = toPiOAuthCredentials(current.auth);
       if (Date.now() < currentCredentials.expires) return currentCredentials;
-      // pi-ai 0.84+: OAuthAuth.refresh requires an AbortSignal.
       const next = await oauth.refresh(
         { type: "oauth", ...currentCredentials },
         new AbortController().signal,

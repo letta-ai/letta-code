@@ -19,11 +19,6 @@ import {
   mapChannelSummary,
 } from "@/channels/protocol-command-helpers";
 
-/**
- * Handles account, config, and lifecycle channel protocol commands.
- * Returns `true` when the command was handled, `false` when the command type
- * does not belong to this group (so the caller can try the next handler).
- */
 export async function handleAccountConfigLifecycleCommand(
   parsed: ChannelsCommand,
   socket: WebSocket,
@@ -47,8 +42,6 @@ export async function handleAccountConfigLifecycleCommand(
     bindChannelAccountLive,
     unbindChannelAccountLive,
   } = service;
-
-  // -- channels_list --------------------------------------------------------
 
   if (parsed.type === "channels_list") {
     try {
@@ -79,8 +72,6 @@ export async function handleAccountConfigLifecycleCommand(
     }
     return true;
   }
-
-  // -- channel_accounts_list -------------------------------------------------
 
   if (parsed.type === "channel_accounts_list") {
     try {
@@ -148,8 +139,6 @@ export async function handleAccountConfigLifecycleCommand(
     return true;
   }
 
-  // -- channel_account_create ------------------------------------------------
-
   if (parsed.type === "channel_account_create") {
     try {
       if (
@@ -160,9 +149,6 @@ export async function handleAccountConfigLifecycleCommand(
       ) {
         throw new Error("Invalid channel account config");
       }
-      // Custom-app model: multiple custom apps are represented as
-      // multiple accounts under the first-party "custom" channel. Do not
-      // scaffold per-app plugin folders/channel IDs here.
       const effectiveChannelId = parsed.channel_id;
 
       const pluginConfig =
@@ -226,8 +212,6 @@ export async function handleAccountConfigLifecycleCommand(
     }
     return true;
   }
-
-  // -- channel_account_update ------------------------------------------------
 
   if (parsed.type === "channel_account_update") {
     try {
@@ -295,8 +279,6 @@ export async function handleAccountConfigLifecycleCommand(
     return true;
   }
 
-  // -- channel_account_bind --------------------------------------------------
-
   if (parsed.type === "channel_account_bind") {
     try {
       const account = bindChannelAccountLive(
@@ -344,8 +326,6 @@ export async function handleAccountConfigLifecycleCommand(
     return true;
   }
 
-  // -- channel_account_unbind ------------------------------------------------
-
   if (parsed.type === "channel_account_unbind") {
     try {
       const account = unbindChannelAccountLive(
@@ -391,8 +371,6 @@ export async function handleAccountConfigLifecycleCommand(
     return true;
   }
 
-  // -- channel_account_delete ------------------------------------------------
-
   if (parsed.type === "channel_account_delete") {
     try {
       const deleted = await removeChannelAccountLive(
@@ -414,8 +392,6 @@ export async function handleAccountConfigLifecycleCommand(
         "listener_channels_command",
       );
       if (deleted) {
-        // Remove the plugin folder if this was a user-scaffolded channel
-        // so the display name can be reused.
         removeUserPlugin(parsed.channel_id);
 
         emitChannelAccountsUpdated(socket, safeSocketSend, {
@@ -450,8 +426,6 @@ export async function handleAccountConfigLifecycleCommand(
     }
     return true;
   }
-
-  // -- channel_account_start -------------------------------------------------
 
   if (parsed.type === "channel_account_start") {
     try {
@@ -497,8 +471,6 @@ export async function handleAccountConfigLifecycleCommand(
     return true;
   }
 
-  // -- channel_account_stop --------------------------------------------------
-
   if (parsed.type === "channel_account_stop") {
     try {
       const account = await stopChannelAccountLive(
@@ -543,8 +515,6 @@ export async function handleAccountConfigLifecycleCommand(
     return true;
   }
 
-  // -- channel_get_config ----------------------------------------------------
-
   if (parsed.type === "channel_get_config") {
     try {
       safeSocketSend(
@@ -579,8 +549,6 @@ export async function handleAccountConfigLifecycleCommand(
     }
     return true;
   }
-
-  // -- channel_set_config ----------------------------------------------------
 
   if (parsed.type === "channel_set_config") {
     try {
@@ -644,8 +612,6 @@ export async function handleAccountConfigLifecycleCommand(
     return true;
   }
 
-  // -- channel_start ---------------------------------------------------------
-
   if (parsed.type === "channel_start") {
     try {
       const summary = await startChannelLive(
@@ -680,8 +646,6 @@ export async function handleAccountConfigLifecycleCommand(
     }
     return true;
   }
-
-  // -- channel_stop ----------------------------------------------------------
 
   if (parsed.type === "channel_stop") {
     try {

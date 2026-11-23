@@ -47,8 +47,6 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-// Stalls inside resolveSystemPromptForTurn so a test can cancel while the
-// turn is still in async pre-stream prep (no stream controller registered).
 class PromptGatedBackend extends FakeHeadlessBackend {
   readonly promptEntered = deferred();
   readonly promptGate = deferred();
@@ -64,8 +62,6 @@ class PromptGatedBackend extends FakeHeadlessBackend {
   }
 }
 
-// Stalls inside executor.execute so a test can cancel during provider
-// startup, after the run exists but before its controller is registered.
 class DeferredExecutor {
   readonly entered = deferred();
   readonly gate = deferred();
@@ -86,15 +82,12 @@ class DeferredExecutor {
   }
 }
 
-// Throws synchronously from execute (validation/setup failure before any
-// Promise exists): the run must fail, never strand as an active-run conflict.
 class SyncThrowExecutor {
   execute(): never {
     throw new Error("sync executor setup explosion");
   }
 }
 
-// Throws synchronously from resolveSystemPromptForTurn: same invariant.
 class SyncThrowPromptBackend extends FakeHeadlessBackend {
   protected override resolveSystemPromptForTurn(): never {
     throw new Error("sync prompt setup explosion");
@@ -131,7 +124,6 @@ describe("FakeHeadlessBackend", () => {
     const runFor = (agentId: string) =>
       [...runs.values()].find((run) => run.agent_id === agentId);
 
-    // Leave both streams unconsumed so both runs stay active.
     await backend.createConversationMessageStream("default", {
       agent_id: "agent-a",
       messages: [{ role: "user", content: "from a" }],
@@ -143,12 +135,10 @@ describe("FakeHeadlessBackend", () => {
     expect(runFor("agent-a")?.status).toBe("running");
     expect(runFor("agent-b")?.status).toBe("running");
 
-    // Default-conversation cancels address the agent id.
     await backend.cancelConversation("agent-b");
     expect(runFor("agent-b")?.status).toBe("cancelled");
     expect(runFor("agent-a")?.status).toBe("running");
 
-    // Agent B's cleanup left agent A's ownership intact.
     await expect(
       backend.createConversationMessageStream("default", {
         agent_id: "agent-a",
@@ -163,8 +153,6 @@ describe("FakeHeadlessBackend", () => {
       agent_id: "agent-fake-headless",
     });
 
-    // Esc landed during pre-stream prep: the cancel found no run to stop,
-    // so this send must fail before it can leave an orphaned active run.
     const controller = new AbortController();
     controller.abort();
     await expect(
@@ -183,7 +171,6 @@ describe("FakeHeadlessBackend", () => {
     });
     expect(JSON.stringify(page)).not.toContain("aborted input");
 
-    // A later send starts cleanly instead of tripping over an orphaned run.
     const chunks = await collect(
       await backend.createConversationMessageStream(conversation.id, {
         agent_id: "agent-fake-headless",
@@ -210,8 +197,6 @@ describe("FakeHeadlessBackend", () => {
     );
     send.catch(() => {});
 
-    // The turn is parked inside resolveSystemPromptForTurn: the run exists,
-    // but no stream controller is registered for cancelConversation to abort.
     await backend.promptEntered.promise;
     controller.abort();
     await backend.cancelConversation(conversation.id);
@@ -225,7 +210,6 @@ describe("FakeHeadlessBackend", () => {
     ).runControllerByRunId;
     expect(controllers.size).toBe(0);
 
-    // The cancelled run was completed, so a later send starts cleanly.
     const chunks = await collect(
       await backend.createConversationMessageStream(conversation.id, {
         agent_id: "agent-fake-headless",
@@ -255,15 +239,12 @@ describe("FakeHeadlessBackend", () => {
     );
     send.catch(() => {});
 
-    // The turn is parked inside executor.execute: the run was already
-    // cancelled by cancelConversation, but no controller was registered yet.
     await executor.entered.promise;
     controller.abort();
     await backend.cancelConversation(conversation.id);
     executor.gate.resolve();
 
     await expect(send).rejects.toBeInstanceOf(APIUserAbortError);
-    // The late controller is aborted immediately, never registered.
     const controllers = (
       backend as unknown as {
         runControllerByRunId: Map<string, AbortController>;
@@ -289,8 +270,6 @@ describe("FakeHeadlessBackend", () => {
       agent_id: "agent-fake-headless",
     });
 
-    // No caller signal at all: cancelConversation alone (task-stop/control
-    // path) cancels the run while executor.execute is still starting up.
     const send = backend.createConversationMessageStream(conversation.id, {
       agent_id: "agent-fake-headless",
       messages: [{ role: "user", content: "control cancel" }],
@@ -302,7 +281,6 @@ describe("FakeHeadlessBackend", () => {
     executor.gate.resolve();
 
     await expect(send).rejects.toBeInstanceOf(APIUserAbortError);
-    // The late controller is genuinely aborted, not just left unregistered.
     expect(executor.lastController?.signal.aborted).toBe(true);
     const controllers = (
       backend as unknown as {
@@ -339,8 +317,6 @@ describe("FakeHeadlessBackend", () => {
 
     await backend.promptEntered.promise;
     controller.abort();
-    // No cancelConversation: even when the backend cancel never lands, a
-    // prep rejection after Esc is a user interrupt and the run must close.
     backend.promptGate.reject(new Error("prompt prep blew up"));
 
     await expect(send).rejects.toBeInstanceOf(APIUserAbortError);
@@ -373,8 +349,6 @@ describe("FakeHeadlessBackend", () => {
 
     await backend.promptEntered.promise;
     controller.abort();
-    // The gate stays unresolved: cancellation must preempt the hung startup,
-    // not wait for it. The timer makes a wedge fail fast and legibly.
     await expect(
       Promise.race([
         send,
@@ -411,7 +385,6 @@ describe("FakeHeadlessBackend", () => {
 
     await executor.entered.promise;
     await backend.cancelConversation(conversation.id);
-    // The gate stays unresolved: the send must settle promptly anyway.
     await expect(
       Promise.race([
         send,
@@ -424,8 +397,6 @@ describe("FakeHeadlessBackend", () => {
       ]),
     ).rejects.toBeInstanceOf(APIUserAbortError);
 
-    // When the hung startup finally hands back a stream, its controller is
-    // aborted and never registered.
     executor.gate.resolve();
     await new Promise((resolve) => setImmediate(resolve));
     await new Promise((resolve) => setImmediate(resolve));
@@ -463,8 +434,6 @@ describe("FakeHeadlessBackend", () => {
       .catch((error: unknown) => error);
     expect((first as Error).message).toContain("sync executor setup explosion");
 
-    // The run failed instead of leaking active: a later send reaches the
-    // executor again, not an active-run conflict.
     const second = await backend
       .createConversationMessageStream(conversation.id, {
         agent_id: "agent-fake-headless",
@@ -532,8 +501,6 @@ describe("FakeHeadlessBackend", () => {
     await backend.cancelConversation(conversation.id);
     executor.gate.reject(new Error("provider startup 500"));
 
-    // The raw provider error must not escape as a stream error, and failRun
-    // must not overwrite the cancelled state.
     await expect(send).rejects.toBeInstanceOf(APIUserAbortError);
 
     const chunks = await collect(
@@ -643,10 +610,6 @@ describe("FakeHeadlessBackend", () => {
   });
 
   test("settles orphaned tool calls from an interrupted turn before the next turn", async () => {
-    // Simulate what happens when a turn is interrupted (crash / unhandled error)
-    // before cancelConversation is called: a tool_use block is stored in the
-    // conversation history but its tool_result never arrives. The next turn must
-    // add a synthetic error result so the provider doesn't reject the context.
     const backend = new FakeHeadlessBackend(
       "agent-fake-headless",
       new DeterministicToolCallExecutor(),
@@ -656,8 +619,6 @@ describe("FakeHeadlessBackend", () => {
       agent_id: "agent-fake-headless",
     });
 
-    // Run a turn that ends with a tool call (requires_approval), then do NOT
-    // send a tool result — leave the tool call orphaned.
     await collect(
       await backend.createConversationMessageStream(conversation.id, {
         agent_id: "agent-fake-headless",
@@ -665,8 +626,6 @@ describe("FakeHeadlessBackend", () => {
       } as ConversationMessageCreateBody),
     );
 
-    // Inspect the raw local messages before the next turn: there should be one
-    // tool call with no corresponding result.
     const storeBefore = (
       backend as unknown as {
         store: { listLocalMessages: (id: string) => unknown[] };
@@ -688,9 +647,8 @@ describe("FakeHeadlessBackend", () => {
     const unsettled = orphanedCallIds.filter(
       (id) => !existingResultIds.includes(id),
     );
-    expect(unsettled.length).toBe(1); // one orphaned tool call before the next turn
+    expect(unsettled.length).toBe(1);
 
-    // Start the next turn — executeConversationTurn should settle the orphan first.
     await collect(
       await backend.createConversationMessageStream(conversation.id, {
         agent_id: "agent-fake-headless",
@@ -698,7 +656,6 @@ describe("FakeHeadlessBackend", () => {
       } as ConversationMessageCreateBody),
     );
 
-    // Now the orphaned tool call should have a synthetic error result.
     const storeAfter = (
       backend as unknown as {
         store: { listLocalMessages: (id: string) => unknown[] };

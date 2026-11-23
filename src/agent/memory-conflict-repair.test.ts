@@ -27,7 +27,6 @@ function repository(): string {
   return repo.dir;
 }
 
-/** Claim, asserting the attempt was recorded, and return its token. */
 async function claim(root: string): Promise<string> {
   const result = await claimMemoryConflictRepair(root);
   expect(result.status).toBe("claimed");
@@ -41,7 +40,6 @@ test("a conflict a worker has run on is not attempted again while unchanged", as
   expect(await claimMemoryConflictRepair(root)).toEqual({
     status: "attempted",
   });
-  // A different incoming commit is a new conflict.
   writeFileSync(join(root, ".git", "MERGE_HEAD"), "b".repeat(40));
   await claim(root);
 });
@@ -76,7 +74,6 @@ test("a repair still in progress in a running process is not launched twice", as
   const root = repository();
   writeFileSync(join(root, ".git", "MERGE_HEAD"), "a".repeat(40));
   await claim(root);
-  // Still "launching" and this process is alive: in progress.
   expect(await claimMemoryConflictRepair(root)).toEqual({
     status: "in_progress",
   });
@@ -88,9 +85,6 @@ test("an attempt whose process is gone before the worker ran is retried", async 
   await claim(root);
   const path = join(root, ".git", "letta-memory-repair.json");
   const attempt = JSON.parse(readFileSync(path, "utf8"));
-  // The recording process exited. A dead pid needs no start-time lookup,
-  // which can time out on slow Windows runners (pid reuse is covered in
-  // process-liveness.test.ts).
   const exited = spawnSync(process.execPath, ["-e", ""]);
   writeFileSync(path, JSON.stringify({ ...attempt, pid: exited.pid }));
   await claim(root);

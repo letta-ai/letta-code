@@ -14,12 +14,6 @@ import type {
   WireMessage,
 } from "@/types/protocol";
 
-/**
- * Wire-shape tests for queue lifecycle protocol events.
- * These verify that each event type has the expected fields and
- * discriminant values, ensuring the protocol contract is stable.
- */
-
 describe("QueueItemEnqueuedEvent wire shape", () => {
   test("has required fields with correct types", () => {
     const event: QueueItemEnqueuedEvent = {
@@ -259,8 +253,6 @@ describe("QueueLifecycleEvent union", () => {
   });
 
   test("QueueLifecycleEvent is assignable to WireMessage", () => {
-    // Compile-time check: if QueueLifecycleEvent is removed from WireMessage,
-    // this assignment fails and the test won't compile.
     const event: QueueLifecycleEvent = {
       type: "queue_item_enqueued",
       item_id: "i1",

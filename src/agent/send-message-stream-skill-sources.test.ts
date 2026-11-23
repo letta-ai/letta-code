@@ -54,10 +54,12 @@ describe("sendMessageStream skill sources", () => {
     ).toBeNull();
     const reminder = buildClientSkillsUpdateReminder([skill], [other]);
     expect(reminder).toContain(
-      "Additional skills are now available. These supplement the skills already listed in your context:\n<available_skills>\n  <skill>\n    <name>review</name>\n    <description>Review</description>\n  </skill>\n</available_skills>",
+      "Added skills:\n<available_skills>\n  <skill>\n    <name>review</name>\n    <description>Review</description>\n  </skill>\n</available_skills>",
     );
     expect(reminder).not.toContain(other.location);
-    expect(reminder).toContain("Skills no longer available:\n- search");
+    expect(reminder).toContain(
+      "even if they still appear in your system prompt):\n- search\n",
+    );
     expect(
       buildClientSkillsUpdateReminder(
         [],
@@ -90,7 +92,6 @@ describe("sendMessageStream skill sources", () => {
       headers?: Record<string, string>;
     }> = [];
     let rejectNext = false;
-    // Capture the backend boundary; skill discovery and file parsing are real.
     const backend = {
       createConversationMessageStream: async (
         conversationId: string,
@@ -138,7 +139,6 @@ describe("sendMessageStream skill sources", () => {
         options,
       );
       for await (const _chunk of stream) {
-        /* consume response-state metadata */
       }
     };
     try {
@@ -167,13 +167,7 @@ describe("sendMessageStream skill sources", () => {
       expect(content.content).toContain("<system-reminder>");
       expect(content.content).toContain("Newly cloned skill");
       expect(JSON.stringify(content)).not.toContain("BODY_MUST_STAY_LAZY");
-      expect(accepted?.client_skills).toEqual([
-        {
-          name: "late-skill",
-          description: "Newly cloned skill",
-          location: join(skillDir, "SKILL.md"),
-        },
-      ]);
+      expect(accepted?.client_skills).toEqual([]);
       expect(recorded.at(-2)?.body.messages).toEqual(accepted?.messages);
       await send("conv-a");
       expect(recorded.at(-1)?.body.messages).toHaveLength(1);

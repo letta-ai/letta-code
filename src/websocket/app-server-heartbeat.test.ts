@@ -58,9 +58,6 @@ test("app-server heartbeat probes after a local event-loop stall", async () => {
   await waitForEvent(client, "open");
   await waitForEvent(client, "ping");
 
-  // Simulate CPU starvation or sleep/wake delaying the watchdog callback beyond
-  // its wall-clock timeout. The next callback must send a fresh probe instead
-  // of immediately killing a client that can still pong.
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
   await waitForEvent(client, "ping");
   await new Promise((resolve) => setTimeout(resolve, 50));

@@ -1,11 +1,4 @@
 #!/usr/bin/env bun
-/**
- * Headless bidirectional reflection scenario.
- *
- * Intended for CI as a dedicated Reflection / Headless check. It exercises the
- * authenticated API headless bidirectional path with MemFS enabled and verifies
- * that auto-reflection creates the right transcript metadata and payload.
- */
 
 import { spawn } from "node:child_process";
 import {
@@ -307,8 +300,6 @@ async function runLiveBidirectionalCli(paths: {
         if (parsed.type === "result") {
           resultCount += 1;
           if (!sawAssistantMessage) {
-            // The live auto route can return final text only as reasoning. That
-            // turn is not an assistant step, so keep the current snapshot phase.
             retryCurrentTurn();
           } else if (phase === "first") {
             void waitForLaunchArtifacts(transcriptDir, 1, 10_000).then(

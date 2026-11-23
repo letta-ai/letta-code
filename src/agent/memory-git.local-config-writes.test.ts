@@ -14,14 +14,6 @@ import {
   initializeLocalMemoryRepo,
 } from "@/agent/memory-git";
 
-/**
- * Local-sync memory commits used to rewrite `.git/config` three times on
- * every commit (`letta.agentId`, `user.email`, `user.name`), even when the
- * values were already correct. A failure in any of those writes failed the
- * whole memory write. These tests run real git against a temp repo and use
- * GIT_TRACE to record every git invocation the commit path makes.
- */
-
 const AGENT_ID = "agent-local-config-writes-test";
 const AUTHOR = {
   agentId: AGENT_ID,
@@ -77,7 +69,6 @@ afterEach(() => {
   rmSync(tempDir, { recursive: true, force: true });
 });
 
-/** Run a local-sync memory commit and return the git commands it ran. */
 async function tracedCommit(
   content: string,
   author: typeof AUTHOR,
@@ -128,8 +119,6 @@ describe("local-sync memory commit git config writes", () => {
     await tracedCommit("v1", AUTHOR);
     const commands = await tracedCommit("v2", AUTHOR);
 
-    // The trace did capture the commit itself, so an empty write list is
-    // not an artifact of tracing being off.
     expect(commands.some((line) => / commit /.test(line))).toBe(true);
     expect(configWrites(commands)).toEqual([]);
   });

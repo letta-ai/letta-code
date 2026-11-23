@@ -126,7 +126,6 @@ test.each(["text", "json", "stream-json"])(
   "no-wait %s exits on HTTP acceptance with a receipt and recovery commands",
   async (format) => {
     const f = fixture();
-    // The conversation ID alone addresses a send; it is never read first.
     f.backend.retrieveConversation = async () => {
       throw new Error("a conversation-ID send must not read the conversation");
     };

@@ -58,7 +58,6 @@ describe("Monitor url source", () => {
           request: fakeRequest({ id: "cmon-compare" }, []),
         },
       );
-      // Cloud has no output file; the common message is identical apart from the id.
       expect(cloud.content[0]?.text).toBe(
         local.content[0]?.text
           .split("\nOutput file:")[0]
@@ -167,8 +166,6 @@ describe("Monitor url source", () => {
         request: fakeRequest({ id: "cmon-1" }, calls),
       },
     );
-    // $GITLAB_TOKEN stays a reference: Cloud fills it from the agent's
-    // secrets on every poll, so the value never leaves the vault.
     expect(calls[0]?.body?.source).toEqual({
       type: "url",
       url: "https://gitlab.example.com/api/v4/projects/1/pipelines?ref=main",
@@ -225,7 +222,6 @@ describe("Monitor url source", () => {
     [{ url: "ftp://example.com/" }, "absolute http or https URL"],
     [{ url: "not a url" }, "absolute http or https URL"],
     [
-      // Tool arguments arrive as JSON, so a model can send a non-string value.
       { headers: { "X-Count": 1 } as unknown as Record<string, string> },
       "headers must map header names to strings",
     ],

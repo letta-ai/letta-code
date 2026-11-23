@@ -28,6 +28,7 @@ import {
   scrubSecretsFromString,
 } from "@/tools/secret-substitution";
 import type { SubagentStartupErrorCode } from "@/types/subagent-protocol";
+import { debugLog } from "@/utils/debug";
 import { withNativeCliPath } from "@/utils/native-cli-env";
 import { SUBAGENT_DEPTH_ENV } from "@/utils/subagent-depth-env";
 import { runClaudeTurn } from "./claude-stream-session";
@@ -62,7 +63,6 @@ export interface ExternalCodingAgentMcpEntry {
   toolCount: number | null;
 }
 
-/** Live progress: tool calls, their results, text, and reasoning. */
 export interface ExternalCodingAgentRunOptions extends ExternalWorkerListeners {
   type: ExternalCodingAgentType;
   prompt: string;
@@ -73,6 +73,7 @@ export interface ExternalCodingAgentRunOptions extends ExternalWorkerListeners {
   actingUserId?: string | null;
   resumeSessionId?: string;
   cwd?: string;
+  cloudSkillRepositories?: string[];
   mcpReminder?: string;
   signal?: AbortSignal;
   onStarted?: (agentId: string) => void;
@@ -84,8 +85,6 @@ export interface ExternalCodingAgentCommand {
   stdin?: string;
 }
 
-/** `fork` marks a worker launched with the parent's transcript, including
- * when the ambient default computer routes it to a remote sandbox. */
 export function createExternalCodingAgentConfig(
   type: ExternalCodingAgentType,
   fork = false,
@@ -224,22 +223,29 @@ export function buildExternalCodingAgentMcpReminder(
   return buildMcpServersReminderText(entries);
 }
 
-/**
- * Resolve the parent agent's MCP servers into the discovery reminder passed to
- * an external coding agent. Inherits by default; explicit false disables the
- * reminder. Throws when the inventory cannot be read.
- */
 export async function resolveExternalCodingAgentMcpReminder(
   parentAgentId: string,
   mcp: ExternalCodingAgentMcpOptions | undefined,
   deps: McpServersReminderDependencies = {},
 ): Promise<string | undefined> {
   if (mcp?.inherit === false) return undefined;
-  const inventory = await listMcpServersForAgent(
-    await getMcpScopeAgentId(parentAgentId, undefined, deps.lookupParentAgent),
-    createSharedReminderState(),
-    deps,
+  const scopeAgentId = await getMcpScopeAgentId(
+    parentAgentId,
+    undefined,
+    deps.lookupParentAgent,
   );
+  let inventory: ExternalCodingAgentMcpEntry[];
+  try {
+    ({ entries: inventory } = await listMcpServersForAgent(
+      scopeAgentId,
+      createSharedReminderState(),
+      deps,
+      5_000,
+    ));
+  } catch (error) {
+    debugLog("mcp", "Failed to load worker MCP inventory: %s", error);
+    return buildMcpServersReminderText(null);
+  }
   return buildExternalCodingAgentMcpReminder(
     selectExternalCodingAgentMcpEntries(inventory, mcp?.servers),
   );
@@ -357,7 +363,6 @@ async function defaultRunPreflight(
   }
 }
 
-/** Classify this module's startup failures for a remote caller. */
 export function classifyExternalCodingAgentStartupError(
   error: string,
 ): SubagentStartupErrorCode | undefined {
@@ -388,9 +393,7 @@ function assertPreflightReady(
     try {
       const parsed = JSON.parse(result.stdout) as { loggedIn?: unknown };
       if (result.exitCode === 0 && parsed.loggedIn === true) return;
-    } catch {
-      // Fall through to the concrete status error below.
-    }
+    } catch {}
   } else if (result.exitCode === 0) {
     return;
   }
@@ -449,14 +452,6 @@ export function parseExternalCodingAgentOutput(
   };
 }
 
-/**
- * Vault secrets an external coding agent receives at launch. Claude Code and
- * Codex run their own shells, so the harness's per-command `$NAME`
- * substitution never reaches them; export the vault of the agent the parent
- * inherits MCP from (same parent linkage and trust boundary), with the
- * parent's own secrets winning. Unresolvable linkage falls back to the
- * parent's own vault only.
- */
 export async function resolveExternalCodingAgentSecretEnv(
   parentAgentId: string,
   lookupParent?: ParentAgentLookup,
@@ -475,29 +470,19 @@ export async function resolveExternalCodingAgentSecretEnv(
       await ensureSecretsLoaded(scopeAgentId);
       inherited = loadSecrets(scopeAgentId);
     }
-  } catch {
-    // Never widen access on unresolvable parent linkage.
-  }
+  } catch {}
   try {
     await ensureSecretsLoaded(parentAgentId);
-  } catch {
-    // Vault unavailable; the worker still runs without secrets.
-  }
+  } catch {}
   return { ...inherited, ...loadSecrets(parentAgentId) };
 }
 
 export interface ExternalWorkerLaunchEnv {
   env: NodeJS.ProcessEnv;
-  /** Vault values exported into `env`; scrub them from returned reports. */
   secretEnv: Record<string, string>;
-  /** Parent memory note plus the MCP reminder, for the worker's prompt. */
   mcpReminder?: string;
 }
 
-/**
- * The environment and prompt note a worker process starts with. Launch and
- * resume both build them here so a resumed worker matches a fresh one.
- */
 export async function buildExternalWorkerLaunchEnv(
   options: Pick<
     ExternalCodingAgentRunOptions,
@@ -506,7 +491,6 @@ export async function buildExternalWorkerLaunchEnv(
   deps: Pick<ExternalCodingAgentDependencies, "env" | "resolveSecretEnv"> = {},
 ): Promise<ExternalWorkerLaunchEnv> {
   const parentMemoryNote = buildParentMemoryNote(options.parentAgentId);
-  // Compose once for both providers, independently of MCP inheritance.
   const mcpReminder =
     [
       parentMemoryNote
@@ -528,7 +512,6 @@ export async function buildExternalWorkerLaunchEnv(
     LETTA_PARENT_CONVERSATION_ID:
       options.parentConversationId ?? getConversationId() ?? "default",
     LETTA_CODE_AGENT_ROLE: "subagent",
-    // A Letta CLI launched from the worker's shell stays inside the depth bound.
     [SUBAGENT_DEPTH_ENV]: String(getCurrentSubagentDepth() + 1),
   });
   if (typeof options.actingUserId === "string") {
@@ -547,11 +530,6 @@ export interface ExternalWorkerResumeEnvDependencies
   resolveMcpReminder?: (parentAgentId: string) => Promise<string | undefined>;
 }
 
-/**
- * Prepare a resumed Claude Code or Codex worker the same way as a launch.
- * The launch's MCP selection is not persisted, so a resume lists the parent's
- * default MCP inventory; an unreadable inventory drops the list, not the turn.
- */
 export async function buildExternalWorkerResumeEnv(
   options: Pick<
     ExternalCodingAgentRunOptions,
@@ -567,7 +545,6 @@ export async function buildExternalWorkerResumeEnv(
   return buildExternalWorkerLaunchEnv({ ...options, mcpReminder }, deps);
 }
 
-/** Keep exported vault values out of a report returned to the parent. */
 export function scrubExternalWorkerResult(
   result: SubagentResult,
   secretEnv: Record<string, string>,
@@ -581,12 +558,6 @@ export function scrubExternalWorkerResult(
   };
 }
 
-/**
- * Wrap progress listeners so values exported from the vault never reach the
- * task's logs in tool arguments, outputs, or text. Every string field is
- * scrubbed raw (and in its JSON-escaped form, as in `args`), so a value with
- * quotes, backslashes, or newlines is caught too.
- */
 export function scrubWorkerListeners(
   listeners: ExternalWorkerListeners,
   secretEnv: Record<string, string>,
@@ -627,6 +598,7 @@ export async function runExternalCodingAgent(
         agentId: options.parentAgentId,
         conversationId: options.parentConversationId,
         actingUserId: captureActingUserId,
+        cloudSkillRepositories: options.cloudSkillRepositories,
       }
     : undefined;
   const source = options.type === "claude-code" ? "claude_code" : "codex";
@@ -645,8 +617,6 @@ export async function runExternalCodingAgent(
   const capture = async (
     rawResult: SubagentResult,
   ): Promise<SubagentResult> => {
-    // The worker had the vault in its environment; keep exported values out
-    // of the report that returns to the parent's context.
     const result = scrubExternalWorkerResult(rawResult, secretEnv);
     const sessionId = result.runtimeSessionId ?? captureSessionId;
     if (scope && sessionId) {
@@ -678,8 +648,6 @@ export async function runExternalCodingAgent(
     };
   }
   if (options.type === "opencode") {
-    // OpenCode persists native sessions itself; transcript capture currently
-    // supports only Claude/Codex formats, not OpenCode's database.
     return runOpenCodeTurn(
       {
         ...options,
@@ -716,9 +684,6 @@ export async function runExternalCodingAgent(
       if (scope && options.resumeSessionId) {
         await reserveCapture(options.resumeSessionId);
       }
-      // The managed sandbox wrapper authenticates model requests with its
-      // sandbox key, not native `codex login`. A real app-server turn is the
-      // authority on whether the configured provider can answer.
       return capture(
         await (deps.runCodexTurn ?? runCodexTurn)(
           {
@@ -734,6 +699,7 @@ export async function runExternalCodingAgent(
             prompt: options.prompt,
             parentAgentId: options.parentAgentId,
             cwd,
+            cloudSkillRepositories: options.cloudSkillRepositories,
             model: options.model,
             mcpReminder: options.mcpReminder,
             signal: options.signal,
@@ -801,6 +767,7 @@ export async function runExternalCodingAgent(
             prompt: options.prompt,
             parentAgentId: options.parentAgentId,
             cwd,
+            cloudSkillRepositories: options.cloudSkillRepositories,
             model: options.model,
             mcpReminder: options.mcpReminder,
             signal: options.signal,

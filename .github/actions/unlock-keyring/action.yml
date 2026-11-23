@@ -11,7 +11,7 @@ runs:
       run: |
         install_packages() {
           timeout -k 10 140 sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
-            apt-get install -y -o Dpkg::Use-Pty=0 \
+            apt-get install -y --no-install-recommends -o Dpkg::Use-Pty=0 \
             -o Acquire::http::Timeout=20 \
             -o Acquire::Retries=3 -o DPkg::Lock::Timeout=60 \
             dbus-x11 gnome-keyring
@@ -32,12 +32,30 @@ runs:
             if [ "$attempt" -eq 1 ]; then
               for source in /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list; do
                 if [ -f "$source" ]; then
-                  sudo sed -i 's#http://azure.archive.ubuntu.com/ubuntu#http://archive.ubuntu.com/ubuntu#g' "$source"
+                  sudo cp -p "$source" "$source.keyring-backup"
+                  sudo sed -E -i \
+                    -e 's#mirror\+file:/etc/apt/apt-mirrors\.txt#http://archive.ubuntu.com/ubuntu#g' \
+                    -e 's#https?://([[:alnum:]-]+\.)*archive\.ubuntu\.com/ubuntu#http://archive.ubuntu.com/ubuntu#g' \
+                    "$source"
                 fi
               done
             fi
             timeout -k 10 30 sudo DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
-            timeout -k 10 45 sudo apt-get update -qq -o Acquire::Retries=3 || true
+            if [ "$attempt" -eq 1 ]; then
+              echo "Updating package indexes with archive.ubuntu.com sources"
+              if ! timeout -k 10 120 sudo apt-get update -qq -o Acquire::Retries=3; then
+                echo "Archive index update failed; restoring original apt sources"
+                for source in /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list; do
+                  if [ -f "$source.keyring-backup" ]; then
+                    sudo mv "$source.keyring-backup" "$source"
+                  fi
+                done
+                timeout -k 10 120 sudo apt-get update -qq -o Acquire::Retries=3 || true
+              fi
+            else
+              echo "Updating package indexes with current apt sources"
+              timeout -k 10 45 sudo apt-get update -qq -o Acquire::Retries=3 || true
+            fi
           fi
         done
         exit 1

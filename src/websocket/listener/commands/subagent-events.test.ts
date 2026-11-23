@@ -52,7 +52,6 @@ test("serves the launching conversation a page of events after a seq", () => {
     has_more: false,
     missed: 0,
   });
-  // An oversized event is cut with a marker, not dropped.
   const [event] = response.success ? response.events : [];
   expect(event?.seq).toBe(2);
   expect(String(event?.text)).toEndWith("bytes]");

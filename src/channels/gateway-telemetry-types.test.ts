@@ -8,8 +8,6 @@ import { resolveChannelGatewayTelemetryTypes } from "@/channels/gateway-telemetr
 import { createChannelAccountLive } from "@/channels/service";
 import type { ChannelAccount } from "@/channels/types";
 
-// Stands in for the on-disk account files shared by the listener and the
-// ChannelGateway child.
 const disk = new Map<string, ChannelAccount[]>();
 
 function resetAccountStores(): void {
@@ -91,8 +89,6 @@ test("Desktop restore telemetry reflects account changes made by the gateway chi
     }),
   ).toEqual(["telegram"]);
 
-  // The child disables the account: disk changes, but this process's account
-  // cache is never touched.
   disk.set(
     "telegram",
     (disk.get("telegram") ?? []).map((account) => ({

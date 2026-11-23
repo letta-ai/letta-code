@@ -101,7 +101,6 @@ describe("listener interrupt queue handoff", () => {
     server.on("connection", (peer) => peers.push(peer));
     const processQueuedTurn = mock(async (_incoming: IncomingMessage) => {});
     setActiveRuntime(listener);
-    // Another test's background task can finish before this listener mounts.
     addToMessageQueue({
       kind: "task_notification",
       text: "Unrelated background task completed",
@@ -119,12 +118,10 @@ describe("listener interrupt queue handoff", () => {
       const address = server.address();
       if (!address || typeof address === "string")
         throw new Error("No WS port");
-      // Start all sources in an earlier turn, not under the lease being aborted.
       const earlier = target.turnLifecycle.begin({
         origin: "message",
         workingDirectory: process.cwd(),
       });
-      // Keep the control scopes busy so their real routed notifications remain inspectable.
       for (const runtime of runtimes.slice(1)) {
         runtime.turnLifecycle.begin({
           origin: "message",
@@ -208,7 +205,6 @@ describe("listener interrupt queue handoff", () => {
           ),
         4000,
       );
-      // The frame reached the actual source but has not reached its batch timer.
       expect(target.queueRuntime.peek().map((item) => item.id)).toEqual(
         baseline,
       );
@@ -235,7 +231,6 @@ describe("listener interrupt queue handoff", () => {
           },
         ),
       ).toBe(true);
-      // Turn cancellation leaves previously started Monitor sources running.
       expect(commandState.status).toBe("running");
       expect(wsState.status).toBe("running");
       expect(requireFixture(peers[0]).readyState).toBe(1);
@@ -441,8 +436,6 @@ describe("listener interrupt queue handoff", () => {
     expect(forgotWork).toHaveBeenCalledTimes(1);
     expect(runtime.turnLifecycle.kind).toBe("cancelling");
 
-    // The owner has finished, so the fenced lease is no longer current even
-    // though backend settlement still keeps the lifecycle in `cancelling`.
     expect(
       await handleAbortMessageInput(
         listener,

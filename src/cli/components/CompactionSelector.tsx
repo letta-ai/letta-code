@@ -1,6 +1,3 @@
-// Compaction mode selector.
-// Wraps SingleSelectPicker with compaction-specific logic.
-
 import { memo, useMemo } from "react";
 import { OverlayShell } from "./OverlayShell";
 import { SingleSelectPicker } from "./SingleSelectPicker";

@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AssistantMessage, Context, Tool } from "@earendil-works/pi-ai";
+import { toPiHistoryMessages } from "@/backend/dev/pi-messages";
 import { createOrUpdateLocalProvider } from "@/backend/local/local-provider-auth-store";
 import {
   LOCAL_ALL_COMPACTION_PROMPT,
@@ -10,7 +11,11 @@ import {
   type LocalAllCompactionInput,
   summarizeLocalMessagesAll,
 } from "./compaction";
-import { emptyLocalUsage, type LocalMessage } from "./local-message";
+import {
+  emptyLocalUsage,
+  type LocalCompactionSummarySource,
+  type LocalMessage,
+} from "./local-message";
 
 const TOOLS: Tool[] = [
   {
@@ -89,12 +94,13 @@ describe("self-compaction", () => {
     overrides: Partial<LocalAllCompactionInput> = {},
   ): Promise<{
     summary: string;
+    source?: LocalCompactionSummarySource;
     contexts: Context[];
     options: Array<Record<string, unknown> | undefined>;
   }> {
     const contexts: Context[] = [];
     const options: Array<Record<string, unknown> | undefined> = [];
-    const summary = await summarizeLocalMessagesAll({
+    const { summary, source } = await summarizeLocalMessagesAll({
       conversationId: "conv-self",
       agent: {
         id: "agent-local-self",
@@ -118,7 +124,7 @@ describe("self-compaction", () => {
       },
       ...overrides,
     });
-    return { summary, contexts, options };
+    return { summary, source, contexts, options };
   }
 
   test("summarizes inside the agent's own context and tools", async () => {
@@ -135,12 +141,11 @@ describe("self-compaction", () => {
       "user",
       "assistant",
       "toolResult",
-      "assistant",
       "user",
     ]);
-    expect(context?.messages.at(-2)).toMatchObject({
-      content: [{ type: "text", text: "I understand. Let me summarize." }],
-    });
+    expect(context?.messages.slice(0, -1)).toEqual(
+      toPiHistoryMessages(TOOL_TURN),
+    );
     expect(context?.messages.at(-1)).toMatchObject({
       content: LOCAL_SELF_ALL_COMPACTION_PROMPT,
     });
@@ -164,6 +169,34 @@ describe("self-compaction", () => {
     ]);
     expect(contexts[0]?.messages.at(-1)).toMatchObject({
       content: "Summarize for the next session.",
+    });
+  });
+
+  test("adds the prompt to a trailing user message instead of a second one", async () => {
+    const messages: LocalMessage[] = [
+      TOOL_TURN[0] as LocalMessage,
+      assistant([{ type: "text", text: "done" }]),
+      {
+        id: "user-2",
+        role: "user",
+        content: [{ type: "text", text: "now fix the lint" }],
+        timestamp: Date.now(),
+      },
+    ];
+    const { contexts } = await summarize(messages, [
+      assistant([{ type: "text", text: "self summary" }]),
+    ]);
+
+    expect(contexts[0]?.messages.map((message) => message.role)).toEqual([
+      "user",
+      "assistant",
+      "user",
+    ]);
+    expect(contexts[0]?.messages.at(-1)).toMatchObject({
+      content: [
+        { type: "text", text: "now fix the lint" },
+        { type: "text", text: LOCAL_SELF_ALL_COMPACTION_PROMPT },
+      ],
     });
   });
 
@@ -240,5 +273,93 @@ describe("self-compaction", () => {
 
     expect(contexts).toHaveLength(1);
     expect(contexts[0]?.systemPrompt).toBe(LOCAL_ALL_COMPACTION_PROMPT);
+  });
+
+  describe("reports which request wrote the summary", () => {
+    const text = (value: string) => assistant([{ type: "text", text: value }]);
+    const cases: Array<{
+      name: string;
+      replies: () => Array<AssistantMessage | Error>;
+      overrides?: Partial<LocalAllCompactionInput>;
+      source: LocalCompactionSummarySource;
+    }> = [
+      {
+        name: "a self summary",
+        replies: () => [text("self summary")],
+        source: "self",
+      },
+      {
+        name: "a transcript-mode summary",
+        replies: () => [text("transcript summary")],
+        overrides: { self: undefined },
+        source: "transcript",
+      },
+      {
+        name: "a self request that throws a context-window overflow",
+        replies: () => [
+          new Error("This model's maximum context length is 1000 tokens."),
+          text("transcript summary"),
+        ],
+        source: "transcript_after_overflow",
+      },
+      {
+        name: "a self request the provider refuses as over the window",
+        replies: () => [
+          {
+            ...assistant([]),
+            stopReason: "error",
+            errorMessage:
+              "This model's maximum context length is 30000 tokens. However, your messages resulted in 30551 tokens. (context_length_exceeded)",
+          },
+          text("transcript summary"),
+        ],
+        source: "transcript_after_overflow",
+      },
+      {
+        name: "a self answer with only a tool call",
+        replies: () => [
+          assistant([
+            {
+              type: "toolCall",
+              id: "call-2",
+              name: "Bash",
+              arguments: { command: "ls" },
+            },
+          ]),
+          text("transcript summary"),
+        ],
+        source: "transcript_after_no_text",
+      },
+    ];
+
+    for (const testCase of cases) {
+      test(`${testCase.source} for ${testCase.name}`, async () => {
+        const replies = testCase.replies();
+        const { summary, source, contexts } = await summarize(
+          TOOL_TURN,
+          [...replies],
+          testCase.overrides,
+        );
+
+        expect(source).toBe(testCase.source);
+        expect(replies.at(-1)).toMatchObject({
+          content: [{ type: "text", text: summary }],
+        });
+        expect(contexts).toHaveLength(replies.length);
+        expect(contexts.at(-1)?.systemPrompt).toBe(
+          testCase.source === "self"
+            ? "compiled agent system"
+            : LOCAL_ALL_COMPACTION_PROMPT,
+        );
+      });
+    }
+
+    test("no source when there is nothing to summarize", async () => {
+      const { summary, source, contexts } = await summarize([], []);
+
+      expect(summary).toBe("No prior conversation messages.");
+      expect(source).toBeUndefined();
+      expect(contexts).toHaveLength(0);
+    });
   });
 });

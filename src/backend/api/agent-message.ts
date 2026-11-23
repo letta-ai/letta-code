@@ -2,7 +2,6 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import { actingUserRequestOptions } from "@/agent/acting-user";
 import type { Backend } from "@/backend";
 
-/** Optional routing values share the same meaning in CLI and tool sends. */
 export function normalizeAgentMessageComputer(
   value: unknown,
 ): string | undefined {
@@ -31,7 +30,6 @@ export function buildAgentSendContent(
   ];
 }
 
-/** `letta -p` target flags; `--agent` with a conv-... ID is rejected by startup validation. */
 export function buildAgentSendCliTarget(
   agentId: string,
   conversationId: string,
@@ -74,7 +72,6 @@ export function validateAddress(
   return value;
 }
 
-/** Recovery commands for a send; `--agent` is only needed for `default`. */
 export function buildAgentMessageRecoveryCommands(destination: {
   agentId?: string | null;
   conversationId: string;
@@ -86,21 +83,12 @@ export function buildAgentMessageRecoveryCommands(destination: {
   };
 }
 
-/**
- * Shared destination lookup for CLI sends and the SendAgentMessage tool.
- *
- * A non-default conversation ID is a complete address: the enqueue endpoint
- * derives the agent from it and reports it in the receipt, so the conversation
- * is not read and `agentId` is returned only when the caller supplied it. A
- * caller-supplied `agentId` is forwarded; the server owns any mismatch check.
- */
 export async function resolveAgentMessageDestination(
   input: {
     agentId?: string;
     conversationId?: string;
     senderAgentId?: string;
     actingUserId?: string | null;
-    /** Calling runtime, independent of optional sender attribution overrides. */
     currentConversation?: { agentId?: string; conversationId?: string };
   },
   backend: Pick<Backend, "createConversation">,
@@ -128,7 +116,6 @@ export async function resolveAgentMessageDestination(
     }
   }
   const current = input.currentConversation;
-  // Conversation IDs are unique except `default`, which is scoped by agent.
   const isCurrent =
     conversationId === current?.conversationId &&
     (conversationId !== "default" || agentId === current?.agentId);

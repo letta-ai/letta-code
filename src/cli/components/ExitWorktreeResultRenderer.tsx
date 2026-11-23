@@ -3,7 +3,7 @@ import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { Text } from "./Text";
 
-const PREFIX_WIDTH = 5; // `  └  ` or `     `
+const PREFIX_WIDTH = 5;
 const LABEL_WIDTH = 8;
 
 export interface ExitWorktreeDisplayResult {
@@ -97,8 +97,6 @@ export function ExitWorktreeResultRenderer({
     return null;
   }
 
-  // Only surface the CWD row when the switch succeeded. A failed switch is the
-  // one case worth spelling out, because the session is somewhere unexpected.
   const cwdValue =
     parsed.switchedCwd === false
       ? "⚠ not switched"

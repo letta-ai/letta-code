@@ -53,12 +53,6 @@ const defaultWarmupDeps: ListenerWarmupDeps = {
 
 let warmupDeps: ListenerWarmupDeps = defaultWarmupDeps;
 
-/**
- * Hydrate listener-side state needed for the next turn.
- *
- * The warmup is intentionally best-effort: failures are logged and do not
- * block the user turn, mirroring the existing preflight behavior.
- */
 export async function ensureListenerWarmStateForTurn(
   listener: ListenerRuntime,
   scope: ListenerWarmupScope,
@@ -90,8 +84,6 @@ export async function ensureListenerWarmStateForTurn(
   }
 
   try {
-    // Start primary memory in parallel. The mod loader below owns the only
-    // startup dependency; attached repositories must not be part of that wait.
     void warmupDeps.ensureMemfsSyncedForAgent(listener, agentId);
     await Promise.all([
       warmupDeps.ensureSecretsHydratedForAgent(listener, agentId),
@@ -120,9 +112,6 @@ export async function ensureListenerWarmStateForTurn(
   return agentMetadataPromise;
 }
 
-/**
- * Start background warmups after sync without delaying the sync response.
- */
 export function scheduleListenerWarmupsAfterSync(
   listener: ListenerRuntime,
   scope: Partial<ListenerWarmupScope> & {

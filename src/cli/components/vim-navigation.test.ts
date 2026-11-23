@@ -8,10 +8,6 @@ function readComponent(name: string): string {
 }
 
 describe("vim-style j/k navigation in list selectors", () => {
-  // Pure-list pickers (no inline text field), so binding bare j/k as
-  // down/up aliases cannot clash with typing. Filter-based selectors
-  // (AgentSelector, ProviderSelector, ...) deliberately avoid bare
-  // letter shortcuts and are intentionally excluded here.
   const pickers = [
     "SingleSelectPicker.tsx",
     "MultiSelectPicker.tsx",

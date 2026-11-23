@@ -59,7 +59,6 @@ async function createListenerClient(
   });
 }
 
-/** Cancel only this input: a queued child must not interrupt the turn ahead of it. */
 export async function cancelListenerInput(params: {
   client: AppServerClient;
   scope: ConversationRuntimeScope;
@@ -101,7 +100,6 @@ export async function cancelListenerInput(params: {
   return response.aborted;
 }
 
-/** Reconnect only for explicit cancellation, never to observe task progress. */
 export async function cancelAcceptedListenerInput(
   receipt: EnqueueReceipt,
 ): Promise<boolean> {
@@ -147,7 +145,6 @@ export async function cancelAcceptedListenerInput(
   }
 }
 
-/** Stop the owning harness, rather than only the CLI waiting for its receipt. */
 export async function stopAcceptedListenerConversation(
   receipt: EnqueueReceipt,
 ): Promise<void> {
@@ -168,7 +165,6 @@ export async function stopAcceptedListenerConversation(
       AbortSignal.timeout(10_000),
     );
   } catch (error) {
-    // An accepted turn can already have left the queue; still stop its owner.
     if (!(error instanceof ApiRequestError && error.status === 404))
       throw error;
   }
@@ -205,14 +201,12 @@ export async function stopAcceptedListenerConversation(
   }
 }
 
-/** The CLI remains the caller; the existing listener owns model and tool execution. */
 export async function launchListenerConversation(
   params: {
     connectionId: string;
     scope: ConversationRuntimeScope;
     parentAgentId?: string;
     content: MessageCreate["content"];
-    /** Initial assignment identity, not a control-command request_id. */
     clientMessageId?: string;
     backend: Pick<Backend, "retrieveRun">;
     settings: RuntimeExecutionSettings;
@@ -221,11 +215,6 @@ export async function launchListenerConversation(
     skillSources?: RuntimeStartCommand["skill_sources"];
     onMessage?: (message: MessageDelta) => void;
     signal?: AbortSignal;
-    /**
-     * Return the enqueue receipt as soon as Cloud accepts the send instead of
-     * waiting for the remote turn. The caller tracks completion through the
-     * Cloud super-run status APIs; nothing in this process keeps waiting.
-     */
     noWait?: boolean;
   },
   deps: {
@@ -362,8 +351,6 @@ export async function launchListenerConversation(
       },
       AbortSignal.timeout(30_000),
     );
-    // Tracked callers follow this receipt until the Super Run completes. The
-    // child's first end_turn may only be waiting for its own background work.
     if (params.noWait)
       return {
         status: "queued",
@@ -401,8 +388,6 @@ export async function launchListenerConversation(
           throw new Error(
             "Could not confirm listener cancellation; execution may still be running",
           );
-        // Cancellation has its own deadline and requests. Never feed it the
-        // already-aborted signal used to interrupt status/result reads.
         await delay(deps.pollMs ?? 1000);
         continue;
       }

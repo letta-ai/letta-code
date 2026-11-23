@@ -35,7 +35,7 @@ export interface CompileLocalSystemPromptOptions {
   memoryDir?: string;
   includeMemfs?: boolean;
   now?: Date;
-  previousMessageCount?: number;
+  previousMessageCount?: number | (() => number);
 }
 
 function hashString(value: string): string {
@@ -129,10 +129,7 @@ function collectCommittedMemoryFiles(memoryDir: string): {
             ? frontmatter.description.trim()
             : "",
       });
-    } catch {
-      // Skip unreadable committed files. MemFS tooling surfaces validation
-      // issues at write/commit time; prompt compilation should stay best-effort.
-    }
+    } catch {}
   }
 
   return {
@@ -446,7 +443,10 @@ export function compileLocalSystemPrompt(
           agentId: options.agent.id,
           conversationId: options.conversationId,
           compiledAt,
-          previousMessageCount: options.previousMessageCount ?? 0,
+          previousMessageCount:
+            typeof options.previousMessageCount === "function"
+              ? options.previousMessageCount()
+              : (options.previousMessageCount ?? 0),
         });
   const coreMemory = [memfs.content, metadata]
     .filter((part) => part.trim().length > 0)

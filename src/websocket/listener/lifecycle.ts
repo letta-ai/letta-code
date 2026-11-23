@@ -255,7 +255,6 @@ export async function startConnectedListenerRuntime(
   if (!startupConnection || startupConnection.writer !== transport) return;
   sealStartupLogs();
   installExternalToolBridge(runtime);
-  // Avoid recurring lease-held messages when another process owns cron.
   const shouldStartCronScheduler =
     options.startCronScheduler !== false &&
     process.env.LETTA_DISABLE_CRON_SCHEDULER !== "1";
@@ -302,7 +301,6 @@ export async function startConnectedListenerRuntime(
       ))
     )
       return;
-    // Establish durable authority before startup ingress can teleport work.
     if (options.startProcessServices !== false) {
       runtime.scheduleRecordedRecovery = () =>
         scheduleRecordedTurnRecovery(runtime, options.recoverRecordedWork);
@@ -379,14 +377,6 @@ export async function startConnectedListenerRuntime(
     }
   }
 }
-
-/**
- * Attach an already-open, locally accepted websocket to a listener runtime.
- *
- * Unlike the cloud listener client path, this helper does not reconnect on
- * close. It is intended for local app-server transports where the HTTP server
- * keeps running and the next client connection creates a fresh runtime.
- */
 
 export async function attachOpenListenerSocket(
   runtime: ListenerRuntime,
@@ -555,7 +545,6 @@ export async function attachOpenListenerSocket(
   );
 }
 
-/** Start the listener WebSocket client with automatic retry. */
 export async function startListenerClient(
   opts: StartListenerOptions,
 ): Promise<void> {
@@ -594,10 +583,6 @@ export interface StartLocalChannelListenerOptions {
   onLog?: StartListenerOptions["onLog"];
   onWsEvent?: StartListenerOptions["onWsEvent"];
 }
-/**
- * Start a listener runtime for local channel adapters without environment
- * registration or a remote WebSocket server.
- */
 export async function startLocalChannelListener(
   opts: StartLocalChannelListenerOptions,
 ): Promise<void> {
@@ -660,7 +645,6 @@ async function connectWithRetry(
   const elapsedTime = Date.now() - startTime;
   if (attempt > 0) {
     if (elapsedTime >= MAX_RETRY_DURATION_MS) {
-      // Established sessions re-register after the retry window expires.
       if (runtime.everConnected && opts.onNeedsReregister) {
         rejectPendingExternalToolCallsForConnection(
           runtime,
@@ -705,7 +689,6 @@ async function connectWithRetry(
     return;
   }
   const apiKey = auth.apiKey;
-  // Best effort, cached, never awaited: lets agent shells see LETTA_ORGANIZATION_ID.
   void warmOrganizationId();
 
   const url = new URL(opts.wsUrl);
@@ -738,7 +721,6 @@ async function connectWithRetry(
   runtime.streamSocket = streamSocket;
   const transport = socket;
   const processQueuedTurn = createConnectionTurnProcessor(runtime);
-  // Reserve the lineage before accepting frames.
   const startupOwner = reserveStartupIngressOwner(runtime, opts);
   const handleMessage = createListenerMessageHandler({
     runtime,
@@ -885,7 +867,6 @@ async function connectWithRetry(
     });
     fileCommandSession.dispose();
     const reasonText = reason.toString();
-    // Fencing 1008s can supersede us without a prior replacement close.
     const terminalClose =
       runtime.intentionallyClosed ||
       (code === 1008 &&
@@ -931,7 +912,6 @@ async function connectWithRetry(
     runtime.streamSocket = null;
     runtime.streamTransport = null;
     if (code === 1008 && !terminalClose && opts.onNeedsReregister) {
-      // Cloud external responses are routed to the old connection generation server-side.
       rejectPendingExternalToolCallsForConnection(
         runtime,
         opts.connectionId,
@@ -949,7 +929,6 @@ async function connectWithRetry(
       else opts.onDisconnected();
       return;
     }
-    // If we had connected before, restart backoff from zero for this outage window.
     const nextAttempt = runtime.hasSuccessfulConnection ? 0 : attempt + 1;
     const nextStartTime = runtime.hasSuccessfulConnection
       ? Date.now()
@@ -973,17 +952,14 @@ async function connectWithRetry(
     if (isDebugEnabled()) {
       console.error("[Listen] WebSocket error:", error);
     }
-    // Error triggers close(), which handles retry logic.
   });
 }
 
-/** Check if listener is currently active. */
 export function isListenerActive(): boolean {
   const runtime = getActiveRuntime();
   return runtime !== null && runtime.transport !== null;
 }
 
-/** Stop the active listener connection. */
 export function stopListenerClient(): void {
   const runtime = getActiveRuntime();
   if (!runtime) {

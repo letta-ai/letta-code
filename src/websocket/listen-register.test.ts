@@ -81,7 +81,6 @@ describe("registerWithCloud", () => {
         supportsComputerLinkCredentialBootstrap: true,
       },
     });
-    // Not provided → omitted so legacy servers see an unchanged payload
     expect(body).not.toHaveProperty("listenerInstanceId");
   });
 

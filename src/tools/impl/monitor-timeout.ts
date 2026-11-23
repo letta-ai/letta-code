@@ -5,12 +5,6 @@ const DAY_MS = 24 * HOUR_MS;
 const DEFAULT_MAX_TIMEOUT_MS = HOUR_MS;
 const SEVEN_DAYS_MS = 7 * DAY_MS;
 
-/**
- * Per-sandbox cap from LETTA_MONITOR_MAX_TIMEOUT_SECONDS, with a one-hour
- * default and a seven-day ceiling. Returned in milliseconds for timers.
- * Launchers that still set only the earlier LETTA_MONITOR_MAX_TIMEOUT_MS keep
- * their cap.
- */
 export function getMonitorMaxTimeoutMs(): number {
   const seconds = process.env.LETTA_MONITOR_MAX_TIMEOUT_SECONDS;
   const value = seconds || process.env.LETTA_MONITOR_MAX_TIMEOUT_MS;
@@ -22,7 +16,6 @@ export function getMonitorMaxTimeoutMs(): number {
   return Math.min(SEVEN_DAYS_MS, Math.max(DEFAULT_MAX_TIMEOUT_MS, parsed));
 }
 
-/** Human-readable cap, such as "1 hour", "24 hours", or "7 days". */
 export function formatMonitorMaxTimeout(
   timeoutMs: number = getMonitorMaxTimeoutMs(),
 ): string {
@@ -34,10 +27,6 @@ export function formatMonitorMaxTimeout(
   return `${value} ${unit}${value === 1 ? "" : "s"}`;
 }
 
-/**
- * Renders the configured cap into Monitor and WatchPR descriptions so the
- * model sees this sandbox's limit instead of the one-hour default.
- */
 export function applyMonitorMaxTimeout(
   text: string,
   timeoutMs: number = getMonitorMaxTimeoutMs(),
@@ -53,6 +42,6 @@ export function getMonitorTimeoutEvent(
   tool = "Monitor",
 ): string {
   return isManagedCloudRuntime() && timeoutMs === getMonitorMaxTimeoutMs()
-    ? `${tool} stopped at the ${timeoutMs / 3_600_000}-hour Cloud sandbox limit. If you still need to watch, simply re-arm it by calling ${tool} again. For much longer waits, schedule a Wake or cron, which does not keep the sandbox running between turns.`
+    ? `${tool} stopped at the ${timeoutMs / 3_600_000}-hour Cloud sandbox limit. If you still need to watch, re-arm it by calling ${tool} again.`
     : "[Monitor timed out — re-arm if needed.]";
 }

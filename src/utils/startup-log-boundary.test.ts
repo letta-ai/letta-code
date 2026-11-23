@@ -99,7 +99,6 @@ for (const runtime of ["bun", "node"]) {
       if (owner !== undefined && owner !== "self") {
         env.LETTA_STARTUP_LOG_OWNER_PID = owner;
       }
-      // Both descriptors point at the SAME pipe, as in a Cloud launch.
       const result = spawnSync(
         "sh",
         [

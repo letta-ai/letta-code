@@ -21,12 +21,6 @@ export {
 import { getConversationPermissionModeState } from "./permission-mode";
 import type { ConversationRuntime } from "./types";
 
-/**
- * Run a mod command in the listener and return its result. Builds a
- * ModCommandContext that mirrors the TUI command path (createModConversationHandle
- * with the shared sendMessageStreamWithBackend so fork/send/updateLlmConfig work
- * across local and Letta Cloud backends).
- */
 export async function runListenerModCommand(
   conversationRuntime: ConversationRuntime,
   modCommand: ModCommand,

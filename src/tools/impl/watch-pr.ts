@@ -9,6 +9,7 @@ import {
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { updateMonitorState } from "@/backend/api/monitors";
+import { experimentManager } from "@/experiments/manager";
 import { isManagedCloudRuntime } from "@/managed-cloud-runtime";
 import {
   getCurrentWorkingDirectory,
@@ -65,13 +66,14 @@ import {
   notifyBackgroundProcessStateChanged,
   unrefTimer,
 } from "./process_manager";
+import { startCloudPullRequestWatch } from "./watch-pr-cloud";
 
 const WATCH_POLL_MS = 30_000;
 const WATCH_MAX_POLL_MS = 5 * 60_000;
-const WATCH_REFRESH_ERROR_NOTIFY_AFTER_MS = 5 * 60_000;
 const WATCH_FRESH_SNAPSHOT_NOTIFY_AFTER_MS = 30 * 60_000;
 
 interface WatchPullRequestArgs {
+  toolCallId?: string;
   resume?: string;
   url?: string;
   notify_on?: PullRequestEventKind[];
@@ -116,7 +118,6 @@ async function defaultWait(
   await delay(milliseconds, undefined, { signal });
 }
 
-// Cache failures must never prevent a watch from starting or polling.
 function saveSnapshot(
   path: string | undefined,
   snapshot: GitHubPullRequestSnapshot,
@@ -129,7 +130,6 @@ function saveSnapshot(
       return;
     }
     mkdirSync(dirname(path), { recursive: true });
-    // Previous discussion bodies and authors are not needed by the diff.
     const compact = {
       ...snapshot,
       ref: undefined,
@@ -164,13 +164,10 @@ function saveSnapshot(
     );
     renameSync(temporary, path);
   } catch {
-    // Best effort: GitHub remains the source of truth.
   } finally {
     try {
       rmSync(temporary, { force: true });
-    } catch {
-      /* Best effort cleanup. */
-    }
+    } catch {}
   }
 }
 
@@ -190,7 +187,6 @@ function resumedChanges(
       notifyOn,
     ).events;
     if (!changes.length) return "";
-    // Use the same line and notification limits as live monitor events.
     let text = changes
       .map((line) =>
         line.length > MONITOR_EVENT_LINE_CHARS
@@ -210,6 +206,8 @@ export async function watch_pr(
   args: WatchPullRequestArgs,
   deps: WatchPullRequestDeps = {},
 ): Promise<WatchPullRequestResult> {
+  const cloud = await startCloudPullRequestWatch(args);
+  if (cloud) return cloud;
   const resumeRecord = args.resume
     ? await readResumableMonitor(args.resume, args.parentScope)
     : undefined;
@@ -239,7 +237,11 @@ export async function watch_pr(
     deps.fetchSnapshot ??
     (isRun
       ? createGitHubWorkflowRunFetcher()
-      : createGitHubPullRequestSnapshotFetcher());
+      : createGitHubPullRequestSnapshotFetcher({
+          allowInaccessibleFallback:
+            experimentManager.isEnabled("cloud_watch_pr") &&
+            isManagedCloudRuntime(),
+        }));
   const runtimeContext = getRuntimeContext();
   const parentScope =
     args.parentScope ??
@@ -271,9 +273,7 @@ export async function watch_pr(
               .digest("hex")}.json`,
           )
         : undefined;
-  } catch {
-    // Invalid config paths disable persistence, not the watch.
-  }
+  } catch {}
   const initial = await fetchSnapshot(ref, { cwd, signal: args.signal });
   args.signal?.throwIfAborted();
   const changesSincePreviousWatch = resumedChanges(
@@ -427,8 +427,6 @@ export async function watch_pr(
         let freshnessNoticeSent = false;
         let nextPollMs = WATCH_POLL_MS;
         let failedPolls = 0;
-        let failureStartedAt: number | undefined;
-        let lastNotifiedError: string | undefined;
         while (processState.status === "running") {
           try {
             await wait(controller.signal, nextPollMs);
@@ -444,14 +442,7 @@ export async function watch_pr(
               freshnessNoticeSent = false;
             }
             nextPollMs = WATCH_POLL_MS;
-            if (lastNotifiedError !== undefined) {
-              emit([
-                `WatchPR recovered after ${failedPolls} failed poll${failedPolls === 1 ? "" : "s"}.`,
-              ]);
-            }
             failedPolls = 0;
-            failureStartedAt = undefined;
-            lastNotifiedError = undefined;
             const sameHead = current.headSha === previous.headSha;
             const stableCurrent = { ...current, readinessConfirmed: false };
             stableCurrent.readinessConfirmed = Boolean(
@@ -516,22 +507,12 @@ export async function watch_pr(
             }
             failedPolls += 1;
             nextPollMs = pollDelayMs(failedPolls);
-            failureStartedAt ??= now();
             const message = errorText(error);
             if (!output.append(`[poll error ${failedPolls}] ${message}\n`)) {
               processState.completionNotificationSuppressed = true;
               markMonitorFinished(taskId, processState, "failed", null);
               controller.abort();
               return;
-            }
-            if (
-              now() - failureStartedAt >= WATCH_REFRESH_ERROR_NOTIFY_AFTER_MS &&
-              message !== lastNotifiedError
-            ) {
-              emit([
-                `WatchPR could not refresh ${ref.url}: ${message}. Retrying.`,
-              ]);
-              lastNotifiedError = message;
             }
           }
         }

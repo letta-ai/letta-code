@@ -15,8 +15,7 @@ import type {
   ProviderTurnInput,
 } from "@/backend/dev/provider-turn-executor";
 import { ProviderTurnExecutor } from "@/backend/dev/provider-turn-executor";
-import type { LocalCompactionStats } from "./compaction";
-import type { LocalMessage } from "./local-message";
+import type { LocalCompactionStats, LocalMessage } from "./local-message";
 
 export type LocalBackendExecutionMode =
   | "pi"

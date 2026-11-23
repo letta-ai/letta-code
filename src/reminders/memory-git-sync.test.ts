@@ -242,7 +242,6 @@ const conflict: MemoryPostTurnSyncResult = {
   summary: "merge in progress",
   localOnly: true,
 };
-/** A spawn stub that records the launched task's arguments. */
 function spawnInto(jobs: SpawnBackgroundSubagentTaskArgs[]) {
   return (args: SpawnBackgroundSubagentTaskArgs) => {
     jobs.push(args);
@@ -410,12 +409,10 @@ test("host diagnostics report a conflict only once repair has run on it", async 
   expect(jobs).toHaveLength(1);
   expect(reminders).toHaveLength(1);
   expect(reminders[0]).toContain("MEMORY REPAIR RUNNING");
-  // The worker is still running, so diagnostics only show the checkout guard.
   await run();
   expect(jobs).toHaveLength(1);
   expect(reminders).toHaveLength(2);
   expect(reminders[1]).toContain("MEMORY REPAIR RUNNING");
-  // The worker ran and could not resolve it: report without assigning repair.
   await run();
   expect(jobs).toHaveLength(1);
   expect(reminders).toHaveLength(3);

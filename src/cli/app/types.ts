@@ -31,13 +31,13 @@ export type AppLoadingState =
 export type AppProps = {
   agentId: string;
   agentState?: AgentState | null;
-  conversationId: string; // Required: created at startup
+  conversationId: string;
   loadingState?: AppLoadingState;
   continueSession?: boolean;
-  startupApproval?: ApprovalRequest | null; // Deprecated: use startupApprovals
+  startupApproval?: ApprovalRequest | null;
   startupApprovals?: ApprovalRequest[];
   messageHistory?: Message[];
-  resumedExistingConversation?: boolean; // True if we explicitly resumed via --resume
+  resumedExistingConversation?: boolean;
   startupConversationTitleEligible?: boolean;
   tokenStreaming?: boolean;
   reasoningTabCycleEnabled?: boolean;
@@ -46,8 +46,8 @@ export type AppProps = {
   startupHasCloudCredentials?: boolean;
   startupHasAvailableLocalModels?: boolean;
   fileAutocompleteFdPath?: string | null;
-  releaseNotes?: string | null; // Markdown release notes to display above header
-  updateNotification?: string | null; // Latest version when a significant auto-update was applied
+  releaseNotes?: string | null;
+  updateNotification?: string | null;
   systemInfoReminderEnabled?: boolean;
   modsDisabled?: boolean;
 };
@@ -199,7 +199,6 @@ export type OverlayCommandConsumer = (
 
 export type { ApprovalDecision };
 
-// Items that have finished rendering and no longer change
 export type StaticItem =
   | {
       kind: "welcome";
@@ -226,15 +225,11 @@ export type StaticItem =
       }>;
     }
   | {
-      // Preview content committed early during approval to enable flicker-free UI
-      // When an approval's content is tall enough to overflow the viewport,
-      // we commit the preview to static and only show small approval options in dynamic
       kind: "approval_preview";
       id: string;
       toolCallId: string;
       toolName: string;
       toolArgs: string;
-      // Optional precomputed/cached data for rendering
       precomputedDiff?: AdvancedDiffSuccess;
     }
   | Line;

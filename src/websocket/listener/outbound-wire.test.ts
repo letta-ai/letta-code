@@ -9,7 +9,6 @@ import {
 } from "@/websocket/listener/outbound-wire";
 import type { ListenerTransport } from "@/websocket/listener/transport";
 
-/** Local-kind fake: settable buffer, records sends. */
 function makeLocalTransport(options?: { bufferedAmount?: number }) {
   const sent: string[] = [];
   const transport = {
@@ -23,7 +22,6 @@ function makeLocalTransport(options?: { bufferedAmount?: number }) {
   return { transport: transport as ListenerTransport, sent, raw: transport };
 }
 
-/** WebSocket-kind fake (no `kind` field): supports terminate for kill tests. */
 function makeWsTransport(options?: {
   bufferedAmount?: number;
   bufferedAmountAfterSend?: number;
@@ -181,7 +179,6 @@ describe("outbound wire queue", () => {
     await new Promise((resolve) =>
       setTimeout(resolve, OUTBOUND_QUEUE_LIMITS.DRAIN_POLL_MS + 20),
     );
-    // The new snapshot stays after the critical delta that preceded it.
     expect(sent).toEqual(["delta:1", "loop:v2", "device:v1"]);
   });
 

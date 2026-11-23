@@ -1,13 +1,11 @@
 import { isRetryableCloudReadinessError } from "./cloud-readiness-retry";
 
-/** A timeout from this fixture's own per-request signal, with its HTTP step. */
 export class CloudRequestTimeoutError extends Error {
   constructor(step: string, cause: unknown) {
     super(`${step}: per-request timeout`, { cause });
   }
 }
 
-/** Read-only readiness probes share one deadline, including requests and waits. */
 export async function pollCloudReadiness<T>(
   label: string,
   probe: (remainingMs: number) => Promise<T | undefined>,
