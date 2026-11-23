@@ -76,6 +76,7 @@ beforeEach(() => {
   telemetryState.events = [];
   telemetry.drain = mock(async () => {});
   delete process.env.DO_NOT_TRACK;
+  process.env.LETTA_CODE_TELEM = "1";
   tempDir = mkdtempSync(join(tmpdir(), "reflection-completion-"));
   memoryDir = join(tempDir, "agent", "memory");
   git(tempDir, ["init", "-b", "main", memoryDir]);
@@ -411,6 +412,59 @@ describe("reflection worktree completion messaging", () => {
       commit_count: 0,
     });
   });
+
+  test.each([
+    [
+      "Letta",
+      "Subagent process exited with code 71\nsandbox-exec: execvp() of 'letta' failed: No such file or directory",
+    ],
+    [
+      "Node",
+      "Subagent process exited with code 127\nenv: node: No such file or directory",
+    ],
+  ])(
+    "missing %s keeps reflection retryable with runtime guidance",
+    async (executable, subagentError) => {
+      const worktree = await createReflectionMemoryWorktree({
+        parentMemoryDir: memoryDir,
+      });
+      const result = await finalizeLaunch(worktree, false, { subagentError });
+
+      expect(result.integration.status).toBe("failed");
+      expect(result.completionSuccess).toBe(false);
+      expect(result.completionMessage).toBe(
+        `Reflection failed: ${executable} executable was not found. Reinstall or update Letta/Node, or fix the local runtime PATH before running /reflect. Will retry later.`,
+      );
+      expect(isAutomaticReflectionSuppressed("agent-test")).toBe(false);
+      expect(existsSync(worktree.worktreeDir)).toBe(false);
+      expect(telemetryState.events[0]?.data).toMatchObject({
+        outcome: "subagent_failed",
+        integration_status: "failed",
+        commit_count: 0,
+      });
+    },
+  );
+
+  test.each([
+    "Subagent process exited with code 71",
+    "Subagent process exited with code 127",
+    "env: python: No such file or directory",
+    "sandbox-exec: execvp() of 'letta' failed: Permission denied",
+  ])(
+    "unrelated process failure retains generic retry: %s",
+    async (subagentError) => {
+      const worktree = await createReflectionMemoryWorktree({
+        parentMemoryDir: memoryDir,
+      });
+      const result = await finalizeLaunch(worktree, false, { subagentError });
+
+      expect(result.completionSuccess).toBe(false);
+      expect(result.completionMessage).toBe(
+        "Tried to reflect, but memory updates were not completed cleanly; will retry later.",
+      );
+      expect(isAutomaticReflectionSuppressed("agent-test")).toBe(false);
+    },
+  );
 
   test("failed reflection surfaces a model configuration error", async () => {
     const worktree = await createReflectionMemoryWorktree({
