@@ -126,6 +126,35 @@ describe("composeSubagentChildEnv", () => {
     );
   });
 
+  test("providers-only profile keeps passive turn events but no acting capabilities", () => {
+    // The child process resolves its capabilities from this env var
+    // (resolveProcessModCapabilities), so the profile constant must keep
+    // events.turns enabled for timestamp-style observation mods.
+    const originalProcessValue = process.env[LETTA_MOD_CAPABILITY_PROFILE_ENV];
+    process.env[LETTA_MOD_CAPABILITY_PROFILE_ENV] =
+      PROVIDERS_ONLY_MOD_CAPABILITY_PROFILE;
+    try {
+      // Import lazily so the env var set above is what resolveProcess sees.
+      const { resolveProcessModCapabilities, DEFAULT_MOD_CAPABILITIES } =
+        require("@/mods/capabilities") as typeof import("@/mods/capabilities");
+      const resolved = resolveProcessModCapabilities(DEFAULT_MOD_CAPABILITIES);
+
+      expect(resolved.providers).toBe(true);
+      expect(resolved.events.turns).toBe(true);
+      expect(resolved.tools).toBe(false);
+      expect(resolved.commands).toBe(false);
+      expect(resolved.permissions).toBe(false);
+      expect(resolved.events.tools).toBe(false);
+      expect(resolved.events.lifecycle).toBe(false);
+    } finally {
+      if (originalProcessValue === undefined) {
+        delete process.env[LETTA_MOD_CAPABILITY_PROFILE_ENV];
+      } else {
+        process.env[LETTA_MOD_CAPABILITY_PROFILE_ENV] = originalProcessValue;
+      }
+    }
+  });
+
   test("non-reflection subagents do not restrict mods by default", () => {
     const env = composeSubagentChildEnv({
       parentProcessEnv: { HOME: "/home/user" },
