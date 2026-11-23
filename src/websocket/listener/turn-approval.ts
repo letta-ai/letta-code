@@ -340,20 +340,31 @@ export async function handleApprovalStop(params: {
   );
   let lastExecutionResults: ApprovalResult[] | null = null;
   let lastExecutingToolCallIds: string[] = [];
-  const isDeliveryReady = (): boolean => {
-    const listener = runtime.listener;
-    const scopedSubscribers = getSubscribedListenerConnections(listener, {
+  const getSubscribedDeliveryOwnerId = (): string | null => {
+    const subscribers = getSubscribedListenerConnections(runtime.listener, {
       agent_id: runtime.agentId,
       conversation_id: runtime.conversationId,
-    });
-    const deliveryOwnerId = runtime.activeConnectionId ?? originConnectionId;
-    if (deliveryOwnerId) {
-      return scopedSubscribers.some(
-        (connection) => connection.id === deliveryOwnerId,
-      );
+    }).filter(
+      (connection) =>
+        !getOutboundQueueStats(connection.streamWriter ?? connection.writer)
+          .killed,
+    );
+    const preferred = runtime.activeConnectionId ?? originConnectionId;
+    if (preferred && subscribers.some(({ id }) => id === preferred)) {
+      return preferred;
     }
-    return scopedSubscribers.length > 0 || isListenerTransportOpen(socket);
+    if (originConnectionCanResume && preferred) return null;
+    const replacementId = subscribers[0]?.id ?? null;
+    if (replacementId && !originConnectionCanResume) {
+      runtime.activeConnectionId = replacementId;
+    }
+    return replacementId;
   };
+  const isDeliveryReady = (): boolean =>
+    getSubscribedDeliveryOwnerId() !== null ||
+    (!runtime.activeConnectionId &&
+      !originConnectionId &&
+      isListenerTransportOpen(socket));
   const getDeliveryOwnerId = (): string | null => {
     const listener = runtime.listener;
     if (
@@ -380,24 +391,7 @@ export async function handleApprovalStop(params: {
         return originConnectionId;
       }
     }
-    const scopedSubscribers = getSubscribedListenerConnections(listener, {
-      agent_id: runtime.agentId,
-      conversation_id: runtime.conversationId,
-    }).filter(
-      (connection) =>
-        !getOutboundQueueStats(connection.streamWriter ?? connection.writer)
-          .killed,
-    );
-    const preferred = runtime.activeConnectionId ?? originConnectionId;
-    if (preferred && scopedSubscribers.some(({ id }) => id === preferred)) {
-      return preferred;
-    }
-    if (originConnectionCanResume && originConnectionId) return null;
-    const replacementId = scopedSubscribers[0]?.id ?? null;
-    if (replacementId && originConnectionCanResume === false) {
-      runtime.activeConnectionId = replacementId;
-    }
-    return replacementId;
+    return getSubscribedDeliveryOwnerId();
   };
   const awaitTerminalDeliveries = async (
     deliveries: OutboundMessageDelivery[],

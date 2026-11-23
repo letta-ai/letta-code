@@ -30,6 +30,7 @@ import { publishChannelRuntimeToolsForTurn } from "./channel-runtime-tools";
 import { resolveTurnExecutionConnectionId } from "./connection";
 import {
   captureNotificationWait,
+  getConnectionToolRegistration,
   recordRuntimeSubmittingConnection,
   resolveRuntimeToolOwner,
 } from "./external-tools";
@@ -109,6 +110,23 @@ export async function prepareListenerTurn(params: {
   const isInterrupted = () =>
     turnLease.signal.aborted || !runtime.turnLifecycle.isCurrent(turnLease);
 
+  const toolRuntimeScope = {
+    agent_id: agentId,
+    conversation_id: conversationId,
+  };
+  const submitter = connectionId
+    ? runtime.listener.connections.get(connectionId)
+    : undefined;
+  // Disconnect removes the submitter's own registration during warmup.
+  // Other registrations are resolved after the gateway publishes its tools.
+  const submitterRegistration =
+    submitter?.options.connectionIdCanResume === false
+      ? getConnectionToolRegistration(
+          runtime.listener,
+          toolRuntimeScope,
+          submitter.id,
+        )
+      : undefined;
   let listenAgentMetadata = await ensureListenerWarmStateForTurn(
     runtime.listener,
     { agentId, conversationId },
@@ -334,20 +352,18 @@ export async function prepareListenerTurn(params: {
   }
   const executionConnectionId = resolveTurnExecutionConnectionId(
     runtime.listener,
-    { agent_id: agentId, conversation_id: conversationId },
+    toolRuntimeScope,
     connectionId,
   );
-  const listenerOptions = executionConnectionId
-    ? runtime.listener.connections.get(executionConnectionId)?.options
-    : runtime.listener.connections.values().next().value?.options;
+  const listenerOptions =
+    submitter?.options ??
+    (executionConnectionId
+      ? runtime.listener.connections.get(executionConnectionId)?.options
+      : runtime.listener.connections.values().next().value?.options);
   const environmentDeviceId = listenerOptions?.deviceId;
   if (msg.clientPreferences !== undefined)
     replaceClientPreferences(agentId, conversationId, msg.clientPreferences);
-  const toolRuntimeScope = {
-    agent_id: agentId,
-    conversation_id: conversationId,
-  };
-  if (connectionId) {
+  if (connectionId && !submitter?.cancellation.signal.aborted) {
     recordRuntimeSubmittingConnection(
       runtime.listener,
       toolRuntimeScope,
@@ -356,11 +372,14 @@ export async function prepareListenerTurn(params: {
   }
   // Connection-level tools and policy apply to every turn on the runtime;
   // this input's own fields override them for this turn only.
-  const toolOwner = resolveRuntimeToolOwner(
-    runtime.listener,
-    toolRuntimeScope,
-    connectionId,
-  );
+  const toolOwner =
+    submitterRegistration && submitter?.cancellation.signal.aborted
+      ? submitterRegistration
+      : resolveRuntimeToolOwner(
+          runtime.listener,
+          toolRuntimeScope,
+          connectionId,
+        );
   const toolSelection = resolveTurnToolSelection(
     {
       clientToolset: msg.clientToolset,
