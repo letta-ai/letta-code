@@ -109,6 +109,23 @@ export async function prepareListenerTurn(params: {
   const isInterrupted = () =>
     turnLease.signal.aborted || !runtime.turnLifecycle.isCurrent(turnLease);
 
+  const toolRuntimeScope = {
+    agent_id: agentId,
+    conversation_id: conversationId,
+  };
+  const submitter = connectionId
+    ? runtime.listener.connections.get(connectionId)
+    : undefined;
+  // Disconnect removes the client's registration while warmup is in flight.
+  // Keep its tool restrictions for the accepted turn.
+  const submittedToolOwner =
+    submitter?.options.connectionIdCanResume === false
+      ? resolveRuntimeToolOwner(
+          runtime.listener,
+          toolRuntimeScope,
+          submitter.id,
+        )
+      : undefined;
   let listenAgentMetadata = await ensureListenerWarmStateForTurn(
     runtime.listener,
     { agentId, conversationId },
@@ -334,20 +351,18 @@ export async function prepareListenerTurn(params: {
   }
   const executionConnectionId = resolveTurnExecutionConnectionId(
     runtime.listener,
-    { agent_id: agentId, conversation_id: conversationId },
+    toolRuntimeScope,
     connectionId,
   );
-  const listenerOptions = executionConnectionId
-    ? runtime.listener.connections.get(executionConnectionId)?.options
-    : runtime.listener.connections.values().next().value?.options;
+  const listenerOptions =
+    submitter?.options ??
+    (executionConnectionId
+      ? runtime.listener.connections.get(executionConnectionId)?.options
+      : runtime.listener.connections.values().next().value?.options);
   const environmentDeviceId = listenerOptions?.deviceId;
   if (msg.clientPreferences !== undefined)
     replaceClientPreferences(agentId, conversationId, msg.clientPreferences);
-  const toolRuntimeScope = {
-    agent_id: agentId,
-    conversation_id: conversationId,
-  };
-  if (connectionId) {
+  if (connectionId && !submitter?.cancellation.signal.aborted) {
     recordRuntimeSubmittingConnection(
       runtime.listener,
       toolRuntimeScope,
@@ -356,11 +371,14 @@ export async function prepareListenerTurn(params: {
   }
   // Connection-level tools and policy apply to every turn on the runtime;
   // this input's own fields override them for this turn only.
-  const toolOwner = resolveRuntimeToolOwner(
-    runtime.listener,
-    toolRuntimeScope,
-    connectionId,
-  );
+  const toolOwner =
+    submittedToolOwner?.toolPolicy && submitter?.cancellation.signal.aborted
+      ? submittedToolOwner
+      : resolveRuntimeToolOwner(
+          runtime.listener,
+          toolRuntimeScope,
+          connectionId,
+        );
   const toolSelection = resolveTurnToolSelection(
     {
       clientToolset: msg.clientToolset,

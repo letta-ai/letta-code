@@ -88,30 +88,24 @@ export function cleanupListenerConnection(
   for (const conversationRuntime of runtime.conversationRuntimes.values()) {
     if (conversationRuntime.activeConnectionId === connectionId) {
       const closingConnection = runtime.connections.get(connectionId);
-      const hasEligibleFailover = getSubscribedListenerConnections(runtime, {
+      const replacement = getSubscribedListenerConnections(runtime, {
         agent_id: conversationRuntime.agentId,
         conversation_id: conversationRuntime.conversationId,
-      }).some((connection) => connection.id !== connectionId);
+      }).find((connection) => connection.id !== connectionId);
+      const turn = conversationRuntime.turnLifecycle.snapshot();
       if (
-        hasEligibleFailover &&
-        closingConnection?.options.connectionIdCanResume === false
+        closingConnection?.options.connectionIdCanResume === false &&
+        (replacement ||
+          (turn.kind === "active" && turn.origin === "message") ||
+          conversationRuntime.pendingTerminalDeliveryCount > 0)
       ) {
-        conversationRuntime.activeConnectionId =
-          getSubscribedListenerConnections(runtime, {
-            agent_id: conversationRuntime.agentId,
-            conversation_id: conversationRuntime.conversationId,
-          }).find((connection) => connection.id !== connectionId)?.id ?? null;
-      } else if (!hasEligibleFailover) {
-        const awaitsRotatingTerminalHandoff =
-          closingConnection?.options.connectionIdCanResume === false &&
-          conversationRuntime.pendingTerminalDeliveryCount > 0;
-        if (awaitsRotatingTerminalHandoff) {
-          conversationRuntime.activeConnectionId = null;
-        } else {
-          conversationRuntime.turnLifecycle.requestCancellation({
-            cause: "transport",
-          });
-        }
+        // An App Server client can close immediately after input_accepted.
+        // Its message turn keeps running even when the delivery route is gone.
+        conversationRuntime.activeConnectionId = replacement?.id ?? null;
+      } else if (!replacement) {
+        conversationRuntime.turnLifecycle.requestCancellation({
+          cause: "transport",
+        });
       }
     }
     for (const [
