@@ -33,9 +33,6 @@ export function enqueueInboundUserMessage(
     return false;
   }
 
-  // A genuinely new user message releases anything parked by an earlier
-  // interrupt. Durable rehydration is observational: it must not alter pause
-  // state whether capacity admits or rejects the restored item.
   if (!options.preserveExisting) runtime.queueRuntime.resume();
   const enqueuedItem = runtime.queueRuntime.enqueue(
     {
@@ -48,7 +45,6 @@ export function enqueueInboundUserMessage(
       agentId: incoming.agentId,
       conversationId: incoming.conversationId || "default",
       ...(incoming.noCoalesce ? { noCoalesce: true } : {}),
-      // Forwarded by cloud-api for sender attribution in multi-user sandboxes.
       actingUserId,
     } as Parameters<typeof runtime.queueRuntime.enqueue>[0],
     options,

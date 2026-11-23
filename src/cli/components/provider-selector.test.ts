@@ -197,7 +197,6 @@ describe("ProviderSelector provider filtering", () => {
     expect(
       filterProviderConfigs(providers, "openrou").map((p) => p.id),
     ).toEqual(["openrouter", "openrouter-oauth"]);
-    // Keep the subscription filter aligned with pi-ai's OAuth providers.
     expect(
       filterProviderConfigs(providers, "subscription").map((p) => p.id),
     ).toEqual([

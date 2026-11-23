@@ -340,7 +340,6 @@ test.each([
   const processIncomingMessage = mock(async (_incoming: IncomingMessage) => {});
   openSource(listener, socket);
   setActiveRuntime(listener);
-  // The destination's runtime_start announced this continuation.
   expectInboundTeleport(runtime, "teleport-return");
   listener.pendingTeleports = new Map([
     [
@@ -502,9 +501,6 @@ test("fresh teleport accept is refresh-only with no recreate hatch; duplicate ca
     source: { device_id: "source-device", connection_name: "Source" },
   };
 
-  // Fresh accept: the disposition commit lands before the ack, so any
-  // live-owner predicate would be vacuously true — the fresh accept must
-  // carry no recreate hatch at all (refresh-only, never creates).
   admitTeleportContinueInput({ ...base, payload });
   expect(acknowledgements.at(-1)).toEqual({
     accepted: true,
@@ -514,8 +510,6 @@ test("fresh teleport accept is refresh-only with no recreate hatch; duplicate ca
     mayRecreateOwner: undefined,
   });
 
-  // Duplicate re-ack (the crash-recovery path): keeps the durable live-owner
-  // gate so a lost entry may be recreated only while the owner is live.
   admitTeleportContinueInput({ ...base, payload });
   const duplicate = acknowledgements.at(-1);
   expect(duplicate?.accepted).toBe(true);
@@ -630,21 +624,18 @@ test("teleport accepts re-assert but never create originator token entries (refr
     source: { device_id: "source-device", connection_name: "Source" },
   });
 
-  // Fresh accept: creates a turn but no token owner — refresh-only.
   admitTeleportContinueInput({ ...base, payload: payload() });
   expect(acknowledgements.at(-1)).toMatchObject({
     accepted: true,
     deliveryHandling: "refresh",
   });
 
-  // Duplicate re-ack of the same teleport id: also refresh-only.
   admitTeleportContinueInput({ ...base, payload: payload() });
   expect(acknowledgements.at(-1)).toMatchObject({
     accepted: true,
     deliveryHandling: "refresh",
   });
 
-  // No accepted teleport ack may request create semantics.
   expect(
     acknowledgements
       .filter((ack) => ack.accepted)

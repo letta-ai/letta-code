@@ -38,9 +38,6 @@ import { prepareListenerTurn } from "./turn-setup";
 import { finishListenerTurn } from "./turn-terminal";
 import { __listenerWarmupTestUtils } from "./warmup";
 
-// Task notifications, cron and mod continues reach a turn with no submitting
-// connection. Agent launches in that turn read the tool context's connectionId;
-// without it the child runs as a direct-API process no listener owns.
 test.each([false, undefined, true])(
   "presence %s: turn setup carries the listener connection and global mods into agent-free workers",
   async (presence) => {
@@ -149,7 +146,6 @@ test.each([false, undefined, true])(
             workingDirectory: directory.path,
             permissionModeState: { mode: DEFAULT_PERMISSION_MODE },
             turnLease: lease,
-            // No connectionId: this is how process-originated queued turns arrive.
           }),
       );
       expect(result.kind).toBe("ready");

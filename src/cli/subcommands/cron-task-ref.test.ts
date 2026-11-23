@@ -4,15 +4,6 @@ import path from "node:path";
 import { addTask } from "@/cron";
 import { resolveTaskName } from "./cron-task-ref";
 
-/**
- * Name resolution for `letta cron get`/`delete` (LET-10492).
- *
- * These tests exercise the local execution path, which
- * never touch the network. The cloud branch shares the same match/ambiguity
- * logic and is best-effort by design (failures fall through to the caller's
- * not-found error).
- */
-
 const TEST_DIR = path.join(import.meta.dir, "__cron_task_ref_test_tmp__");
 
 const origHome = process.env.LETTA_HOME;
@@ -96,7 +87,6 @@ describe("resolveTaskName (local store)", () => {
   test("does not match task ids as names", async () => {
     const id = addNamedTask("some-task");
 
-    // The resolver is name-only; ID addressing is the caller's first pass.
     const resolved = await resolveTaskName(id, {
       agentId: "agent-local-test",
     });

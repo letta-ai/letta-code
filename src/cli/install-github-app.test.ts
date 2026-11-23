@@ -13,10 +13,6 @@ import {
   buildProgressSteps,
 } from "@/cli/components/InstallGithubAppFlow";
 
-// ---------------------------------------------------------------------------
-// Helper utilities
-// ---------------------------------------------------------------------------
-
 describe("install-github-app helpers", () => {
   test("validateRepoSlug accepts owner/repo and rejects invalid forms", () => {
     expect(validateRepoSlug("letta-ai/letta-code")).toBe(true);
@@ -102,10 +98,6 @@ describe("install-github-app helpers", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Wizard progress steps
-// ---------------------------------------------------------------------------
-
 describe("buildProgressSteps", () => {
   test("includes all standard steps for current agent mode", () => {
     const steps = buildProgressSteps("current", null);
@@ -173,10 +165,6 @@ describe("buildProgressSteps", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Progress state machine
-// ---------------------------------------------------------------------------
-
 describe("buildProgress", () => {
   test("marks first step as active when status matches it", () => {
     const items = buildProgress(
@@ -187,7 +175,6 @@ describe("buildProgress", () => {
 
     expect(items[0]?.active).toBe(true);
     expect(items[0]?.done).toBe(false);
-    // All subsequent steps should be inactive and not done
     for (const item of items.slice(1)) {
       expect(item.active).toBe(false);
       expect(item.done).toBe(false);
@@ -199,15 +186,12 @@ describe("buildProgress", () => {
     const labels = items.map((i) => i.label);
     const workflowIdx = labels.indexOf("Creating workflow files");
 
-    // All steps before should be done
     for (let i = 0; i < workflowIdx; i++) {
       expect(items[i]?.done).toBe(true);
       expect(items[i]?.active).toBe(false);
     }
-    // Current step should be active
     expect(items[workflowIdx]?.active).toBe(true);
     expect(items[workflowIdx]?.done).toBe(false);
-    // Steps after should be neither done nor active
     for (let i = workflowIdx + 1; i < items.length; i++) {
       expect(items[i]?.done).toBe(false);
       expect(items[i]?.active).toBe(false);
@@ -256,10 +240,6 @@ describe("buildProgress", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Success screen / InstallGithubAppResult content
-// ---------------------------------------------------------------------------
-
 describe("success screen content", () => {
   const baseResult: InstallGithubAppResult = {
     repo: "letta-ai/letta-code",
@@ -290,7 +270,6 @@ describe("success screen content", () => {
   });
 
   test("secretAction is always 'set' after the API key fix", () => {
-    // After removing reuseExistingSecret, the secret is always set
     expect(baseResult.secretAction).toBe("set");
   });
 
@@ -311,7 +290,6 @@ describe("success screen content", () => {
     expect(unchanged.branchName).toBeNull();
   });
 
-  // Simulate the success lines built by the component to verify content
   test("success lines include expected content", () => {
     const result = baseResult;
     const successLines: string[] = [
@@ -331,7 +309,6 @@ describe("success screen content", () => {
     successLines.push("2. Merge the PR to enable Letta Code PR assistance");
     successLines.push("3. Mention @letta-code in an issue or PR to test");
 
-    // Verify all expected content is present
     const allText = successLines.join("\n");
     expect(allText).toContain("GitHub Actions workflow created");
     expect(allText).toContain("API key saved as LETTA_API_KEY secret");
@@ -365,7 +342,6 @@ describe("success screen content", () => {
     const agentId = "agent-12345678-abcd-efgh-ijkl-123456789012";
     const expectedUrl = `https://chat.letta.com/chat/${agentId}`;
 
-    // This mirrors the logic in installGithubApp
     const agentUrl = agentId ? `https://chat.letta.com/chat/${agentId}` : null;
 
     expect(agentUrl).toBe(expectedUrl);

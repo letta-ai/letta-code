@@ -1,17 +1,6 @@
 import chalk, { Chalk, type ChalkInstance } from "chalk";
 import { staticLogoLines } from "@/cli/components/AnimatedLogo";
 
-/**
- * One-shot banner for a computer's first registration (typically pasted from
- * onboarding). Printed once with console.log and left in the scrollback.
- *
- * Written directly rather than through Ink: Ink emits cursor/erase control
- * bytes even when stdout is redirected, which would corrupt the plain-text
- * `letta server --debug > file` path. Colors go through chalk so the banner
- * follows the CLI's color-level detection (24-bit, 256-color on Terminal.app,
- * none at level 0). The logo only exists as background-color cells, so it is
- * dropped when chalk reports no color support.
- */
 export function formatFirstRunWelcome(
   computerName: string,
   paint: ChalkInstance,
@@ -28,10 +17,6 @@ export function formatFirstRunWelcome(
   ];
 }
 
-/**
- * Chalk's own detection ignores NO_COLOR (it only reads the TTY, FORCE_COLOR,
- * and CLI flags), so honor the convention explicitly before painting.
- */
 export function firstRunWelcomeChalk(
   env: NodeJS.ProcessEnv = process.env,
 ): ChalkInstance {

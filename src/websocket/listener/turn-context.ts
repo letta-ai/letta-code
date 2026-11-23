@@ -32,7 +32,5 @@ export function releaseListenerTurnContext(params: {
       setCurrentAgentId(null);
       setConversationId(null);
     }
-  } catch {
-    // Best-effort cleanup only. Never let teardown obscure the turn result.
-  }
+  } catch {}
 }

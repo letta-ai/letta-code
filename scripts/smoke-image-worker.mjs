@@ -1,6 +1,3 @@
-// Exercise the published Node worker with a standalone Sharp installation in an
-// ancestor directory. Sharp's JS and native binding must come from the same
-// installed package, rather than mixing bundled JS with a runtime binding.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { copyFileSync, mkdtempSync, rmSync } from "node:fs";

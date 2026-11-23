@@ -137,8 +137,6 @@ describe("self-compaction", () => {
     const [context] = contexts;
     expect(context?.systemPrompt).toBe("compiled agent system");
     expect(context?.tools?.map((tool) => tool.name)).toEqual(["Bash"]);
-    // The agent's context continued: the prompt follows the tool result
-    // directly, with nothing written in the model's name.
     expect(context?.messages.map((message) => message.role)).toEqual([
       "user",
       "assistant",
@@ -336,7 +334,6 @@ describe("self-compaction", () => {
 
     for (const testCase of cases) {
       test(`${testCase.source} for ${testCase.name}`, async () => {
-        // Each reply answers one request; the last one writes the summary.
         const replies = testCase.replies();
         const { summary, source, contexts } = await summarize(
           TOOL_TURN,

@@ -1,6 +1,3 @@
-// Interactive slash commands that open overlays immediately (bypass queueing)
-// These commands let users browse/view while the agent is working
-// Any changes made in the overlay will be queued until end_turn
 const INTERACTIVE_SLASH_COMMANDS = new Set([
   "/model",
   "/experiments",
@@ -23,12 +20,10 @@ const INTERACTIVE_SLASH_COMMANDS = new Set([
   "/profile",
 ]);
 
-// Non-state commands that should run immediately while the agent is busy
-// These don't modify agent state, so they should bypass queueing
 const NON_STATE_COMMANDS = new Set([
   "/ade",
   "/bg",
-  "/workflows", // read-only view of background workflow runs
+  "/workflows",
   "/btw",
   "/usage",
   "/help",
@@ -36,15 +31,15 @@ const NON_STATE_COMMANDS = new Set([
   "/search",
   "/memory",
   "/feedback",
-  "/mods", // starts background local mod-learning runs; does not need the foreground lock
+  "/mods",
   "/reasoning-tab",
   "/secret",
-  "/palace", // read-only memory viewer
-  "/exit", // session exit
-  "/rename", // agent/convo rename
+  "/palace",
+  "/exit",
+  "/rename",
   "/btw",
-  "/reload", // runtime surface reload (has its own busy guard)
-  "/dream", // Cloud admission or Code-managed background reflection
+  "/reload",
+  "/dream",
   "/reflect",
   "/reflection",
 ]);
@@ -54,12 +49,9 @@ export function aliasBareExitCommand(input: string): string {
   return input;
 }
 
-// Check if a command is interactive (opens overlay, should not be queued)
 export function isInteractiveCommand(msg: string): boolean {
   const trimmed = msg.trim().toLowerCase();
-  // Check exact matches first
   if (INTERACTIVE_SLASH_COMMANDS.has(trimmed)) return true;
-  // Check prefix matches for commands with arguments
   for (const cmd of INTERACTIVE_SLASH_COMMANDS) {
     if (trimmed.startsWith(`${cmd} `)) return true;
   }

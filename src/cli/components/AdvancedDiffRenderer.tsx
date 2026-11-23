@@ -51,7 +51,6 @@ function padLeft(n: number, width: number): string {
   return s.length >= width ? s : " ".repeat(width - s.length) + s;
 }
 
-// A styled text chunk with optional color/dim for row-splitting.
 type StyledChunk = { text: string; color?: string; dimColor?: boolean };
 
 export type AdvancedDiffRenderRow = {
@@ -125,9 +124,6 @@ function takeFirstCharacter(text: string): {
   };
 }
 
-// Split styled chunks into rows of exactly `cols` characters, padding the last row.
-// Continuation rows start with a blank indent of `contIndent` characters
-// (matching Codex's empty-gutter + 2-space continuation, diff_render.rs:922-929).
 function buildPaddedRows(
   chunks: StyledChunk[],
   cols: number,
@@ -164,7 +160,6 @@ function buildPaddedRows(
         width += next.width;
         rem = next.rest;
         rows.push(row);
-        // Start continuation row with blank gutter indent
         row = [{ text: " ".repeat(contIndent) }];
         width = contIndent;
       }
@@ -175,9 +170,6 @@ function buildPaddedRows(
   return rows;
 }
 
-// Render a single diff line split into full-width rows.
-// Each visual row gets its own <Text> with backgroundColor so there are no gaps.
-// See ~/dev/codex/codex-rs/tui/src/diff_render.rs lines 836-936.
 function Line({
   kind,
   displayNo,
@@ -209,7 +201,6 @@ function Line({
         ? colors.diff.removedLineBg
         : colors.diff.contextLineBg;
 
-  // Build styled chunks: indent + gutter + sign + content
   const gutterStr = `${padLeft(displayNo, gutterWidth)} `;
   const chunks: StyledChunk[] = [];
   if (indent) chunks.push({ text: indent });
@@ -227,7 +218,6 @@ function Line({
     chunks.push({ text: expandTabsForDiffDisplay(text) });
   }
 
-  // Continuation indent = indent + gutter + sign + space (blank, same width)
   const contIndent = indent.length + gutterStr.length + 1 + 1;
   const rows = buildPaddedRows(chunks, columns, contIndent);
 
@@ -263,14 +253,13 @@ export function buildAdvancedDiffRows(
     const syntaxForHunk = hunkSyntaxLines[hIdx] ?? [];
     let oldNo = h.oldStart;
     let newNo = h.newStart;
-    let displayLineIdx = 0; // index into syntaxForHunk
+    let displayLineIdx = 0;
     for (let i = 0; i < h.lines.length; i++) {
       const line = h.lines[i];
       if (!line) continue;
       const raw = line.raw || "";
       const ch = raw.charAt(0);
       const body = raw.slice(1);
-      // Skip meta lines (e.g., "\ No newline at end of file")
       if (ch === "\\") continue;
 
       const spans = syntaxForHunk[displayLineIdx];
@@ -320,7 +309,6 @@ export function buildAdvancedDiffRows(
 export function AdvancedDiffRenderer(
   props: Props & { precomputed?: AdvancedDiffSuccess },
 ) {
-  // Must call hooks at top level before any early returns
   const columns = useTerminalWidth();
 
   const result = useMemo(() => {
@@ -343,10 +331,9 @@ export function AdvancedDiffRenderer(
     );
   }, [props]);
 
-  const showHeader = props.showHeader !== false; // default to true
+  const showHeader = props.showHeader !== false;
 
   if (result.mode === "fallback") {
-    // Render simple arg-based fallback for readability
     const filePathForFallback = (props as { filePath: string }).filePath;
     if (props.kind === "write") {
       return (
@@ -385,18 +372,15 @@ export function AdvancedDiffRenderer(
   const filePath = (props as { filePath: string }).filePath;
   const relative = formatRelativePath(filePath);
 
-  // Syntax-highlight all hunk content at once per hunk (preserves parser state
-  // across consecutive lines, like Codex's hunk-level highlighting approach).
   const lang = languageFromPath(filePath);
   const shouldHighlight = lang && !exceedsAdvancedDiffHighlightLimits(hunks);
   const hunkSyntaxLines: (StyledSpan[] | undefined)[][] = [];
   for (const h of hunks) {
-    // Concatenate all displayable lines in the hunk for a single highlight pass.
     const textLines: string[] = [];
     for (const line of h.lines) {
       if (!line) continue;
       const raw = line.raw || "";
-      if (raw.charAt(0) === "\\") continue; // skip meta
+      if (raw.charAt(0) === "\\") continue;
       textLines.push(raw.slice(1));
     }
     const block = textLines.join("\n");
@@ -405,13 +389,10 @@ export function AdvancedDiffRenderer(
       : undefined;
     const syntaxLines =
       highlighted?.length === textLines.length ? highlighted : undefined;
-    // Map highlighted per-line spans back; undefined when highlighting failed.
     hunkSyntaxLines.push(textLines.map((_, i) => syntaxLines?.[i]));
   }
 
   const rows = buildAdvancedDiffRows(hunks, hunkSyntaxLines);
-  // Compute gutter width based on the maximum display number we will render,
-  // so multi-digit line numbers (e.g., 10) never wrap.
   const maxDisplayNo = rows.reduce((m, r) => Math.max(m, r.displayNo), 1);
   const gutterWidth = String(maxDisplayNo).length;
 
@@ -420,7 +401,6 @@ export function AdvancedDiffRenderer(
       ? `Wrote changes to ${relative}`
       : `Updated ${relative}`;
 
-  // If no changes (empty diff), show a message with filepath
   if (rows.length === 0) {
     const noChangesGutter = 4;
     return (
@@ -453,7 +433,6 @@ export function AdvancedDiffRenderer(
     );
   }
 
-  // Gutter width for `  └` prefix (4 chars: 2 spaces + └ + space)
   const toolResultGutter = 4;
 
   return (

@@ -31,14 +31,6 @@ interface BrowserDiscoveryServerOptions {
   retryDelayMs?: number;
 }
 
-/**
- * Start the browser discovery endpoint for this process.
- *
- * Multiple Letta Code processes can run on one device. The first process owns
- * the fixed discovery port; the others retry in the background so one of them
- * takes over after the owner exits. The server and retry timer are unref'd so
- * this best-effort endpoint never keeps a short-lived CLI command alive.
- */
 export function startBrowserDiscoveryServer(
   options: BrowserDiscoveryServerOptions = {},
 ): BrowserDiscoveryServerHandle {

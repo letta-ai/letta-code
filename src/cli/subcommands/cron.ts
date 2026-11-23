@@ -1,18 +1,3 @@
-/**
- * `letta cron` CLI subcommand.
- *
- * Usage:
- *   letta cron add --prompt <text> --every <interval> [--agent <id>] [--conversation <id>]
- *   letta cron add --prompt <text> --at <time> [--once] [--agent <id>]
- *   letta cron add --prompt <text> --cron <expr> [--agent <id>]
- *   letta cron list [--agent <id>] [--conversation <id>]
- *   letta cron get <id|name>
- *   letta cron runs --id <id>
- *   letta cron delete <id|name>   (alias: remove)
- *   letta cron delete --all [--agent <id>]
- *
- */
-
 import { parseArgs } from "node:util";
 import { ApiRequestError } from "@/backend/api/request";
 import {
@@ -52,8 +37,6 @@ import {
   printAmbiguousTaskName,
   resolveTaskName,
 } from "./cron-task-ref";
-
-// ── Usage ───────────────────────────────────────────────────────────
 
 function printUsage(): void {
   console.log(
@@ -95,8 +78,6 @@ Output is JSON.
   );
 }
 
-// ── Args ────────────────────────────────────────────────────────────
-
 const CRON_OPTIONS = {
   help: { type: "boolean", short: "h" },
   name: { type: "string" },
@@ -125,8 +106,6 @@ function parseCronArgs(argv: string[]) {
     allowPositionals: true,
   });
 }
-
-// ── Cloud output mapping ────────────────────────────────────────────
 
 function extractPromptFromCloudSchedule(
   schedule: CloudSchedule,
@@ -158,8 +137,6 @@ function formatCloudScheduleOutput(
   };
 }
 
-// ── Handlers ────────────────────────────────────────────────────────
-
 async function handleAdd(values: CronArgValues): Promise<number> {
   const name = values.name;
   if (!name || typeof name !== "string") {
@@ -188,7 +165,6 @@ async function handleAdd(values: CronArgValues): Promise<number> {
   const conversationId = resolveCronAddConversationTarget(values.conversation);
   if (conversationId === null) return 1;
 
-  // Determine schedule type
   const everyValue = values.every;
   const atValue = values.at;
   const cronValue = values.cron;
@@ -389,8 +365,6 @@ async function handleCloudAdd(params: CloudAddParams): Promise<number> {
     );
     return 0;
   } catch (err) {
-    // Deliberately no fallback to the local runner: silently degrading to an
-    // ephemeral device-local schedule is the failure mode LET-9692 fixes.
     console.error(
       `Error: failed to create schedule: ${err instanceof Error ? err.message : String(err)}`,
     );
@@ -490,9 +464,7 @@ async function handleGet(
       const schedule = await getCloudSchedule(agentId, resolved.id);
       console.log(JSON.stringify(formatCloudScheduleOutput(schedule), null, 2));
       return 0;
-    } catch {
-      // fall through to not-found
-    }
+    } catch {}
   }
 
   console.error(`Error: task ${taskRef} not found.`);
@@ -587,8 +559,6 @@ async function handleDelete(
   if (agentId && canManageCloudSchedules(agentId)) {
     try {
       await ensureSettingsForCloud();
-      // Verify existence first: the cloud delete endpoint is a soft-delete
-      // update that reports success even for unknown IDs.
       await getCloudSchedule(agentId, taskRef);
       await deleteCloudSchedule(agentId, taskRef);
       console.log(JSON.stringify({ deleted: taskRef }));
@@ -600,12 +570,9 @@ async function handleDelete(
         );
         return 1;
       }
-      // 404 → not an ID; fall through to name resolution.
     }
   }
 
-  // Not an ID in either store — try it as a task name (LET-10492): `add`
-  // requires --name, so the name is the handle users actually remember.
   const resolved = await resolveTaskName(taskRef, { agentId });
   if (resolved && "ambiguous" in resolved) {
     printAmbiguousTaskName(taskRef, resolved.ambiguous);
@@ -672,8 +639,6 @@ async function handleDeleteAll(values: CronArgValues): Promise<number> {
   return 0;
 }
 
-// ── Entry ───────────────────────────────────────────────────────────
-
 export async function runCronSubcommand(argv: string[]): Promise<number> {
   let parsed: ReturnType<typeof parseCronArgs>;
   try {
@@ -700,9 +665,6 @@ export async function runCronSubcommand(argv: string[]): Promise<number> {
     case "runs":
       return handleRuns(parsed.values);
     case "delete":
-    // "remove" reads naturally enough that agents/scripts reach for it, and
-    // the old "Unknown action" + usage dump was easy to misread as success
-    // in captured output (LET-10492).
     case "remove":
       return handleDelete(parsed.values, parsed.positionals);
     default:

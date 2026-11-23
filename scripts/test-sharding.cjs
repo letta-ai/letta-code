@@ -1,6 +1,3 @@
-// Assign files before launching Bun, including suites that need their own
-// process. Sharding each Bun invocation separately would duplicate or omit
-// isolated suites. Keep file order within each shard unchanged.
 function shardTestFiles(files, shard) {
   if (shard === undefined) return files;
   if (!/^[1-9]\d*\/[1-9]\d*$/u.test(shard)) {

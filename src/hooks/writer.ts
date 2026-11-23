@@ -1,6 +1,3 @@
-// src/hooks/writer.ts
-// Functions to write hooks to settings files via settings-manager
-
 import { settingsManager } from "@/settings-manager";
 import { debugLog } from "@/utils/debug";
 import { isProjectSettingsPathGlobal } from "@/utils/settings-path";
@@ -14,25 +11,14 @@ import {
   type ToolHookEvent,
 } from "./types";
 
-/**
- * Save location for hooks
- */
 export type SaveLocation = "user" | "project" | "project-local";
 
-/**
- * Check whether project settings path collides with global settings path.
- *
- * When cwd is HOME, both resolve to ~/.letta/settings.json.
- */
 function isProjectSettingsPathCollidingWithGlobal(
   workingDirectory: string,
 ): boolean {
   return isProjectSettingsPathGlobal(workingDirectory);
 }
 
-/**
- * Load hooks config from a specific location
- */
 export function loadHooksFromLocation(
   location: SaveLocation,
   workingDirectory: string = process.cwd(),
@@ -43,7 +29,6 @@ export function loadHooksFromLocation(
         return settingsManager.getSettings().hooks || {};
       case "project":
         if (isProjectSettingsPathCollidingWithGlobal(workingDirectory)) {
-          // Avoid showing global hooks twice (once as project, once as user)
           return {};
         }
         return (
@@ -55,35 +40,26 @@ export function loadHooksFromLocation(
         );
     }
   } catch (error) {
-    // Settings not loaded yet, return empty
     debugLog("hooks", "loadHooksFromLocation: Settings not loaded yet", error);
     return {};
   }
 }
 
-/**
- * Save hooks config to a specific location
- * Note: This is async because it may need to load settings first
- */
 export async function saveHooksToLocation(
   hooks: HooksConfig,
   location: SaveLocation,
   workingDirectory: string = process.cwd(),
 ): Promise<void> {
-  // Ensure settings are loaded before updating
   switch (location) {
     case "user":
       settingsManager.updateSettings({ hooks });
       break;
     case "project":
-      // If cwd is HOME, project settings path equals global settings path.
-      // Persist as user settings to avoid duplicate project/global hook views.
       if (isProjectSettingsPathCollidingWithGlobal(workingDirectory)) {
         settingsManager.updateSettings({ hooks });
         break;
       }
 
-      // Load project settings if not already loaded
       try {
         settingsManager.getProjectSettings(workingDirectory);
       } catch {
@@ -92,7 +68,6 @@ export async function saveHooksToLocation(
       settingsManager.updateProjectSettings({ hooks }, workingDirectory);
       break;
     case "project-local":
-      // Load local project settings if not already loaded
       try {
         settingsManager.getLocalProjectSettings(workingDirectory);
       } catch {
@@ -103,9 +78,6 @@ export async function saveHooksToLocation(
   }
 }
 
-/**
- * Add a new hook matcher to a tool event (PreToolUse, PostToolUse, PermissionRequest)
- */
 export async function addHookMatcher(
   event: ToolHookEvent,
   matcher: HookMatcher,
@@ -114,22 +86,16 @@ export async function addHookMatcher(
 ): Promise<void> {
   const hooks = loadHooksFromLocation(location, workingDirectory);
 
-  // Initialize event array if needed
   if (!hooks[event]) {
     (hooks as Record<ToolHookEvent, HookMatcher[]>)[event] = [];
   }
 
-  // Add the new matcher
   const eventMatchers = hooks[event] as HookMatcher[];
   eventMatchers.push(matcher);
 
   await saveHooksToLocation(hooks, location, workingDirectory);
 }
 
-/**
- * Add a new hook matcher to a simple event (non-tool events)
- * Simple events use the same structure as tool events but without the matcher field
- */
 export async function addSimpleHookMatcher(
   event: SimpleHookEvent,
   matcher: SimpleHookMatcher,
@@ -138,22 +104,16 @@ export async function addSimpleHookMatcher(
 ): Promise<void> {
   const hooks = loadHooksFromLocation(location, workingDirectory);
 
-  // Initialize event array if needed
   if (!hooks[event]) {
     (hooks as Record<SimpleHookEvent, SimpleHookMatcher[]>)[event] = [];
   }
 
-  // Add the new matcher
   const eventMatchers = hooks[event] as SimpleHookMatcher[];
   eventMatchers.push(matcher);
 
   await saveHooksToLocation(hooks, location, workingDirectory);
 }
 
-/**
- * Remove a hook matcher from an event by index
- * Works for both tool events (HookMatcher) and simple events (SimpleHookMatcher)
- */
 export async function removeHook(
   event: HookEvent,
   index: number,
@@ -189,9 +149,6 @@ export async function removeHook(
   await saveHooksToLocation(hooks, location, workingDirectory);
 }
 
-/**
- * Update a hook matcher at a specific index (tool events only)
- */
 export async function updateHookMatcher(
   event: ToolHookEvent,
   matcherIndex: number,
@@ -215,9 +172,6 @@ export async function updateHookMatcher(
   await saveHooksToLocation(hooks, location, workingDirectory);
 }
 
-/**
- * Update a hook matcher at a specific index (simple events only)
- */
 export async function updateSimpleHookMatcher(
   event: SimpleHookEvent,
   matcherIndex: number,
@@ -241,32 +195,20 @@ export async function updateSimpleHookMatcher(
   await saveHooksToLocation(hooks, location, workingDirectory);
 }
 
-/**
- * Hook matcher with source tracking for display (tool events)
- */
 export interface HookMatcherWithSource extends HookMatcher {
   source: SaveLocation;
-  sourceIndex: number; // Index within that source file
+  sourceIndex: number;
 }
 
-/**
- * Simple hook matcher with source tracking for display (simple events)
- */
 export interface SimpleHookMatcherWithSource extends SimpleHookMatcher {
   source: SaveLocation;
-  sourceIndex: number; // Index within that source file
+  sourceIndex: number;
 }
 
-/**
- * Union type for hooks with source tracking
- */
 export type HookWithSource =
   | HookMatcherWithSource
   | SimpleHookMatcherWithSource;
 
-/**
- * Load all hook matchers for a tool event with source tracking
- */
 export function loadMatchersWithSource(
   event: ToolHookEvent,
   workingDirectory: string = process.cwd(),
@@ -293,9 +235,6 @@ export function loadMatchersWithSource(
   return result;
 }
 
-/**
- * Load all hook matchers for a simple event with source tracking
- */
 export function loadSimpleMatchersWithSource(
   event: SimpleHookEvent,
   workingDirectory: string = process.cwd(),
@@ -322,9 +261,6 @@ export function loadSimpleMatchersWithSource(
   return result;
 }
 
-/**
- * Count total hooks across all events and locations
- */
 export function countTotalHooks(
   workingDirectory: string = process.cwd(),
 ): number {
@@ -335,18 +271,15 @@ export function countTotalHooks(
   for (const location of locations) {
     const hooks = loadHooksFromLocation(location, workingDirectory);
     for (const key of Object.keys(hooks)) {
-      // Skip non-event keys like 'disabled'
       if (key === "disabled") continue;
 
       const event = key as HookEvent;
       if (isToolEvent(event)) {
-        // Tool events have HookMatcher[] with nested hooks
         const matchers = (hooks[event as ToolHookEvent] || []) as HookMatcher[];
         for (const matcher of matchers) {
           count += matcher.hooks.length;
         }
       } else {
-        // Simple events have SimpleHookMatcher[] with nested hooks
         const matchers = (hooks[event as SimpleHookEvent] ||
           []) as SimpleHookMatcher[];
         for (const matcher of matchers) {
@@ -359,9 +292,6 @@ export function countTotalHooks(
   return count;
 }
 
-/**
- * Count hooks for a specific event across all locations
- */
 export function countHooksForEvent(
   event: HookEvent,
   workingDirectory: string = process.cwd(),
@@ -373,13 +303,11 @@ export function countHooksForEvent(
   for (const location of locations) {
     const hooks = loadHooksFromLocation(location, workingDirectory);
     if (isToolEvent(event)) {
-      // Tool events have HookMatcher[] with nested hooks
       const matchers = (hooks[event as ToolHookEvent] || []) as HookMatcher[];
       for (const matcher of matchers) {
         count += matcher.hooks.length;
       }
     } else {
-      // Simple events have SimpleHookMatcher[] with nested hooks
       const matchers = (hooks[event as SimpleHookEvent] ||
         []) as SimpleHookMatcher[];
       for (const matcher of matchers) {
@@ -391,11 +319,6 @@ export function countHooksForEvent(
   return count;
 }
 
-/**
- * Check if user-level hooks.disabled is set to true.
- * NOTE: This only checks user settings. For full precedence logic
- * (user → project → project-local), use areHooksDisabled from loader.ts.
- */
 export function isUserHooksDisabled(): boolean {
   try {
     return settingsManager.getSettings().hooks?.disabled === true;
@@ -409,9 +332,6 @@ export function isUserHooksDisabled(): boolean {
   }
 }
 
-/**
- * Set whether all hooks are disabled (writes to user-level hooks.disabled)
- */
 export function setHooksDisabled(disabled: boolean): void {
   const currentHooks = settingsManager.getSettings().hooks || {};
   settingsManager.updateSettings({

@@ -253,8 +253,6 @@ describe("trajectories export", () => {
     expect(hermes?.id).toBe("hermes-1");
     expect(hermes?.project).toBe("/workspace/hermes");
 
-    // Uniform chronological filenames: <startedAt>_<sessionId>.json, where
-    // sessionId is the stable hash of the source-scoped native id.
     for (const session of manifest.sessions) {
       expect(session.sessionId).toBe(sessionHash(session.source, session.id));
       expect(session.file).toBe(

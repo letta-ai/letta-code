@@ -130,7 +130,6 @@ test("max_turns reached while stopped for approval finishes with max_steps", asy
       runtime,
     );
 
-    // Only the capped step ran; the approved continuation never started.
     expect(request).toHaveBeenCalledTimes(1);
     expect(frames).not.toContainEqual(
       expect.objectContaining({
@@ -147,8 +146,6 @@ test("max_turns reached while stopped for approval finishes with max_steps", asy
         stop_reason: "max_steps",
       }),
     );
-    // The pending approval is denied on the next turn so the server isn't
-    // left waiting on it.
     expect(runtime.pendingInterruptedResults).toEqual([
       expect.objectContaining({
         type: "approval",

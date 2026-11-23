@@ -1,7 +1,3 @@
-// Restart-time approval recovery: when a sync arrives and this process has no
-// live approval state, consult the backend for pending approvals recorded in
-// the conversation and rebuild what can be safely re-presented.
-
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { ApprovalDecision } from "@/agent/approval-execution";
 import {
@@ -43,11 +39,6 @@ export async function recoverApprovalStateForSync(
     readInterruptedTurn: typeof readInterruptedTurn;
   }> = {},
   opts: {
-    /**
-     * The sync came from this conversation's execution owner (see
-     * `SyncCommand.resume_interrupted_turn`): stale denials may start a turn
-     * now instead of waiting for this listener's next user message.
-     */
     resumeInterruptedTurn?: boolean;
   } = {},
 ): Promise<"deferred" | undefined> {
@@ -134,8 +125,6 @@ export async function recoverApprovalStateForSync(
     return;
   }
 
-  // Re-check liveness after the backend awaits: a turn or live approval that
-  // started meanwhile owns this conversation's approval state.
   if ((await getRecoveryEligibility(runtime)) !== "owned") return "deferred";
   if (
     (hasInterruptedCacheForScope(runtime.listener, scope) &&
@@ -170,15 +159,11 @@ export async function recoverApprovalStateForSync(
       (approval) => !recorded.toolCallIds.includes(approval.toolCallId),
     )
   ) {
-    // Advance only the predecessor lineage. Its sidecar remains authoritative
-    // until retirement exposes the independent successor for the next sync.
     pendingApprovals = pendingApprovals.filter((approval) =>
       recorded.toolCallIds.includes(approval.toolCallId),
     );
     if (pendingApprovals.length === 0) return "deferred";
   }
-  // Local evidence distinguishes exact completed results, provably unstarted
-  // approvals, and unrelated stale calls. Only the unstarted set executes again.
   const staleDenialDecisions: ApprovalDecision[] = pendingApprovals.map(
     (approval) => {
       const saved = recordedResults.get(approval.toolCallId);
@@ -223,9 +208,6 @@ export async function recoverApprovalStateForSync(
   );
 
   if (!opts.resumeInterruptedTurn) {
-    // An observer must not turn replayable or exactly completed work into stale
-    // denials. Leave the durable record untouched so the execution owner can
-    // perform the recovered continuation on its subsequent owner sync.
     if (staleDenialDecisions.some((decision) => decision.type === "approve")) {
       clearRecoveredApprovalState(runtime);
       return "deferred";
@@ -258,8 +240,6 @@ export async function recoverApprovalStateForSync(
     recoveryUsesIndependentSuccessor:
       recorded?.recoveryClaimCompletion?.independentSuccessor === true,
   };
-  // The owner now has a complete replacement. Only this definitive handoff
-  // may erase an observer's parked denial cache.
   clearObserverCache();
   return undefined;
 }

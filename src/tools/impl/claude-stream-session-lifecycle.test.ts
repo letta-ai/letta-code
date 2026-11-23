@@ -223,8 +223,6 @@ describe("Claude stream session lifecycle", () => {
       });
       expect(receipt.mode).toBe("steered");
 
-      // The background task finishes and Claude runs its own wake-up turn
-      // before it picks up the follow-up.
       fixture.emit({
         type: "system",
         subtype: "background_tasks_changed",

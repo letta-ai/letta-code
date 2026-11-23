@@ -17,7 +17,7 @@ function applyOffsetAndLimit<T>(
   if (limit > 0) {
     return sliced.slice(0, limit);
   }
-  return sliced; // 0 = unlimited
+  return sliced;
 }
 
 export interface GrepArgs {
@@ -110,7 +110,6 @@ export async function grep(args: GrepArgs): Promise<GrepResult> {
       const fileList = files.join("\n");
       const fullOutput = `Found ${totalCount} file${totalCount !== 1 ? "s" : ""}${fileCount < totalCount ? ` (showing ${fileCount})` : ""}\n${fileList}`;
 
-      // Apply character limit to prevent large file lists
       const { content: truncatedOutput } = truncateByChars(
         fullOutput,
         LIMITS.GREP_OUTPUT_CHARS,
@@ -159,7 +158,6 @@ export async function grep(args: GrepArgs): Promise<GrepResult> {
       const lines = applyOffsetAndLimit(allLines, offset, head_limit);
       const content = lines.join("\n");
 
-      // Apply character limit to content output
       const { content: truncatedOutput } = truncateByChars(
         content,
         LIMITS.GREP_OUTPUT_CHARS,

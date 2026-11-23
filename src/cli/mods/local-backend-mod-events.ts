@@ -3,17 +3,6 @@ import { LocalBackend } from "@/backend/local/local-backend";
 import type { ModAdapter } from "@/mods/mod-adapter";
 import type { ModCompactTrigger, ModContext } from "@/mods/types";
 
-/**
- * Wires the local backend's internal lifecycle (compaction and provider calls)
- * into a surface's mod adapter. These boundaries are owned by the local
- * backend, so the events only fire for local agents; on any other backend this
- * is a no-op.
- *
- * The backend already guards each hook so a throwing/rejecting emit can never
- * break compaction or a provider request.
- *
- * Returns a disposer that clears the hooks (a no-op on non-local backends).
- */
 export function installLocalBackendModEventHooks(options: {
   backend: Backend;
   adapter: { events: ModAdapter["events"] };

@@ -140,7 +140,6 @@ describe("org credential session", () => {
       tokenExpiresAt: Date.now() + 60 * 60 * 1000,
     });
 
-    // A retained SDK client reads the live token on its next request.
     expect(client.apiKey).toBe("second-token");
     expect(await getOrgAccessToken()).toBe("second-token");
   });
@@ -150,7 +149,7 @@ describe("org credential session", () => {
       activateOrgCredentials("org-123", "org-device", {
         apiKey: "stale-org-token",
         refreshToken: "org-refresh-token",
-        tokenExpiresAt: Date.now() + 60 * 1000, // inside the refresh window
+        tokenExpiresAt: Date.now() + 60 * 1000,
       });
     }
 
@@ -181,9 +180,7 @@ describe("org credential session", () => {
           }),
       );
 
-      // The starter owns the in-flight refresh (no signal).
       const starter = getOrgAccessToken();
-      // The joiner waits on the same in-flight refresh with an abort budget.
       const controller = new AbortController();
       const joinerPending = getOrgAccessToken({ signal: controller.signal });
       if (!joinerPending) throw new Error("expected an active org session");
@@ -197,8 +194,6 @@ describe("org credential session", () => {
       expect(await joiner).toBe("rejected:Error");
       expect(refreshAccessTokenMock).toHaveBeenCalledTimes(1);
 
-      // The underlying refresh still completes for the starter — the joiner's
-      // budget release never cancelled the shared flight.
       resolveRefresh?.({
         access_token: "fresh-org-token",
         refresh_token: "rotated-org-refresh",

@@ -5,12 +5,6 @@ import type {
 import type { ChannelAccount, CustomChannelAccount } from "@/channels/types";
 import { createCustomAdapter } from "./adapter";
 
-/**
- * Declarative config schema for the custom channel.
- * Matches the field set used by CustomManageDialog so the desktop UI can
- * render a dynamic form when it receives this schema from
- * `channels_list_response`.
- */
 export const CUSTOM_CHANNEL_CONFIG_SCHEMA: ChannelConfigSchema = {
   version: 1,
   fields: [

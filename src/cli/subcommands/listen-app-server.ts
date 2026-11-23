@@ -7,16 +7,10 @@ import type { AppServerHandle } from "@/websocket/app-server";
 import type { RemoteSessionLog } from "@/websocket/listen-log";
 
 export interface ListenerAppServer {
-  /** Start (or keep) the App Server on the active listener runtime. */
   start: () => Promise<void>;
   close: () => Promise<void>;
 }
 
-/**
- * Serve App Server clients from a registered computer's listener runtime.
- * Clients and Cloud-delivered turns then share one runtime, so tools a client
- * registers for a conversation apply when Cloud routes that conversation here.
- */
 export function createListenerAppServer(
   options: AppServerCliOptions | undefined,
   connectionName: string,
@@ -44,7 +38,6 @@ export function createListenerAppServer(
             websocketAuth: options.websocketAuth,
             openaiApi: options.openaiApi,
             connectionName,
-            // The registered listener already owns process services.
             startProcessServices: false,
             onListening: (info) =>
               printAppServerListening(info, options.openaiApi),

@@ -99,8 +99,6 @@ export async function completeInitialConnectionStartup(
   }
   if (!isCurrent()) return false;
   if (startupOptions.updateReconnectState) {
-    // hasSuccessfulConnection is set by the caller once startup is complete;
-    // setting it here would reset reconnect backoff if later startup stalls.
     listener.everConnected = true;
   }
   markListenerConnectionInitialized(listener, options.connectionId, connection);
@@ -152,7 +150,6 @@ export async function replaySubscribedConnectionState(
     forceDeviceStatus: options.forceDeviceStatus,
     ...(connection ? { routing: toListenerConnection(connection.id) } : {}),
   });
-  // Git is advisory: replay and runtime_start must not wait for git subprocesses.
   void (async () => {
     await (options.refreshGitContext ?? refreshDeviceGitContext)(
       listener,

@@ -518,7 +518,6 @@ describe("teleport subcommand", () => {
             conversationId,
             targetConnectionId,
           ) => {
-            // Use the mock request to verify body shape
             return mockRequest(
               "POST",
               `/v1/environments/runtimes/${agentId}/${conversationId}/teleport`,

@@ -1,11 +1,3 @@
-/**
- * Voice memo transcription via OpenAI.
- *
- * Minimal: one API call, no format conversion, no chunking.
- * Telegram voice memos are .ogg/opus which OpenAI transcription supports
- * natively.
- */
-
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -98,15 +90,10 @@ function prepareOpenAiTranscriptionFile(localPath: string): {
   };
 }
 
-/** Check whether an API key is available for transcription. */
 export function isTranscriptionConfigured(): boolean {
   return !!process.env.OPENAI_API_KEY;
 }
 
-/**
- * Transcribe a local audio file using OpenAI's transcription API.
- * Never throws; returns { success: false, error } on failure.
- */
 export async function transcribeAudioFile(
   localPath: string,
 ): Promise<TranscriptionResult> {

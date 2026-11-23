@@ -7,7 +7,6 @@ export interface BalanceMetadata {
   monthly_credit_balance: number;
   purchased_credit_balance: number;
   billing_tier: string;
-  /** The caller's organization (newer servers). */
   organization_id?: string;
 }
 
@@ -91,8 +90,6 @@ export async function submitTelemetryMetadata(
   const config = await getMetadataRequestConfig(apiKey);
   await apiRequest<void>("POST", "/v1/metadata/telemetry", payload, {
     ...config,
-    // Telemetry snapshots the acting user when the event is created. `null`
-    // prevents a later headless env value from replacing an empty snapshot.
     actingUserId: options?.actingUserId ?? null,
     headers: {
       "X-Letta-Code-Device-ID": deviceId,

@@ -227,12 +227,9 @@ function makeEditToolCall(
 test("committed items release precomputed diff payloads but keep hunks", async () => {
   const precomputedDiffs = new Map<string, AdvancedDiffSuccess>();
   precomputedDiffs.set("call-edit", makeDiff("call-edit.ts"));
-  // ApplyPatch-style compound key owned by the same tool call
   precomputedDiffs.set("call-edit:call-edit.ts", makeDiff("call-edit.ts"));
-  // Eagerly-committed approval previews share the map entry's object reference
   const previewDiff = makeDiff("preview.ts");
   precomputedDiffs.set("call-preview", previewDiff);
-  // No committed item owns this entry, so it must stay intact
   precomputedDiffs.set("call-pending", makeDiff("pending.ts"));
 
   const items: StaticItem[] = [
@@ -271,21 +268,15 @@ test("committed items release precomputed diff payloads but keep hunks", async (
 
   await waitForRender();
 
-  // Full before/after contents are released once committed and rendered...
   expect(precomputedDiffs.get("call-edit")?.oldStr).toBe("");
   expect(precomputedDiffs.get("call-edit")?.newStr).toBe("");
   expect(precomputedDiffs.get("call-edit:call-edit.ts")?.oldStr).toBe("");
-  // ...including the reference shared with the approval_preview item...
   expect(previewDiff.oldStr).toBe("");
   expect(previewDiff.newStr).toBe("");
-  // ...while hunks stay cached so Static remounts (resize, ctrl+o) can
-  // re-render the identical diff.
   expect(precomputedDiffs.get("call-edit")?.hunks).toHaveLength(1);
   expect(previewDiff.hunks).toHaveLength(1);
-  // Entries for tool calls that never committed keep their payloads.
   expect(precomputedDiffs.get("call-pending")?.oldStr).toBe("const a = 1;\n");
 
-  // The committed diff still renders from its hunks.
   expect(stripAnsi(stdout.chunks.join(""))).toContain("const a = 2");
 
   instance.unmount();
@@ -364,8 +355,6 @@ test("repeated transcript repaints replace Ink static output", async () => {
   await waitForRender();
   const overflowOutput = stripAnsi(stdout.chunks.slice(overflowStart).join(""));
 
-  // Overflow must not replay the retained static tail and must not 3J.
-  // The collapsed summary and expanded body both stay out of this frame.
   expect(overflowOutput).not.toContain("Thought for 4 seconds");
   expect(overflowOutput).not.toContain(
     "Reasoning body that must not return after recollapse",

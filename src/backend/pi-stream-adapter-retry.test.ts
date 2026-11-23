@@ -189,9 +189,7 @@ describe("PiStreamAdapter retry output boundary", () => {
       )) {
         events.push(event);
       }
-    } catch {
-      // The adapter surfaces the non-retryable provider error after its events.
-    }
+    } catch {}
 
     const localMessageIndex = events.findIndex(
       (event) => event.type === "local-message",

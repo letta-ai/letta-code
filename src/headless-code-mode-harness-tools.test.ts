@@ -6,9 +6,6 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createIsolatedCliTestEnv } from "@/test-utils/test-process-env";
 
-// Real headless entrypoint and bidirectional SDK transport. Only model/backend
-// responses are deterministic; the harness actually receives and answers the
-// nested execute_external_tool request over stdin/stdout.
 const fixture = `
 import { __testSetBackend } from "./src/backend";
 import { setConfiguredBackendMode } from "./src/backend/backend-mode";

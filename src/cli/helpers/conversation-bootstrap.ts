@@ -12,10 +12,6 @@ const BOOTSTRAP_RELEVANT_LIMIT = 5;
 const BOOTSTRAP_RECENT_FETCH_LIMIT =
   BOOTSTRAP_RECENT_LIMIT + BOOTSTRAP_RELEVANT_LIMIT;
 const BOOTSTRAP_RELEVANT_FETCH_LIMIT = 12;
-// The remote hybrid search uses weighted RRF with k=60 and 0.5 weights per
-// channel. A rank-1 result from only one channel scores ~0.008, while a rank-1
-// result from both vector + FTS scores ~0.016. Require hybrid agreement, then
-// keep only the strongest cluster so weak tail matches do not get injected.
 const BOOTSTRAP_RELEVANT_MIN_RRF_SCORE = 0.012;
 const BOOTSTRAP_RELEVANT_MIN_RELATIVE_SCORE = 0.93;
 

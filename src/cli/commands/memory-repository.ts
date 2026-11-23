@@ -1,18 +1,3 @@
-/**
- * /memory-repository command handler.
- *
- * Configures an additional git remote that the memfs repo pushes to after
- * every commit. Backed by per-repo git config (`letta.memoryRepository.url`)
- * and a post-commit hook installed by src/agent/memoryGit.ts.
- *
- * Usage:
- *   /memory-repository set <url>    Configure a remote URL
- *   /memory-repository unset        Remove the configured URL
- *   /memory-repository status       Show current URL + tail of push log
- *   /memory-repository push         Force a push now (useful after a failure)
- *   /memory-repository help         Show usage
- */
-
 import { getCurrentAgentId } from "@/agent/context";
 import {
   getMemoryRepositoryUrl,
@@ -35,9 +20,7 @@ function resolveAgentId(): string | null {
     if (scoped) {
       return scoped;
     }
-  } catch {
-    // Fall through to env.
-  }
+  } catch {}
   const fromEnv = (
     process.env.LETTA_AGENT_ID ||
     process.env.AGENT_ID ||
@@ -66,14 +49,6 @@ Examples:
   /memory-repository status
   /memory-repository unset`;
 
-/**
- * Normalize a user-provided URL. Accepts:
- *   https://github.com/owner/repo
- *   https://github.com/owner/repo.git
- *   git@github.com:owner/repo.git
- *   any other git-recognized URL form
- * Strips trailing slashes. Does not force `.git` — git accepts both.
- */
 function normalizeRepositoryUrl(raw: string): string {
   return raw.trim().replace(/\/+$/, "");
 }
@@ -134,8 +109,6 @@ export async function handleMemoryRepositoryCommand(
         };
       }
 
-      // Best-effort initial push so the user gets immediate feedback about
-      // auth/connectivity issues, bounded so the slash command stays responsive.
       const push = await pushToMemoryRepositoryWithTimeout(agentId);
       if (push === "timeout") {
         return {

@@ -50,9 +50,6 @@ test("the configured Windows helper survives atomic checkout publication", async
         {
           input: "protocol=https\nhost=example.test\n\n",
           encoding: "utf8",
-          // Match the product's git environment, and keep the runner's
-          // system helper (Git Credential Manager) out of the lookup so
-          // only the helper under test answers.
           env: { ...buildNonInteractiveGitEnv(), GIT_CONFIG_NOSYSTEM: "1" },
           timeout: 10_000,
         },

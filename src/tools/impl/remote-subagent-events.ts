@@ -9,12 +9,6 @@ import {
 
 type EventPage = Extract<ReadSubagentEventsResponse, { success: true }>;
 
-/**
- * Copy a remote worker's progress into this task's logs. A computer that
- * keeps events announces the latest as `event_seq`; each is read once, in
- * full. From an older computer, or after repeated read failures, the
- * snapshot's own short tool-call and text lists are used instead.
- */
 export function followRemoteSubagentEvents(
   subagentId: string,
   read: (afterSeq: number) => Promise<EventPage>,
@@ -49,7 +43,6 @@ export function followRemoteSubagentEvents(
       if (snapshot.event_seq > requested) pull(snapshot.event_seq);
       return;
     }
-    // Snapshots carry full lists; the task log appends each ID once.
     for (const call of snapshot.tool_calls ?? [])
       recordTaskProgressToolCall(subagentId, call);
     for (const entry of snapshot.progress_texts ?? []) {
@@ -64,7 +57,6 @@ export function followRemoteSubagentEvents(
 
   return {
     recordSnapshot,
-    /** Read the final snapshot's events; keep its lists if reads failed. */
     async finish(final: SubagentSnapshot): Promise<void> {
       recordSnapshot(final);
       await draining;

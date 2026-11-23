@@ -132,11 +132,6 @@ export function resolveChatGPTOAuthConnection(
   };
 }
 
-/**
- * Accept tokens a client obtained from the provider's own subscription login.
- * Only the local provider store holds raw OAuth tokens; Cloud rows carry the
- * credential bundle in an encrypted `api_key` written through the Cloud API.
- */
 export function resolveProviderOAuthTokensConnection(
   provider: ByokProvider,
   input: { providerName?: string; oauthConfig: ProviderOAuthTokensConfig },

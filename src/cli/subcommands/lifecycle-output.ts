@@ -45,7 +45,6 @@ export function resolveServerLifecycleOutput(
   return { output: mode ? createServerLifecycleOutput() : null, error: null };
 }
 
-/** Emit deduplicated, payload-free state transitions for process supervisors. */
 export function createServerLifecycleOutput(
   write: LifecycleWriter = (line) => process.stdout.write(`${line}\n`),
 ): ServerLifecycleOutput {

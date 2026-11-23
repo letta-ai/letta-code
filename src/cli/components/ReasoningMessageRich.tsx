@@ -12,13 +12,11 @@ import {
   subscribeToThinkingDisplay,
 } from "./transcript-display-state";
 
-// Helper function to normalize text - copied from old codebase
-// NOTE: Less aggressive than before to preserve spacing when content is split across chunks
 const normalize = (s: string) =>
   s
     .replace(/\r\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
-    .replace(/^\n+/g, ""); // Only trim leading newlines, preserve trailing ones
+    .replace(/^\n+/g, "");
 
 type ReasoningLine = {
   kind: "reasoning";
@@ -50,16 +48,6 @@ export function formatThinkingDuration(durationMs: number): string {
   return `${seconds} ${seconds === 1 ? "second" : "seconds"}`;
 }
 
-/**
- * ReasoningMessageRich - Rich formatting version with special reasoning layout
- * This is a direct port from the old letta-code codebase to preserve the exact styling
- *
- * Features:
- * - Header row with "✻" symbol and "Thinking…" text (unless continuation)
- * - Reasoning content indented with 2 spaces
- * - Full markdown rendering with dimmed colors
- * - Proper text normalization
- */
 export const ReasoningMessage = memo(
   ({ line, expanded = false }: { line: ReasoningLine; expanded?: boolean }) => {
     const columns = useTerminalWidth();
@@ -68,8 +56,6 @@ export const ReasoningMessage = memo(
 
     const normalizedText = normalize(line.text);
 
-    // Continuation rows belong to the preceding thinking block. Keep them
-    // hidden with that block rather than emitting extra collapsed headers.
     if (line.isContinuation) {
       if (!expanded) return null;
       return (

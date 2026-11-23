@@ -16,14 +16,12 @@ const originalConfigDir = process.env.LETTA_CONFIG_DIR;
 const originalHome = process.env.HOME;
 
 beforeEach(async () => {
-  // Create a temporary test directory for project files
   testDir = await mkdtemp(join(tmpdir(), "letta-test-"));
   delete process.env.LETTA_CONFIG_DIR;
 });
 
 afterEach(async () => {
   resetPermissionLoaderCacheForTests();
-  // Clean up test directory
   await removeTestDir(testDir);
   if (originalConfigDir === undefined) delete process.env.LETTA_CONFIG_DIR;
   else process.env.LETTA_CONFIG_DIR = originalConfigDir;
@@ -31,24 +29,16 @@ afterEach(async () => {
   else process.env.HOME = originalHome;
 });
 
-// ============================================================================
-// Basic Loading Tests
-// ============================================================================
-
 test("Load permissions from empty directory returns rules from user settings", async () => {
   const projectDir = join(testDir, "empty-project");
   const permissions = await loadPermissions(projectDir);
 
-  // Will include user settings from real ~/.letta/settings.json if it exists
-  // So we just verify the structure is correct
   expect(Array.isArray(permissions.allow)).toBe(true);
   expect(Array.isArray(permissions.deny)).toBe(true);
   expect(Array.isArray(permissions.ask)).toBe(true);
   expect(Array.isArray(permissions.alwaysAsk)).toBe(true);
   expect(Array.isArray(permissions.additionalDirectories)).toBe(true);
 });
-
-// Skipped: User settings tests require mocking homedir() which is not reliable across platforms
 
 test("Load permissions from project settings", async () => {
   const projectDir = join(testDir, "project-1");
@@ -64,7 +54,6 @@ test("Load permissions from project settings", async () => {
 
   const permissions = await loadPermissions(projectDir);
 
-  // Should include project rule (may also include user settings from real home dir)
   expect(permissions.allow).toContain("Bash(npm run lint)");
 });
 
@@ -82,7 +71,6 @@ test("Load permissions from local settings", async () => {
 
   const permissions = await loadPermissions(projectDir);
 
-  // Should include local rule (may also include user settings from real home dir)
   expect(permissions.allow).toContain("Bash(git push:*)");
 });
 
@@ -213,14 +201,9 @@ test("Saved permission rules are visible immediately", async () => {
   expect(updated.allow).toContain("Bash(letta-permission-watch-saved)");
 });
 
-// ============================================================================
-// Hierarchical Merging Tests
-// ============================================================================
-
 test("Local settings merge with project settings", async () => {
   const projectDir = join(testDir, "project-3");
 
-  // Project settings
   await Bun.write(
     join(projectDir, ".letta", "settings.json"),
     JSON.stringify({
@@ -230,7 +213,6 @@ test("Local settings merge with project settings", async () => {
     }),
   );
 
-  // Local settings
   await Bun.write(
     join(projectDir, ".letta", "settings.local.json"),
     JSON.stringify({
@@ -242,7 +224,6 @@ test("Local settings merge with project settings", async () => {
 
   const permissions = await loadPermissions(projectDir);
 
-  // All rules should be merged (concatenated), plus any from user settings
   expect(permissions.allow).toContain("Bash(cat:*)");
   expect(permissions.allow).toContain("Bash(git push:*)");
 });
@@ -250,7 +231,6 @@ test("Local settings merge with project settings", async () => {
 test("Settings merge deny rules from multiple sources", async () => {
   const projectDir = join(testDir, "project-4");
 
-  // Project settings
   await Bun.write(
     join(projectDir, ".letta", "settings.json"),
     JSON.stringify({
@@ -260,7 +240,6 @@ test("Settings merge deny rules from multiple sources", async () => {
     }),
   );
 
-  // Local settings
   await Bun.write(
     join(projectDir, ".letta", "settings.local.json"),
     JSON.stringify({
@@ -272,7 +251,6 @@ test("Settings merge deny rules from multiple sources", async () => {
 
   const permissions = await loadPermissions(projectDir);
 
-  // Should contain both deny rules (plus any from user settings)
   expect(permissions.deny).toContain("Read(.env)");
   expect(permissions.deny).toContain("Read(secrets/**)");
 });
@@ -280,7 +258,6 @@ test("Settings merge deny rules from multiple sources", async () => {
 test("Settings merge additionalDirectories", async () => {
   const projectDir = join(testDir, "project-5");
 
-  // Project settings
   await Bun.write(
     join(projectDir, ".letta", "settings.json"),
     JSON.stringify({
@@ -290,7 +267,6 @@ test("Settings merge additionalDirectories", async () => {
     }),
   );
 
-  // Local settings
   await Bun.write(
     join(projectDir, ".letta", "settings.local.json"),
     JSON.stringify({
@@ -302,16 +278,9 @@ test("Settings merge additionalDirectories", async () => {
 
   const permissions = await loadPermissions(projectDir);
 
-  // Should contain both (plus any from user settings)
   expect(permissions.additionalDirectories).toContain("../docs");
   expect(permissions.additionalDirectories).toContain("../shared");
 });
-
-// ============================================================================
-// Saving Permission Rules Tests
-// ============================================================================
-
-// Skipped: User settings saving tests require mocking homedir()
 
 test("Save permission to project settings", async () => {
   const projectDir = join(testDir, "project");
@@ -493,7 +462,6 @@ test("Save permission dedupes wrapped shell launcher variants", async () => {
 test("Save permission preserves existing rules", async () => {
   const projectDir = join(testDir, "project");
 
-  // Create initial settings
   const settingsPath = join(projectDir, ".letta", "settings.json");
   await Bun.write(
     settingsPath,
@@ -504,7 +472,6 @@ test("Save permission preserves existing rules", async () => {
     }),
   );
 
-  // Add another rule
   await savePermissionRule("Bash(ls:*)", "allow", "project", projectDir);
 
   const file = Bun.file(settingsPath);
@@ -518,7 +485,6 @@ test("Save permission preserves existing rules", async () => {
 test("Save permission preserves other settings fields", async () => {
   const projectDir = join(testDir, "project");
 
-  // Create settings with other fields
   const settingsPath = join(projectDir, ".letta", "settings.json");
   await Bun.write(
     settingsPath,
@@ -541,20 +507,14 @@ test("Save permission preserves other settings fields", async () => {
   expect(settings.permissions.allow).toContain("Bash(ls:*)");
 });
 
-// ============================================================================
-// Error Handling Tests
-// ============================================================================
-
 test("Load permissions handles invalid JSON gracefully", async () => {
   const projectDir = join(testDir, "project-invalid-json");
   const settingsPath = join(projectDir, ".letta", "settings.json");
 
-  // Write invalid JSON
   await Bun.write(settingsPath, "{ invalid json ");
 
   const permissions = await loadPermissions(projectDir);
 
-  // Should return empty permissions instead of crashing (silently skip invalid file)
   expect(permissions.allow).toBeDefined();
   expect(permissions.deny).toBeDefined();
 });
@@ -567,13 +527,11 @@ test("Load permissions handles missing permissions field", async () => {
     settingsPath,
     JSON.stringify({
       tokenStreaming: true,
-      // No permissions field
     }),
   );
 
   const permissions = await loadPermissions(projectDir);
 
-  // Should have empty arrays
   expect(Array.isArray(permissions.allow)).toBe(true);
   expect(Array.isArray(permissions.deny)).toBe(true);
 });
@@ -588,14 +546,9 @@ test("Save permission creates parent directories", async () => {
   expect(await file.exists()).toBe(true);
 });
 
-// ============================================================================
-// .gitignore Update Tests
-// ============================================================================
-
 test("Saving local settings updates .gitignore", async () => {
   const projectDir = join(testDir, "project");
 
-  // Create .gitignore first
   await Bun.write(join(projectDir, ".gitignore"), "node_modules\n");
 
   await savePermissionRule("Bash(ls:*)", "allow", "local", projectDir);
@@ -604,7 +557,7 @@ test("Saving local settings updates .gitignore", async () => {
   const content = await gitignoreFile.text();
 
   expect(content).toContain(".letta/settings.local.json");
-  expect(content).toContain("node_modules"); // Preserves existing content
+  expect(content).toContain("node_modules");
 });
 
 test("Saving local settings doesn't duplicate .gitignore entry", async () => {

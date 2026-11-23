@@ -23,8 +23,6 @@ import {
 } from "@/test-utils/overflow-preview";
 import { LIMITS } from "@/tools/impl/truncation";
 
-// Skip on Windows - test commands use bash syntax (&&, >&2, sleep, etc.)
-// The executor itself is cross-platform, but these test commands are bash-specific
 const isWindows = process.platform === "win32";
 
 describe.skipIf(isWindows)("Hooks Executor", () => {
@@ -38,9 +36,7 @@ describe.skipIf(isWindows)("Hooks Executor", () => {
   afterEach(() => {
     try {
       rmSync(tempDir, { recursive: true, force: true });
-    } catch {
-      // Ignore cleanup errors
-    }
+    } catch {}
   });
 
   describe("executeHookCommand", () => {
@@ -66,7 +62,6 @@ describe.skipIf(isWindows)("Hooks Executor", () => {
     });
 
     test("receives JSON input via stdin", async () => {
-      // Create a script that reads stdin and outputs it
       const scriptPath = join(tempDir, "read-stdin.sh");
       writeFileSync(scriptPath, `#!/bin/bash\ncat`, { mode: 0o755 });
 
@@ -132,7 +127,7 @@ describe.skipIf(isWindows)("Hooks Executor", () => {
       const hook: HookCommand = {
         type: "command",
         command: "sleep 10",
-        timeout: 100, // 100ms timeout
+        timeout: 100,
       };
 
       const input: PreToolUseHookInput = {
@@ -201,7 +196,6 @@ describe.skipIf(isWindows)("Hooks Executor", () => {
         working_directory: tempDir,
         tool_name: "Bash",
         tool_input: {},
-        // Note: agent_id is not provided
       };
 
       const result = await executeHookCommand(hook, input, tempDir);
@@ -251,7 +245,7 @@ describe.skipIf(isWindows)("Hooks Executor", () => {
       const result = await executeHooks(hooks, input, tempDir);
 
       expect(result.blocked).toBe(true);
-      expect(result.results).toHaveLength(2); // Only first two ran
+      expect(result.results).toHaveLength(2);
       expect(result.feedback[0]).toContain("blocked");
     });
 
@@ -423,7 +417,7 @@ describe.skipIf(isWindows)("Hooks Executor", () => {
 
       expect(result.blocked).toBe(true);
       expect(result.errored).toBe(true);
-      expect(result.results).toHaveLength(3); // All hooks ran (parallel doesn't stop early)
+      expect(result.results).toHaveLength(3);
     });
 
     test("returns empty result for empty hooks array", async () => {
@@ -482,8 +476,6 @@ describe.skipIf(isWindows)("Hooks Executor", () => {
       const duration = Date.now() - startTime;
 
       expect(result.results).toHaveLength(3);
-      // Sequential would take ~300ms, parallel should be ~100ms
-      // Allow extra headroom for CI runners (especially macOS ARM) which can be slow
       expect(duration).toBeLessThan(400);
     });
   });
@@ -589,7 +581,6 @@ describe.skipIf(isWindows)("Hooks Executor", () => {
 
       const result = await executeHookCommand(hook, input, tempDir);
 
-      // Exit 0 = success, stderr should still be captured
       expect(result.exitCode).toBe(HookExitCode.ALLOW);
       expect(result.stderr).toBe("Suggestion: check spelling of command");
     });
@@ -597,7 +588,6 @@ describe.skipIf(isWindows)("Hooks Executor", () => {
 
   describe("Edge cases", () => {
     test("handles command that outputs very long output", async () => {
-      // Generate a command that outputs 10KB of data
       const hook: HookCommand = {
         type: "command",
         command:
@@ -670,7 +660,6 @@ exit 0`,
 
       const hook: HookCommand = { type: "command", command: scriptPath };
 
-      // Test allowed
       const allowedInput: PreToolUseHookInput = {
         event_type: "PreToolUse",
         working_directory: tempDir,
@@ -685,7 +674,6 @@ exit 0`,
       expect(allowedResult.exitCode).toBe(HookExitCode.ALLOW);
       expect(allowedResult.stdout).toContain("Allowed: SafeTool");
 
-      // Test blocked
       const blockedInput: PreToolUseHookInput = {
         event_type: "PreToolUse",
         working_directory: tempDir,

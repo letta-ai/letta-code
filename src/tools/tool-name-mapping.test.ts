@@ -10,12 +10,6 @@ describe("tool name mapping", () => {
   });
 
   test("tool definitions load first in a fresh process without a TDZ cycle", () => {
-    // Regression: client-preferences imported these helpers from tools/manager,
-    // closing tool-definitions -> impl/wake -> cron -> listener/queue ->
-    // client-preferences -> manager -> tool-definitions. Loading
-    // tool-definitions before manager threw "Cannot access 'TOOL_DEFINITIONS'
-    // before initialization". A fresh process is required: any earlier import
-    // of manager in this test process would hide the cycle.
     const script = `
       await import("./src/tools/tool-definitions.ts");
       const { TOOL_NAMES } = await import("./src/tools/manager.ts");

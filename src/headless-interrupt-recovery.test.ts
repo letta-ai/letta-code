@@ -7,8 +7,6 @@ import { fileURLToPath } from "node:url";
 import { type WebSocket, WebSocketServer } from "ws";
 import { createIsolatedCliTestEnv } from "@/test-utils/test-process-env";
 
-// Run the real bidirectional entrypoint in isolation: only the model/backend is
-// fake. Monitor, its socket, stdin control requests, and queue recovery are real.
 const fixture = `
 import { __testSetBackend } from "./src/backend";
 import { setConfiguredBackendMode } from "./src/backend/backend-mode";
@@ -60,8 +58,6 @@ test("headless interrupt preserves a real Monitor and its queued events", async 
     host: "127.0.0.1",
     port: 0,
     verifyClient: (_info, done) => {
-      // Hold the handshake until the first turn is idle. This forces the
-      // ordering that used to let the test send before a socket existed.
       onHandshake(done);
     },
   });
@@ -158,8 +154,6 @@ test("headless interrupt preserves a real Monitor and its queued events", async 
           if (event.type === "result") {
             results++;
             if (results === 1) {
-              // Unlike interrupt, initialize is handled by the main loop,
-              // after the turn's finally block has finished.
               send({
                 type: "control_request",
                 request_id: "after-first-turn",

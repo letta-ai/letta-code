@@ -127,7 +127,6 @@ export class FakeComputer {
       );
   }
 
-  /** A snapshot from a listener that has no subagents for this conversation. */
   emptySnapshot(seq = 1) {
     for (const handler of this.messageHandlers)
       handler(

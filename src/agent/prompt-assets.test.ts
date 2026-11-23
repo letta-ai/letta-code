@@ -55,7 +55,6 @@ describe("isKnownPreset", () => {
   test("returns false for unknown IDs", () => {
     expect(isKnownPreset("recall")).toBe(false);
     expect(isKnownPreset("nonexistent")).toBe(false);
-    // Old IDs should no longer be known
     expect(isKnownPreset("letta-claude")).toBe(false);
     expect(isKnownPreset("claude")).toBe(false);
   });

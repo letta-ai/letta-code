@@ -167,13 +167,9 @@ describe("reflection worktree completion messaging", () => {
         ]);
         return { success: true, conversationId: "conv-review" };
       },
-      // The integration child cannot sync while the parent holds the lease.
-      // The parent syncs only after finalize verified the merge, so a rebase
-      // during sync can no longer make the reflection look unmerged.
       syncIntegratedMemory: async (agentId, options) => {
         synced.push(`${agentId}:${options?.memoryDir}`);
         worktreeGoneAtSync = !existsSync(worktree.worktreeDir);
-        // Still under the same lease as the integration and its verification.
         leaseHeldAtSync = (await claimMemoryOperation(memoryDir)) === null;
         return {
           status: "pushed",

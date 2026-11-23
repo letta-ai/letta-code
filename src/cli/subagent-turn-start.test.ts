@@ -200,7 +200,6 @@ describe("subagent turn-start reentry safeguards", () => {
     const emitted = new Set<string>();
     const deferred = new Map<string, number>();
 
-    // First commit pass gets blocked by deferred non-Task tool call.
     const first = simulateCommitPass(
       order,
       byId,
@@ -213,13 +212,11 @@ describe("subagent turn-start reentry safeguards", () => {
     expect(first.grouped).toBe(false);
     expect(getSubagentByToolCallId("tc-task")).toBeDefined();
 
-    // During reentry we should preserve completed subagents.
     if (shouldClearCompletedSubagentsOnTurnStart(true, false)) {
       clearCompletedSubagents();
     }
     expect(getSubagentByToolCallId("tc-task")).toBeDefined();
 
-    // Explicit non-deferred flush before reentry should request deferToolCalls=false.
     let flushCalled = false;
     let capturedOpts: { deferToolCalls?: boolean } | undefined;
     flushEligibleLinesBeforeReentry((_b, opts) => {
@@ -229,7 +226,6 @@ describe("subagent turn-start reentry safeguards", () => {
     expect(flushCalled).toBe(true);
     expect(capturedOpts?.deferToolCalls).toBe(false);
 
-    // And with defer disabled, Task grouping should happen instead of fallback.
     const flushed = simulateCommitPass(
       order,
       byId,
@@ -291,7 +287,6 @@ describe("subagent turn-start reentry safeguards", () => {
     );
     expect(first.blockedByDeferred).toBe(true);
 
-    // This mirrors the old problematic behavior.
     clearCompletedSubagents();
     expect(getSubagentByToolCallId("tc-task")).toBeUndefined();
 

@@ -1,33 +1,14 @@
-// Server-side MCP servers are registered on the Letta server (via the ADE or
-// API) and shared across the organization. Letta Code does not create or
-// delete them; it lists them and attaches/detaches their tools to an agent.
-// Attached tools execute on the Letta server during agent steps — the client
-// never runs them.
-//
-// Endpoint note: tool discovery uses the legacy name-keyed route
-// GET /v1/tools/mcp/servers/{name}/tools, which lists the MCP server's tools
-// live (the same source the ADE uses). The id-keyed
-// GET /v1/mcp-servers/{id}/tools only returns already-registered Tool records
-// and stays empty until a tool is registered, so it cannot drive discovery.
-// Attaching registers the tool first (POST /v1/tools/mcp/servers/{name}/{tool})
-// to obtain a Letta Tool id, then attaches that id to the agent.
-
 import type { McpServerListResponse } from "@letta-ai/letta-client/resources/mcp-servers/mcp-servers";
 import type { Tool } from "@letta-ai/letta-client/resources/tools";
 
 export type ServerMcpServer = McpServerListResponse[number];
 
-/** A tool as reported live by the MCP server via the Letta server. */
 export interface McpToolSchema {
   name: string;
   description?: string | null;
   health?: { status?: string | null } | null;
 }
 
-/**
- * Structural subset of the Letta SDK client used by server-side MCP flows.
- * Kept structural so tests can stub it without module-level mocking.
- */
 export interface ServerMcpClient {
   get(path: string): Promise<unknown>;
   post(path: string, body?: unknown): Promise<unknown>;
@@ -50,15 +31,12 @@ export interface ServerMcpClient {
   };
 }
 
-/** A server-side MCP server together with its live-discovered tools. */
 export interface ServerMcpEntry {
   server: ServerMcpServer;
   tools: McpToolSchema[];
-  /** Set when the server's tools could not be listed. */
   toolsError?: string;
 }
 
-/** An agent-attached Letta Tool record that wraps a server-side MCP tool. */
 export interface AgentMcpAttachment {
   toolId: string;
   toolName: string;
@@ -83,7 +61,6 @@ function withTimeout<T>(
   }) as Promise<T>;
 }
 
-/** List MCP servers registered on the Letta server. */
 export function listServerMcpServers(
   client: ServerMcpClient,
   timeoutMs = 10_000,
@@ -95,7 +72,6 @@ export function listServerMcpServers(
   );
 }
 
-/** List a server's tools live from the MCP server (name-keyed legacy route). */
 export async function listLiveServerMcpTools(
   client: ServerMcpClient,
   serverName: string,
@@ -115,7 +91,6 @@ export async function listLiveServerMcpTools(
   );
 }
 
-/** List servers and fetch each server's tools; tool errors are per-entry. */
 export async function loadServerMcpEntries(
   client: ServerMcpClient,
   timeoutMs = 15_000,
@@ -158,7 +133,6 @@ function parseMcpMetadata(
   };
 }
 
-/** Collect the agent's attached tools that wrap server-side MCP tools. */
 export async function listAgentMcpAttachments(
   client: ServerMcpClient,
   agentId: string,
@@ -175,7 +149,6 @@ export async function listAgentMcpAttachments(
   return attachments;
 }
 
-/** The subset of attachments that belong to the given server entry. */
 export function attachmentsForEntry(
   entry: ServerMcpEntry,
   attachments: readonly AgentMcpAttachment[],
@@ -187,7 +160,6 @@ export function attachmentsForEntry(
   );
 }
 
-/** Names of the entry's tools that are attached to the agent. */
 export function attachedToolNamesForEntry(
   entry: ServerMcpEntry,
   attachments: readonly AgentMcpAttachment[],
@@ -199,10 +171,6 @@ export function attachedToolNamesForEntry(
   );
 }
 
-/**
- * Register an MCP tool on the Letta server as a Tool record and return it.
- * Registration is an upsert; re-registering an existing tool is safe.
- */
 export async function registerServerMcpTool(
   client: ServerMcpClient,
   serverName: string,
@@ -219,7 +187,6 @@ export async function registerServerMcpTool(
   return { id: result.id };
 }
 
-/** Register the given MCP tools and attach them to the agent. */
 export async function attachServerMcpTools(
   client: ServerMcpClient,
   agentId: string,
@@ -234,7 +201,6 @@ export async function attachServerMcpTools(
   );
 }
 
-/** Detach the given tools from the agent. */
 export async function detachServerMcpTools(
   client: ServerMcpClient,
   agentId: string,
@@ -247,7 +213,6 @@ export async function detachServerMcpTools(
   );
 }
 
-/** Re-sync a server's registered tool schemas on the Letta server. */
 export function refreshServerMcpServer(
   client: ServerMcpClient,
   mcpServerId: string,
@@ -256,10 +221,6 @@ export function refreshServerMcpServer(
   return client.mcpServers.refresh(mcpServerId, { agent_id: agentId });
 }
 
-/**
- * Decide what toggling a whole server does: enabling attaches every tool not
- * yet attached; disabling detaches every attached tool.
- */
 export function planServerMcpToggle(
   entry: ServerMcpEntry,
   attachments: readonly AgentMcpAttachment[],
@@ -276,7 +237,6 @@ export function planServerMcpToggle(
   return { action: "attach", toolNames: entry.tools.map((tool) => tool.name) };
 }
 
-/** Describe where a server-side MCP server points (for list display). */
 export function describeServerMcpTarget(server: ServerMcpServer): string {
   if ("server_url" in server && server.server_url) {
     return server.server_url;

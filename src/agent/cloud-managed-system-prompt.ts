@@ -8,7 +8,6 @@ import {
   isCloudPromptBackend,
 } from "./system-prompt-versioning";
 
-/** Keep a memory-mode change from re-pinning a Cloud-owned default prompt. */
 export async function reconcileCloudPromptForMemoryMode(input: {
   agent: AgentState;
   memoryMode: MemoryPromptMode;
@@ -38,8 +37,6 @@ export async function reconcileCloudPromptForMemoryMode(input: {
     return undefined;
   }
 
-  // Startup may be migrating this old default concurrently. Apply the same
-  // exact-match decision rather than racing it by writing the old text back.
   const decision = decideManagedSystemPromptUpdate({
     agent,
     memoryMode,

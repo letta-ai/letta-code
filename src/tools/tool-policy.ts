@@ -2,14 +2,12 @@ import type { RuntimeToolPolicy } from "@/types/external-tool-protocol";
 import type { ClientToolsetConfig } from "@/types/input-create-message";
 import { getInternalToolName } from "./tool-name-mapping";
 
-/** The tool selection fields one turn sends; each applies to that turn only. */
 export interface TurnToolSelection {
   clientToolset?: ClientToolsetConfig;
   clientToolAllowlist?: string[];
   excludeInteractiveTools?: boolean;
 }
 
-/** Keep entries of `narrower` that `ceiling` also allows. */
 export function intersectToolAllowlists(
   ceiling: readonly string[],
   narrower: readonly string[],
@@ -21,10 +19,6 @@ export function intersectToolAllowlists(
   );
 }
 
-/**
- * Merge per field: a turn's own fields win over field values from the
- * connection's tool policy. A turn allowlist can only narrow the policy's.
- */
 export function resolveTurnToolSelection(
   turn: TurnToolSelection,
   policy: RuntimeToolPolicy | undefined,
@@ -56,7 +50,6 @@ export function resolveTurnToolSelection(
   };
 }
 
-/** Fill toolset fields the turn left unset from the saved conversation choice. */
 export function mergeClientToolsetFields(
   primary: ClientToolsetConfig | undefined,
   fallback: ClientToolsetConfig | undefined,

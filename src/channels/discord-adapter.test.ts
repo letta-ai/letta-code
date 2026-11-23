@@ -235,8 +235,6 @@ afterAll(() => {
   mock.restore();
 });
 
-// ── Discord adapter open-channel ingress ───────────────────────────────
-
 describe("Discord adapter open-channel ingress", () => {
   test("passes non-mentioned guild messages from configured open channels", async () => {
     const { client, deliveries } = await startAdapterWithDeliveries({
@@ -322,8 +320,6 @@ describe("Discord adapter open-channel ingress", () => {
   });
 });
 
-// ── Discord adapter auto-thread-on-mention gating ───────────────────────
-
 describe("Discord adapter auto-thread-on-mention gating", () => {
   test("forwards a bare mention from an existing thread for route recovery", async () => {
     const { client, deliveries } = await startAdapterWithMentionConfig({
@@ -392,7 +388,6 @@ describe("Discord adapter auto-thread-on-mention gating", () => {
   test("does not create a thread when autoThreadOnMention is disabled (default)", async () => {
     const { client, deliveries } = await startAdapterWithMentionConfig({
       allowedChannels: { "channel-mention": "mention-only" },
-      // autoThreadOnMention omitted → defaults to false
     });
 
     const message = createGuildMessage({
@@ -404,7 +399,6 @@ describe("Discord adapter auto-thread-on-mention gating", () => {
 
     await client.emitMessageCreate(message);
 
-    // No thread should be spawned; the mention routes to the channel itself.
     expect(message.startThread).not.toHaveBeenCalled();
     expect(deliveries).toHaveLength(1);
     expect(deliveries[0]).toMatchObject({
@@ -490,13 +484,6 @@ describe("Discord adapter auto-thread-on-mention gating", () => {
   });
 });
 
-// The Discord adapter's internal helpers are not exported, but we can test
-// the equivalent logic by reimplementing the pure functions here and verifying
-// they match the adapter's behavior. These are regression tests for the
-// algorithms used in adapter.ts.
-
-// ── shouldAutoThreadOnDiscordMention ───────────────────────────────
-
 describe("shouldAutoThreadOnDiscordMention", () => {
   test("defaults to false when no policy is configured", () => {
     expect(
@@ -550,8 +537,6 @@ describe("shouldAutoThreadOnDiscordMention", () => {
   });
 });
 
-// ── splitMessageText ──────────────────────────────────────────────────────
-
 function splitMessageText(text: string, maxLength: number): string[] {
   if (text.length <= maxLength) {
     return [text];
@@ -590,10 +575,7 @@ describe("splitMessageText", () => {
     const text = `${line}\n${line}\n${line}`;
     const chunks = splitMessageText(text, 1900);
     expect(chunks.length).toBeGreaterThan(1);
-    // First chunk should split at the newline (position 900), not mid-content
     expect(chunks[0]?.length).toBeLessThanOrEqual(1900);
-    // The split should happen at a \n boundary, so first chunk should be
-    // exactly 900+1 chars (the first line plus the newline)
     expect(chunks[0]).toBe(`${line}\n${line}`);
   });
 
@@ -609,7 +591,7 @@ describe("splitMessageText", () => {
   test("hard-splits when no whitespace available", () => {
     const solid = "x".repeat(5000);
     const chunks = splitMessageText(solid, 1900);
-    expect(chunks.length).toBe(3); // 1900 + 1900 + 1200
+    expect(chunks.length).toBe(3);
     expect(chunks[0]?.length).toBe(1900);
     expect(chunks[1]?.length).toBe(1900);
     expect(chunks[2]?.length).toBe(1200);
@@ -620,15 +602,11 @@ describe("splitMessageText", () => {
       .fill("The quick brown fox jumps over the lazy dog.")
       .join("\n");
     const chunks = splitMessageText(text, 1900);
-    // When we split at boundaries and trimStart remaining, some whitespace
-    // may be consumed. Verify all non-whitespace content is preserved.
     const originalNonWs = text.replace(/\s+/g, "");
     const reconstructedNonWs = chunks.join("").replace(/\s+/g, "");
     expect(reconstructedNonWs).toBe(originalNonWs);
   });
 });
-
-// ── normalizeDiscordMentionText ──────────────────────────────────────────
 
 function normalizeDiscordMentionText(
   text: string,
@@ -673,8 +651,6 @@ describe("normalizeDiscordMentionText", () => {
     expect(normalizeDiscordMentionText("<@123>", "123")).toBe("");
   });
 });
-
-// ── resolveDiscordReactionEmoji ──────────────────────────────────────────
 
 function resolveDiscordReactionEmoji(value: string): string {
   const trimmed = value.trim();
@@ -729,8 +705,6 @@ describe("resolveDiscordReactionEmoji", () => {
   });
 });
 
-// ── resolveDiscordChatType ──────────────────────────────────────────────
-
 function resolveDiscordChatType(
   guildId: string | null | undefined,
 ): "direct" | "channel" {
@@ -751,13 +725,8 @@ describe("resolveDiscordChatType", () => {
   });
 });
 
-// ── buildDiscordIngressMessageKey ────────────────────────────────────────
-
 describe("buildDiscordIngressMessageKey", () => {
   test("dedupes the same Discord message across parent/thread channel contexts", () => {
-    // Discord message IDs are globally unique. If the same underlying message
-    // is surfaced through both a parent channel and created thread context, the
-    // dedupe key must remain stable.
     const parentChannelKey = buildDiscordIngressMessageKey(
       "discord-bot",
       "msg-1",
@@ -783,8 +752,6 @@ describe("buildDiscordIngressMessageKey", () => {
     expect(buildDiscordIngressMessageKey("discord-bot", "")).toBeNull();
   });
 });
-
-// ── buildDiscordReplyOptions ─────────────────────────────────────────────
 
 describe("buildDiscordReplyOptions", () => {
   test("omits reply options when no reply target is provided", () => {

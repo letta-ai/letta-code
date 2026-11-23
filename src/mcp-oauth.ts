@@ -57,7 +57,6 @@ interface PendingField<T> {
   baseVersion: number;
 }
 
-/** Credentials produced by a completed MCP OAuth flow. */
 export interface McpOAuthCredentialSnapshot {
   access_token: string;
   refresh_token?: string;
@@ -65,7 +64,6 @@ export interface McpOAuthCredentialSnapshot {
   client_secret?: string;
   redirect_uri: string;
   token_type?: string;
-  /** Remaining access-token lifetime in seconds at export time. */
   expires_in?: number;
   scope?: string;
 }
@@ -78,18 +76,9 @@ export interface McpOAuthSession {
 }
 
 export interface ExportableMcpOAuthSession extends McpOAuthSession {
-  /** Export credentials after the MCP client finishes authorization. */
   exportCredentials(): Promise<McpOAuthCredentialSnapshot>;
 }
 
-/**
- * Async storage for completed MCP OAuth credentials.
- *
- * Discovery, dynamic registration, and PKCE verifier state remain scoped to an
- * active callback session and are committed together only after token exchange;
- * an interrupted browser flow starts over rather than attempting callback
- * recovery without its original loopback listener.
- */
 export interface McpOAuthStorage {
   get(credentialKey: string): Promise<string | null | undefined>;
   set(credentialKey: string, value: string): Promise<void>;
@@ -100,28 +89,17 @@ export interface McpOAuthSessionOptions {
   interactive: boolean;
   onStatus?: (message: string) => void;
   openBrowser?: (url: string) => Promise<void>;
-  /**
-   * `client_name` shown on the provider's consent screen. Defaults to
-   * "Letta Code"; only sent at dynamic client registration.
-   */
   clientName?: string;
 }
 
 export interface StorageInjectedMcpOAuthSessionOptions {
-  /** Consumer-owned opaque key, unique process-wide across storage backends. */
   credentialKey: string;
-  /** Stable identity for wrappers around the same physical storage backend. */
   storageNamespace?: string;
   storage: McpOAuthStorage;
   interactive: boolean;
   openBrowser?: (url: string) => Promise<void>;
   onStatus?: (message: string) => void;
-  /** Inspect callback params before token exchange; throw to abort the flow. */
   onAuthorizationCallback?: (callback: { domain?: string }) => void;
-  /**
-   * `client_name` shown on the provider's consent screen. Defaults to
-   * "Letta Code"; only sent at dynamic client registration.
-   */
   clientName?: string;
 }
 
@@ -866,15 +844,9 @@ async function openSystemBrowser(url: string): Promise<void> {
     const { default: open } = await import("open");
     const subprocess = await open(url, { wait: false });
     subprocess.on("error", () => {});
-  } catch {
-    // The authorization URL is also printed in the command status.
-  }
+  } catch {}
 }
 
-/**
- * Moves credentials stored under a pre-normalization key to the current key
- * and returns the current key.
- */
 export async function migrateLegacyMcpOAuthCredentials(
   storage: McpOAuthStorage,
   agentId: string,

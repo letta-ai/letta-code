@@ -17,8 +17,6 @@ function quotePowerShellLiteral(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
 }
 
-// Use the built-in Windows native application instead of assuming a separate
-// `node` executable is installed alongside the Bun test runner.
 const WINDOWS_COMMAND_INTERPRETER =
   process.env.ComSpec ?? process.env.COMSPEC ?? "cmd.exe";
 
@@ -222,7 +220,6 @@ describe("Shell Launchers", () => {
       test("PowerShell is tried before cmd.exe", () => {
         const launchers = buildShellLaunchers("echo test");
 
-        // Find indices of PowerShell and cmd.exe
         const powershellIndex = launchers.findIndex(
           (l) =>
             l[0]?.toLowerCase().includes("powershell") ||
@@ -236,7 +233,6 @@ describe("Shell Launchers", () => {
 
         expect(powershellIndex).toBeGreaterThanOrEqual(0);
         expect(cmdIndex).toBeGreaterThanOrEqual(0);
-        // PowerShell should come before cmd.exe
         expect(powershellIndex).toBeLessThan(cmdIndex);
       });
 
@@ -338,8 +334,6 @@ describe("Shell Launchers", () => {
         }
       });
 
-      // The first Windows PowerShell 5.1 launch took 17s on fresh CI runners.
-      // Its cold start must fit inside both the subprocess and test deadlines.
       test("preserves native exit codes on Windows PowerShell 5.1", () => {
         const executable =
           "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
@@ -399,7 +393,6 @@ describe("Shell Launchers", () => {
 
         try {
           const launchers = buildShellLaunchers("echo test");
-          // User's shell should be first
           expect(launchers[0]?.[0]).toBe("/bin/zsh");
         } finally {
           if (originalShell === undefined) delete process.env.SHELL;

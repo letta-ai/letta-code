@@ -175,9 +175,7 @@ export function getSignalAttachmentSearchDirs(): string[] {
       }
       dirs.push(join(localShare, entry.name, "attachments"));
     }
-  } catch {
-    // Ignore missing ~/.local/share or unreadable entries.
-  }
+  } catch {}
 
   return dirs;
 }

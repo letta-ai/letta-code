@@ -13,9 +13,6 @@ describe("resolveSubagentModel with runtime catalog", () => {
       availableHandles: new Set(["chatgpt-plus-pro/gpt-5.6-sol"]),
     });
 
-    // The spawned child's createAgent re-resolves the ID and applies the
-    // catalog entry's updateArgs (reasoning_effort: high). Returning the bare
-    // handle would silently spawn the base (-none) tier.
     expect(result).toBe("gpt-5.6-sol-plus-pro-high");
   });
 
@@ -44,8 +41,6 @@ describe("resolveSubagentModel with runtime catalog", () => {
       availableHandles: new Set(["lc-openai/gpt-5.6-sol"]),
     });
 
-    // The ID would resolve to openai/gpt-5.6-sol in the child, losing the
-    // BYOK provider swap, so the swapped handle must be returned as-is.
     expect(result).toBe("lc-openai/gpt-5.6-sol");
   });
 });

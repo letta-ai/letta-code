@@ -16,12 +16,8 @@ afterEach(() => {
   sessionPermissions.clear();
 });
 
-// ============================================================================
-// Working Directory Tests
-// ============================================================================
-
 test("Read within working directory is auto-allowed", () => {
-  if (process.platform === "win32") return; // Skip on Windows - Unix paths
+  if (process.platform === "win32") return;
   const result = checkPermission(
     "Read",
     { file_path: "src/test.ts" },
@@ -41,7 +37,6 @@ test("Read outside working directory requires permission", () => {
     "/Users/test/project",
   );
 
-  // Default for Read is allow, but not within working directory
   expect(result.decision).toBe("allow");
   expect(result.reason).toBe("Default behavior for tool");
 });
@@ -57,30 +52,18 @@ test("Glob within working directory is auto-allowed", () => {
   expect(result.decision).toBe("allow");
 });
 
-// ============================================================================
-// Long Command Caching Tests
-// ============================================================================
-
 test("Long bash commands should use wildcard patterns, not exact match", () => {
-  // This is the bug: when you approve a long command like
-  // "cd /path && git diff file.ts | head -100"
-  // it should also match
-  // "cd /path && git diff file.ts | tail -30"
-  // But currently it saves an exact match instead of a wildcard
-
   const longCommand1 =
     "cd /Users/test/project && git diff src/file.ts | head -100";
   const longCommand2 =
     "cd /Users/test/project && git diff src/file.ts | tail -30";
 
-  // After approving the first command with a wildcard pattern
   const permissions: PermissionRules = {
     allow: ["Bash(cd /Users/test/project && git diff:*)"],
     deny: [],
     ask: [],
   };
 
-  // Both should match
   const result1 = checkPermission(
     "Bash",
     { command: longCommand1 },
@@ -267,10 +250,6 @@ test("Grep within working directory is auto-allowed", () => {
   expect(result.decision).toBe("allow");
 });
 
-// ============================================================================
-// Additional Directories Tests
-// ============================================================================
-
 test("Read in additional directory is auto-allowed", () => {
   const permissions: PermissionRules = {
     allow: [],
@@ -315,10 +294,6 @@ test("Multiple additional directories", () => {
   );
   expect(result2.decision).toBe("allow");
 });
-
-// ============================================================================
-// Deny Rule Precedence Tests
-// ============================================================================
 
 test("Deny rule overrides working directory auto-allow", () => {
   const permissions: PermissionRules = {
@@ -403,12 +378,8 @@ test("deny rules match expanded home paths", () => {
   }
 });
 
-// ============================================================================
-// Allow Rule Tests
-// ============================================================================
-
 test("Allow rule for file outside working directory", () => {
-  if (process.platform === "win32") return; // Skip on Windows - Unix paths
+  if (process.platform === "win32") return;
   const permissions: PermissionRules = {
     allow: ["Read(/Users/test/docs/**)"],
     deny: [],
@@ -465,7 +436,7 @@ test("Allow exact Bash command", () => {
     permissions,
     "/Users/test/project",
   );
-  expect(result2.decision).toBe("ask"); // Doesn't match exact
+  expect(result2.decision).toBe("ask");
 });
 
 test("Issue #969: legacy Windows Edit allow rule matches memory project file", () => {
@@ -515,10 +486,6 @@ test("Issue #969 guardrail: Windows legacy Edit rule does not over-match sibling
   expect(result.decision).toBe("ask");
 });
 
-// ============================================================================
-// Ask Rule Tests
-// ============================================================================
-
 test("Ask rule forces prompt", () => {
   const permissions: PermissionRules = {
     allow: [],
@@ -554,10 +521,6 @@ test("Ask rule for specific file pattern", () => {
   expect(result.decision).toBe("ask");
 });
 
-// ============================================================================
-// Default Behavior Tests
-// ============================================================================
-
 test("Read defaults to allow", () => {
   const result = checkPermission(
     "Read",
@@ -573,7 +536,7 @@ test("Read defaults to allow", () => {
 test("Bash defaults to ask", () => {
   const result = checkPermission(
     "Bash",
-    { command: "curl http://example.com" }, // Use non-read-only command
+    { command: "curl http://example.com" },
     { allow: [], deny: [], ask: [] },
     "/Users/test/project",
   );
@@ -615,10 +578,6 @@ test("MessageChannel defaults to allow", () => {
   expect(result.decision).toBe("allow");
   expect(result.reason).toBe("Default behavior for tool");
 });
-
-// ============================================================================
-// Precedence Order Tests
-// ============================================================================
 
 test("Deny takes precedence over allow", () => {
   const permissions: PermissionRules = {
@@ -672,7 +631,7 @@ test("Allow takes precedence over ask", () => {
 });
 
 test("Ask takes precedence over default", () => {
-  if (process.platform === "win32") return; // Skip on Windows - Unix paths
+  if (process.platform === "win32") return;
   const permissions: PermissionRules = {
     allow: [],
     deny: [],
@@ -689,19 +648,14 @@ test("Ask takes precedence over default", () => {
   expect(result.decision).toBe("ask");
 });
 
-// ============================================================================
-// Session Permission Tests (Integration)
-// ============================================================================
-
 test("Session allow rule takes precedence over persisted allow", () => {
-  // Add a session rule
   sessionPermissions.clear();
   sessionPermissions.addRule("Bash(git push:*)", "allow");
 
   const permissions: PermissionRules = {
     allow: [],
     deny: [],
-    ask: ["Bash(git push:*)"], // Would normally ask
+    ask: ["Bash(git push:*)"],
   };
 
   const result = checkPermission(
@@ -714,7 +668,6 @@ test("Session allow rule takes precedence over persisted allow", () => {
   expect(result.decision).toBe("allow");
   expect(result.matchedRule).toContain("session");
 
-  // Clean up
   sessionPermissions.clear();
 });
 
@@ -729,31 +682,25 @@ test("Session rules don't persist after clear", () => {
   expect(sessionPermissions.hasRule("Bash(ls:*)", "allow")).toBe(false);
 });
 
-// ============================================================================
-// Edge Cases and Error Handling
-// ============================================================================
-
 test("Missing file_path parameter", () => {
   const result = checkPermission(
     "Read",
-    {}, // No file_path
+    {},
     { allow: [], deny: [], ask: [] },
     "/Users/test/project",
   );
 
-  // Should fall back to default
   expect(result.decision).toBe("allow");
 });
 
 test("Missing command parameter for Bash", () => {
   const result = checkPermission(
     "Bash",
-    {}, // No command
+    {},
     { allow: [], deny: [], ask: [] },
     "/Users/test/project",
   );
 
-  // Should fall back to default
   expect(result.decision).toBe("ask");
 });
 
@@ -773,7 +720,7 @@ test("Empty permissions object", () => {
   const result = checkPermission(
     "Read",
     { file_path: "test.txt" },
-    {}, // No arrays defined
+    {},
     "/Users/test/project",
   );
 
@@ -805,13 +752,12 @@ test("Parent directory traversal", () => {
     "/Users/test/project",
   );
 
-  // Outside working directory, uses default
   expect(result.decision).toBe("allow");
   expect(result.reason).toBe("Default behavior for tool");
 });
 
 test("Absolute path handling", () => {
-  if (process.platform === "win32") return; // Skip on Windows - Unix paths
+  if (process.platform === "win32") return;
   const permissions: PermissionRules = {
     allow: [],
     deny: ["Read(/etc/**)"],

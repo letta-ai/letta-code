@@ -184,8 +184,6 @@ describe("recoverApprovalStateForSync restart recovery", () => {
 
   test("owner sync with only stale denials holds them for an immediate turn", async () => {
     const runtime = createScopedRuntime();
-    // Auto-allowable, manual, and auto-deniable tools all become stale
-    // denials: nothing is classified, re-run, or re-asked (#1876).
     const stale = [
       { toolCallId: "call-read-1", toolName: "Read", toolArgs: "{}" },
       bashApproval,
@@ -196,8 +194,6 @@ describe("recoverApprovalStateForSync restart recovery", () => {
       resumeInterruptedTurn: true,
     });
 
-    // Nothing parks for a later user message: the sync caller sends these
-    // denials as the next turn itself.
     expect(runtime.pendingInterruptedResults).toBeNull();
     expect(runtime.pendingInterruptedContext).toBeNull();
     const recovered = runtime.recoveredApprovalState;
@@ -214,8 +210,6 @@ describe("recoverApprovalStateForSync restart recovery", () => {
   test("observer sync with only stale denials parks them for this listener's next user message", async () => {
     const runtime = createScopedRuntime();
 
-    // A browser attaching or a readiness probe: another process (a TUI,
-    // `letta -p`, a different computer) may still be executing call-bash-1.
     await recoverApprovalStateForSync(
       runtime,
       scope,
@@ -479,8 +473,6 @@ describe("recoverApprovalStateForSync restart recovery", () => {
       },
     );
 
-    // The continuation owns the lifecycle before the status replay runs, so
-    // the first sync already reports an active turn instead of idle.
     const statusFrames = transport.sent
       .map((payload) => JSON.parse(payload))
       .filter((frame) => frame.type === "update_loop_status");
@@ -512,9 +504,6 @@ describe("recoverApprovalStateForSync restart recovery", () => {
     const transport = connectRuntime(runtime);
     const processed: IncomingMessage[] = [];
 
-    // A browser attaches to a prewarmed sandbox (recover_approvals=true,
-    // no resume_interrupted_turn) while `letta -p` on another machine is
-    // still running call-bash-1.
     await replaySyncStateForRuntime(
       runtime.listener,
       transport as never,
@@ -569,9 +558,6 @@ describe("recoverApprovalStateForSync restart recovery", () => {
       recoveryCalls += 1;
     };
 
-    // cloud-api's readiness probes and activity claims send false. A fresh
-    // listener (a prewarmed sandbox) must not touch a conversation it only
-    // observes; the relaunch path asks explicitly with recover_approvals=true.
     await replaySyncStateForRuntime(
       runtime.listener,
       transport as never,
@@ -583,7 +569,6 @@ describe("recoverApprovalStateForSync restart recovery", () => {
       },
     );
     expect(recoveryCalls).toBe(0);
-    // The lightweight path still replays in-memory state to the connection.
     expect(transport.sent.map((payload) => JSON.parse(payload).type)).toEqual([
       "update_device_status",
       "update_loop_status",
@@ -669,8 +654,6 @@ describe("recoverApprovalStateForSync restart recovery", () => {
     );
     const source = readFileSync(recoveryPath, "utf-8");
 
-    // Legacy/unrelated tools remain stale denials, while an explicit durable
-    // unstarted marker is the only path which reconstructs an approval.
     expect(source).toContain('type: "deny" as const,');
     expect(source).toContain("STALE_APPROVAL_RECOVERY_DENIAL_REASON");
     expect(source).toContain("recorded.unstartedToolCallIds?.includes");

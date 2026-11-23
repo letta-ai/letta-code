@@ -66,7 +66,6 @@ export async function handleProfileCommand(
     updateAgentName,
   } = ctx;
 
-  // Special handling for /profile command - manage local profiles
   if (trimmed.startsWith("/profile")) {
     const parts = trimmed.split(/\s+/);
     const subcommand = parts[1]?.toLowerCase();
