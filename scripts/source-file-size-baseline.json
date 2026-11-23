@@ -1,9 +1,6 @@
 {
-  "src/agent/client-skills.test.ts": 1096,
   "src/agent/memory-git.ts": 1819,
-  "src/backend/local-backend.test.ts": 2458,
   "src/backend/local/local-store.ts": 3179,
-  "src/backend/pi-stream-adapter.test.ts": 1236,
   "src/cli/app/AppCoordinator.tsx": 4744,
   "src/cli/app/AppView.tsx": 1661,
   "src/cli/app/use-approval-flow.ts": 1031,
@@ -16,7 +13,6 @@
   "src/cli/components/ProviderSelector.tsx": 1483,
   "src/cli/helpers/accumulator.ts": 1384,
   "src/cli/helpers/reflection-transcript.ts": 1905,
-  "src/cli/mods/local-mod-loader.test.ts": 1043,
   "src/cli/reflection-transcript.test.ts": 1081,
   "src/cli/subcommands/mcp.ts": 1018,
   "src/cli/subcommands/skills.ts": 1239,
@@ -31,13 +27,11 @@
   "src/mods/package-registry.ts": 1033,
   "src/permissions/read-only-shell.test.ts": 1246,
   "src/permissions/read-only-shell.ts": 1945,
-  "src/settings-manager.test.ts": 1499,
   "src/settings-manager.ts": 1711,
   "src/tools/manager.ts": 2351,
   "src/tools/tool-execution-context.test.ts": 1025,
   "src/types/protocol_v2.ts": 2129,
   "src/websocket/listen-client-concurrency.test.ts": 2493,
-  "src/websocket/listen-client-protocol.test.ts": 5623,
   "src/websocket/listener/commands/memory.ts": 1058,
   "src/websocket/listener/protocol-inbound.ts": 2041
 }
