@@ -174,7 +174,7 @@ The SDK provides hooks for different stages of agent execution. Some hooks are a
 | `ElicitationResult` | No | Yes | A user responds to an MCP elicitation | Modify or block the response before it returns to the server |
 | `ConfigChange` | No | Yes | Configuration file changes | Reload settings dynamically |
 | `InstructionsLoaded` | No | Yes | A `CLAUDE.md` or rules file is loaded into context | Audit which instruction files load |
-| `WorktreeCreate` | No | Yes | Git worktree created | Track isolated workspaces |
+| `WorktreeCreate` | No | Yes | Claude Code needs a worktree, and the hook creates it instead of git | Create the worktree and return its path in [`hookSpecificOutput.worktreePath`](https://code.claude.com/docs/en/hooks#worktreecreate-output) |
 | `WorktreeRemove` | No | Yes | A worktree created by a `WorktreeCreate` hook is being removed | Clean up workspace resources |
 | `CwdChanged` | No | Yes | The working directory changes during a session | Reload environment variables per directory |
 | `FileChanged` | No | Yes | A watched file is modified, created, or deleted | Reload configuration when project files change |
@@ -312,7 +312,7 @@ const options: Options = {
 
 To test it, make the callback raise an error and ask Claude to run a Bash command. The tool result includes `failed; blocking because onFailure is "block"`, and Claude doesn't see your error text.
 
-Return `{}` when the callback has no opinion. With `"block"` set, a path with no `return` blocks the action. A callback that catches its own error and returns `{}` isn't failing, so let the error propagate from a guard.
+Return `{}` when the callback has no opinion. With `"block"` set, a path with no `return` blocks the action. A callback that catches its own error and returns `{}` isn't failing, so let the error propagate from a guard. A `WorktreeCreate` callback must return `hookSpecificOutput.worktreePath`.
 
 #### Events that behave differently
 
@@ -322,7 +322,7 @@ These events don't always block with `"block"` set:
 * **`PermissionRequest`**: the block counts only if it arrives before your `canUseTool` callback answers.
 * **`PostToolUse`**: the tool has already run, so Claude receives the failure as feedback.
 
-A callback that exceeds its timeout follows [Hook timeout](#hook-timeout). With `"block"` set, a timeout also blocks `PreCompact`, `Elicitation`, and `WorktreeCreate`.
+A callback that exceeds its timeout follows [Hook timeout](#hook-timeout). With `"block"` set, a timeout also blocks `PreCompact` and `Elicitation`.
 
 #### Startup errors for `onFailure`
 
@@ -827,7 +827,8 @@ When a callback exceeds its timeout, Claude Code cancels it and discards its out
 * `Stop` and `SubagentStop`: the timed-out callback counts as returning no decision. The agent or subagent stops as if that callback had allowed it, and a decision from your other hooks on the event still applies. Before Claude Code v2.1.273, a timed-out `Stop` or `SubagentStop` callback counted as a failed hook run, and Claude Code discarded the decisions of your other hooks on the event.
 * `SessionStart`: the timed-out callback counts as returning no output, and the session continues with the output of your other `SessionStart` hooks.
 * `PreModelSwitch`: Claude Code blocks the model switch. A hook that doesn't answer hasn't approved the switch.
-* Other events, such as `Notification`, `PreCompact`, and `PostModelSwitch`: Claude Code logs the failure and continues. With [`onFailure: "block"`](#block-the-action-when-a-callback-fails), a timeout on `PreCompact`, `Elicitation`, or `WorktreeCreate` blocks the action.
+* `WorktreeCreate`: worktree creation fails with an error.
+* Other events, such as `Notification`, `PreCompact`, and `PostModelSwitch`: Claude Code logs the failure and continues. With [`onFailure: "block"`](#block-the-action-when-a-callback-fails), a timeout on `PreCompact` or `Elicitation` blocks the action.
 
 The first time a `Stop` or `SessionStart` callback times out in the main session, Claude Code also adds an [`SDKInformationalMessage`](https://code.claude.com/docs/en/agent-sdk/typescript#sdkinformationalmessage) to the message stream saying the app driving the session didn't respond. Later timeouts don't repeat that message while your app stays unresponsive.
 
