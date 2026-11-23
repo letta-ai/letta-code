@@ -66,6 +66,8 @@ export interface ExternalCodingAgentMcpEntry {
 export interface ExternalCodingAgentRunOptions extends ExternalWorkerListeners {
   type: ExternalCodingAgentType;
   prompt: string;
+  /** Agent task description: the native session name and owner record. */
+  description?: string;
   model?: string;
   parentAgentId: string;
   parentConversationId?: string;
@@ -599,6 +601,7 @@ export async function runExternalCodingAgent(
         conversationId: options.parentConversationId,
         actingUserId: captureActingUserId,
         cloudSkillRepositories: options.cloudSkillRepositories,
+        ...(options.description ? { description: options.description } : {}),
       }
     : undefined;
   const source = options.type === "claude-code" ? "claude_code" : "codex";
@@ -652,6 +655,7 @@ export async function runExternalCodingAgent(
       {
         ...options,
         cwd,
+        sessionName: options.description,
         onStarted: (sessionId) =>
           options.onStarted?.(
             formatExternalCodingAgentId("opencode", sessionId),
@@ -665,6 +669,7 @@ export async function runExternalCodingAgent(
       {
         ...options,
         cwd,
+        sessionName: options.description,
         onStarted: (sessionId) =>
           options.onStarted?.(formatExternalCodingAgentId("cursor", sessionId)),
       },
@@ -704,6 +709,7 @@ export async function runExternalCodingAgent(
             mcpReminder: options.mcpReminder,
             signal: options.signal,
             resumeThreadId: options.resumeSessionId,
+            threadName: options.description,
             onToolCall: options.onToolCall,
             onText: options.onText,
             onToolResult: options.onToolResult,
@@ -773,6 +779,7 @@ export async function runExternalCodingAgent(
             signal: options.signal,
             resumeSessionId: options.resumeSessionId,
             sessionId,
+            sessionName: options.description,
             onToolCall: options.onToolCall,
             onText: options.onText,
             onToolResult: options.onToolResult,
