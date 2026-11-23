@@ -1,4 +1,3 @@
-/** Persisted inbound routing state, supplied by the host that owns the route. */
 export interface ChannelConversationBinding {
   conversationId: string;
   enabled: boolean;

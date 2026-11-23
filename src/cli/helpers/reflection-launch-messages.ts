@@ -1,6 +1,5 @@
 import type { ReflectionLaunchSkippedReason } from "@/cli/helpers/reflection-launcher";
 
-/** Exhaustive over the skipped reasons; only `error` has no fixed message. */
 export function getReflectionLaunchSkippedMessage(
   reason: ReflectionLaunchSkippedReason,
   surface: "cli" | "listener" = "cli",

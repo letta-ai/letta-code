@@ -50,7 +50,6 @@ function remember<T>(map: Map<string, T>, key: string, value: T): void {
   map.set(key, value);
   if (map.size > 128) map.delete(map.keys().next().value ?? "");
 }
-// Reserve two snapshots and two outcomes in addition to eight ordinary phases.
 function category(phase: Phase): 0 | 1 | 2 {
   if (phase === "stream_progress" || phase === "stream_waiting") return 1;
   return oneOf(
@@ -65,7 +64,6 @@ function oneOf(value: unknown, allowed: string): string | undefined {
     ? value
     : undefined;
 }
-/** Fixed text, bounded opaque IDs and allowlisted scalar metadata; no content/tails. */
 export function reportBusyRecovery(phase: Phase, fields: Fields = {}): void {
   try {
     if (!isBusyRecoveryEnabled()) return;
@@ -140,9 +138,7 @@ export function reportBusyRecovery(phase: Phase, fields: Fields = {}): void {
         omitDebugLogTail: true,
       },
     );
-  } catch {
-    /* Diagnostics must never change recovery behavior. */
-  }
+  } catch {}
 }
 export function getBusyRecoveryHttpStatus(error: unknown): number | undefined {
   const status = (error as { status?: unknown } | null)?.status;
@@ -169,7 +165,6 @@ interface ProgressClock {
   schedule?: (callback: () => void, delayMs: number) => () => void;
 }
 
-/** Observe original streams too; ordinary short successful sends emit nothing. */
 export function traceBusyRecoveryStream<T extends AsyncIterable<unknown>>(
   stream: T,
   conversationId: string,
@@ -217,7 +212,6 @@ export function traceBusyRecoveryStream<T extends AsyncIterable<unknown>>(
     idleMs: now() - lastChunkAt,
   });
   let cancelTimer = () => {};
-  // Observation expires independently of the underlying stream ending.
   let retired = false;
   const retire = () => {
     if (retired) return;

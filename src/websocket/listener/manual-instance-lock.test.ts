@@ -208,16 +208,13 @@ describe("manual listener instance lock", () => {
     const beforeLock = Date.now() - 3_600_000;
     const afterLock = Date.now() + 3_600_000;
 
-    // Same boot: the live incumbent still blocks.
     await expect(
       acquireWith(202, beforeLock, "/usr/libexec/unrelated"),
     ).rejects.toBeInstanceOf(ManualListenerAlreadyRunningError);
-    // Looks pre-boot (e.g. clock jump) but the pid is still a letta server.
     await expect(
       acquireWith(202, afterLock, "node /usr/local/bin/letta server"),
     ).rejects.toBeInstanceOf(ManualListenerAlreadyRunningError);
 
-    // After a reboot, pid 101 belongs to an unrelated process.
     const replacement = await acquireWith(
       303,
       afterLock,

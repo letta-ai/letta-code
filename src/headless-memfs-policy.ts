@@ -8,9 +8,7 @@ interface HeadlessMemfsPolicyOptions {
 }
 
 interface HeadlessMemfsPolicy {
-  /** A newly created subagent whose prompt and blocks must be stateless. */
   isFreshStatelessSubagent: boolean;
-  /** This process must not enable, clone, or sync MemFS for its selected agent. */
   isStatelessSession: boolean;
 }
 

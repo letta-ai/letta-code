@@ -26,7 +26,6 @@ export interface LocalSegmentIdentity {
   useSourceMessageId: boolean;
 }
 
-/** Keep the provider segment identity without copying the response-so-far. */
 export function attachLocalSegmentIdentity<T extends object>(
   target: T,
   identity: LocalSegmentIdentity,
@@ -61,7 +60,6 @@ function projectedMessageTypeForChunk(
     : "assistant_message";
 }
 
-/** Stream canonical local segment IDs instead of transient provider identities. */
 export function canonicalizeLocalStreamChunk(
   chunk: LettaStreamingResponse,
   stored: StoredMessage,
@@ -91,8 +89,6 @@ export function canonicalizeLocalStreamChunk(
         .filter((projected) => projected.message_type === projectedMessageType)
         .at(-1)?.id;
   if (!id) return stored;
-  // Provider OTIDs are transient and are not persisted. Leaving one here would
-  // override the canonical envelope identity in assistant/reasoning consumers.
   const { otid: _otid, ...fields } = stored;
   return { ...fields, id } as StoredMessage;
 }

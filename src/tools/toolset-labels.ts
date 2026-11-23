@@ -1,17 +1,9 @@
 import { TOOLSET_OPTIONS } from "./toolset-catalog";
 
-/**
- * Human-readable display names for toolset IDs.
- * Kept in a separate file to avoid pulling UI formatting logic into the heavy toolset.ts module.
- */
 export const TOOLSET_DISPLAY_NAMES: Record<string, string> = Object.fromEntries(
   TOOLSET_OPTIONS.map((option) => [option.id, option.display_name]),
 );
 
-/**
- * Returns the human-readable display name for a toolset ID.
- * id is optional to accommodate optional currentToolset props.
- */
 export function formatToolsetName(id?: string): string {
   if (!id) return "Unknown";
   return TOOLSET_DISPLAY_NAMES[id] ?? id;

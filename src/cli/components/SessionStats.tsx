@@ -37,9 +37,6 @@ interface FormatUsageStatsOptions {
   balance?: BalanceInfo;
 }
 
-/**
- * Format usage statistics as markdown text for display in CommandMessage
- */
 export function formatUsageStats({
   stats,
   balance,
@@ -58,7 +55,6 @@ export function formatUsageStats({
   ];
 
   if (balance) {
-    // API returns credits (integers), dollars = credits / 1000
     const totalCredits = Math.round(balance.total_balance);
     const monthlyCredits = Math.round(balance.monthly_credit_balance);
     const purchasedCredits = Math.round(balance.purchased_credit_balance);

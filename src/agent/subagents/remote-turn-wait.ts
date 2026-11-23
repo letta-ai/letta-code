@@ -26,6 +26,7 @@ import { addToMessageQueue } from "@/utils/message-queue-bridge";
 import {
   formatTaskNotification,
   resolveNotificationScope,
+  taskNotificationMessage,
 } from "@/utils/task-notifications";
 import {
   type ExecutionState,
@@ -43,7 +44,6 @@ export interface RemoteTurnWaitDeps
   listMessages?: (runId: string, signal: AbortSignal) => Promise<Message[]>;
 }
 
-/** Capture the initiating parent scope before the remote wait outlives its turn. */
 export function createRemoteIdleNotifier(
   subagentId: string,
   parentScope?: { agentId: string; conversationId: string },
@@ -62,12 +62,14 @@ export function createRemoteIdleNotifier(
     addToMessageQueue({
       kind: "task_notification",
       ...scope,
-      text: formatTaskNotification({
-        taskId: subagentId,
-        status: "running",
-        summary: `Agent loop stopped with ${count} background process${count === 1 ? "" : "es"} still running`,
-        result: `${text}\n\nThe child agent's loop has stopped with ${count} background process${count === 1 ? "" : "es"} still running. It will resume when they finish, and a final notification will follow.`,
-      }),
+      ...taskNotificationMessage(
+        formatTaskNotification({
+          taskId: subagentId,
+          status: "running",
+          summary: `Agent loop stopped with ${count} background process${count === 1 ? "" : "es"} still running`,
+          result: `${text}\n\nThe child agent's loop has stopped with ${count} background process${count === 1 ? "" : "es"} still running. It will resume when they finish, and a final notification will follow.`,
+        }),
+      ),
     });
   };
 }
@@ -80,11 +82,6 @@ function messageText(content: unknown): string {
     .join("");
 }
 
-/**
- * Record a remote run's tool calls, results, reasoning, and assistant text
- * like a local child's stream events, so they reach the subagent state and
- * the task's logs. Client-side tools appear as approval requests.
- */
 function recordRemoteRunProgress(
   messages: Message[],
   state: ExecutionState,
@@ -113,8 +110,6 @@ function recordRemoteRunProgress(
         { at: message.date, key: `${message.id}:reasoning` },
       );
     } else if (message.message_type === "user_message") {
-      // A background command the child started reports back as a new turn;
-      // its output is often only there.
       const text = messageText(message.content);
       if (text.includes("<task-notification>")) {
         recordTaskEvent(
@@ -133,7 +128,6 @@ function recordRemoteRunProgress(
   }
 }
 
-/** The submitting CLI has exited. The harness follows its Cloud receipt. */
 export async function collectRemoteTurnResult(
   receipt: EnqueueReceipt,
   state: ExecutionState,
@@ -167,9 +161,6 @@ export async function collectRemoteTurnResult(
     const reply = await waitForAcceptedSuperRun(receipt, signal, {
       exact: deps.exact ?? getExactSuperRun,
       runtimeStatus: deps.runtimeStatus ?? readConversationRuntimeStatus,
-      // Only a background task's parent can act on an interim notice. A
-      // foreground Task blocks its parent in this wait, so the notice would
-      // queue behind the final result and promise a follow-up that never comes.
       ...(getSubagents().find((agent) => agent.id === subagentId)?.isBackground
         ? { onIdle: createRemoteIdleNotifier(subagentId) }
         : {}),
@@ -182,9 +173,6 @@ export async function collectRemoteTurnResult(
         recordRemoteRunProgress(messages, state, subagentId);
         return messages;
       },
-      // Stream the remote turn's tool calls and assistant text into the task
-      // output file while it runs. A run that has a newer sibling is done, so
-      // it is read once more and then skipped.
       onProgress: async (runIds, readSignal) => {
         const [newest] = runIds;
         for (const runId of [...runIds].reverse()) {

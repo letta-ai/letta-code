@@ -10,7 +10,6 @@ export function rawDataByteLength(data: WebSocket.RawData): number {
   return data.byteLength;
 }
 
-/** A bounded pre-initialization ingress queue. Overflow discards every payload. */
 export class StartupFrameBuffer {
   #frames: WebSocket.RawData[] = [];
   #bytes = 0;
@@ -142,11 +141,8 @@ export class StartupFrameBuffer {
     this.#phase = "terminated";
   }
 
-  /** Fail closed when startup ingress exceeds capacity. */
   failOverflow(capacity: "frame_count" | "byte_count" = "frame_count"): void {
     if (this.#phase === "terminated") return;
-    // Record lineage poison before clearing the payload. Close handlers run after
-    // socket termination and must not mistake the emptied buffer for healthy state.
     this.onOverflow(capacity);
     this.clear();
     this.#phase = "terminated";

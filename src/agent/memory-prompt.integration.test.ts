@@ -13,7 +13,6 @@ describeIntegration("memory prompt integration", () => {
   const createdAgentIds: string[] = [];
 
   beforeAll(() => {
-    // Avoid polluting user's normal local LRU state in integration runs.
     process.env.LETTA_CODE_AGENT_ROLE = "subagent";
   });
 
@@ -22,9 +21,7 @@ describeIntegration("memory prompt integration", () => {
     for (const agentId of createdAgentIds) {
       try {
         await client.agents.delete(agentId);
-      } catch {
-        // Best-effort cleanup.
-      }
+      } catch {}
     }
   });
 

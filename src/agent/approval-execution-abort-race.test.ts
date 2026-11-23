@@ -19,13 +19,6 @@ import {
 } from "@/agent/subagent-state";
 import { INTERRUPTED_BY_USER } from "@/constants";
 
-/**
- * Tests for aborting in-flight tool executions (the "cancel waits for the
- * slowest signal-ignoring tool" bug). settleApprovalExecutionTasks must race
- * batch settlement against the abort signal so a cancel unwinds the batch
- * without waiting for stragglers, while preserving completed partial results.
- */
-
 const neverSettles = () => new Promise<void>(() => {});
 
 const result = (toolCallId: string): ApprovalResult => ({
@@ -53,7 +46,7 @@ describe("settleApprovalExecutionTasks abort race", () => {
     );
 
     await Bun.sleep(5);
-    expect(settled).toEqual([]); // still waiting on the hanging tasks
+    expect(settled).toEqual([]);
     controller.abort();
     await settle;
 
@@ -106,7 +99,7 @@ describe("settleApprovalExecutionTasks abort race", () => {
       { abortSignal: controller.signal },
     );
     await promise;
-    controller.abort(); // late abort must not resurrect a settled batch
+    controller.abort();
     await Bun.sleep(5);
   });
 
@@ -125,8 +118,6 @@ describe("settleApprovalExecutionTasks abort race", () => {
   test("an already-aborted signal settles normally (freeze semantics)", async () => {
     const controller = new AbortController();
     controller.abort();
-    // Executors return fulfilled interrupted results without running tools
-    // when the signal is pre-aborted; the batch must not synthesize a throw.
     await settleApprovalExecutionTasks(
       [Promise.resolve(), Promise.resolve()],
       () => [],
@@ -166,7 +157,7 @@ describe("settleApprovalExecutionTasks abort race", () => {
         if (opts.toolCallId === "call-a") {
           return { toolReturn: "call-a-done", status: "success" };
         }
-        await Bun.sleep(10_000); // call-b ignores the abort signal
+        await Bun.sleep(10_000);
         return { toolReturn: "call-b-done", status: "success" };
       }) as never,
     });
@@ -216,8 +207,6 @@ describe("settleApprovalExecutionTasks abort race", () => {
         if (opts.toolCallId === "call-a") {
           return { toolReturn: "call-a-done", status: "success" };
         }
-        // call-b honors the abort signal: settles shortly after the abort,
-        // well inside the grace window.
         await Bun.sleep(30);
         if (opts.signal?.aborted) {
           return { toolReturn: "call-b-interrupted", status: "success" };
@@ -228,8 +217,6 @@ describe("settleApprovalExecutionTasks abort race", () => {
 
     await Bun.sleep(10);
     controller.abort();
-    // The batch must RESOLVE with the real results (no throw): a cancel of
-    // well-behaved tools is a cancel, not "This operation was aborted".
     const results = await promise;
     expect(results.map((r) => r.tool_call_id)).toEqual(["call-a", "call-b"]);
   });
@@ -272,8 +259,6 @@ describe("settleApprovalExecutionTasks abort race", () => {
           if (opts.toolCallId === "call-a") {
             return { toolReturn: "call-a-done", status: "success" };
           }
-          // call-b ignores the signal and returns after the grace expiry;
-          // its late result is discarded and must not publish onChunk.
           await Bun.sleep(ABORT_GRACE_MS + 150);
           return { toolReturn: "call-b-done", status: "success" };
         }) as never,
@@ -291,7 +276,6 @@ describe("settleApprovalExecutionTasks abort race", () => {
     expect(error.name).toBe("AbortError");
     expect(error.partialResults).toEqual([result("call-a")]);
 
-    // Let the straggler settle late; its onChunk must stay suppressed.
     await Bun.sleep(250);
     expect(chunks).toEqual(["call-a"]);
   });
@@ -375,7 +359,7 @@ describe("subagent abort hooks", () => {
 
     expect(aborted).toEqual(["sub-scope-conv1"]);
     const other = getSubagents().find((a) => a.id === "sub-scope-conv2");
-    expect(other?.status).toBe("pending"); // concurrent conversation untouched
+    expect(other?.status).toBe("pending");
   });
 
   test("subagents with no recorded conversation stay interruptible by agent", () => {
@@ -451,8 +435,6 @@ describe("subagent abort hooks", () => {
       aborted.push("sub-explicit-parent");
     });
 
-    // Esc in the default conversation must scope to default-parented tasks,
-    // not act as an agent-wide wildcard over explicit conversations.
     interruptActiveSubagents(INTERRUPTED_BY_USER, {
       agentId: "agent-1",
       conversationId: "default",

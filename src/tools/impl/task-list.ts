@@ -1,11 +1,7 @@
-import { listTasks, type TaskRecord } from "./tasks/store.js";
-
-interface TaskListResult {
-  tasks: TaskRecord[];
-}
+import { getTaskSnapshot, type TaskSnapshot } from "./tasks/store.js";
 
 export async function task_list(
   _args: Record<string, unknown>,
-): Promise<TaskListResult> {
-  return { tasks: listTasks() };
+): Promise<TaskSnapshot> {
+  return getTaskSnapshot();
 }

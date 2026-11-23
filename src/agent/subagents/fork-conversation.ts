@@ -46,13 +46,10 @@ interface ForkParentConversationDependencies {
   inheritToolset?: typeof inheritForkToolset;
 }
 
-/** Fork the parent conversation, then apply fork-only runtime configuration. */
 export async function forkParentConversation(
   params: ForkParentConversationParams,
   dependencies: ForkParentConversationDependencies = {},
 ) {
-  // Resolve and validate before creating the hidden conversation. Invalid
-  // model IDs should not leave an orphan fork behind.
   const modelOverride = await (
     dependencies.resolveModelOverride ??
     (async () => {

@@ -1,5 +1,3 @@
-// Output-file transcript lines and result headers shared by Agent task paths.
-
 import { writeFileSync } from "node:fs";
 import {
   serveSubagentEvents,
@@ -80,21 +78,15 @@ export function writeTaskTranscriptResult(
   );
 }
 
-/** Longest `text:` excerpt written per progress line. */
 export const TASK_PROGRESS_TEXT_CHARS = PROGRESS_TEXT_CHARS;
-/** Longest tool-argument excerpt written per progress line. */
 export const TASK_PROGRESS_ARGS_CHARS = 200;
-/** Progress lines written per task, including the final omission notice. */
 export const TASK_PROGRESS_MAX_LINES = 1_000;
-/** Event-log bytes written per task; a safety valve for runaway output. */
 export const TASK_EVENTS_MAX_BYTES = 256 * 1024 * 1024;
 
-/** The full event log written next to a task's output file. */
 export function taskEventsFileFor(outputFile: string): string {
   return `${outputFile.replace(/\.(log|output)$/, "")}.jsonl`;
 }
 
-/** An event of a running task, before it is numbered and stamped. */
 export type TaskEvent =
   | { type: "tool_call"; id: string; name: string; input: unknown }
   | {
@@ -104,7 +96,6 @@ export type TaskEvent =
       is_error: boolean;
       output: string;
     }
-  /** `notification`: a background command's completion notice, a new turn. */
   | { type: "text" | "reasoning" | "notification"; text: string };
 
 interface TaskProgressLog {
@@ -113,15 +104,11 @@ interface TaskProgressLog {
   lines: number;
   eventBytes: number;
   seq: number;
-  /** Dedupe keys already written (tool-call IDs, remote message IDs, …). */
   seen: Set<string>;
-  /** Tool names by call ID, so results can name their tool. */
   toolNames: Map<string, string>;
   lastText?: string;
   now: () => Date;
-  /** Secret values scrubbed from every event before it is written. */
   redactions: Record<string, string>;
-  /** Keep events for a parent on another computer to read. */
   serve: boolean;
 }
 
@@ -130,7 +117,6 @@ const progressLogs = new Map<string, TaskProgressLog>();
 function appendProgress(log: TaskProgressLog, entry: string, at: string) {
   if (log.lines >= TASK_PROGRESS_MAX_LINES) return;
   log.lines++;
-  // The last line the cap allows is a notice that the log stops here.
   const line =
     log.lines === TASK_PROGRESS_MAX_LINES
       ? `[progress log reached ${TASK_PROGRESS_MAX_LINES} lines; further progress omitted; every event is in ${log.eventsFile}]`
@@ -154,10 +140,6 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/**
- * The output line most likely to name an error: the first that mentions one,
- * else the last non-empty line (where commands usually summarize a failure).
- */
 function errorLine(output: string): string {
   const lines = output.split("\n").filter((line) => line.trim());
   const named = lines.find((line) =>
@@ -184,7 +166,6 @@ function readableLine(event: TaskEvent): string | null {
     case "text":
       return `text: ${excerpt(event.text, TASK_PROGRESS_TEXT_CHARS)}`;
     case "reasoning":
-      // Reasoning is in the event log only; it is too noisy to tail.
       return null;
     case "notification": {
       const summary = /<summary>([\s\S]*?)<\/summary>/.exec(event.text)?.[1];
@@ -193,14 +174,6 @@ function readableLine(event: TaskEvent): string | null {
   }
 }
 
-/**
- * Start recording live worker progress into a task's output file, between
- * `[Task started…]` and the final result: one readable line per tool call,
- * tool result, and message. Every event also goes, in full, to a JSONL event
- * log next to the output file. The runtime credentials and the parent
- * agent's vault values (or `redactions`, in tests) are scrubbed from each
- * event first.
- */
 export function openTaskProgressLog(
   subagentId: string,
   outputFile: string,
@@ -213,9 +186,7 @@ export function openTaskProgressLog(
   const eventsFile = taskEventsFileFor(outputFile);
   try {
     writeFileSync(eventsFile, "", { mode: 0o600, flag: "a" });
-  } catch {
-    // The readable log still works; event-log appends will no-op.
-  }
+  } catch {}
   progressLogs.set(subagentId, {
     outputFile,
     eventsFile,
@@ -230,10 +201,6 @@ export function openTaskProgressLog(
   });
 }
 
-/**
- * Also keep a task's events for a parent on another computer to read, and
- * announce the latest `event_seq` in its snapshots.
- */
 export function serveTaskEvents(subagentId: string): void {
   const log = progressLogs.get(subagentId);
   if (!log) return;
@@ -242,7 +209,6 @@ export function serveTaskEvents(subagentId: string): void {
   updateSubagent(subagentId, { eventSeq: log.seq });
 }
 
-/** Stop recording progress, so nothing lands after the final result. */
 export function closeTaskProgressLog(subagentId: string): void {
   progressLogs.delete(subagentId);
 }
@@ -253,12 +219,6 @@ function isoOrUndefined(at: string | undefined): string | undefined {
     : new Date(at).toISOString();
 }
 
-/**
- * Record one event of a running task: in full to the event log, and as one
- * readable line to the output file. Tool calls and results are written once
- * per tool-call ID; `key` dedupes other events (e.g. a remote message ID).
- * `at` is when the worker produced the event; it defaults to now.
- */
 export function recordTaskEvent(
   subagentId: string,
   event: TaskEvent,
@@ -266,10 +226,7 @@ export function recordTaskEvent(
 ): void {
   const log = progressLogs.get(subagentId);
   if (!log) return;
-  // Scrub raw values before anything is serialized or excerpted.
   event = scrubSecretsDeep(event, log.redactions);
-  // A remote event's own key and its tool-call ID both dedupe it, so a call
-  // also reported in an older snapshot field is written once.
   const keys = [
     options.key,
     event.type === "tool_call" ? `call:${event.id}` : undefined,
@@ -288,7 +245,6 @@ export function recordTaskEvent(
   } else {
     if (!event.text.trim()) return;
     if (event.type === "text") {
-      // Some workers repeat a message; skip an unkeyed back-to-back repeat.
       if (key === undefined && event.text === log.lastText) return;
       log.lastText = event.text;
     }
@@ -305,10 +261,6 @@ export function recordTaskEvent(
   }
 }
 
-/**
- * Record an event read from the worker's computer: it keeps the worker's
- * time and is written once per remote seq.
- */
 export function recordRemoteTaskEvent(
   subagentId: string,
   { seq, at, ...event }: SubagentEventRecord,
@@ -319,7 +271,6 @@ export function recordRemoteTaskEvent(
   });
 }
 
-/** Note in both logs that the worker's computer dropped unread events. */
 export function recordMissedRemoteEvents(subagentId: string, missed: number) {
   const log = progressLogs.get(subagentId);
   if (!log || missed <= 0) return;
@@ -328,10 +279,6 @@ export function recordMissedRemoteEvents(subagentId: string, missed: number) {
   appendProgress(log, `[${missed} earlier events were not received]`, at);
 }
 
-/**
- * Append a tool call, stamped with `at` (when the worker made the call) if
- * given. `input`, when present, carries the full arguments.
- */
 export function recordTaskProgressToolCall(
   subagentId: string,
   call: ExternalToolCall,
@@ -346,15 +293,10 @@ export function recordTaskProgressToolCall(
   );
 }
 
-/** Append assistant text, skipping blanks and consecutive repeats. */
 export function recordTaskProgressText(subagentId: string, text: string): void {
   recordTaskEvent(subagentId, { type: "text", text });
 }
 
-/**
- * Append a remote worker's text once per ID, stamped with the time the
- * worker emitted it.
- */
 export function recordTaskProgressRemoteText(
   subagentId: string,
   entry: ProgressText,
@@ -366,11 +308,6 @@ export function recordTaskProgressRemoteText(
   );
 }
 
-/**
- * Progress listeners for an external worker: tool calls and assistant text
- * update the subagent state (the live display, and the snapshots a parent on
- * another computer reads), and every event goes to the task's logs.
- */
 export function externalWorkerProgressListeners(
   subagentId: string,
 ): Required<ExternalWorkerListeners> {

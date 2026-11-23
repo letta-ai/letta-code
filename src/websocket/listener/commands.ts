@@ -60,21 +60,9 @@ import type { ConversationRuntime, StartListenerOptions } from "./types";
 
 export { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
 
-/**
- * Reply sent to clients that still dispatch the removed remote `/clear` and
- * `/clear-messages` commands. Kept as a plain unsuccessful command result so an
- * older web/Desktop build surfaces it like any other command failure.
- */
 const REMOVED_CLEAR_COMMAND_MESSAGE =
   "/clear was removed; use /new to start a fresh conversation.";
 
-/**
- * Handle an `execute_command` message from the web app.
- *
- * Dispatches to the appropriate command handler based on `command_id`.
- * Results flow back as `slash_command_start` / `slash_command_end`
- * stream deltas so they appear in the web UMI message list.
- */
 export async function handleExecuteCommand(
   command: ExecuteCommandCommand,
   socket: WebSocket,
@@ -96,7 +84,6 @@ export async function handleExecuteCommand(
     ? `/${command.command_id} ${trimmedArgs}`
     : `/${command.command_id}`;
 
-  // Emit slash_command_start
   const startDelta: SlashCommandStartMessage = {
     ...createLifecycleMessageBase("slash_command_start"),
     command_id: command.command_id,
@@ -115,11 +102,6 @@ export async function handleExecuteCommand(
     switch (command.command_id) {
       case "clear":
       case "clear-messages":
-        // Removed: the remote clear reassigned `conversationId` on a runtime
-        // whose `key` still addressed the old scope, so the next accepted
-        // input was written to the durable ledger under a mismatched identity
-        // and poisoned the whole store. Clients use /new instead. Answer
-        // old clients without touching any runtime or conversation state.
         emitSlashCommandEnd(socket, conversationRuntime, scope, {
           command_id: command.command_id,
           input,
@@ -179,7 +161,6 @@ export async function handleExecuteCommand(
 
       case "reload":
         output = await handleReloadCommand(conversationRuntime);
-        // Re-advertise so newly (un)registered mod commands reach the client.
         emitDeviceStatusUpdate(socket, conversationRuntime, scope);
         break;
 
@@ -281,11 +262,6 @@ export async function handleExecuteCommand(
   }
 }
 
-/**
- * Run a mod-registered slash command and surface its result. Mirrors the TUI
- * mod command path: `output` is shown as command output, `handled` closes
- * silently, and `prompt` injects a user turn through the normal message flow.
- */
 async function handleModCommand(
   modCommand: ModCommand,
   command: ExecuteCommandCommand,
@@ -525,7 +501,6 @@ function compactHelpOutput(): string {
   ].join("\n");
 }
 
-/** /compact — Summarize conversation history through the active Backend. */
 async function handleCompactCommand(
   socket: WebSocket,
   conversationRuntime: ConversationRuntime,
@@ -591,7 +566,6 @@ async function handleCompactCommand(
       conversationRuntime.reminderState,
     );
 
-    // Launching reflection is best-effort — never fail the /compact itself.
     try {
       const reflectionSettings = getReflectionSettings(
         agentId,
@@ -645,13 +619,6 @@ async function handleCompactCommand(
   }
 }
 
-/**
- * /init — Initialize (or re-init) agent memory.
- *
- * Builds the init system-reminder message (same as the CLI /init)
- * and feeds it through `handleIncomingMessage` so the agent runs a full
- * turn executing the `initializing-memory` skill.
- */
 async function handleInitCommand(
   socket: WebSocket,
   conversationRuntime: ConversationRuntime,
@@ -673,8 +640,6 @@ async function handleInitCommand(
 
   const initMessage = buildInitMessage({ gitContext, memoryDir });
 
-  // Feed the init prompt as a user message through the normal turn pipeline.
-  // This triggers a full agent turn whose deltas stream back to the web UI.
   await handleIncomingMessage(
     {
       type: "message",
@@ -697,7 +662,6 @@ async function handleInitCommand(
   return "Memory initialization completed";
 }
 
-/** /context-limit — Set or reset the active scope's max context window. */
 async function handleSetMaxContextCommand(
   conversationRuntime: ConversationRuntime,
   args: string | undefined,
@@ -715,15 +679,6 @@ async function handleSetMaxContextCommand(
   return formatSetMaxContextResult(result);
 }
 
-/**
- * /channels — Manage external channel integrations.
- *
- * Subcommands (via WS), generic across all supported channels:
- *   /channels <channel> pair <code>    — Approve pairing + bind chat to this agent/conversation
- *   /channels <channel> enable --chat-id <id> — Bind a known chat to this agent/conversation
- *   /channels <channel> disable        — Unbind this agent/conversation
- *   /channels status                   — Show channel status
- */
 async function handleChannelsCommand(
   _socket: WebSocket,
   conversationRuntime: ConversationRuntime,
@@ -810,7 +765,7 @@ async function handleReflectCommand(
       },
     },
     { isCutover: async () => false },
-  ); // Ownership was resolved with the acting user above.
+  );
   if (result.launched)
     return "Started a reflection pass for this conversation.";
   const skippedMessage = getReflectionLaunchSkippedMessage(

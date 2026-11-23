@@ -221,7 +221,6 @@ def main() -> None:
             sys.exit(1)
         print(f"Added {args.type} rule: {args.rule}")
 
-        # Ensure local settings are gitignored
         if args.scope == "local":
             ensure_local_gitignored(args.cwd)
     else:

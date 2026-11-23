@@ -1,6 +1,5 @@
 import { stripShellQuotes } from "./shell-analysis";
 
-// letta CLI read-only subcommands: group -> allowed actions
 const SAFE_LETTA_COMMANDS: Record<string, Set<string>> = {
   memory: new Set(["status", "help", "backups", "export", "tokens"]),
   memfs: new Set(["status", "help", "backups", "export", "tokens"]),
@@ -9,9 +8,6 @@ const SAFE_LETTA_COMMANDS: Record<string, Set<string>> = {
   messages: new Set(["search", "list", "help"]),
 };
 
-// The CLI extracts --backend before dispatching subcommands, wherever it
-// appears. Recognize only its literal supported values; other leading options
-// must not accidentally turn an invocation into an allowed group/action pair.
 export function isReadOnlyLettaCommand(args: string[]): boolean {
   const filtered: string[] = [];
   for (let index = 0; index < args.length; index += 1) {

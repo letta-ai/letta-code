@@ -1,19 +1,4 @@
 #!/usr/bin/env node
-/**
- * Enforces architectural import boundaries between top-level modules.
- *
- * Rules:
- *   tools/              must not import from  cli/
- *   backend/            must not import from  cli/  or  websocket/
- *   providers/          must not import from  agent/  or  cli/
- *   websocket/listener/ must not import from  backend/api/client  or  backend/api/conversations
- *   telemetry/          must not import from  cli/  agent/  websocket/  or  tools/
- *
- * These are currently violation-free. Adding a rule here means you must
- * also ensure no existing code violates it.
- *
- * To add a new rule, append an entry to RULES below.
- */
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -22,10 +7,6 @@ import { glob } from "glob";
 const rootDir = process.cwd();
 const srcDir = join(rootDir, "src");
 
-/**
- * Each rule: files under `layer` must not contain an import from any of `forbidden`.
- * `description` is shown on violation.
- */
 const RULES = [
   {
     layer: "tools",
@@ -82,7 +63,6 @@ const RULES = [
   },
 ];
 
-// Matches: import ... from "@/forbidden/..." (static imports only)
 function buildPattern(forbidden) {
   return new RegExp(`from\\s+["'\`]@/(${forbidden.join("|")})/`, "g");
 }
@@ -102,7 +82,6 @@ for (const rule of RULES) {
     const lines = content.split("\n");
 
     lines.forEach((line, i) => {
-      // Reset lastIndex for global regex reuse
       pattern.lastIndex = 0;
       if (pattern.test(line)) {
         if (violations === 0) {

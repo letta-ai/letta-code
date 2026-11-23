@@ -47,8 +47,6 @@ describe("createLocalPiCredentialStore", () => {
     });
     const store = createLocalPiCredentialStore(storageDir);
 
-    // pi-ai reads fields like enterpriseUrl during refresh and toAuth; the
-    // adapter must not strip them.
     expect(await store.read("github-copilot")).toMatchObject({
       type: "oauth",
       access: "a",
@@ -83,14 +81,10 @@ describe("createLocalPiCredentialStore", () => {
       });
 
     await Promise.all([refresh(), refresh(), refresh()]);
-    // The contract requires serialized read-modify-write so concurrent
-    // requests cannot double-refresh a rotated token.
     expect(maxConcurrent).toBe(1);
   });
 
   test("modify is serialized across stores sharing a storage dir", async () => {
-    // Two processes (e.g. a channel listener and an App Server) each own a
-    // store over the same auth.json and race to refresh one expired token.
     const storageDir = await makeStorageDir();
     setLocalOAuthProvider({
       storageDir,
@@ -107,7 +101,6 @@ describe("createLocalPiCredentialStore", () => {
       createLocalPiCredentialStore(storageDir),
     ];
 
-    // A rotating-refresh-token provider: each refresh token works once.
     const usedRefreshTokens = new Set<string>();
     let refreshCalls = 0;
     const refreshIfExpired = (store: (typeof stores)[number]) =>
@@ -185,7 +178,6 @@ describe("createLocalPiCredentialStore", () => {
       key: "new-key",
     }));
 
-    // The new key persists and non-credential record config survives.
     expect(await store.read("anthropic")).toEqual({
       type: "api_key",
       key: "new-key",
@@ -210,7 +202,6 @@ describe("createLocalPiCredentialStore", () => {
       key: "sk-ant-key",
     });
     expect(await store.read("openai")).toBeUndefined();
-    // list() reports pi-ai provider ids, not local record aliases.
     expect(await store.list()).toContainEqual({
       providerId: "anthropic",
       type: "api_key",

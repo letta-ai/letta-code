@@ -22,7 +22,6 @@ export class ShellExecutionError extends Error {
   code?: string;
   executable?: string;
   cwd?: string;
-  /** Distinguishes which lookup failed when `code` is ENOENT. */
   reason?: "executable_missing" | "cwd_missing";
 }
 
@@ -32,12 +31,11 @@ export type ShellSpawnOptions = {
   cwd: string;
   env: NodeJS.ProcessEnv;
   timeoutMs: number;
-  /** Command before launcher and sandbox wrapping, used for completion metadata. */
   sourceCommand?: ShellSourceCommand;
   signal?: AbortSignal;
+  waitForProcessGroupOnClose?: boolean;
   onOutput?: (chunk: string, stream: ShellOutputStream) => void;
   tty?: boolean;
-  /** Disable when the caller already keeps its own bounded output buffer. */
   captureOutput?: boolean;
 };
 
@@ -87,7 +85,11 @@ type NodePtyModule = {
 type ProcessEvents = {
   output(data: Buffer | string, stream: ShellOutputStream): void;
   error(error: NodeJS.ErrnoException): void;
-  close(code: number | null, signal?: string | number | null): void;
+  close(
+    code: number | null,
+    signal?: string | number | null,
+    processGroup?: number,
+  ): void;
 };
 
 const NODE_PTY_BRIDGE_SCRIPT = `
@@ -108,7 +110,7 @@ process.on("SIGTERM", () => child.kill("SIGTERM"));
 process.on("SIGINT", () => child.kill("SIGINT"));
 `;
 
-const FORCE_KILL_GRACE_MS = 2000;
+export const FORCE_KILL_GRACE_MS = 2000;
 
 function buildSpawnError(
   err: NodeJS.ErrnoException,
@@ -190,17 +192,13 @@ function killChildProcessTree(
     taskkill.once("error", () => {
       try {
         childProcess.kill("SIGKILL");
-      } catch {
-        // Already dead, ignore.
-      }
+      } catch {}
     });
     taskkill.once("close", (code) => {
       if (code === 0) return;
       try {
         childProcess.kill("SIGKILL");
-      } catch {
-        // Already dead, ignore.
-      }
+      } catch {}
     });
     return;
   }
@@ -210,9 +208,7 @@ function killChildProcessTree(
   } catch {
     try {
       childProcess.kill(signal as NodeJS.Signals);
-    } catch {
-      // Already dead, ignore.
-    }
+    } catch {}
   }
 }
 
@@ -225,7 +221,6 @@ function interruptChildProcessTree(childProcess: ChildProcess): void {
   killChildProcessTree(childProcess, "SIGINT");
 }
 
-/** Stop inherited pipe handles from extending a forced termination indefinitely. */
 function createPipeProcessKiller(
   childProcess: ChildProcess,
 ): ShellProcessHandle["kill"] {
@@ -235,10 +230,6 @@ function createPipeProcessKiller(
   childProcess.once("close", () => clearTimeout(drainTimer));
   const closePipes = () => {
     if (!exited || !forced || drainTimer) return;
-    // `exit` only waits for the launcher; `close` also waits for every process
-    // inheriting these handles. MSYS descendants can outlive taskkill's snapshot.
-    // Allow buffered output and the tree kill to finish normally first, but
-    // bound the wait for handles retained by orphaned descendants.
     drainTimer = setTimeout(() => {
       childProcess.stdin?.destroy();
       childProcess.stdout?.destroy();
@@ -252,8 +243,6 @@ function createPipeProcessKiller(
   return (signal?: string | number) => {
     forced ||=
       process.platform === "win32" || signal === "SIGKILL" || signal === 9;
-    // Issue the tree kill before releasing pipes. On POSIX, keep waiting through
-    // SIGTERM so the grace timer still escalates for stubborn descendants.
     killChildProcessTree(childProcess, signal);
     closePipes();
   };
@@ -285,16 +274,20 @@ function spawnPipeProcess(
     events.output(chunk, "stderr");
   });
   childProcess.on("error", events.error);
-  childProcess.on("close", events.close);
+  childProcess.on("close", (code, signal) => {
+    events.close(
+      code,
+      signal,
+      process.platform === "win32" ? undefined : childProcess.pid,
+    );
+  });
 
   return {
     kill: createPipeProcessKiller(childProcess),
     interrupt() {
       interruptChildProcessTree(childProcess);
     },
-    write(_input: string) {
-      // Pipe-mode shell processes deliberately keep stdin closed.
-    },
+    write(_input: string) {},
   };
 }
 
@@ -388,18 +381,11 @@ function spawnPtyProcess(
   options: ShellSpawnOptions,
   events: ProcessEvents,
 ): ShellProcessHandle {
-  // node-pty's native handles do not integrate reliably when loaded into
-  // Bun's event loop. Local Bun dev/tests use a tiny Node bridge; the
-  // distributed CLI runs under Node and uses node-pty directly.
   return typeof Bun !== "undefined"
     ? spawnPtyBridgeProcess(launcher, options, events)
     : spawnNativePtyProcess(launcher, options, events);
 }
 
-/**
- * Starts one shell process. Every built-in shell surface uses this function,
- * while its adapter decides whether to await completion or expose a session.
- */
 export function startShellProcess(
   launcher: string[],
   options: ShellSpawnOptions,
@@ -439,10 +425,7 @@ export function startShellProcess(
         },
         getClient: async () => await getClient(),
       });
-    } catch {
-      // A local broker failure must not break unrelated shell commands. A
-      // restricted MCP call from this child will continue to fail closed.
-    }
+    } catch {}
   }
   const launchOptions: ShellSpawnOptions = broker
     ? { ...options, env: { ...options.env, ...broker.env } }
@@ -507,20 +490,21 @@ export function startShellProcess(
   };
 
   let processHandle: ShellProcessHandle;
+  let forceKillIssued = false;
+  let finishGroupClose: (() => void) | undefined;
   const terminateProcess = () => {
+    if (completed || forceKillTimer) return;
     if (process.platform === "win32") {
       processHandle.kill("SIGKILL");
       return;
     }
 
     processHandle.kill("SIGTERM");
-    if (!forceKillTimer) {
-      forceKillTimer = setTimeout(() => {
-        if (!completed) {
-          processHandle.kill("SIGKILL");
-        }
-      }, FORCE_KILL_GRACE_MS);
-    }
+    forceKillTimer = setTimeout(() => {
+      forceKillIssued = true;
+      processHandle.kill("SIGKILL");
+      finishGroupClose?.();
+    }, FORCE_KILL_GRACE_MS);
   };
 
   const abortHandler = () => {
@@ -566,8 +550,25 @@ export function startShellProcess(
       void pullRequestTracker?.finish();
       rejectCompletion(buildSpawnError(error, executable, options.cwd));
     },
-    close(code, signal) {
+    close(code, signal, processGroup) {
       if (completed) return;
+      if (
+        launchOptions.waitForProcessGroupOnClose &&
+        forceKillTimer &&
+        !forceKillIssued &&
+        processGroup !== undefined
+      ) {
+        let groupExists = true;
+        try {
+          process.kill(-processGroup, 0);
+        } catch (error) {
+          groupExists = (error as NodeJS.ErrnoException).code !== "ESRCH";
+        }
+        if (groupExists) {
+          finishGroupClose = () => events.close(code, signal);
+          return;
+        }
+      }
       completed = true;
       cleanup();
       flushOutputDecoders();
@@ -600,8 +601,6 @@ export function startShellProcess(
     cleanup();
     const failure = error instanceof Error ? error : new Error(String(error));
     rejectCompletion(failure);
-    // Preserve synchronous startup errors without leaving the deferred
-    // completion promise unhandled.
     void completion.catch(() => {});
     throw failure;
   }
@@ -621,9 +620,6 @@ export function startShellProcess(
   return { process: processHandle, completion, terminate: terminateProcess };
 }
 
-/**
- * Compatibility helper for callers that wait for the process to finish.
- */
 export async function spawnWithLauncher(
   launcher: string[],
   options: ShellSpawnOptions,

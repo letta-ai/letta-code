@@ -134,7 +134,6 @@ describe("telemetry acting-user HTTP attribution", () => {
       "customer-b",
       null,
     ]);
-    // Requests run concurrently: only ordering within an identity is defined.
     for (const actingUserId of ["customer-a", "customer-b", null]) {
       const request = submissions.find(
         (row) => row.actingUserId === actingUserId,
@@ -183,7 +182,6 @@ describe("telemetry acting-user HTTP attribution", () => {
     }
     const first = telemetry.flush();
     const concurrent = telemetry.flush();
-    // The server handshake makes the late-event race deterministic.
     await received.promise;
     runWithRuntimeContext({ actingUserId: "customer-c" }, () =>
       telemetry.trackToolUsage("Read", true, 1),

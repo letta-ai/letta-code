@@ -310,10 +310,11 @@ export async function runSandboxSubcommand(
               ),
             };
       const visibility = parsed.values.public ? { public: true } : {};
+      const sandboxId = process.env.DAYTONA_SANDBOX_ID;
       const exposure = await (deps.createExposure ?? createSandboxExposure)(
         port,
         expiry,
-        visibility,
+        { ...visibility, ...(sandboxId ? { sandboxId } : {}) },
       );
       if (!parsed.values.public && exposure.private !== true) {
         throw new Error(

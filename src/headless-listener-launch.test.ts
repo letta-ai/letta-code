@@ -459,8 +459,6 @@ test.each(["run", "messages", "super-run"] as const)(
       async (input: { clientMessageId: string }, signal?: AbortSignal) => {
         expect(signal?.aborted).toBe(false);
         expect(signal).not.toBe(stop.signal);
-        // A final answer is already complete when its message read stalls. Prove
-        // cancellation reaches the server, even if that request itself fails.
         if (stage === "messages") throw new Error("cancel request reached");
         return {
           client_message_id: input.clientMessageId,
@@ -641,8 +639,6 @@ test("initial assignment identity survives enqueue without leaking into later la
 });
 
 test("noWait returns a receipt for a tracked Agent launch", async () => {
-  // The Agent tool's child uses this: it configures the listener, submits,
-  // and exits. The parent process follows the remote turn from the receipt.
   const wire = transport();
   const retrieveRun = mock(backend.retrieveRun);
   const listRunMessages = mock(async () => [] as Message[]);

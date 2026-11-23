@@ -154,8 +154,6 @@ export function createModAdapter(options: CreateModAdapterOptions): ModAdapter {
     },
     async emit(name, event, scopedContext) {
       if (loadState.isLoading || !loadState.hasModSources) {
-        // Events are best-effort hooks; do not deliver them while the mod
-        // registry is unavailable or in flux.
         return emptyEventEmissionResult(name);
       }
       const result = await engine.emitEvent(name, event, scopedContext);

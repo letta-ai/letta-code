@@ -14,7 +14,6 @@ function trackProcess(child: ChildProcessWithoutNullStreams): void {
   if (exitCleanupInstalled) return;
   exitCleanupInstalled = true;
   process.once("exit", () => {
-    // Exit handlers cannot await the normal graceful process-group shutdown.
     for (const running of children) {
       if (!running.pid) continue;
       try {
@@ -53,7 +52,6 @@ export interface OpenCodeEvent {
   };
 }
 
-/** Private, authenticated loopback server; never attaches to a user's server. */
 export class OpenCodeServer {
   private readonly lifetime = new AbortController();
   private readonly password = randomUUID();
@@ -160,8 +158,6 @@ export class OpenCodeServer {
         url,
         {
           method: body === undefined ? "GET" : "POST",
-          // Each server owns its connections. A restarted OpenCode can reuse its
-          // default port; global fetch pooling can reuse the old SSE connection.
           agent: false,
           signal: signal
             ? AbortSignal.any([this.lifetime.signal, signal])
@@ -197,7 +193,6 @@ export class OpenCodeServer {
     return JSON.parse(await responseText(response)) as T;
   }
 
-  /** Subscribe before submitting a prompt so even fast tool calls are visible. */
   async events(
     onEvent: (event: OpenCodeEvent) => void,
   ): Promise<{ completion: Promise<void> }> {
@@ -224,7 +219,6 @@ export class OpenCodeServer {
       }
       throw new Error("OpenCode event stream closed");
     };
-    // Do not await the stream here: only wait for subscription headers.
     const completion = consume();
     void completion.catch(() => undefined);
     return { completion };

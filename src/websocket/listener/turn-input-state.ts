@@ -25,7 +25,6 @@ export function ensureTurnInputMessageOtids(
     didChange = true;
     return {
       ...message,
-      // Reconcile optimistic transcript rows with the canonical echo.
       otid:
         "client_message_id" in message &&
         typeof message.client_message_id === "string"

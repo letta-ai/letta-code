@@ -1,11 +1,3 @@
-/**
- * Agent-scoped secret storage for Letta Code.
- * Cloud agent secrets are stored on the Letta server. Local agent secrets are
- * stored in the operating system credential manager when available, with a
- * local-backend file fallback for Node production. Both paths hydrate the same
- * in-memory cache for fast $SECRET_NAME substitution.
- */
-
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { isLocalAgentId } from "@/agent/agent-id";
@@ -146,9 +138,7 @@ async function setAutoLocalSecretValue(
     try {
       await setSecretValue(name, value);
       return;
-    } catch {
-      // Fall through to file storage if keychain writes fail after probing.
-    }
+    } catch {}
   }
 
   setFileBackedLocalSecret(name, value);
@@ -173,8 +163,6 @@ function getLocalSecretStorage(): LocalSecretStorage {
   );
 }
 
-/** In-memory cache of secrets (populated on startup from server).
- *  Stored on globalThis via Symbol.for() to survive Bun bundle duplication. */
 const SECRETS_CACHE_KEY = Symbol.for("@letta/secretsCache");
 type SecretsCache = Map<string, Record<string, string>>;
 type GlobalWithSecrets = typeof globalThis & {
@@ -188,7 +176,6 @@ function getCache(): SecretsCache {
   return global[SECRETS_CACHE_KEY];
 }
 
-/** When each cache entry was last written, for ensureSecretsLoaded staleness. */
 const SECRETS_LOADED_AT_KEY = Symbol.for("@letta/secretsLoadedAt");
 type GlobalWithLoadedAt = typeof globalThis & {
   [key: symbol]: Map<string, number> | undefined;
@@ -206,14 +193,9 @@ function setCache(agentId: string, secrets: Record<string, string>): void {
   getLoadedAt().set(agentId, Date.now());
 }
 
-/**
- * How long an entry loaded by ensureSecretsLoaded is trusted before it is
- * re-fetched. Matches the listener's own-agent freshness window.
- */
 const DEFAULT_SECRETS_MAX_AGE_MS = 60_000;
 let testSecretsMaxAgeOverride: number | null = null;
 
-/** @internal */
 export function __testSetSecretsMaxAgeMs(ms: number | null): void {
   testSecretsMaxAgeOverride = ms;
 }
@@ -377,9 +359,7 @@ function resolveSecretsAgentId(explicitAgentId?: string): string | null {
     if (scopedAgentId) {
       return scopedAgentId;
     }
-  } catch {
-    // Fall through to env fallback below.
-  }
+  } catch {}
 
   const envAgentId = (
     process.env.LETTA_AGENT_ID ||
@@ -389,10 +369,6 @@ function resolveSecretsAgentId(explicitAgentId?: string): string | null {
   return envAgentId || null;
 }
 
-/**
- * Initialize the agent-scoped secrets cache. Cloud agents fetch from the
- * server. Local agents read from OS secure storage through Bun.secrets.
- */
 export async function initSecretsFromServer(agentId: string): Promise<void> {
   if (isLocalAgentId(agentId)) {
     setCache(agentId, await loadLocalAgentSecrets(agentId));
@@ -428,11 +404,6 @@ function getVaultLinks(): Map<string, string> {
   return global[VAULT_LINKS_KEY];
 }
 
-/**
- * Read `sessionId`'s secrets from `vaultAgentId`'s vault. A detached subagent
- * conversation has no vault of its own and uses its parent agent's. Only
- * reads follow the link; writes still target the session's own ID.
- */
 export function linkSecretsVault(sessionId: string, vaultAgentId: string) {
   getVaultLinks().set(sessionId, vaultAgentId);
 }
@@ -441,10 +412,6 @@ function readVaultId(agentId: string): string {
   return getVaultLinks().get(agentId) ?? agentId;
 }
 
-/**
- * Load secrets from the in-memory cache.
- * Returns an empty object if secrets have not been initialized yet.
- */
 export function loadSecrets(agentId?: string): Record<string, string> {
   const resolvedAgentId = resolveSecretsAgentId(agentId);
   if (!resolvedAgentId) {
@@ -453,13 +420,6 @@ export function loadSecrets(agentId?: string): Record<string, string> {
   return { ...(getCache().get(readVaultId(resolvedAgentId)) ?? {}) };
 }
 
-/**
- * Populate an agent's cache entry from its vault if it is missing, or re-fetch
- * it if it is older than the freshness window. Callers use this for vaults the
- * listener does not hydrate itself (e.g. a subagent's parent), so without the
- * age check a secret added to that vault after the first load would never be
- * seen. A failed refresh keeps the previous entry.
- */
 export async function ensureSecretsLoaded(agentId: string): Promise<void> {
   const vaultId = readVaultId(agentId);
   if (!getCache().has(vaultId)) {
@@ -479,17 +439,10 @@ export async function ensureSecretsLoaded(agentId: string): Promise<void> {
   await refresh;
 }
 
-/**
- * List all secret names (not values).
- */
 export function listSecretNames(agentId?: string): string[] {
   return Object.keys(loadSecrets(agentId)).sort();
 }
 
-/**
- * Refresh the cache from core, then return the full entries. Used by the
- * modal's `secret_list` WS handler to pre-populate the form.
- */
 export async function refreshAndListSecrets(
   agentIdArg?: string,
 ): Promise<Array<{ key: string; value: string }>> {
@@ -504,13 +457,6 @@ export async function refreshAndListSecrets(
     .map((key) => ({ key, value: cache[key] ?? "" }));
 }
 
-/**
- * Apply a batch of secret mutations. Cloud agents use a single server PATCH;
- * local agents update OS secure storage and the local key index. Used by the
- * modal's `secret_apply` WS handler.
- *
- * @returns sorted final secret name list after the apply
- */
 export async function applySecretBatch(
   options: {
     set?: Record<string, string>;
@@ -548,9 +494,6 @@ export async function applySecretBatch(
   return Object.keys(next).sort();
 }
 
-/**
- * Set an agent-scoped secret and update the in-memory cache.
- */
 export async function setSecretOnServer(
   key: string,
   value: string,
@@ -575,20 +518,14 @@ export async function setSecretOnServer(
 
   await initSecretsFromServer(agentId);
 
-  // Update cache first
   const secrets = { ...loadSecrets(agentId) };
   secrets[normalizedKey] = value;
 
-  // PATCH replaces entire map
   await backend.updateAgent(agentId, { secrets });
 
   setCache(agentId, secrets);
 }
 
-/**
- * Delete an agent-scoped secret and update the in-memory cache.
- * @returns true if the secret existed and was deleted
- */
 export async function deleteSecretOnServer(
   key: string,
   agentIdArg?: string,
@@ -625,9 +562,6 @@ export async function deleteSecretOnServer(
   return true;
 }
 
-/**
- * Clear the in-memory cache (useful for testing).
- */
 export function clearSecretsCache(agentId?: string | null): void {
   if (agentId === null) {
     getCache().clear();
