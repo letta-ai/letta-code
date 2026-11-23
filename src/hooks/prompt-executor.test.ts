@@ -24,7 +24,6 @@ interface GenerateOpts {
   timeout?: number;
 }
 
-// Mock generate seam to avoid real API calls
 const mockPost = mock(
   (_agentId: string, _body: GenerateOpts["body"], _timeout: number) =>
     Promise.resolve({
@@ -44,7 +43,6 @@ mock.module("../backend/api/generate", () => ({
 
 const { executePromptHook } = await import("@/hooks/prompt-executor");
 
-/** Helper to get the first call's [path, opts] from mockPost */
 function firstPostCall(): [string, GenerateOpts] {
   const calls = mockPost.mock.calls;
   const call = calls[0];
@@ -57,7 +55,6 @@ describe("Prompt Hook Executor", () => {
   beforeEach(() => {
     mockPost.mockClear();
 
-    // Default: allow
     mockPost.mockResolvedValue({
       content: '{"ok": true}',
       model: "anthropic/claude-3-5-haiku-20241022",
@@ -70,7 +67,6 @@ describe("Prompt Hook Executor", () => {
   });
 
   afterEach(() => {
-    // Clean up env vars
     delete process.env.LETTA_AGENT_ID;
   });
 
@@ -98,7 +94,6 @@ describe("Prompt Hook Executor", () => {
       expect(result.timedOut).toBe(false);
       expect(mockPost).toHaveBeenCalledTimes(1);
 
-      // Verify the correct path and body were sent
       const [path, opts] = firstPostCall();
       expect(path).toBe("/v1/agents/agent-abc-123/generate");
       expect(opts.body.prompt).toContain("Check if this tool call is safe");
@@ -196,7 +191,6 @@ describe("Prompt Hook Executor", () => {
       await executePromptHook(hook, input);
 
       const [, opts] = firstPostCall();
-      // $ARGUMENTS should have been replaced with JSON
       expect(opts.body.prompt).not.toContain("$ARGUMENTS");
       expect(opts.body.prompt).toContain('"event_type": "PreToolUse"');
       expect(opts.body.prompt).toContain('"tool_name": "Bash"');

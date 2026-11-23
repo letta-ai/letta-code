@@ -1,12 +1,3 @@
-/**
- * Integration tests for memory filesystem sync behavior.
- *
- * NOTE: The old hash-based sync tests (syncMemoryFilesystem,
- * checkMemoryFilesystemStatus) have been removed. Memory is now
- * git-backed. New integration tests for the git model should be
- * added when needed.
- */
-
 import { describe, expect, test } from "bun:test";
 
 describe("memfs git integration", () => {

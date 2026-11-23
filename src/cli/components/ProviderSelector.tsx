@@ -87,7 +87,6 @@ type ValidationState = "idle" | "validating" | "valid" | "invalid" | "saving";
 
 interface ProviderSelectorProps {
   onCancel: () => void;
-  /** Called when an OAuth flow should start */
   onStartOAuth?: (
     provider: ByokProvider,
     target: ProviderStorageTarget,
@@ -117,7 +116,6 @@ export function ProviderSelector({
   const terminalWidth = useTerminalWidth();
   const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
 
-  // State
   const [selectedTarget, setSelectedTarget] = useState<ProviderStorageTarget>(
     defaultProviderStorageTarget(),
   );
@@ -144,12 +142,9 @@ export function ProviderSelector({
   const chatGPTRateLimits = useChatGPTRateLimitState(selectedTarget);
   const [resetCreditIndex, setResetCreditIndex] = useState(0);
   const [resetNotice, setResetNotice] = useState<ResetNotice | null>(null);
-  // Multi-field input state (for providers like Bedrock)
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
   const [focusedFieldIndex, setFocusedFieldIndex] = useState(0);
-  // Auth method selection state (for providers with multiple auth options)
   const [methodIndex, setMethodIndex] = useState(0);
-  // AWS profile selection state
   const [awsProfiles, setAwsProfiles] = useState<AwsProfile[]>([]);
   const [profileIndex, setProfileIndex] = useState(0);
   const [isLoadingProfiles, setIsLoadingProfiles] = useState(false);
@@ -256,7 +251,6 @@ export function ProviderSelector({
     [setConnectedProvidersForTarget],
   );
 
-  // Load connected providers once per target while the overlay is mounted.
   useEffect(() => {
     if (selectedTarget === "api" && !showProviderStoreTabs) return;
     if (connectedProvidersByTarget[selectedTarget]) return;
@@ -270,8 +264,6 @@ export function ProviderSelector({
     showProviderStoreTabs,
   ]);
 
-  // When both tabs are available, prefetch the inactive tab so switching tabs
-  // can render from overlay-local cache instead of flashing a loading state.
   useEffect(() => {
     if (!showProviderStoreTabs) return;
     for (const target of ["local", "api"] as const) {
@@ -344,7 +336,6 @@ export function ProviderSelector({
   const resettableProviderNames = (provider: ByokProvider): string[] =>
     chatGPTRateLimits.resettable(getConnectedProviderRecords(provider));
 
-  // Keeps a repeated confirm Enter off Disconnect (see usePostResetCursor).
   const markResetApplied = usePostResetCursor(
     viewState.type === "options"
       ? providerManageActions(
@@ -371,7 +362,6 @@ export function ProviderSelector({
         chosen: credit,
       });
       const result = await consumeChatGPTReset(providerName, credit.id);
-      // null: a duplicate confirmation while the first spend is in flight.
       if (!result || !mountedRef.current) return;
       setResetNotice(result.notice);
       markResetApplied();
@@ -385,7 +375,6 @@ export function ProviderSelector({
     loadChatGPTUsageForProvider(viewState.provider);
   }, [loadChatGPTUsageForProvider, viewState]);
 
-  // Get provider ID if connected
   const getProviderId = useCallback(
     (provider: ByokProvider): string | undefined => {
       return getConnectedProviderRecords(provider)[0]?.id;
@@ -393,7 +382,6 @@ export function ProviderSelector({
     [getConnectedProviderRecords],
   );
 
-  // Handle selecting a provider from the list
   const handleSelectProvider = useCallback(
     (provider: ByokProvider) => {
       const providerId = getProviderId(provider);
@@ -406,7 +394,6 @@ export function ProviderSelector({
       }
 
       if (flow === "oauth") {
-        // OAuth provider - trigger OAuth flow
         if (onStartOAuth) {
           onStartOAuth(provider, selectedTarget);
         }
@@ -414,18 +401,15 @@ export function ProviderSelector({
       }
 
       if (flow === "methodSelect") {
-        // Provider with multiple auth methods - show method selection
         setViewState({ type: "methodSelect", provider });
         setMethodIndex(0);
       } else if (flow === "multiInput") {
-        // Multi-field provider - show multi-input view
         setViewState({ type: "multiInput", provider });
         setFieldValues(fieldValuesFromProviderPlaceholders(provider.fields));
         setFocusedFieldIndex(0);
         setValidationState("idle");
         setValidationError(null);
       } else {
-        // Single API key input for regular providers
         setViewState({ type: "input", provider });
         setApiKeyInput("");
         setValidationState("idle");
@@ -435,16 +419,13 @@ export function ProviderSelector({
     [getProviderId, onStartOAuth, selectedTarget],
   );
 
-  // Handle selecting an auth method
   const handleSelectAuthMethod = useCallback(
     async (provider: ByokProvider, authMethod: AuthMethod) => {
-      // Special handling for profile method - load AWS profiles first
       if (authMethod.id === "profile") {
         setIsLoadingProfiles(true);
         setViewState({ type: "profileSelect", provider });
         setProfileIndex(0);
 
-        // Load profiles asynchronously
         parseAwsCredentials()
           .then((profiles) => {
             if (mountedRef.current) {
@@ -471,10 +452,8 @@ export function ProviderSelector({
     [],
   );
 
-  // Handle selecting an AWS profile - pre-fill IAM fields with credentials
   const handleSelectAwsProfile = useCallback(
     (provider: ByokProvider, profile: AwsProfile) => {
-      // Find the IAM auth method to use its fields
       const iamMethod =
         "authMethods" in provider
           ? provider.authMethods?.find((m) => m.id === "iam")
@@ -482,7 +461,6 @@ export function ProviderSelector({
 
       if (!iamMethod) return;
 
-      // Pre-fill field values from the profile
       setFieldValues({
         accessKey: profile.accessKeyId || "",
         apiKey: profile.secretAccessKey || "",
@@ -490,14 +468,13 @@ export function ProviderSelector({
       });
 
       setViewState({ type: "multiInput", provider, authMethod: iamMethod });
-      setFocusedFieldIndex(profile.region ? 0 : 2); // Focus region if not set
+      setFocusedFieldIndex(profile.region ? 0 : 2);
       setValidationState("idle");
       setValidationError(null);
     },
     [],
   );
 
-  // Handle API key validation and saving
   const handleValidateAndSave = useCallback(async () => {
     if (viewState.type !== "input") return;
 
@@ -505,7 +482,6 @@ export function ProviderSelector({
     const apiKey = providerApiKeyFromInput(provider, apiKeyInput);
     if (!apiKey) return;
 
-    // If already validated, save
     if (validationState === "valid") {
       setValidationState("saving");
       try {
@@ -520,7 +496,6 @@ export function ProviderSelector({
           { target: selectedTarget },
         );
         clearAvailableModelsCache();
-        // Refresh connected providers
         const providers = await getConnectedProviders({
           target: selectedTarget,
         });
@@ -541,7 +516,6 @@ export function ProviderSelector({
       return;
     }
 
-    // Validate the key
     setValidationState("validating");
     setValidationError(null);
 
@@ -573,18 +547,15 @@ export function ProviderSelector({
     setConnectedProvidersForTarget,
   ]);
 
-  // Handle multi-field validation and saving (for providers like Bedrock)
   const handleMultiFieldValidateAndSave = useCallback(async () => {
     if (viewState.type !== "multiInput") return;
 
     const { provider, authMethod } = viewState;
-    // Get fields from authMethod if present, otherwise from provider
     const fields: ProviderField[] | undefined =
       authMethod?.fields ||
       ("fields" in provider ? (provider.fields as ProviderField[]) : undefined);
     if (!fields) return;
 
-    // Check all required fields are filled
     const allFilled = fields.every(
       (field) => field.required === false || fieldValues[field.key]?.trim(),
     );
@@ -597,7 +568,6 @@ export function ProviderSelector({
     const profile = fieldValues.profile?.trim();
     const baseURL = fieldValues.baseUrl?.trim();
 
-    // If already validated, save
     if (validationState === "valid") {
       setValidationState("saving");
       try {
@@ -612,7 +582,6 @@ export function ProviderSelector({
           { target: selectedTarget },
         );
         clearAvailableModelsCache();
-        // Refresh connected providers
         const providers = await getConnectedProviders({
           target: selectedTarget,
         });
@@ -633,7 +602,6 @@ export function ProviderSelector({
       return;
     }
 
-    // Validate the credentials
     setValidationState("validating");
     setValidationError(null);
 
@@ -665,7 +633,6 @@ export function ProviderSelector({
     setConnectedProvidersForTarget,
   ]);
 
-  // Handle disconnect
   const handleDisconnect = useCallback(
     async (providerName?: string) => {
       if (viewState.type !== "options") return;
@@ -680,7 +647,6 @@ export function ProviderSelector({
           await removeProviderById(connected.id, { target: selectedTarget });
         }
         clearAvailableModelsCache();
-        // Refresh connected providers
         const providers = await getConnectedProviders({
           target: selectedTarget,
         });
@@ -688,9 +654,7 @@ export function ProviderSelector({
           setConnectedProvidersForTarget(selectedTarget, providers);
           setViewState({ type: "list" });
         }
-      } catch {
-        // Silently fail, stay on options view
-      }
+      } catch {}
     },
     [
       viewState,
@@ -734,13 +698,11 @@ export function ProviderSelector({
   ]);
 
   useInput((input, key) => {
-    // CTRL-C: immediately cancel
     if (key.ctrl && input === "c") {
       onCancel();
       return;
     }
 
-    // Handle based on view state
     if (viewState.type === "list") {
       if (isLoading) return;
 
@@ -790,7 +752,6 @@ export function ProviderSelector({
       }
     } else if (viewState.type === "input") {
       if (key.escape) {
-        // Back to list
         setViewState({ type: "list" });
         setApiKeyInput("");
         setValidationState("idle");
@@ -799,21 +760,18 @@ export function ProviderSelector({
         handleValidateAndSave();
       } else if (key.backspace || key.delete) {
         setApiKeyInput((prev) => prev.slice(0, -1));
-        // Reset validation if key changed
         if (validationState !== "idle") {
           setValidationState("idle");
           setValidationError(null);
         }
       } else if (input && !key.ctrl && !key.meta) {
         setApiKeyInput((prev) => prev + input);
-        // Reset validation if key changed
         if (validationState !== "idle") {
           setValidationState("idle");
           setValidationError(null);
         }
       }
     } else if (viewState.type === "methodSelect") {
-      // Handle auth method selection
       if (
         !("authMethods" in viewState.provider) ||
         !viewState.provider.authMethods
@@ -822,7 +780,6 @@ export function ProviderSelector({
       const authMethods = viewState.provider.authMethods;
 
       if (key.escape) {
-        // Back to list
         setViewState({ type: "list" });
         setMethodIndex(0);
       } else if (key.upArrow) {
@@ -836,11 +793,9 @@ export function ProviderSelector({
         }
       }
     } else if (viewState.type === "profileSelect") {
-      // Handle AWS profile selection
       if (isLoadingProfiles) return;
 
       if (key.escape) {
-        // Back to method select
         setViewState({ type: "methodSelect", provider: viewState.provider });
         setMethodIndex(0);
         setAwsProfiles([]);
@@ -856,7 +811,6 @@ export function ProviderSelector({
         }
       }
     } else if (viewState.type === "multiInput") {
-      // Get fields from authMethod if present, otherwise from provider
       const fields: ProviderField[] | undefined =
         viewState.authMethod?.fields ||
         ("fields" in viewState.provider
@@ -867,7 +821,6 @@ export function ProviderSelector({
       if (!currentField) return;
 
       if (key.escape) {
-        // Back to method select if provider has authMethods, otherwise back to list
         if (
           "authMethods" in viewState.provider &&
           viewState.provider.authMethods
@@ -882,7 +835,6 @@ export function ProviderSelector({
         setValidationState("idle");
         setValidationError(null);
       } else if (key.tab) {
-        // Move to next/prev field
         if (key.shift) {
           setFocusedFieldIndex((prev) => Math.max(0, prev - 1));
         } else {
@@ -899,7 +851,6 @@ export function ProviderSelector({
           ...prev,
           [currentField.key]: (prev[currentField.key] || "").slice(0, -1),
         }));
-        // Reset validation if value changed
         if (validationState !== "idle") {
           setValidationState("idle");
           setValidationError(null);
@@ -909,7 +860,6 @@ export function ProviderSelector({
           ...prev,
           [currentField.key]: (prev[currentField.key] || "") + input,
         }));
-        // Reset validation if value changed
         if (validationState !== "idle") {
           setValidationState("idle");
           setValidationError(null);
@@ -1002,13 +952,11 @@ export function ProviderSelector({
     }
   });
 
-  // Mask API key for display
   const maskApiKey = (key: string): string => {
     if (key.length <= 8) return "*".repeat(key.length);
     return key.slice(0, 4) + "*".repeat(Math.min(key.length - 4, 20));
   };
 
-  // Render list view
   const renderListView = () => (
     <>
       <Box flexDirection="column" marginBottom={1}>
@@ -1123,7 +1071,6 @@ export function ProviderSelector({
     </>
   );
 
-  // Render input view
   const renderInputView = () => {
     if (viewState.type !== "input") return null;
     const { provider } = viewState;
@@ -1197,7 +1144,6 @@ export function ProviderSelector({
     );
   };
 
-  // Render method select view (for providers with multiple auth options)
   const renderMethodSelectView = () => {
     if (viewState.type !== "methodSelect") return null;
     if (
@@ -1251,7 +1197,6 @@ export function ProviderSelector({
     );
   };
 
-  // Render AWS profile select view
   const renderProfileSelectView = () => {
     if (viewState.type !== "profileSelect") return null;
 
@@ -1341,18 +1286,15 @@ export function ProviderSelector({
     );
   };
 
-  // Render multi-input view (for providers like Bedrock)
   const renderMultiInputView = () => {
     if (viewState.type !== "multiInput") return null;
 
     const { provider, authMethod } = viewState;
-    // Get fields from authMethod if present, otherwise from provider
     const fields: ProviderField[] | undefined =
       authMethod?.fields ||
       ("fields" in provider ? (provider.fields as ProviderField[]) : undefined);
     if (!fields) return null;
 
-    // Check if all required fields are filled
     const allFilled = fields.every(
       (field: ProviderField) =>
         field.required === false || fieldValues[field.key]?.trim(),
@@ -1387,7 +1329,6 @@ export function ProviderSelector({
             ? `Enter to validate · Tab/↑↓ navigate · ${escText}`
             : `Tab/↑↓ navigate · ${escText}`;
 
-    // Build title - include auth method name if present
     const title = authMethod
       ? `${provider.displayName} · ${authMethod.label}`
       : provider.displayName;
@@ -1459,7 +1400,6 @@ export function ProviderSelector({
     );
   };
 
-  // Render options view (for connected providers)
   const renderOptionsView = () => {
     if (viewState.type !== "options") return null;
     const { provider } = viewState;
@@ -1517,7 +1457,6 @@ export function ProviderSelector({
 
   return (
     <Box flexDirection="column">
-      {/* Command header */}
       <Text dimColor>{"> /connect"}</Text>
       <Text dimColor>{solidLine}</Text>
 

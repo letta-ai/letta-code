@@ -55,7 +55,6 @@ describe("isDiskSpaceLow", () => {
   });
 
   test("low under 1 GiB free even below 90% used", () => {
-    // 5 GiB volume, 0.8 GiB free = 84% used, but under the 1 GiB floor.
     expect(
       isDiskSpaceLow({
         path: "/",
@@ -119,7 +118,6 @@ describe("evaluateDiskSpaceReminder", () => {
     expect(second.text).toContain("/root/workspace");
     expect(second.text).toContain("512 MB available");
     expect(second.notified).toBe(true);
-    // Throttled: the second turn inside the interval did not re-measure.
     expect(statfs.calls).toHaveLength(1);
   });
 
@@ -213,7 +211,7 @@ describe("watchDiskSpaceDuring", () => {
       "/work",
       (text) => deliverDiskSpaceReminder(text),
       async () => {
-        free = 1.5 * GIB; // a long install fills the disk mid-batch
+        free = 1.5 * GIB;
         await new Promise((resolve) => setTimeout(resolve, 30));
       },
       { env: managed, statfsFn, intervalMs: 10 },
@@ -238,7 +236,7 @@ describe("watchDiskSpaceDuring", () => {
       statfsFn,
     });
     await new Promise((resolve) => setTimeout(resolve, 5));
-    free = 0.5 * GIB; // 97.5% used
+    free = 0.5 * GIB;
     await watchDiskSpaceDuring("/work", deliver, async () => {}, {
       env: managed,
       statfsFn,
@@ -281,7 +279,7 @@ describe("watchSandboxDiskSpace", () => {
     );
     await new Promise((resolve) => setTimeout(resolve, 25));
     expect(queued).toHaveLength(0);
-    free = 1.5 * GIB; // 92.5% used, written by something outside any tool
+    free = 1.5 * GIB;
     await new Promise((resolve) => setTimeout(resolve, 25));
     expect(queued).toHaveLength(1);
     expect(queued[0]?.kind).toBe("task_notification");

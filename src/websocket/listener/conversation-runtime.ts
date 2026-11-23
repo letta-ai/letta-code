@@ -431,7 +431,6 @@ export function restoreDurableQueuedInputs(
   }
   return restored;
 }
-/** Promote terminal journals before connection state-sync attempts replay. */
 export function promotePreparedInputTerminals(
   listener: ListenerRuntime,
   terminalStore = createTurnFinishedStore(),

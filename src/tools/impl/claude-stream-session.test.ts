@@ -406,7 +406,6 @@ describe("Claude stream sessions", () => {
         fixture.emit({ type: "result", is_error: false, result: "DONE" });
         const result = await running;
         expect(result).toMatchObject({ success: true, report: "DONE" });
-        // Late lines flushed after settle must not re-arm the cap.
         fixture.emit({
           type: "system",
           subtype: "background_tasks_changed",
@@ -797,7 +796,6 @@ describe("Claude stream sessions", () => {
       },
     };
     fixture.emit(toolUse);
-    // Claude Code can repeat an assistant message; each block counts once.
     fixture.emit(toolUse);
     fixture.emit({
       type: "result",
@@ -813,7 +811,6 @@ describe("Claude stream sessions", () => {
     expect(calls[0]?.args).toBe('{"command":"ls"}');
     expect(calls[1]?.args.length).toBeLessThanOrEqual(1_001);
     expect(calls[1]?.args.endsWith("…")).toBe(true);
-    // The display args are short; the event log gets the full input.
     expect(calls[1]?.input).toEqual({
       file_path: "a.txt",
       content: "x".repeat(2_000),
@@ -898,7 +895,6 @@ describe("Claude stream sessions", () => {
       },
     };
     fixture.emit(text);
-    // A repeated message reports its text once.
     fixture.emit(text);
     fixture.emit({
       type: "assistant",

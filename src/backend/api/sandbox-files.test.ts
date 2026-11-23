@@ -28,6 +28,12 @@ describe("sandbox file API", () => {
   test.each([
     ["private by default", {}, true, {}],
     [
+      "explicit sandbox",
+      { sandboxId: "sandbox-current" },
+      true,
+      { sandboxId: "sandbox-current" },
+    ],
+    [
       "public when explicitly requested",
       { public: true },
       undefined,

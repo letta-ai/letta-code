@@ -354,7 +354,6 @@ describe("buildSubagentArgs", () => {
     );
 
     expect(args[args.indexOf("--computer") + 1]).toBe("office-mac");
-    // The child submits and exits; the parent follows the remote turn.
     expect(args).toContain("--no-wait");
   });
 
@@ -592,7 +591,6 @@ describe("buildSubagentArgs", () => {
       "agent-existing-reflection",
     );
 
-    // --base-tools requires --new and only applies to fresh agent creation.
     expect(args).not.toContain("--base-tools");
   });
   test("adds MessageChannel to fork subagent scoped tools when inheriting a channel tool context", () => {

@@ -1,13 +1,11 @@
 export { isContextWindowOverflowError } from "@/backend/dev/context-window-overflow";
 export {
-  formatLocalMessagesForSummary,
   isLocalSlidingWindowCompactionPlanningError,
   LOCAL_ALL_COMPACTION_PROMPT,
   LOCAL_DEFAULT_COMPACTION_MODE,
   LOCAL_DEFAULT_SLIDING_WINDOW_PERCENTAGE,
   LOCAL_SLIDING_WINDOW_COMPACTION_PROMPT,
   type LocalCompactionMode,
-  type LocalCompactionStats,
   LocalSlidingWindowCompactionPlanningError,
   planLocalSlidingWindowCompaction,
 } from "./compaction";
@@ -17,6 +15,7 @@ export {
 } from "./local-agent-record";
 export { LocalBackend, type LocalBackendOptions } from "./local-backend";
 export type {
+  LocalCompactionStats,
   LocalMessage,
   LocalMessageMetadata,
   LocalMessageProviderMetadata,

@@ -1,11 +1,3 @@
-// Model resolution for spawned subagents: decide which model handle a subagent
-// should run on, given the user's request, the subagent config's recommended
-// model, the parent agent's active model, and the account's billing tier.
-//
-// Extracted from `manager.ts` so this self-contained resolution logic (and its
-// tests) live on their own. It depends only on lower-level model/backend
-// helpers, never back on the subagent manager.
-
 import { getAvailableModelHandles } from "@/agent/available-models";
 import { getCurrentAgentId } from "@/agent/context";
 import { getDefaultModelForTier, resolveModel } from "@/agent/model";
@@ -51,15 +43,17 @@ export async function getPrimaryAgentModelHandle(
     const conversationId = scope.conversationId;
     if (conversationId && conversationId !== "default") {
       try {
-        const conversation =
-          await getBackend().retrieveConversation(conversationId);
+        const conversation = await getBackend().retrieveConversation(
+          conversationId,
+          {
+            query: { include_context_message_ids: false },
+          },
+        );
         const conversationHandle = getModelHandleFromAgent(conversation);
         if (conversationHandle) {
           return { handle: conversationHandle, agent };
         }
-      } catch {
-        // Fall back to the agent default if the conversation is not available.
-      }
+      } catch {}
     }
     return { handle: getModelHandleFromAgent(agent), agent };
   } catch {
@@ -114,14 +108,6 @@ export interface ForkModelOverride {
   updateArgs?: Record<string, unknown>;
 }
 
-/**
- * Resolve a model override for a forked conversation.
- *
- * Fresh subagents receive their model through headless startup. Forks instead
- * deploy the parent agent into an existing forked conversation, so their model
- * must be applied as a conversation-scoped override before that deployment.
- * Catalog IDs preserve tier-specific settings such as reasoning effort.
- */
 export async function resolveForkModelOverride(options: {
   userModel?: string;
   recommendedModel?: string;
@@ -153,10 +139,6 @@ export async function resolveForkModelOverride(options: {
     getProviderPrefix(resolvedHandle) ||
     undefined;
 
-  // A catalog ID names the base provider (for example openai/gpt-5.6-sol),
-  // while the parent may use an organization-specific BYOK alias. Keep that
-  // provider when it exposes the requested model through the same provider
-  // type, so a fork does not unexpectedly switch from BYOK to hosted credits.
   if (catalogModel && options.parentModelHandle) {
     const parentProviderType = available.providerTypes.get(
       options.parentModelHandle,
@@ -210,11 +192,6 @@ export async function resolveSubagentModel(options: {
     ? "inherit"
     : recommendedModel;
 
-  // When the recommended pin is a catalog ID (e.g. gpt-5.6-sol-plus-pro-high),
-  // return the identifier itself rather than the bare handle: the spawned
-  // child's createAgent re-resolves the ID and applies the catalog entry's
-  // updateArgs (reasoning_effort, verbosity, ...). Returning the bare handle
-  // would silently spawn the base effort tier instead.
   const recommendedSelection = (handle: string): string => {
     if (!effectiveRecommendedModel) return handle;
     const entry = resolveCatalogModel(effectiveRecommendedModel);
@@ -236,10 +213,6 @@ export async function resolveSubagentModel(options: {
     }
   }
 
-  // Local backend has no server-side auto router. If the parent agent is
-  // already running successfully on a local model, spawned subagents should use
-  // that exact model instead of resolving auto/auto-memory to a provider
-  // default that may not match the active session.
   if (options.backendMode === "local" && parentModelHandle) {
     return parentModelHandle;
   }
@@ -258,9 +231,6 @@ export async function resolveSubagentModel(options: {
     return "letta/auto-memory";
   }
 
-  // An inheriting subagent should use the parent's exact active handle even on
-  // the free tier. Tier defaults are fallbacks for auto/default selection, not
-  // overrides for an explicit inheritance policy.
   if (isInheritModel(effectiveRecommendedModel) && parentModelHandle) {
     return parentModelHandle;
   }
@@ -283,13 +253,11 @@ export async function resolveSubagentModel(options: {
     }
   };
 
-  // Free-tier default for subagents: auto-fast, when available.
   const freeTierDefaultHandle = isFreeTier ? resolveModel("auto-fast") : null;
   if (freeTierDefaultHandle && (await isAvailable(freeTierDefaultHandle))) {
     return freeTierDefaultHandle;
   }
 
-  // Free-tier fallback default: auto, when available.
   if (isFreeTier) {
     const defaultHandle = getDefaultModelForTier(billingTier);
     if (defaultHandle && (await isAvailable(defaultHandle))) {
@@ -337,7 +305,6 @@ export async function resolveSubagentModel(options: {
     return recommendedSelection(recommendedHandle);
   }
 
-  // Non-free fallback default: auto, when available.
   const defaultHandle = getDefaultModelForTier(billingTier);
   if (defaultHandle && (await isAvailable(defaultHandle))) {
     return defaultHandle;

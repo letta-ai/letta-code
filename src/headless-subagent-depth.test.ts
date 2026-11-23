@@ -16,7 +16,6 @@ async function childInitTools(
     launchProfile: "default",
     inheritedPrimaryRoot: null,
   });
-  // No --tools: the same launch shape as a `tools: all` fork.
   const child = Bun.spawn(
     [
       process.execPath,

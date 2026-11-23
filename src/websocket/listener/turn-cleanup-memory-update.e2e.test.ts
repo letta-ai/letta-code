@@ -103,7 +103,6 @@ function setupAgent() {
       finalized,
     });
   const commitPicture = (dir = memoryDir) => {
-    // A direct file write + commit, with no memory tool or upload command.
     writeFileSync(join(dir, "profile.png"), Buffer.from("picture bytes"));
     git(dir, ["add", "profile.png"]);
     git(dir, ["commit", "-m", "Change profile picture"]);

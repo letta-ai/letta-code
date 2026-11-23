@@ -88,9 +88,6 @@ async function main() {
       sendJson(response, { message: "Agent not found" }, 404);
       return;
     }
-
-    // Keep the message-history request pending so the secrets rejection reaches
-    // the event loop before startup arrives at its later synchronization point.
   });
 
   await new Promise((resolve, reject) => {

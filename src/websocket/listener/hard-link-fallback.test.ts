@@ -28,8 +28,6 @@ import {
   tryAcquireRemoteSettingsLockSync,
 } from "@/websocket/listener/remote-settings-lock";
 
-// Every lock here must work on a volume where CreateHardLink fails with
-// ERROR_INVALID_FUNCTION, which Node reports on Windows as EISDIR.
 const originalOps = { ...exclusivePublishOps };
 const DEAD_PID = 2_147_483_647;
 
@@ -122,7 +120,6 @@ describe("durable file lock without hard links", () => {
       '{"token":"inst',
     );
 
-    // An old unparsable installer is corruption and still fails closed.
     age(join(lock, ".installing"));
     expect(() =>
       acquireDurableFileLock(path, {
@@ -135,8 +132,6 @@ describe("durable file lock without hard links", () => {
   });
 });
 
-// Fake pids have no real start time, so these locks record none and
-// liveness alone decides ownership, as on platforms without a lookup.
 const noStartTime = async () => null;
 
 describe("manual listener lock without hard links", () => {
@@ -209,7 +204,6 @@ describe("manual listener lock without hard links", () => {
         isProcessAlive: () => false,
       });
       expect(JSON.parse(readFileSync(next.lockPath, "utf-8")).pid).toBe(222);
-      // Recovery claims are cleaned up after the reap.
       expect(
         readdirSync(join(root, "listeners")).filter((name) =>
           name.includes(".recover."),
@@ -282,7 +276,6 @@ describe("remote settings lock without hard links", () => {
     expect(readFileSync(lockPath, "utf-8")).toBe(handle.ownerToken);
     releaseRemoteSettingsLockSync(handle);
 
-    // A live foreign owner blocks acquisition.
     writeFileSync(lockPath, `${process.pid}-foreign`);
     expect(tryAcquireRemoteSettingsLockSync(lockPath)).toBeNull();
     expect(await tryAcquireRemoteSettingsLock(lockPath)).toBeNull();
@@ -304,7 +297,6 @@ describe("remote settings lock without hard links", () => {
 
   test("a half-written token is not reaped until it is old", () => {
     const lockPath = join(root, "remote-settings.json.lock");
-    // A truncated pid: the separator has not been written yet.
     writeFileSync(lockPath, String(DEAD_PID));
     expect(tryAcquireRemoteSettingsLockSync(lockPath)).toBeNull();
     expect(readFileSync(lockPath, "utf-8")).toBe(String(DEAD_PID));

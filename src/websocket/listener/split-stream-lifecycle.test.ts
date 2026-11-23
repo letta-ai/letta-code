@@ -629,8 +629,6 @@ describe("split stream listener lifecycle", () => {
   });
 
   test("split stream handshake stall retries without clearing runtime turn state", async () => {
-    // Keep the synthetic stall short without racing healthy socket setup on a
-    // loaded Windows runner.
     process.env.LETTA_LISTENER_STREAM_OPEN_TIMEOUT_MS = "500";
     const onConnected = mock(() => {});
     const onDisconnected = mock(() => {});

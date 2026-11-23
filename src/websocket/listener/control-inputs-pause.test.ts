@@ -1,8 +1,3 @@
-/**
- * abort_message parks the user's queued messages (Codex-style "queue paused
- * because you interrupted"). System items still drain once the interrupted
- * lease settles; parked items wait for resume_queue or the next user message.
- */
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { handleAbortMessageInput } from "./control-inputs";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
@@ -58,10 +53,6 @@ function enqueueNotification(runtime: ConversationRuntime, text: string): void {
   } as Parameters<typeof runtime.queueRuntime.enqueue>[0]);
 }
 
-/**
- * Start an active turn, queue `queuedBeforeAbort`, abort it, and settle the
- * cancellation. Returns the processed turns and the runtime.
- */
 async function interruptWithQueuedItems(params: {
   queuedBeforeAbort: (runtime: ConversationRuntime) => void;
   queuedAfterAbort?: (runtime: ConversationRuntime) => void;
@@ -164,7 +155,6 @@ describe("abort_message parks queued user messages", () => {
     const drained = JSON.stringify(processedTurns[0]?.messages);
     expect(drained).toContain("<monitor-done/>");
     expect(drained).not.toContain("queued before esc");
-    // The parked message is still there, flagged paused, and nothing is pumping.
     expect(runtime.queueRuntime.length).toBe(1);
     expect(runtime.queueRuntime.pausedCount).toBe(1);
     expect(runtime.queueRuntime.items[0]?.paused).toBe(true);

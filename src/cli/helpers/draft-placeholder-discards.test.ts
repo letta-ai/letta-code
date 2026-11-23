@@ -14,7 +14,6 @@ describe("createDraftPlaceholderDiscards", () => {
     const draft = `look [Image #${imageId}] tail`;
 
     discards.noteEdit(draft, " tail");
-    // Still registered: a kill-buffer yank could bring it back.
     expect(getImage(imageId)).toBeDefined();
 
     discards.release("", [" tail"]);
@@ -39,12 +38,6 @@ function allocateDraftImage(): { id: number; display: string } {
   return { id, display: `[Image #${id}]` };
 }
 
-/**
- * InputRich releases a dropped holder (the parked history draft, an unrestored
- * input) through `release` with its keep set: [next draft, parked draft,
- * restored input, in-flight submission, ...queued texts]. The dropped holder is
- * zeroed first, so a stale copy of it cannot keep its entries alive.
- */
 describe("dropped draft holders", () => {
   test("history exit on type releases the parked draft against the live composer", () => {
     const parked = allocateDraftImage();
@@ -142,7 +135,6 @@ describe("dropped draft holders", () => {
     const discards = createDraftPlaceholderDiscards();
     const parked = allocateDraftImage();
 
-    // The leak: the parked draft is dropped but still listed as a holder.
     discards.release(parked.display, ["git status", parked.display, null]);
     expect(getImage(parked.id)).toBeDefined();
 
@@ -157,7 +149,6 @@ describe("dropped draft holders", () => {
     const yanked = allocateDraftImage();
 
     discards.noteEdit(`${deleted.display} ${yanked.display}`, "");
-    // The yanked placeholder is back in the live draft when the holder drops.
     discards.release(parked.display, [`x ${yanked.display}`, "", null, null]);
 
     expect(getImage(parked.id)).toBeUndefined();

@@ -25,7 +25,6 @@ function memoryRoot(files: Record<string, string>): string {
   return root;
 }
 
-// Exercise the actual self-contained HTML's tree construction without requiring a browser.
 function renderedTrees(files: MemoryFile[]): {
   core: string;
   external: string;

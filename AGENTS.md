@@ -58,6 +58,14 @@ tests.
 
 These are the rules enforced by CI and the pre-commit hook, with the reasoning behind each. Understanding the *why* lets you make good decisions in ambiguous cases the rules don't explicitly cover.
 
+### No code comments
+
+**Rule:** Omit prose comments, JSDoc, and section comments. Keep only directives that tools or runtimes read, such as shebangs and lint suppressions.
+
+**Why:** The code and Git history are the source of truth for behavior and the reasoning behind changes.
+
+---
+
 ### No `../` parent imports — use `@/`
 
 **Rule:** All cross-directory imports must use the `@/` alias (`@/` maps to `src/`). Relative parent paths (`../`) are banned and blocked by pre-commit.
@@ -403,7 +411,7 @@ image parts for text-only models), the model catalog, and env key resolution.
 
 LC's responsibility ends at a narrow seam: guarantee that only canonical,
 type-valid `LocalMessage` content enters the pi Context (ingestion sanitizers in
-`local-store.ts`, `toPiMessage`/`toPiMessages` in `pi-stream-adapter.ts`).
+`local-store.ts`, `toPiMessage`/`toPiMessages` in `pi-messages.ts`).
 
 **Any PR that adds capability-gated payload sanitization, image stripping,
 provider format fixups, or model-capability checks inside the LC adapter/dispatch

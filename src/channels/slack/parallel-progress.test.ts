@@ -77,7 +77,6 @@ test("one model step keeps its first title through parallel starts and returns",
       message_type: "approval_request_message",
       tool_calls: tools,
     });
-    // Other consumers still receive every tool's own details.
     expect(updates.map((update) => update.toolDetails)).toEqual([
       "Read source",
       "Run tests",
@@ -185,7 +184,6 @@ test("message-id batches preserve file titles through duplicate completions", as
       });
       expect(h.titles).toEqual([firstTitle]);
     }
-    // A following step with no intervening reasoning can change the title.
     await h.feed({
       id: "message-2",
       message_type: "tool_call_message",

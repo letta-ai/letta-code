@@ -43,23 +43,15 @@ export type DurableFileLockOptions = {
   waitMs?: number;
   owner?: DurableLockOwner;
   isOwnerAlive?: (owner: DurableLockOwner) => boolean;
-  /** Deterministic identity input; retains the default reachability/reuse check. */
   readProcessStart?: (pid: number, timeoutMs: number) => string | null;
-  /** @deprecated Retained for source compatibility with the former file lock. */
   beforeExactUnlink?: (path: string) => void;
-  /** Deterministic race injection used by the lock's adversarial tests. */
   afterOwnerUnlink?: (lockPath: string) => void;
-  /** Deterministic injection after mkdir, before the candidate owner is linked. */
   afterInstallMkdir?: (lockPath: string) => void;
-  /** Failure seams after canonical publication, used to prove orphan cleanup. */
   afterCanonicalOwnerLink?: (lockPath: string) => void;
   afterCanonicalDirectorySync?: (lockPath: string) => void;
   afterInstallingOwnerUnlink?: (lockPath: string) => void;
-  /** Deterministic race injection after reading an incumbent owner. */
   afterOwnerDirectoryRead?: (lockPath: string) => void;
-  /** Deterministic injection after observing an empty incumbent directory. */
   beforeEmptyCleanup?: (lockPath: string) => void;
-  /** Deterministic clock and backoff seams used by bounded-retry tests. */
   now?: () => number;
   sleep?: (milliseconds: number) => void;
 };
@@ -82,12 +74,6 @@ function installCandidateDirectory(
     | "afterInstallingOwnerUnlink"
   >,
 ): boolean {
-  // mkdir is the one portable no-replacement primitive available on every
-  // supported platform. A stale empty-directory cleanup can still pass its
-  // identity check before this mkdir and remove this directory afterward. Keep
-  // the already-fsynced candidate intact and link (rather than move) its unique
-  // owner into the canonical directory so that installation can verify which
-  // directory received the link and retry safely when it lost that race.
   mkdirSync(lockPath, { mode: 0o700 });
   const directoryIdentity = pathIdentity(lockPath);
   if (!directoryIdentity) return false;
@@ -99,10 +85,6 @@ function installCandidateDirectory(
   hooks.afterInstallMkdir?.(lockPath);
   let method: PublishMethod;
   try {
-    // The fixed installation name elects at most one installer in a directory.
-    // In particular, a delayed installer cannot add its unique owner alongside
-    // an owner that already populated a replacement directory. Volumes without
-    // hard links elect with an exclusive-create copy instead.
     method = publishExclusiveSync(candidateOwnerPath, installingOwnerPath);
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
@@ -110,9 +92,6 @@ function installCandidateDirectory(
     throw error;
   }
 
-  // The installation link pins whichever directory received it. If stale
-  // cleanup replaced our mkdir before the link, relinquish the fixed name and
-  // retry; the private candidate still contains the durable owner record.
   const installingNames = readdirSync(lockPath);
   if (
     !hasPathIdentity(lockPath, directoryIdentity) ||
@@ -129,8 +108,6 @@ function installCandidateDirectory(
   if (method === "link") {
     linkSync(candidateOwnerPath, installedOwnerPath);
   } else {
-    // A copy shares no inode with `.installing`, so readers could not match
-    // the two names. Move the complete elected record to its stable name.
     renameSync(installingOwnerPath, installedOwnerPath);
   }
   hooks.afterCanonicalOwnerLink?.(lockPath);
@@ -144,7 +121,6 @@ function installCandidateDirectory(
   return true;
 }
 
-/** Windows does not support opening/fsyncing directories. File fsyncs still run. */
 export function fsyncDirectory(
   path: string,
   platform: NodeJS.Platform = process.platform,
@@ -158,7 +134,6 @@ export function fsyncDirectory(
   }
 }
 
-/** Synchronous process identity for a synchronous inter-process lock protocol. */
 export function getProcessStart(
   pid: number,
   platform: NodeJS.Platform = process.platform,
@@ -200,7 +175,6 @@ export function getProcessStart(
   }
 }
 
-/** A failed synchronous probe is retried only after a short cooldown. */
 export function createCurrentDurableLockOwner(
   readStart: (timeoutMs: number) => string | null = (timeoutMs) =>
     getProcessStart(process.pid, process.platform, undefined, timeoutMs),
@@ -211,8 +185,6 @@ export function createCurrentDurableLockOwner(
   return (processStartTimeoutMs = PROCESS_START_PROBE_TIMEOUT_MS) => {
     if (cachedProcessStart === undefined && now() >= retryAt) {
       const processStart = readStart(processStartTimeoutMs);
-      // Measure from completion: a slow failed probe must still get the full
-      // cooldown. Null remains conservative for PID reuse and is never permanent.
       if (processStart === null) retryAt = now() + PROCESS_START_RETRY_DELAY_MS;
       else cachedProcessStart = processStart;
     }
@@ -242,11 +214,8 @@ export function durableLockOwnerIsAlive(
     probe(owner.pid);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EPERM") return false;
-    // EPERM proves the pid is reachable, not that it is still the same process.
   }
   const actualStart = readStart(owner.pid);
-  // Unknown identity fails closed: evict a reachable process only when both
-  // recorded and current creation identities prove that the pid was reused.
   return (
     owner.processStart === null ||
     actualStart === null ||
@@ -285,9 +254,6 @@ function readOwnerDirectory(
   ownerPath: string;
 } | null {
   const names = readdirSync(lockPath);
-  // Empty directories are recognizable crash artifacts from the interval between
-  // removing a dead owner and rmdir. Populated directories are never published
-  // empty, so a contender may safely finish that cleanup.
   if (names.length === 0) return null;
   if (names.length > 2) {
     throw new Error("Invalid durable lock owner directory");
@@ -305,9 +271,6 @@ function readOwnerDirectory(
     const owner = parseOwner(JSON.parse(bytes.toString("utf8")));
     afterRead?.(lockPath);
     const stableName = ownerFileName(owner);
-    // A publisher removes .installing after linking the stable owner. If that
-    // happens after readdir, propagate ENOENT so acquisition retries rather
-    // than classifying a legitimate publication transition as corruption.
     const matchingLinks =
       names.length === 2 &&
       names.includes(stableName) &&
@@ -372,11 +335,6 @@ function sameFile(first: string, second: string): boolean {
   }
 }
 
-/**
- * Same owner record: one inode, or (after a copy publish on a volume without
- * hard links) identical bytes. Records embed a random token, so equal
- * contents identify the same owner.
- */
 function sameOwnerFile(first: string, second: string): boolean {
   if (sameFile(first, second)) return true;
   try {
@@ -388,10 +346,6 @@ function sameOwnerFile(first: string, second: string): boolean {
   }
 }
 
-/**
- * An exclusive-create copy of `.installing` can be read before it is fully
- * written. A fresh, lone `.installing` is a live election, not corruption.
- */
 function isInstallingOwnerBeingWritten(lockPath: string): boolean {
   try {
     const names = readdirSync(lockPath);
@@ -455,9 +409,6 @@ function removeDeadOwner(
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
-  // The unique filename is the identity check. If another contender atomically
-  // installs M1 over this now-empty M0 directory, it has a different populated
-  // filename: this stale rmdir cannot remove it.
   if (!removed) return false;
   afterOwnerUnlink?.(lockPath);
   removeDirectoryIfEmpty(lockPath, parent, directoryIdentity);
@@ -474,8 +425,6 @@ function sweepDeadCandidates(
   const allCandidates = readdirSync(parent, { withFileTypes: true }).filter(
     (entry) => entry.name.startsWith(prefix) && entry.isDirectory(),
   );
-  // Cleanup work is bounded per pass. Any unswept candidate remains a
-  // conservative live-installer witness until a later pass proves it dead.
   let hasUnresolvedCandidate = allCandidates.length > MAX_CANDIDATE_SWEEP;
   const candidates = allCandidates.slice(0, MAX_CANDIDATE_SWEEP);
   for (const entry of candidates) {
@@ -565,8 +514,6 @@ function prepareCandidate(
       mode: 0o600,
       flag: "wx",
     });
-    // Windows rejects FlushFileBuffers for a read-only handle. Use a writable
-    // handle for an actual file fsync; only directory fsync is platform-skipped.
     const fd = openSync(ownerPath, "r+");
     try {
       fsyncSync(fd);
@@ -584,32 +531,13 @@ function prepareCandidate(
   }
 }
 
-/**
- * An inter-process lock represented by a pre-populated directory with a unique
- * owner filename. A stale empty-directory cleanup can remove a replacement in
- * the narrow interval before its owner link is installed. Installation therefore
- * retains its private candidate and verifies the canonical directory identity;
- * losing that race forces a retry and never publishes two owners concurrently.
- */
 export function acquireDurableFileLock(
   path: string,
   options: DurableFileLockOptions = {},
 ): () => void {
   const waitMs = options.waitMs ?? 2_000;
   const now = options.now ?? Date.now;
-  // Learning this process's own creation identity is a cached, process-wide
-  // cost, and the answer is optional: recording a null start only weakens the
-  // PID-reuse check a later contender runs against this owner. The first
-  // Windows probe spawns a cold PowerShell that can outlast the whole wait, so
-  // charging it to the acquisition deadline left no budget for acquisition
-  // itself and every recovery path that yields once threw on its first retry —
-  // a lock left behind by a dead process stayed unreclaimable. Resolve the
-  // owner under its own short probe budget and start the deadline after it.
-  // The probe is synchronous, so its budget must not scale with waitMs: a
-  // multi-second PowerShell probe blocks the whole event loop. A timed-out
-  // probe records a null start and is retried after the cooldown.
   const owner = options.owner ?? currentDurableLockOwner();
-  // Validate injected owners before constructing any path from their fields.
   parseOwner(owner);
   const startedAt = now();
   const remainingProbeTimeoutMs = (): number => {
@@ -663,7 +591,6 @@ export function acquireDurableFileLock(
       marked = readOwnerFile(legacyMarkerPath);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return "absent";
-      // A copy-published marker may still be being written.
       try {
         if (isWithinPartialPublishGrace(statSync(legacyMarkerPath).mtimeMs))
           return "blocked";
@@ -691,9 +618,6 @@ export function acquireDurableFileLock(
   let consecutiveProgress = 0;
   const retryAfterProgress = (): void => {
     consecutiveProgress += 1;
-    // One immediate retry makes cleanup useful even with a tiny portable
-    // deadline. Repeated replacement churn still yields and consumes the same
-    // total deadline instead of spinning synchronously.
     if (consecutiveProgress > 1) {
       consecutiveProgress = 0;
       waitOrThrow();
@@ -724,8 +648,6 @@ export function acquireDurableFileLock(
         ) {
           throw error;
         }
-        // Permanent policy denials must consume the same bounded wait budget as
-        // an occupied lock; otherwise mkdir/link/rmdir can spin synchronously.
         if (code === "EPERM" || code === "EACCES") {
           waitOrThrow();
           continue;
@@ -766,7 +688,7 @@ export function acquireDurableFileLock(
           waitOrThrow();
           continue;
         }
-        throw error; // Corrupt or multiple-owner directories fail closed.
+        throw error;
       }
       if (incumbent === null) {
         const emptyDirectoryIdentity = pathIdentity(lockPath);
@@ -803,9 +725,6 @@ export function acquireDurableFileLock(
       }
     }
   } catch (error) {
-    // Installation can throw after either canonical hardlink is published.
-    // Each cleanup is independent so a failed unlink/fsync of `.installing`
-    // cannot strand the stable owner filename for this live process.
     const candidateOwner = join(candidatePath, ownerFileName(owner));
     const installingOwner = join(lockPath, INSTALLING_OWNER_NAME);
     try {

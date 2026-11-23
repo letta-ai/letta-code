@@ -14,8 +14,6 @@ import { settingsManager } from "@/settings-manager";
 import { removeTestDir } from "@/test-utils/test-fs";
 import { type SetupResult, SetupUI } from "./setup-ui";
 
-// Use real Ink streams, as in the component tests; ink-testing-library is not
-// installed. No auth/provider modules are mocked, and we never start OAuth.
 class CaptureStream extends Writable {
   columns = 100;
   rows = 40;
@@ -113,7 +111,6 @@ function mount(localModeDisabledReason?: string) {
     {
       stdout: stdout as CaptureStream & NodeJS.WriteStream,
       stdin,
-      // CI otherwise buffers dynamic frames until unmount.
       debug: true,
       patchConsole: false,
       exitOnCtrlC: false,

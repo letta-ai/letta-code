@@ -229,6 +229,39 @@ describe("ProviderTurnExecutor", () => {
     ).toBe("requires_approval");
   });
 
+  test("rejects malformed tool arguments before approval", async () => {
+    const adapter: ProviderStreamAdapter = {
+      async *stream() {
+        const message = assistantMessage();
+        yield providerStreamPart(
+          part({
+            type: "toolcall_end",
+            contentIndex: 0,
+            toolCall: {
+              type: "toolCall",
+              id: "bad-call",
+              name: "Read",
+              arguments: {},
+              argumentsError: "Invalid tool arguments",
+            },
+            partial: message,
+          }),
+        );
+        yield providerStreamPart(
+          part({ type: "done", reason: "toolUse", message }),
+        );
+      },
+    };
+
+    const chunks = await collect(
+      await new ProviderTurnExecutor(adapter).execute(input()),
+    );
+    expect(chunks.map((chunk) => chunk.message_type)).toEqual([
+      "error_message",
+      "stop_reason",
+    ]);
+  });
+
   test("groups adjacent live blocks and preserves interleaved boundaries", async () => {
     const adapter: ProviderStreamAdapter = {
       async *stream() {

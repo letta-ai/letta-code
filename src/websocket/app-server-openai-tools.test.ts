@@ -7,11 +7,6 @@ import {
   type ToolLifecycleCallback,
 } from "@/websocket/app-server-openai-tools";
 
-// ─────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────
-
-/** Build a `tool_call_message` StreamDelta. */
 function toolCallDelta(
   toolCallId: string,
   name: string | null,
@@ -32,7 +27,6 @@ function toolCallDelta(
   } as unknown as StreamDelta;
 }
 
-/** Build an `approval_request_message` StreamDelta. */
 function approvalRequestDelta(
   toolCallId: string,
   name: string | null,
@@ -51,7 +45,6 @@ function approvalRequestDelta(
   } as unknown as StreamDelta;
 }
 
-/** Build a `tool_return_message` StreamDelta with singular fields. */
 function toolReturnDelta(
   toolCallId: string,
   status: "success" | "error",
@@ -68,7 +61,6 @@ function toolReturnDelta(
   } as unknown as StreamDelta;
 }
 
-/** Build a `tool_return_message` StreamDelta with plural `tool_returns`. */
 function toolReturnPluralDelta(
   returns: Array<{
     tool_call_id: string;
@@ -108,7 +100,6 @@ function clientToolEndDelta(
   } as StreamDelta;
 }
 
-/** Build a non-tool StreamDelta (e.g. assistant message). */
 function assistantDelta(text: string): StreamDelta {
   return {
     type: "message",
@@ -122,10 +113,6 @@ function assistantDelta(text: string): StreamDelta {
 function eventTypes(events: ToolCallEvent[]): string[] {
   return events.map((e) => e.type);
 }
-
-// ─────────────────────────────────────────────────────────────────────────
-// Tests
-// ─────────────────────────────────────────────────────────────────────────
 
 describe("createToolLifecycleTracker", () => {
   test("emits start, arguments_delta, and complete for a single tool call", () => {
@@ -334,8 +321,6 @@ describe("createToolLifecycleTracker", () => {
       toolReturnDelta("call-1", "success", "ok"),
     ]);
 
-    // Only the tool call events should be present, not anything from
-    // the assistant message.
     expect(events).toHaveLength(3);
     expect(eventTypes(events)).toEqual([
       "tool_call_start",
@@ -441,12 +426,12 @@ describe("createToolLifecycleTracker", () => {
     });
 
     tracker.process(toolCallDelta("call-1", "Bash", "{}"));
-    expect(collected).toHaveLength(2); // start + arguments_delta
+    expect(collected).toHaveLength(2);
 
     tracker.dispose();
 
     tracker.process(toolReturnDelta("call-1", "success", "ok"));
-    expect(collected).toHaveLength(2); // no new events after dispose
+    expect(collected).toHaveLength(2);
   });
 
   test("failPending completes unfinished calls as errors", () => {
@@ -533,7 +518,6 @@ describe("createToolLifecycleTracker", () => {
       toolReturnDelta("call-1", "success", "ok"),
     ]);
 
-    // Empty string is still a valid (if empty) arguments fragment.
     const argDeltas = events.filter(
       (e) => e.type === "tool_call_arguments_delta",
     );

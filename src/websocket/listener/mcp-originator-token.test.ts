@@ -119,11 +119,6 @@ function inputFrame(
   fields: Record<string, unknown>,
   requestId = "req-1",
 ): Buffer {
-  // The relay contract (letta-cloud #18881): super_run_id and
-  // mcp_originator_token ride the TOP-LEVEL input frame, never inside the
-  // user-message payload — the payload is persisted and bearer material must
-  // stay off durable records. Other fields (e.g. client_message_id) belong
-  // to the payload.
   const {
     super_run_id,
     mcp_originator_token,
@@ -179,16 +174,11 @@ describe("MCP originator token ingestion", () => {
     await waitFor(() => processed.length === 1);
     expect(processed[0]?.mcpOriginatorSuperRunId).toBe("sr-1");
     expect(processed[0]?.mcpOriginatorTokenPresent).toBe(true);
-    // The IncomingMessage rides the durable input ledger: the token value
-    // must never appear anywhere on it.
     expect(JSON.stringify(processed[0])).not.toContain("mst_one.secret-a");
     expect("mcpOriginatorToken" in (processed[0] ?? {})).toBe(false);
   });
 
   test("payload-carried delivery fields are ignored; only the top-level frame counts", async () => {
-    // The relay contract puts the delivery on the top-level input frame.
-    // Fields smuggled inside the user-message payload (which is persisted)
-    // must be ignored, not honored (letta-cloud #18881 shape).
     const listener = createRuntime();
     const socket = new MockSocket();
     initializeMockConnection(listener, socket);
@@ -219,10 +209,6 @@ describe("MCP originator token ingestion", () => {
   });
 
   test("a duplicate re-ack refreshes the live run's re-minted token", async () => {
-    // ACK loss makes the relay redeliver the SAME input bearing a freshly
-    // minted token (the prior token is revoked server-side); the refresh
-    // must update the live entry in place or the turn's next tool call
-    // would present a dead token (evil-shub r4300657683).
     const listener = createRuntime();
     const socket = new MockSocket();
     initializeMockConnection(listener, socket);
@@ -251,7 +237,6 @@ describe("MCP originator token ingestion", () => {
       ),
     );
     await waitFor(() => getMcpOriginatorToken("sr-1") === "mst_one.secret-b");
-    // The duplicate created no new work.
     expect(processed.length).toBe(1);
   });
 
@@ -273,10 +258,6 @@ describe("MCP originator token ingestion", () => {
     await waitFor(() => processed.length === 1);
     expect(getMcpOriginatorToken("sr-1")).toBe("mst_one.secret-a");
 
-    // Process crash: the volatile token entry is lost but the durable ledger
-    // still shows the live accepted owner. The re-delivered (re-minted)
-    // duplicate MAY recreate the entry — otherwise recovered work runs
-    // headerless on the unrestricted MCP path.
     deleteMcpOriginatorToken("sr-1");
     await handleMessage(
       inputFrame(
@@ -310,10 +291,6 @@ describe("MCP originator token ingestion", () => {
     await waitFor(() => processed.length === 1);
     expect(getMcpOriginatorToken("sr-1")).toBe("mst_one.secret-a");
 
-    // The owning turn finishes: the durable disposition is retired and the
-    // finalizer drops the token. A late duplicate re-delivery must not
-    // re-insert an orphaned token — the terminal tombstone is not a live
-    // owner even though the disposition entry itself persists.
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
     const identity = ordinaryInputIdentity("m-1");
     completeInputReplay(runtime, identity ? [identity] : []);
@@ -328,7 +305,6 @@ describe("MCP originator token ingestion", () => {
         "req-2",
       ),
     );
-    // Give the duplicate path a chance to (wrongly) record.
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(getMcpOriginatorToken("sr-1")).toBeUndefined();
     expect(mcpOriginatorTokenCount()).toBe(0);
@@ -383,9 +359,6 @@ describe("MCP originator token ingestion", () => {
   });
 
   test("a tokenless redelivery clears the run's previously held token", async () => {
-    // The relay re-mints per delivery and revokes the prior token, so a
-    // tokenless frame for the same run is authoritative about the run now
-    // having no listener-side authority (evil-shub r4300499673).
     const listener = createRuntime();
     const socket = new MockSocket();
     initializeMockConnection(listener, socket);
@@ -469,8 +442,6 @@ describe("MCP originator batch resolution", () => {
       enqueueMessage(runtime, "first", firstId, firstPresent);
       enqueueMessage(runtime, "second", secondId, secondPresent);
       const consumed = consumeQueuedTurn(runtime);
-      // Steering drains both; the mixed batch carries no originator and
-      // retires each constituent's held token.
       expect(consumed?.queuedTurn.mcpOriginatorSuperRunId).toBeUndefined();
       expect(consumed?.queuedTurn.messages).toHaveLength(2);
       expect(runtime.queueRuntime.length).toBe(0);
@@ -508,7 +479,6 @@ describe("MCP originator batch resolution", () => {
         if (!processFirst) enqueueProcess();
         const consumed = consumeQueuedTurn(runtime);
         expect(consumed?.queuedTurn.messages).toHaveLength(2);
-        // Process-owned work never rides the client message's token.
         expect(consumed?.queuedTurn.mcpOriginatorSuperRunId).toBeUndefined();
         expect(consumed?.queuedTurn.processOwnedTurn).toBeUndefined();
         expect(runtime.queueRuntime.length).toBe(0);
@@ -629,14 +599,12 @@ describe("MCP originator token lifecycle", () => {
 
     expect(transition.finished).toBe(true);
     expect(getMcpOriginatorToken("sr-1")).toBeUndefined();
-    // Other runs' tokens are untouched.
     expect(getMcpOriginatorToken("sr-2")).toBe("mst_two.secret-b");
   });
 
   test("a rejected terminal commit keeps the held token", () => {
     setMcpOriginatorToken("sr-1", "mst_one.secret-a");
     const { finalizer } = buildFinalizer("sr-1");
-    // A fenced-out (stale owner) commit must not retire the run's token.
     const transition = finalizer.finishTurn({
       stopReason: "end_turn",
       conversationId: "conv-1",

@@ -13,7 +13,7 @@ afterEach(() => {
 });
 
 test("Read within working directory is auto-allowed", () => {
-  if (process.platform === "win32") return; // Skip on Windows - Unix paths
+  if (process.platform === "win32") return;
   const result = checkPermission(
     "Read",
     { file_path: "src/test.ts" },
@@ -26,7 +26,7 @@ test("Read within working directory is auto-allowed", () => {
 });
 
 test("Read outside working directory requires approval", () => {
-  if (process.platform === "win32") return; // Skip on Windows - Unix paths
+  if (process.platform === "win32") return;
 
   const result = checkPermission(
     "Read",
@@ -35,13 +35,13 @@ test("Read outside working directory requires approval", () => {
     "/Users/test/project",
   );
 
-  expect(result.decision).toBe("allow"); // Default for Read tool
+  expect(result.decision).toBe("allow");
 });
 
 test("Bash commands require approval by default", () => {
   const result = checkPermission(
     "Bash",
-    { command: "curl http://example.com" }, // Use non-read-only command
+    { command: "curl http://example.com" },
     { allow: [], deny: [], ask: [] },
     "/Users/test/project",
   );
@@ -110,7 +110,7 @@ test("Dangerous commands don't offer persistence", () => {
 });
 
 test("Read outside working directory suggests directory pattern", () => {
-  if (process.platform === "win32") return; // Skip on Windows - Unix paths
+  if (process.platform === "win32") return;
 
   const context = analyzeApprovalContext(
     "Read",

@@ -173,11 +173,6 @@ function validateRuntimeStartShape(parsed: RuntimeStartCommand): void {
   }
 }
 
-/**
- * Match the CLI's own created-agent defaults: when the client does not
- * specify server-side tools, attach the harness default set and disable the
- * Letta agent type's base tools/rules so server defaults never leak in.
- */
 export function applyCreatedAgentServerToolDefaults(
   body: AgentCreateParams,
 ): AgentCreateParams {
@@ -234,13 +229,8 @@ async function resolveRuntimeStartAgent(
         )
       : await backend.createAgent(body);
     if (withMemfs) {
-      // Finish memfs setup (settings, repo clone, legacy tool detach) without
-      // blocking runtime start. The tag is already stamped at creation, so
-      // lazy sync paths can complete this even if the process dies here.
       void enableMemfsIfCloud(agent.id);
     } else {
-      // Worker-style agent: no memfs of its own; a memory scope may be
-      // provided per session (MEMORY_DIR + LETTA_MEMORY_DIR_EXPLICIT).
       settingsManager.setMemfsEnabled(agent.id, false);
     }
     created.agent = true;
@@ -434,8 +424,6 @@ async function applyRuntimeStartState(
       scope.agent_id,
       scope.conversation_id,
     );
-    // A default-only mode (e.g. a channel account's default) must not
-    // override a mode explicitly chosen for this conversation.
     if (!(parsed.mode_is_default && state.explicit)) {
       const previousMode = state.mode;
       state.mode = mode;
@@ -481,19 +469,35 @@ export async function handleRuntimeStartCommand(
 
   try {
     validateRuntimeStartShape(parsed);
-    agent = await resolveRuntimeStartAgent(parsed, created);
     const backend = getBackend();
     const createEphemeral =
       context.createEphemeralConversation ??
       backend.createEphemeralConversation?.bind(backend) ??
       createEphemeralConversation;
+    const retrieveConversation =
+      context.retrieveConversation ??
+      ((id: string) => backend.retrieveConversation(id));
+    let retrievedConversation: Conversation | undefined;
+    if (
+      hasString(parsed.conversation_id) &&
+      parsed.conversation_id !== "default"
+    ) {
+      [agent, retrievedConversation] = await Promise.all([
+        resolveRuntimeStartAgent(parsed, created),
+        retrieveConversation(parsed.conversation_id),
+      ]);
+    } else {
+      agent = await resolveRuntimeStartAgent(parsed, created);
+    }
+    const cachedConversation = retrievedConversation;
     conversation = await resolveRuntimeStartConversation(
       parsed,
       agent,
       created,
       createEphemeral,
-      context.retrieveConversation ??
-        ((id) => backend.retrieveConversation(id)),
+      cachedConversation
+        ? async () => cachedConversation
+        : retrieveConversation,
     );
     conversation = await applyRuntimeStartConversationSourceTags(
       parsed,
@@ -575,9 +579,6 @@ export async function handleRuntimeStartCommand(
     );
   }
 
-  // Startup can attempt the queue before a new connection has subscribed.
-  // Retry after this scope's initial replay so accepted work cannot interleave
-  // with approval recovery or execute after a failed runtime_start.
   if (
     startResponseSent &&
     scopedRuntime?.queueRuntime?.isEmpty === false &&

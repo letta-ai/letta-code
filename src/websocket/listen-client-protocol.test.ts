@@ -49,6 +49,7 @@ import {
   handleExecuteCommand,
   SUPPORTED_REMOTE_COMMANDS,
 } from "@/websocket/listener/commands";
+import { deviceGitContextCache } from "@/websocket/listener/device-git-context";
 import { createIncomingMessage } from "@/websocket/listener/inbound-dispatch";
 import { ensureListenerModAdapter } from "@/websocket/listener/mod-adapter";
 import { isEditFileCommand } from "@/websocket/listener/protocol-inbound";
@@ -587,7 +588,6 @@ describe("listen-client parseServerMessage", () => {
         __testSetBackend(backend);
         const listener = __listenClientTestUtils.createListenerRuntime();
         const socket = new MockSocket(WebSocket.OPEN);
-
         await __listenClientTestUtils.handleRuntimeStartCommand(
           {
             type: "runtime_start",
@@ -609,7 +609,6 @@ describe("listen-client parseServerMessage", () => {
           socket as unknown as WebSocket,
           listener,
         );
-
         const messages = socket.sentPayloads.map((payload) =>
           JSON.parse(payload),
         );
@@ -656,11 +655,11 @@ describe("listen-client parseServerMessage", () => {
           ]),
         );
       } finally {
+        await deviceGitContextCache.refresh(cwdDir);
         await rm(storageDir, { recursive: true, force: true });
         await rm(cwdDir, { recursive: true, force: true });
       }
     });
-
     test("resumes an existing agent and conversation", async () => {
       const storageDir = await mkdtemp(
         join(os.tmpdir(), "ws-runtime-start-resume-"),
@@ -1562,7 +1561,6 @@ describe("listen-client parseServerMessage", () => {
   });
 
   test("rejects malformed skill commands", () => {
-    // Missing skill_path
     const noPath = parseServerMessage(
       Buffer.from(
         JSON.stringify({
@@ -1571,7 +1569,6 @@ describe("listen-client parseServerMessage", () => {
         }),
       ),
     );
-    // Missing name on disable
     const noName = parseServerMessage(
       Buffer.from(
         JSON.stringify({
@@ -1804,9 +1801,6 @@ describe("listen-client parseServerMessage", () => {
           mode: "sliding_window",
         },
       });
-      // Manual /compact now launches reflection directly (when memfs and the
-      // compaction-event trigger are enabled) instead of setting the pending
-      // flag for the next turn.
       expect(runtime.contextTracker.pendingReflectionTrigger).toBe(false);
       expect(socket.sentPayloads.join("\n")).toContain(
         "Compaction completed (mode: sliding_window). Message buffer length reduced from 7 to 2.",
@@ -2036,8 +2030,6 @@ describe("listen-client model command helpers", () => {
   });
 
   test("resolveModelForUpdate preserves explicit model_handle when both model_id and model_handle are present (BYOK tier change)", () => {
-    // When LCD sends both fields for a BYOK tier change, the resolver should
-    // use model_id for updateArgs/label but keep the explicit model_handle.
     const byokHandle = `lc-mykey/${models[0]?.handle}`;
     const resolved = __listenClientTestUtils.resolveModelForUpdate({
       model_id: models[0]?.id,
@@ -2051,7 +2043,6 @@ describe("listen-client model command helpers", () => {
   });
 
   test("resolveModelForUpdate ignores model_handle when only model_id is present", () => {
-    // Standard (non-BYOK) tier selection: only model_id, no model_handle
     const resolved = __listenClientTestUtils.resolveModelForUpdate({
       model_id: models[0]?.id,
     });
@@ -2062,14 +2053,18 @@ describe("listen-client model command helpers", () => {
 });
 
 describe("listen-client cron command handling", () => {
-  test("wraps cron library CRUD over WS commands", async () => {
+  test("wraps Desktop local cron library CRUD over WS commands", async () => {
     const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-listen-cron-"));
     const originalLettaHome = process.env.LETTA_HOME;
+    const originalEnv = {
+      LETTA_DESKTOP_MODE: process.env.LETTA_DESKTOP_MODE,
+      LETTA_MANAGED_CLOUD_RUNTIME: process.env.LETTA_MANAGED_CLOUD_RUNTIME,
+    };
+    process.env.LETTA_DESKTOP_MODE = "1";
+    delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
     process.env.LETTA_HOME = tempRoot;
-
     try {
       const socket = new MockSocket(WebSocket.OPEN);
-
       await __listenClientTestUtils.handleCronCommand(
         {
           type: "cron_add",
@@ -2084,7 +2079,6 @@ describe("listen-client cron command handling", () => {
         },
         socket as unknown as WebSocket,
       );
-
       const addMessages = socket.sentPayloads.map((payload) =>
         JSON.parse(payload as string),
       );
@@ -2105,7 +2099,6 @@ describe("listen-client cron command handling", () => {
         agent_id: "agent-1",
         conversation_id: "conv-1",
       });
-
       const taskId = addMessages[0].task.id as string;
       appendCronRunLog(getCronRunLogPath(taskId), {
         ts: 1000,
@@ -2126,7 +2119,6 @@ describe("listen-client cron command handling", () => {
         runId: "run-newer",
       });
       socket.sentPayloads.length = 0;
-
       await __listenClientTestUtils.handleCronCommand(
         {
           type: "cron_list",
@@ -2143,7 +2135,6 @@ describe("listen-client cron command handling", () => {
       });
       expect(listResponse.tasks).toHaveLength(1);
       expect(listResponse.tasks[0].id).toBe(taskId);
-
       socket.sentPayloads.length = 0;
       await __listenClientTestUtils.handleCronCommand(
         {
@@ -2160,7 +2151,6 @@ describe("listen-client cron command handling", () => {
         found: true,
         task: { id: taskId },
       });
-
       socket.sentPayloads.length = 0;
       await __listenClientTestUtils.handleCronCommand(
         {
@@ -2191,7 +2181,6 @@ describe("listen-client cron command handling", () => {
         agent_id: "agent-1",
         conversation_id: "conv-1",
       });
-
       socket.sentPayloads.length = 0;
       await __listenClientTestUtils.handleCronCommand(
         {
@@ -2225,7 +2214,6 @@ describe("listen-client cron command handling", () => {
           ],
         },
       });
-
       socket.sentPayloads.length = 0;
       await __listenClientTestUtils.handleCronCommand(
         {
@@ -2249,7 +2237,6 @@ describe("listen-client cron command handling", () => {
         agent_id: "agent-1",
         conversation_id: "conv-1",
       });
-
       socket.sentPayloads.length = 0;
       await __listenClientTestUtils.handleCronCommand(
         {
@@ -2288,6 +2275,10 @@ describe("listen-client cron command handling", () => {
         agent_id: "agent-1",
       });
     } finally {
+      for (const [key, value] of Object.entries(originalEnv)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
       if (originalLettaHome) {
         process.env.LETTA_HOME = originalLettaHome;
       } else {
@@ -2440,8 +2431,6 @@ describe("listen-client memory command handling", () => {
         done: true,
         total: 2,
       });
-      // Scanner orders directories first, so system/persona.md precedes
-      // the root-level profile.png. Unsupported binaries stay hidden.
       expect(messages[0].entries).toEqual([
         expect.objectContaining({
           relative_path: "system/persona.md",
@@ -2855,7 +2844,6 @@ describe("listen-client permission mode scope keys", () => {
   test("falls back from legacy default key and migrates to agent-scoped key", () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
 
-    // Simulate a pre-existing/legacy persisted entry without agent binding.
     listener.permissionModeByConversation.set(
       "agent:__unknown__::conversation:default",
       {
@@ -2887,7 +2875,6 @@ describe("listen-client conversation working directory", () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
     const scopeKey = "agent:agent-123::conversation:default";
 
-    // Simulate a worktree dir that was persisted, then cleaned up.
     const staleDir = await mkdtemp(join(os.tmpdir(), "ws-stale-cwd-"));
     listener.workingDirectoryByConversation.set(scopeKey, staleDir);
     await rm(staleDir, { recursive: true, force: true });
@@ -2899,7 +2886,6 @@ describe("listen-client conversation working directory", () => {
     );
 
     expect(resolved).toBe(listener.bootWorkingDirectory);
-    // The dead entry should be pruned so it isn't served again.
     expect(listener.workingDirectoryByConversation.has(scopeKey)).toBe(false);
   });
 
@@ -2975,7 +2961,6 @@ describe("listen-client conversation-scoped protocol events", () => {
 
     runtime.queueRuntime.tryDequeue("runtime_busy");
 
-    // Flush microtask queue (update_queue is debounced via queueMicrotask)
     await Promise.resolve();
 
     const outbound = socket.sentPayloads.map((payload) =>
@@ -3021,14 +3006,11 @@ describe("listen-client conversation-scoped protocol events", () => {
     runtime.queueRuntime.enqueue(input);
     runtime.queueRuntime.tryDequeue(null);
 
-    // Flush microtask queue (update_queue is debounced via queueMicrotask)
     await Promise.resolve();
 
     const outbound = socket.sentPayloads.map((payload) =>
       JSON.parse(payload as string),
     );
-    // With microtask coalescing, enqueue + dequeue in same tick
-    // produces a single update_queue with the final state (0 items)
     const dequeued = outbound.find(
       (payload) =>
         payload.type === "update_queue" &&
@@ -3047,7 +3029,6 @@ describe("listen-client v2 status builders", () => {
     const loopStatus = __listenClientTestUtils.buildLoopStatus(runtime);
     expect(loopStatus.status).toBe("WAITING_ON_INPUT");
     expect(loopStatus.active_run_ids).toEqual([]);
-    // queue is now separate from loopStatus — verify via buildQueueSnapshot
     const queueSnapshot = __listenClientTestUtils.buildQueueSnapshot(runtime);
     expect(queueSnapshot).toEqual([]);
   });
@@ -3953,7 +3934,6 @@ describe("listen-client capability-gated approval flow", () => {
 
     const pending = requestTestApproval(runtime, socket, turnLease, requestId);
 
-    // Simulate approval_response with updated_input
     resolvePendingApprovalResolver(runtime, {
       request_id: requestId,
       decision: {
@@ -4106,7 +4086,6 @@ describe("listen-client capability-gated approval flow", () => {
       },
     ]);
 
-    // Cleanup
     rejectPendingApprovalResolvers(runtime, "test cleanup");
   });
 
@@ -5340,7 +5319,6 @@ describe("listen-client edit_file command", () => {
       }),
     ).toBe(true);
 
-    // Missing file_path
     expect(
       isEditFileCommand({
         type: "edit_file",
@@ -5350,7 +5328,6 @@ describe("listen-client edit_file command", () => {
       }),
     ).toBe(false);
 
-    // Missing old_string
     expect(
       isEditFileCommand({
         type: "edit_file",
@@ -5360,7 +5337,6 @@ describe("listen-client edit_file command", () => {
       }),
     ).toBe(false);
 
-    // Missing new_string
     expect(
       isEditFileCommand({
         type: "edit_file",
@@ -5370,7 +5346,6 @@ describe("listen-client edit_file command", () => {
       }),
     ).toBe(false);
 
-    // Missing request_id
     expect(
       isEditFileCommand({
         type: "edit_file",
@@ -5382,7 +5357,6 @@ describe("listen-client edit_file command", () => {
   });
 
   test("isEditFileCommand validates expected_replacements is positive integer", () => {
-    // Valid: positive integer
     expect(
       isEditFileCommand({
         type: "edit_file",
@@ -5394,7 +5368,6 @@ describe("listen-client edit_file command", () => {
       }),
     ).toBe(true);
 
-    // Invalid: 0
     expect(
       isEditFileCommand({
         type: "edit_file",
@@ -5406,7 +5379,6 @@ describe("listen-client edit_file command", () => {
       }),
     ).toBe(false);
 
-    // Invalid: negative
     expect(
       isEditFileCommand({
         type: "edit_file",
@@ -5418,7 +5390,6 @@ describe("listen-client edit_file command", () => {
       }),
     ).toBe(false);
 
-    // Invalid: non-integer
     expect(
       isEditFileCommand({
         type: "edit_file",
@@ -5443,7 +5414,6 @@ describe("listen-client edit_file command", () => {
       listener.socket = socket as unknown as WebSocket;
       __listenClientTestUtils.setActiveRuntime(listener);
 
-      // Simulate the edit_file command being received
       const parsed = parseServerMessage(
         Buffer.from(
           JSON.stringify({
@@ -5459,11 +5429,7 @@ describe("listen-client edit_file command", () => {
       expect(parsed).not.toBeNull();
       expect(parsed?.type).toBe("edit_file");
 
-      // Give the async handler time to process
       await new Promise((resolve) => setTimeout(resolve, 100));
-
-      // Note: The handler runs asynchronously, so we may need to wait
-      // In a real test, we'd mock the edit function or use a different approach
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
       __listenClientTestUtils.setActiveRuntime(null);
@@ -5478,7 +5444,6 @@ describe("listen-client skill enable/disable command handling", () => {
     process.env.LETTA_HOME = tempRoot;
 
     try {
-      // Create a fake skill directory with SKILL.md
       const skillDir = join(tempRoot, "source-skill");
       await mkdir(skillDir, { recursive: true });
       await writeFile(
@@ -5488,7 +5453,6 @@ describe("listen-client skill enable/disable command handling", () => {
 
       const socket = new MockSocket(WebSocket.OPEN);
 
-      // Enable the skill
       await __listenClientTestUtils.handleSkillCommand(
         {
           type: "skill_enable",
@@ -5509,7 +5473,6 @@ describe("listen-client skill enable/disable command handling", () => {
         type: "skills_updated",
       });
 
-      // Verify symlink was created
       const { lstatSync, readlinkSync } = await import("node:fs");
       const linkPath = join(tempRoot, "skills", "source-skill");
       const stat = lstatSync(linkPath);
@@ -5517,7 +5480,6 @@ describe("listen-client skill enable/disable command handling", () => {
       const target = readlinkSync(linkPath);
       expect(target).toBe(skillDir);
 
-      // Disable the skill
       socket.sentPayloads.length = 0;
       await __listenClientTestUtils.handleSkillCommand(
         {
@@ -5539,7 +5501,6 @@ describe("listen-client skill enable/disable command handling", () => {
         type: "skills_updated",
       });
 
-      // Verify symlink was removed
       const { existsSync } = await import("node:fs");
       expect(existsSync(linkPath)).toBe(false);
     } finally {
@@ -5592,7 +5553,6 @@ describe("listen-client skill enable/disable command handling", () => {
     process.env.LETTA_HOME = tempRoot;
 
     try {
-      // Create a directory without SKILL.md
       const skillDir = join(tempRoot, "no-skill-md");
       await mkdir(skillDir, { recursive: true });
 
@@ -5630,7 +5590,6 @@ describe("listen-client skill enable/disable command handling", () => {
     process.env.LETTA_HOME = tempRoot;
 
     try {
-      // Create a real directory (not a symlink) in skills/
       const skillsDir = join(tempRoot, "skills");
       await mkdir(join(skillsDir, "real-dir"), { recursive: true });
 

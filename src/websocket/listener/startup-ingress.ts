@@ -49,15 +49,6 @@ export async function waitForStartupOrAbort(
   }
 }
 
-/**
- * The replacement lineage this client's reconnect chain belongs to.
- *
- * A live connection is authoritative. Otherwise the lineage comes from the
- * replacement this runtime was itself started from, which is what keeps a
- * multi-hop re-registration chain (`conn-1 -> conn-2 -> conn-3`) on the
- * original lineage even after the physical connection has been suspended and
- * its `ListenerConnectionState` is gone.
- */
 export function resolveStartupLineageId(
   runtime: ListenerRuntime,
   opts: Pick<StartListenerOptions, "connectionId" | "replacement">,
@@ -69,14 +60,6 @@ export function resolveStartupLineageId(
   );
 }
 
-/**
- * Claim the current generation of a lineage before the transport exists.
- *
- * The cloud client buffers ingress from the moment the control socket opens,
- * which is before the stream channel is prepared and therefore before any
- * connection can be opened. Reserving the owner first gives those frames an
- * exact lineage to be handed to if the attempt dies in that window.
- */
 export function reserveStartupIngressOwner(
   runtime: ListenerRuntime,
   opts: Pick<
@@ -110,14 +93,6 @@ function exceededStartupCapacity(
   return null;
 }
 
-/**
- * Park this owner's still-unprocessed requestless frames for its successor.
- *
- * The buffer surrenders those frames, so repeated aborts of the same owner
- * park each frame exactly once. The lineage update is a single discriminated
- * state write: cumulative overflow replaces payload with bounded poison rather
- * than an empty handoff that a successor could accidentally accept.
- */
 export function handoffRequestlessStartupFrames(
   runtime: ListenerRuntime,
   owner: StartupIngressOwner,
@@ -177,9 +152,7 @@ export function poisonCurrentStartupIngressOwner(
 
 export type StartupFrameHandoffClaim = {
   readonly handoff: StartupFrameHandoff;
-  /** Commit only after the successor buffer has accepted the inherited state. */
   commit(): void;
-  /** Poison the lineage before an overflowing successor buffer clears itself. */
   poison(capacity: StartupFrameCapacity): void;
 };
 
@@ -203,8 +176,6 @@ export function claimRequestlessStartupFrameHandoff(
   return {
     handoff,
     commit: () => {
-      // Delete only the exact payload this claim exposed. A newer generation or
-      // concurrent handoff must never be erased by a stale activation.
       if (
         handoff.kind === "frames" &&
         runtime.startupGenerationByLineage.get(owner.lineageId) ===
@@ -215,9 +186,6 @@ export function claimRequestlessStartupFrameHandoff(
       }
     },
     poison: (capacity) => {
-      // Persist loss before StartupFrameBuffer.failOverflow() clears the local
-      // successor frames. Otherwise a later C could inherit A's retained frames
-      // and incorrectly treat the lineage as healthy after B's frames vanished.
       if (
         runtime.startupGenerationByLineage.get(owner.lineageId) ===
           owner.generation &&

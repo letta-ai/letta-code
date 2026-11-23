@@ -2,13 +2,8 @@ import { afterEach, expect, test } from "bun:test";
 import { sessionPermissions } from "@/permissions/session";
 
 afterEach(() => {
-  // Clean up session state after each test
   sessionPermissions.clear();
 });
-
-// ============================================================================
-// Basic Session Operations
-// ============================================================================
 
 test("Add rule to session permissions", () => {
   sessionPermissions.addRule("Bash(ls:*)", "allow");
@@ -77,10 +72,8 @@ test("getRules returns a copy (not reference)", () => {
   const rules1 = sessionPermissions.getRules();
   const rules2 = sessionPermissions.getRules();
 
-  // Should be different array instances
   expect(rules1.allow).not.toBe(rules2.allow);
 
-  // But should have same content
   expect(rules1.allow).toEqual(rules2.allow);
 });
 
@@ -90,19 +83,13 @@ test("Modifying returned rules doesn't affect session state", () => {
   const rules = sessionPermissions.getRules();
   rules.allow?.push("Bash(cat:*)");
 
-  // Original session should be unchanged
   const actualRules = sessionPermissions.getRules();
   expect(actualRules.allow).toHaveLength(1);
   expect(actualRules.allow).toContain("Bash(ls:*)");
   expect(actualRules.allow).not.toContain("Bash(cat:*)");
 });
 
-// ============================================================================
-// Integration with Permission Checker
-// ============================================================================
-
 test("Session rules are respected by permission checker", () => {
-  // This is tested in permissions-checker.test.ts but worth verifying isolation
   sessionPermissions.addRule("Bash(custom-command:*)", "allow");
 
   expect(sessionPermissions.hasRule("Bash(custom-command:*)", "allow")).toBe(

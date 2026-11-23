@@ -16,8 +16,6 @@ const originalOps = { ...exclusivePublishOps };
 function errno(code: string): NodeJS.ErrnoException {
   return Object.assign(new Error(`${code}: link`), { code });
 }
-
-/** Model a Windows volume without hard links: link fails with EISDIR. */
 function simulateNoHardLinks(): { linkCalls: () => number } {
   let calls = 0;
   exclusivePublishOps.platform = () => "win32";
@@ -103,12 +101,10 @@ describe("exclusive publish", () => {
 
     const release = await tryAcquireFileLock(lockPath, { timeoutMs: 0 });
     expect(release).not.toBeNull();
-    // A second contender is blocked while the first holds the lock.
     expect(await tryAcquireFileLock(lockPath, { timeoutMs: 0 })).toBeNull();
     await release?.();
     expect(existsSync(lockPath)).toBe(false);
 
-    // A stale lock is still taken over.
     await writeFile(
       lockPath,
       JSON.stringify({ pid: 99999, acquiredAt: Date.now() - 60_000 }),
@@ -130,7 +126,6 @@ describe("exclusive publish", () => {
     expect(await tryAcquireFileLock(lockPath, { timeoutMs: 0 })).toBeNull();
     expect(readFileSync(lockPath, "utf-8")).toBe('{"pid":12');
 
-    // Once old, the unparsable record is an abandoned acquisition.
     const old = new Date(Date.now() - 60_000);
     await utimes(lockPath, old, old);
     const release = await tryAcquireFileLock(lockPath, {

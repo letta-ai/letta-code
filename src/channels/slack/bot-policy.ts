@@ -71,11 +71,6 @@ export function shouldAcceptSlackInboundBotMessage(params: {
     return true;
   }
 
-  // This is the loop-guard boundary Letta has today: suppress our own Slack
-  // app identity and gate foreign bots at ingress. Foreign bots are accepted
-  // only on explicit mentions, even in DMs or agent-participated threads,
-  // because the requested use case is explicit agent handoff and Letta does
-  // not have OpenClaw's shared pair-loop guard yet.
   const mode = resolveSlackAllowBotsMode(params.allowBots);
   return mode === "mentions" && params.wasMentioned;
 }

@@ -85,7 +85,6 @@ describe("launch_subagent protocol", () => {
     ).toBe(true);
   });
   test.each([
-    // An older client: only subagent_type, with its original meaning.
     [{ subagent_type: "custom" }, { subagent_type: "custom" }],
     [{ subagent_type: "recall" }, { subagent_type: "recall" }],
     [{ subagent_type: " my-reviewer " }, { subagent_type: "my-reviewer" }],
@@ -101,7 +100,6 @@ describe("launch_subagent protocol", () => {
     ],
     [{ subagent_type: "general-purpose" }, { fork_context: false }],
     [{ subagent_type: "fork" }, { fork_context: true }],
-    // A current client: harness or fork_context present, passed through.
     [
       { harness: "codex", fork_context: false },
       { harness: "codex", fork_context: false },

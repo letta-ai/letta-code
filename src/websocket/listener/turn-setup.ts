@@ -43,6 +43,7 @@ import {
   ensureListenerModAdaptersForAgent,
 } from "./mod-adapter";
 import type { ConversationPermissionModeState } from "./permission-mode";
+import { retryApprovalRecoveryRead } from "./recovery-read";
 import { hasInterruptedCacheForScope } from "./runtime";
 import { emitListenerTurnStart } from "./turn-events";
 import {
@@ -296,12 +297,14 @@ export async function prepareListenerTurn(params: {
   let overrideModel: string | undefined;
   if (turnStartEmission.handlerCount > 0) {
     try {
-      const conversation =
-        await getBackend().retrieveConversation(conversationId);
+      const conversation = await getBackend().retrieveConversation(
+        conversationId,
+        {
+          query: { include_context_message_ids: false },
+        },
+      );
       overrideModel = conversation.model ?? undefined;
-    } catch {
-      // Model refresh is best-effort; mod failures must not block the turn.
-    }
+    } catch {}
   }
 
   const currentInput = ensureTurnInputMessageOtids(turnStartEmission.input);
@@ -349,8 +352,6 @@ export async function prepareListenerTurn(params: {
       connectionId,
     );
   }
-  // Connection-level tools and policy apply to every turn on the runtime;
-  // this input's own fields override them for this turn only.
   const toolOwner = resolveRuntimeToolOwner(
     runtime.listener,
     toolRuntimeScope,
@@ -365,6 +366,14 @@ export async function prepareListenerTurn(params: {
     toolOwner.toolPolicy,
   );
   const preparedToolContext = await prepareToolExecutionContextForScope({
+    readScopeState: (read) =>
+      retryApprovalRecoveryRead(
+        read,
+        () => {
+          if (isInterrupted()) throw new Error("Cancelled by user");
+        },
+        turnLease.signal,
+      ),
     connectionId: executionConnectionId,
     environmentDeviceId,
     agentId,
@@ -373,10 +382,10 @@ export async function prepareListenerTurn(params: {
     suppressActingUserFallback: msg.suppressActingUserFallback,
     mcpOriginatorSuperRunId: getEffectiveMcpOriginatorId(msg),
     resolveClientMessageIds,
+    turnStartedAt: msg.receivedAt,
     externalToolOwnerConnectionId: toolOwner.connectionId,
     clientToolset: toolSelection.clientToolset,
     clientToolAllowlist: toolSelection.clientToolAllowlist,
-    // Honor explicit client exclusions; headless execution does not block questions.
     ...(toolSelection.excludeInteractiveTools
       ? { exclude: [...INTERACTIVE_USER_INPUT_TOOL_NAMES] }
       : {}),
@@ -408,6 +417,8 @@ export async function prepareListenerTurn(params: {
       skillsDirectory: listenerOptions?.skillsDirectory,
       skillSources: runtime.skillSources,
       bundledSkills: runtime.bundledSkills,
+      cloudSkillRepositories:
+        runtime.executionSettings?.cloud_skill_repositories,
     })
   ).availableSkills;
   if (isInterrupted()) {
@@ -427,6 +438,8 @@ export async function prepareListenerTurn(params: {
       skillsDirectory: listenerOptions?.skillsDirectory,
       skillSources: runtime.skillSources,
       bundledSkills: runtime.bundledSkills,
+      cloudSkillRepositories:
+        runtime.executionSettings?.cloud_skill_repositories,
     },
   );
   if (isInterrupted()) return { kind: "interrupted" };

@@ -1,7 +1,3 @@
-// Install the packed tarball into a throwaway consumer and require() the
-// public image-resize entrypoint from CommonJS, as bundled Node services do.
-// Proves the entry and the worker it spawns both ship, and that the entry has
-// no top-level await (which CommonJS require() of ESM rejects).
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
@@ -32,7 +28,6 @@ try {
     pkg,
     "--strip-components=1",
   ]);
-  // Reuse the repo's installed Sharp instead of a network install.
   for (const dep of ["sharp", "@img"]) {
     symlinkSync(
       join(repo, "node_modules", dep),

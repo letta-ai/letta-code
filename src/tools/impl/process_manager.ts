@@ -22,39 +22,31 @@ export interface BackgroundRuntimeScope {
 }
 
 export interface BackgroundProcess {
+  persistState?: () => Promise<void>;
   process: BackgroundProcessHandle;
   completion?: Promise<unknown>;
   terminate?: () => void;
+  foregroundBash?: boolean;
   command: string;
-  /**
-   * Recent output lines that Bash replays in its completion notification.
-   * Other background work keeps its output only in the output file.
-   */
   stdout?: string[];
   stderr?: string[];
   status: "running" | "completed" | "failed";
   exitCode: number | null;
   startTime?: Date;
-  outputFile?: string; // File path for persistent output
+  outputFile?: string;
   totalStdoutLines?: number;
   totalStderrLines?: number;
   cleanupTimer?: TimerHandle;
   runtimeScope?: BackgroundRuntimeScope;
-  /** Authenticated Cloud user responsible for launching this process. */
   actingUserId?: string | null;
   kind?: "monitor" | "workflow" | "tool";
-  /** Tool execution lives on a controller that cannot be cancelled locally. */
   remote?: boolean;
   cancel?: () => Promise<{ killed: boolean; output: string }>;
   description?: string;
+  monitorEndStatus?: "expired" | "stopped" | "paused";
   monitorSource?: "command" | "websocket" | "script" | "github_pull_request";
   persistent?: boolean;
   secrets?: Readonly<Record<string, string>>;
-  /**
-   * Set when the agent deliberately stops the shell (TaskStop) so the
-   * resulting "exit" event does not wake it with a failure notification for a
-   * process it just killed on purpose.
-   */
   completionNotificationSuppressed?: boolean;
 }
 
@@ -68,17 +60,12 @@ export interface BackgroundTask {
   startTime: Date;
   outputFile: string;
   abortController?: AbortController;
-  /** Resolves once the local subagent launcher and its process tree have stopped. */
   completion?: Promise<void>;
-  /** Confirm cancellation with the listener that owns an accepted turn. */
   stop?: () => Promise<void>;
-  /** Process exit is confirmed; only wake cancellation remains to retry. */
   cancelPendingWakes?: () => Promise<void>;
-  /** Runs on another computer or in Cloud; stopping it must cancel Cloud. */
   remote?: boolean;
   cleanupTimer?: TimerHandle;
   runtimeScope?: BackgroundRuntimeScope;
-  /** Authenticated Cloud user responsible for launching this task. */
   actingUserId?: string | null;
 }
 
@@ -215,7 +202,6 @@ function trimBufferedLines(lines: string[]): string[] {
     charCount -= (removed?.length ?? 0) + 1;
   }
 
-  // Keep the most recent tail when a single line is still too long.
   if (retained.length === 1 && charCount > maxChars) {
     const [line] = retained;
     if (line !== undefined) {
@@ -323,11 +309,6 @@ export function appendBackgroundProcessOutput(
   ]);
 }
 
-/**
- * Get a temp directory for background task output files.
- * Uses LETTA_SCRATCHPAD if set. Otherwise creates one private temp directory
- * for this process so fixed log filenames do not collide across users or runs.
- */
 export function getBackgroundOutputDir(): string {
   const scratchpad = process.env.LETTA_SCRATCHPAD;
   if (scratchpad) {
@@ -354,9 +335,6 @@ function ensureBackgroundOutputDir(dir: string): void {
   }
 }
 
-/**
- * Create a unique output file path for a background process/task.
- */
 export function createBackgroundOutputFile(id: string): string {
   const dir = getBackgroundOutputDir();
 
@@ -368,15 +346,6 @@ export function createBackgroundOutputFile(id: string): string {
   return filePath;
 }
 
-/**
- * Append content to a background output file.
- *
- * Returns `true` on success, `false` on failure such as ENOSPC. The function
- * never throws so that callers inside event callbacks (stdout/stderr data
- * handlers) do not propagate the exception and crash the host process.
- * Callers should check the return value and degrade the affected session or
- * background process instead of pretending the write succeeded.
- */
 export function appendToOutputFile(filePath: string, content: string): boolean {
   try {
     appendFileSync(filePath, content);
@@ -389,9 +358,6 @@ export function appendToOutputFile(filePath: string, content: string): boolean {
 export function scrubCompletedBackgroundOutput(
   processState: BackgroundProcess,
 ): boolean {
-  // Always scrub, even when the command referenced no secrets:
-  // scrubSecretsFromString covers the ambient runtime auth values (at minimum
-  // the effective LETTA_API_KEY) that every shell child inherits.
   if (!processState.outputFile) return true;
   try {
     const content = readFileSync(processState.outputFile, "utf8");

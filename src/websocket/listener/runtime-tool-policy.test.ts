@@ -123,7 +123,6 @@ function registerLookup(
   );
 }
 
-/** Prepare one turn; omit connectionId for a process-started turn. */
 async function prepareTurn(
   options: {
     connectionId?: string;
@@ -203,10 +202,8 @@ test("a task notification turn uses the registering connection's tools and polic
     exclude_interactive: true,
   });
 
-  // No submitting connection and no per-input fields: only the policy applies.
   expect(await toolNames()).toEqual(["Read", "lookup_ticket"]);
 
-  // runtime_external_tools_update sets the same policy for many runtimes.
   updateRuntimeExternalTools(listener, "sdk-session", [
     {
       runtimes: [scope],
@@ -216,7 +213,6 @@ test("a task notification turn uses the registering connection's tools and polic
   ]);
   expect(await toolNames()).toEqual(["Grep"]);
 
-  // Disconnect removes the connection's tools and policy together.
   rejectPendingExternalToolCallsForConnection(
     listener,
     "sdk-session",
@@ -263,7 +259,6 @@ test("per-input tool fields apply to their own turn and only narrow the policy",
     allowlist: ["Read", "Grep", "lookup_ticket"],
   });
 
-  // A per-input allowlist cannot add Bash back.
   expect(
     await toolNames({
       connectionId: "sdk-session",
@@ -272,7 +267,6 @@ test("per-input tool fields apply to their own turn and only narrow the policy",
     }),
   ).toEqual(["Read", "lookup_ticket"]);
 
-  // The narrower per-input allowlist does not carry into the next turn.
   expect(await toolNames()).toEqual(["Grep", "Read", "lookup_ticket"]);
 });
 
@@ -288,7 +282,6 @@ test("process-started turns pick duplicate tool names from the last submitting c
     (await prepareTools(options)).find((tool) => tool.name === "lookup_ticket")
       ?.description;
 
-  // No submitter yet: the newest registration wins.
   expect(await lookupDescription()).toBe("Lookup through the gateway");
 
   await prepareTurn({ connectionId: "sdk-session", content: "hello" });
@@ -309,8 +302,6 @@ test("a turn relayed by a connection without tools uses the registering connecti
     allowlist: ["Read", "lookup_ticket"],
   });
 
-  // Cloud delivering a queued message to this computer submits on its own
-  // connection, which registered nothing for the conversation.
   const relayed = await prepareTools({ connectionId: "cloud", content: "hi" });
   expect(relayed.map((tool) => tool.name).sort()).toEqual([
     "Read",
@@ -322,8 +313,6 @@ test("a turn relayed by a connection without tools uses the registering connecti
 });
 
 test("the policy's foreground yield reaches the turn's tools and clears with the policy", async () => {
-  // A policy on another conversation (e.g. the parent of a subagent running
-  // here) does not apply: this conversation keeps the default.
   registerRuntimeExternalTools(
     listener,
     "gateway",
@@ -341,7 +330,6 @@ test("the policy's foreground yield reaches the turn's tools and clears with the
     await foregroundYield({ connectionId: "gateway", content: "hello" }),
   ).toBe(5_000);
 
-  // An update without tool_policy clears it.
   updateRuntimeExternalTools(listener, "gateway", [
     { runtimes: [scope], external_tools: [] },
   ]);

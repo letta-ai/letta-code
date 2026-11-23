@@ -1,13 +1,3 @@
-/**
- * Render a parent conversation as a readable transcript for workers that
- * cannot share Letta's conversation state (claude-code, codex, cursor, ...).
- *
- * Letta subagents fork the conversation server-side. External workers get the
- * history as JSONL instead: user and assistant messages, tool calls with
- * their arguments, and tool results. Reasoning,
- * system messages, and `<system-reminder>` blocks are omitted.
- */
-
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Backend } from "@/backend";
 
@@ -16,7 +6,6 @@ const SYSTEM_REMINDER_PATTERN =
   /<system-reminder>[\s\S]*?<\/system-reminder>\s*/g;
 
 export interface ParentTranscript {
-  /** One JSON record per supported event, in chronological order. */
   messages: string[];
   jsonl: string;
 }
@@ -39,43 +28,61 @@ interface HistoryEvent {
   status?: string;
 }
 
-/** JSON escapes keep historical text from closing the surrounding prompt tags. */
 export function serializeHistoryRecord(record: unknown): string {
   return JSON.stringify(record)
     .replace(/</g, "\\u003c")
     .replace(/>/g, "\\u003e");
 }
 
-/** Page through a conversation oldest-first, skipping reasoning and system rows. */
 export async function fetchParentConversationMessages(params: {
   backend: Pick<Backend, "listConversationMessages">;
   agentId: string;
   conversationId: string;
   signal?: AbortSignal;
+  inContextIds?: string[];
+  maxChars?: number;
 }): Promise<Message[]> {
+  const contextIds = params.inContextIds && new Set(params.inContextIds);
+  const oldestId = params.inContextIds?.[0];
+  if (contextIds?.size === 0 || (params.maxChars ?? 1) <= 0) return [];
   const messages: Message[] = [];
   let after: string | undefined;
-  for (;;) {
+  for (let pageIndex = 0; pageIndex < (contextIds ? 10 : 1); pageIndex++) {
     params.signal?.throwIfAborted();
     const page = await params.backend.listConversationMessages(
       params.conversationId,
       {
         agent_id: params.agentId,
-        order: "asc",
+        order: "desc",
         limit: PAGE_SIZE,
         ...(after ? { after } : {}),
       },
       params.signal ? { signal: params.signal } : undefined,
     );
     const items = page.getPaginatedItems();
-    messages.push(...items);
-    if (items.length < PAGE_SIZE) break;
-    const cursor = items[items.length - 1]?.id;
-    // A page whose cursor cannot advance would otherwise be fetched forever.
+    const boundary = items.findIndex((message) => message.id === oldestId);
+    const withinBoundary = boundary >= 0 ? items.slice(0, boundary + 1) : items;
+    messages.push(
+      ...withinBoundary.filter(
+        (message) =>
+          (!contextIds || contextIds.has(message.id)) &&
+          message.message_type !== "summary_message",
+      ),
+    );
+    const preview = previewParentTranscript(
+      renderParentTranscript([...messages].reverse()).messages,
+    ).join("\n");
+    if (
+      boundary >= 0 ||
+      items.length < PAGE_SIZE ||
+      preview.length >= (params.maxChars ?? Infinity)
+    )
+      break;
+    const cursor = items.at(-1)?.id;
     if (!cursor || cursor === after) break;
     after = cursor;
   }
-  return messages;
+  return messages.reverse();
 }
 
 function contentText(content: unknown): string {
@@ -124,7 +131,6 @@ function renderToolResult(result: {
   };
 }
 
-/** Separate known harness wrappers without guessing provenance from prose. */
 function userEvents(text: string, speaker?: string): HistoryEvent[] {
   const events: HistoryEvent[] = [];
   const human = (body: string) => {
@@ -188,7 +194,6 @@ function renderMessage(message: Message): HistoryEvent[] {
       return results.map(renderToolResult);
     }
     case "approval_response_message": {
-      // Client-side tools report their results through approval responses.
       return (message.approvals ?? []).map(
         (approval): HistoryEvent =>
           "tool_return" in approval
@@ -204,7 +209,6 @@ function renderMessage(message: Message): HistoryEvent[] {
     case "summary_message":
       return [{ type: "summary", text: message.summary }];
     default:
-      // reasoning, hidden reasoning, system, and compaction events
       return [];
   }
 }
@@ -214,8 +218,6 @@ export function renderParentTranscript(messages: Message[]): ParentTranscript {
   const projections = new Map<string, string>();
   for (const message of messages) {
     for (const event of renderMessage(message)) {
-      // Approval and tool rows can project the same execution. Preserve separate
-      // calls with identical output, and conflicting results rather than hiding them.
       if (
         event.call_id &&
         (event.type === "tool_result" || event.type === "tool_call")
@@ -240,14 +242,13 @@ export function renderParentTranscript(messages: Message[]): ParentTranscript {
   };
 }
 
-/** Bound individual preview records; the full JSONL keeps their exact content. */
 export function previewParentTranscript(messages: string[]): string[] {
   return messages.map((line) => {
     const event = JSON.parse(line) as HistoryEvent & {
       seq: number;
       truncated?: boolean;
-      content_ref?: { seq: number };
     };
+    if (event.type === "summary") return line;
     for (const field of ["text", "arguments"] as const) {
       const text = event[field];
       if (typeof text !== "string") continue;
@@ -258,13 +259,11 @@ export function previewParentTranscript(messages: string[]): string[] {
           `${text.slice(0, 2_000)}\n[... omitted ...]\n${text.slice(-2_000)}`;
       } else continue;
       event.truncated = true;
-      event.content_ref = { seq: event.seq };
     }
     return serializeHistoryRecord(event);
   });
 }
 
-/** Keep a complete suffix of messages inline; preserve the remainder in a file. */
 export function selectRecentMessages(
   messages: string[],
   maxChars: number,

@@ -1,27 +1,6 @@
 import type { Usage } from "@earendil-works/pi-ai";
 import type { LocalMessage } from "./local-message";
 
-// Ported from pi-mono packages/coding-agent/src/core/compaction/compaction.ts
-// (`calculateContextTokens`, `estimateTokens`, `estimateContextTokens`) so local
-// context estimation tracks Pi's semantics instead of serialized JSON size.
-//
-// Intentional deviations from Pi (everything else should stay 1:1):
-// 1. User-message images are counted at the same fixed image cost Pi applies to
-//    tool-result images. Pi counts user images as 0; Letta Code receives pasted
-//    screenshots as user content, so zero-costing them undercounts real usage.
-// 2. Assistant messages whose usage is all-zero are skipped as anchors
-//    (`contextTokensFromLocalUsage` returns undefined). The local backend
-//    persists synthetic assistant messages with empty usage; anchoring on them
-//    would report a near-zero context.
-// 3. Pi's post-compaction staleness guard (agent-session.ts `_checkCompaction`
-//    / `getContextUsage`) is folded into `estimateLocalContextTokens`: usage
-//    anchors at or before the latest compaction summary timestamp are ignored,
-//    and the estimate falls back to Pi's no-usage semantic path. Pi's footer
-//    reports "unknown" in that state; we need a number for compaction
-//    planning and usage estimates, and the semantic sum of [summary + kept
-//    messages] is exactly the payload of the next request.
-
-// Matches Pi's `estimateTokens` image cost: 4800 chars / 4 = 1200 tokens.
 const IMAGE_TOKEN_ESTIMATE = 1200;
 
 export interface LocalContextTokenEstimate {
@@ -117,10 +96,6 @@ export function estimateLocalMessageTokens(message: LocalMessage): number {
   return Math.ceil(chars / 4);
 }
 
-// Compaction rebuilds the transcript as [summary, ...keptMessages], so kept
-// assistant messages appear after the summary in array order while remaining
-// chronologically older. Staleness therefore has to be timestamp-based, like
-// Pi's `assistantMessage.timestamp <= compactionEntry.timestamp` check.
 function latestCompactionBoundaryTimestamp(
   messages: readonly LocalMessage[],
 ): number | undefined {
@@ -143,7 +118,6 @@ function getAssistantUsageInfo(
       continue;
     }
     if (staleAtOrBefore !== undefined && message.timestamp <= staleAtOrBefore) {
-      // Pre-compaction usage reflects the old (larger) context; ignore it.
       continue;
     }
     const usageTokens = contextTokensFromLocalUsage(message.usage);

@@ -34,39 +34,21 @@ import type { ListenerRuntime } from "@/websocket/listener/types";
 
 const DEFAULT_LISTEN_URL = "ws://127.0.0.1:0";
 const DEFAULT_WS_PATH = "/ws";
-// App-server liveness watchdog. Here letta-code is the WS *server* (the client
-// is the Desktop/relay), so we use protocol-level ws.ping()/pong rather than
-// the app-level ping/pong the outbound listener uses. Ping every 30s and reap
-// any client that has not ponged within 90s (3 missed pings). A half-open
-// client connection (Desktop sleep, network switch, NAT idle timeout) never
-// emits a `close` event. Terminating the dead socket fires its connection-
-// scoped cleanup without disturbing healthy peers.
 const APP_SERVER_HEARTBEAT_INTERVAL_MS = 30000;
 const APP_SERVER_PONG_TIMEOUT_MS = 90000;
 
 export interface StartAppServerOptions {
   listen?: string;
-  /**
-   * Attach the server to an already-running listener runtime. The caller
-   * retains ownership of that runtime; closing the server only detaches its
-   * client sockets.
-   */
   runtime?: ListenerRuntime;
   websocketAuth?: AppServerWebsocketAuthSettings;
   connectionName?: string;
-  /** Serve OpenAI-compatible models, Chat Completions, and Responses routes. */
   openaiApi?: boolean;
   onListening?: (info: AppServerListeningInfo) => void;
   onLog?: (message: string) => void;
-  /** @internal Test override for the liveness ping cadence (ms). */
   heartbeatIntervalMs?: number;
-  /** @internal Test override for the pong timeout before a socket is reaped (ms). */
   pongTimeoutMs?: number;
-  /** @internal Test hook for simulating one half-open client. */
   shouldRecordPong?: (connectionId: string) => boolean;
-  /** @internal Test override for listener runtime initialization. */
   initializeRuntime?: (runtime: ListenerRuntime) => Promise<void>;
-  /** Whether attached clients may start process-owned services. Defaults true. */
   startProcessServices?: boolean;
 }
 
@@ -213,8 +195,6 @@ export async function startAppServer(
     1,
     Math.ceil(pongTimeoutMs / heartbeatIntervalMs),
   );
-  // Track heartbeat state per connection. WeakMaps let socket collection clean
-  // up both entries without a separate close-path registry.
   const lastPongAtBySocket = new WeakMap<WebSocket, number>();
   const heartbeatWatchdogBySocket = new WeakMap<
     WebSocket,
@@ -224,9 +204,6 @@ export async function startAppServer(
   const handleWebSocketConnection = (socket: WebSocket): void => {
     const connectionId = `app-server-${nextConnectionOrdinal}`;
     nextConnectionOrdinal += 1;
-    // The `ws` library auto-replies to ping frames with a pong. Leave the pong
-    // timestamp unset until a probe is actually answered; the missed-probe
-    // budget gives a freshly accepted socket its full grace window.
     heartbeatWatchdogBySocket.set(
       socket,
       createMissedPongWatchdog(maxUnansweredPings),
@@ -299,8 +276,6 @@ export async function startAppServer(
         return;
       }
       response.writeHead(200, { "content-type": "application/json" });
-      // Keep capability discovery identical across HTTP and WebSocket; HTTP
-      // transport owns correlation, so this request id is only a shape marker.
       response.end(JSON.stringify(getAppServerInfoResponse("http-info")));
       return;
     }
@@ -339,10 +314,6 @@ export async function startAppServer(
       return;
     }
 
-    // Browser WebSocket APIs cannot set Authorization headers, while native
-    // clients such as React Native may send both Authorization and Origin.
-    // authorizeUpgrade() also returns null when auth is disabled, so require
-    // an actual configured policy before treating the request as authenticated.
     if (request.headers.origin !== undefined && authPolicy.mode === undefined) {
       options.onLog?.(
         `Rejecting unauthenticated app-server websocket request with Origin header: ${request.url ?? "/"}; native clients such as React Native must configure --ws-auth capability-token or --ws-auth signed-bearer-token`,
@@ -363,8 +334,6 @@ export async function startAppServer(
         watchdog?.shouldTerminate(lastPongAtBySocket.get(client) ?? null) ===
         true
       ) {
-        // Consecutive unanswered probes identify a half-open socket without
-        // mistaking a delayed local interval callback for a dead peer.
         options.onLog?.(
           `App-server terminating unresponsive socket after ${maxUnansweredPings} unanswered pings`,
         );
@@ -378,7 +347,6 @@ export async function startAppServer(
       }
     }
   }, heartbeatIntervalMs);
-  // Do not let the watchdog keep the event loop alive on its own.
   heartbeatInterval.unref?.();
   wss.on("close", () => {
     clearInterval(heartbeatInterval);

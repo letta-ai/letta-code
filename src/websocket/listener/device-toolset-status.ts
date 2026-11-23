@@ -20,9 +20,7 @@ export function buildDeviceToolsetStatus(
         agentId,
         conversationId ?? "default",
       );
-    } catch {
-      // Settings may not be initialized while the listener is starting.
-    }
+    } catch {}
   }
 
   return {

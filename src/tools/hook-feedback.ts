@@ -1,14 +1,3 @@
-/**
- * Post-tool hook feedback: collection and attachment to model-facing tool
- * results.
- *
- * Hooks run user-configured shell commands whose children inherit the runtime
- * environment (including LETTA_API_KEY), so their feedback can echo runtime
- * credentials. All feedback attached here is scrubbed for ambient runtime auth
- * values before it reaches the model — the secret scrub of the tool's own
- * output runs earlier and cannot cover text appended afterwards.
- */
-
 import { runPostToolUseFailureHooks, runPostToolUseHooks } from "@/hooks";
 import { scrubAmbientSecrets } from "@/tools/secret-substitution";
 import { debugLog } from "@/utils/debug";

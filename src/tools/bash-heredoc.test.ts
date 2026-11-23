@@ -3,7 +3,6 @@ import { bash } from "@/tools/impl/bash";
 
 const isWindows = process.platform === "win32";
 
-// HEREDOC is bash/zsh syntax, not available in PowerShell
 describe.skipIf(isWindows)("Bash HEREDOC support", () => {
   test("simple HEREDOC works", async () => {
     const result = await bash({
@@ -48,7 +47,6 @@ EOF
   });
 
   test("git commit style HEREDOC works", async () => {
-    // Simulates the pattern used for git commits
     const result = await bash({
       command: `echo "$(cat <<'EOF'
 feat: add user's preferences
@@ -85,7 +83,6 @@ Special chars: $VAR \`backticks\` "quotes" 'apostrophes'
 EOF`,
     });
     expect(result.status).toBe("success");
-    // With <<'EOF' (quoted), these should be literal, not expanded
     expect(result.content[0]?.text).toContain("$VAR");
     expect(result.content[0]?.text).toContain("`backticks`");
   });

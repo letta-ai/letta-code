@@ -24,7 +24,6 @@ function hashMcpOAuthCredentialKey(
   return `mcp-oauth-${digest}`;
 }
 
-/** Treats `https://host` and `https://host/` as the same server. */
 function normalizeMcpServerUrl(serverUrl: string): string {
   try {
     const url = new URL(serverUrl);
@@ -36,7 +35,6 @@ function normalizeMcpServerUrl(serverUrl: string): string {
   }
 }
 
-/** Keys used before server URLs were normalized, excluding the current key. */
 export function legacyMcpOAuthCredentialKeys(
   agentId: string,
   serverName: string,
@@ -44,11 +42,8 @@ export function legacyMcpOAuthCredentialKeys(
 ): string[] {
   const variants = [serverUrl];
   try {
-    // Covers the trailing-slash spelling of a root URL.
     variants.push(new URL(serverUrl).href);
-  } catch {
-    // Unparseable URLs were never normalized.
-  }
+  } catch {}
   const current = mcpOAuthCredentialKey(agentId, serverName, serverUrl);
   return [
     ...new Set(
@@ -61,10 +56,6 @@ export function legacyMcpOAuthCredentialKeys(
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "[::1]", "localhost"]);
 
-/**
- * Some authorization servers store a loopback redirect without its port, as
- * RFC 8252 section 7.3 permits, so only the port may differ for loopback URLs.
- */
 export function hasMatchingRedirectUri(
   registered: readonly string[],
   redirectUrl: string,

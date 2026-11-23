@@ -114,6 +114,44 @@ describe("app-server client", () => {
     ).toBe(0);
   });
 
+  test.each(["message", "error"] as const)(
+    "keeps late socket errors handled and reports ErrorEvent.%s",
+    async (field) => {
+      class FailedSocket extends EventEmitter {
+        constructor(_url: string) {
+          super();
+        }
+        readyState = 0;
+        send() {}
+        close() {
+          this.readyState = 3;
+          this.emit("error", new Error("aborted during close"));
+          this.emit("close", {});
+        }
+      }
+      const client = createAppServerClient({
+        url: "http://localhost:4500",
+        WebSocket: FailedSocket,
+      });
+      const pending = client.connect();
+      const socket = client.socket as FailedSocket;
+      socket.emit("error", {
+        [field]:
+          field === "error"
+            ? new Error("connection reset")
+            : "connection reset",
+      });
+      expect(() =>
+        socket.emit("error", new Error("second error")),
+      ).not.toThrow();
+      await expect(pending).rejects.toThrow(
+        "App-server WebSocket failed to open: connection reset",
+      );
+      expect(socket.readyState).toBe(3);
+      expect(() => socket.emit("error", new Error("late error"))).not.toThrow();
+    },
+  );
+
   test("rejects connect when the socket never opens", async () => {
     const { client } = createFakeClient();
     const started = Date.now();
@@ -121,6 +159,30 @@ describe("app-server client", () => {
       "App-server WebSocket failed to open: timed out after 25ms",
     );
     expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  test("reports the close reason after an opaque socket error", async () => {
+    class FailedSocket extends EventEmitter {
+      constructor(_url: string) {
+        super();
+      }
+      readyState = 0;
+      send() {}
+      close() {}
+    }
+    const client = createAppServerClient({
+      url: "http://localhost:4500",
+      WebSocket: FailedSocket,
+    });
+    const pending = client.connect();
+    const socket = client.socket as FailedSocket;
+    socket.emit("error", new Event("error"));
+    socket.emit("close", {
+      code: 1006,
+      reason: "NSOSStatusErrorDomain Code=-9836: TLS protocol version",
+    });
+    await expect(pending).rejects.toThrow("-9836");
+    await expect(pending).rejects.not.toThrow("[object Event]");
   });
 
   test("rejects connect when the socket closes before opening", async () => {
