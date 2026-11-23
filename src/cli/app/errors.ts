@@ -1,4 +1,3 @@
-/** Extract errorType and httpStatus from a caught exception for telemetry. */
 export function extractErrorMeta(e: unknown) {
   return {
     errorType: e instanceof Error ? e.constructor.name : "UnknownError",

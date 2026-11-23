@@ -77,7 +77,6 @@ test("reclaims a checkout whose holder exited", async () => {
 
 test("reclaims a checkout whose pid now belongs to another process", async () => {
   const root = repository();
-  // Our own pid is alive, but the recorded start time is not ours: the pid was reused.
   writeFileSync(
     lockPath(root),
     JSON.stringify({

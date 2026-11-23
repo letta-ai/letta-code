@@ -2,6 +2,10 @@ import { afterEach, expect, mock, test } from "bun:test";
 import WebSocket from "ws";
 import type { TeleportContinuation } from "@/types/protocol_v2";
 import {
+  addToMessageQueue,
+  clearPendingMessages,
+} from "@/utils/message-queue-bridge";
+import {
   markListenerConnectionInitialized,
   openListenerConnection,
 } from "./connection";
@@ -13,6 +17,10 @@ import {
 } from "./input-disposition";
 import { createRuntime } from "./lifecycle";
 import { createListenerMessageHandler } from "./message-router";
+import {
+  clearProcessServices,
+  installProcessEventRouting,
+} from "./process-services";
 import { setActiveRuntime } from "./runtime";
 import {
   claimPendingTeleportAtBoundary,
@@ -24,6 +32,7 @@ import {
   isRuntimeTeleportPending,
 } from "./teleport";
 import { admitTeleportContinueInput } from "./teleport-continue-input";
+import { LocalListenerTransport } from "./transport";
 import type { IncomingMessage, StartListenerOptions } from "./types";
 
 class MockSocket {
@@ -331,7 +340,6 @@ test.each([
   const processIncomingMessage = mock(async (_incoming: IncomingMessage) => {});
   openSource(listener, socket);
   setActiveRuntime(listener);
-  // The destination's runtime_start announced this continuation.
   expectInboundTeleport(runtime, "teleport-return");
   listener.pendingTeleports = new Map([
     [
@@ -493,9 +501,6 @@ test("fresh teleport accept is refresh-only with no recreate hatch; duplicate ca
     source: { device_id: "source-device", connection_name: "Source" },
   };
 
-  // Fresh accept: the disposition commit lands before the ack, so any
-  // live-owner predicate would be vacuously true — the fresh accept must
-  // carry no recreate hatch at all (refresh-only, never creates).
   admitTeleportContinueInput({ ...base, payload });
   expect(acknowledgements.at(-1)).toEqual({
     accepted: true,
@@ -505,8 +510,6 @@ test("fresh teleport accept is refresh-only with no recreate hatch; duplicate ca
     mayRecreateOwner: undefined,
   });
 
-  // Duplicate re-ack (the crash-recovery path): keeps the durable live-owner
-  // gate so a lost entry may be recreated only while the owner is live.
   admitTeleportContinueInput({ ...base, payload });
   const duplicate = acknowledgements.at(-1);
   expect(duplicate?.accepted).toBe(true);
@@ -621,21 +624,18 @@ test("teleport accepts re-assert but never create originator token entries (refr
     source: { device_id: "source-device", connection_name: "Source" },
   });
 
-  // Fresh accept: creates a turn but no token owner — refresh-only.
   admitTeleportContinueInput({ ...base, payload: payload() });
   expect(acknowledgements.at(-1)).toMatchObject({
     accepted: true,
     deliveryHandling: "refresh",
   });
 
-  // Duplicate re-ack of the same teleport id: also refresh-only.
   admitTeleportContinueInput({ ...base, payload: payload() });
   expect(acknowledgements.at(-1)).toMatchObject({
     accepted: true,
     deliveryHandling: "refresh",
   });
 
-  // No accepted teleport ack may request create semantics.
   expect(
     acknowledgements
       .filter((ack) => ack.accepted)
@@ -682,4 +682,61 @@ test("the continuation carries the frame's originator super run id so its finali
   return tasks[0]!().then(() => {
     expect(seen.at(-1)?.mcpOriginatorSuperRunId).toBe("run-teleported");
   });
+});
+
+test("background completions skip pending teleports but still run for other conversations", async () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-1",
+    "conversation-1",
+  );
+  const otherRuntime = getOrCreateScopedRuntime(
+    listener,
+    "agent-1",
+    "conversation-2",
+  );
+  const processQueuedTurn = mock(async (_incoming: IncomingMessage) => {});
+  openSource(listener, new MockSocket());
+  setActiveRuntime(listener);
+  installProcessEventRouting({
+    runtime: listener,
+    processTransport: new LocalListenerTransport(),
+    opts: makeOptions(),
+    processQueuedTurn,
+  });
+  try {
+    requestTeleport(listener);
+    expect(
+      isRuntimeTeleportPending(listener, "agent-1", "conversation-1"),
+    ).toBe(true);
+    addToMessageQueue({
+      kind: "task_notification",
+      text: "Background task completed",
+      agentId: "agent-1",
+      conversationId: "conversation-1",
+    });
+    expect(runtime.queueRuntime.peekReady()).toHaveLength(0);
+    expect(runtime.queuePumpScheduled).toBe(false);
+    await runtime.messageQueue;
+    expect(processQueuedTurn).not.toHaveBeenCalled();
+
+    addToMessageQueue({
+      kind: "task_notification",
+      text: "Background task completed",
+      agentId: "agent-1",
+      conversationId: "conversation-2",
+    });
+    expect(otherRuntime.queueRuntime.peekReady()).toHaveLength(1);
+    expect(otherRuntime.queuePumpScheduled).toBe(true);
+    await otherRuntime.messageQueue;
+    expect(processQueuedTurn).toHaveBeenCalledTimes(1);
+    expect(processQueuedTurn.mock.calls[0]?.[0]).toMatchObject({
+      agentId: "agent-1",
+      conversationId: "conversation-2",
+    });
+  } finally {
+    clearProcessServices(listener);
+    clearPendingMessages();
+  }
 });

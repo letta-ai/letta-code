@@ -37,11 +37,6 @@ function bumpProviderRevision(providerName: string): void {
   providerRevisions.set(providerName, revisionCounter);
 }
 
-/**
- * Monotonic per-provider registration revision. Bumps on every register or
- * unregister of that provider name, letting per-backend Models runtimes
- * detect that a registration changed and rebuild only that provider.
- */
 export function getRegisteredPiProviderRevision(providerName: string): number {
   return providerRevisions.get(providerName) ?? 0;
 }
@@ -50,10 +45,7 @@ function notifyRegistryListeners(): void {
   for (const listener of [...registryListeners]) {
     try {
       listener();
-    } catch {
-      // Registry listeners are observers; a UI refresh failure should not make
-      // mod provider registration fail.
-    }
+    } catch {}
   }
 }
 

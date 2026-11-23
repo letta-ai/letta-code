@@ -1,17 +1,4 @@
 #!/usr/bin/env bun
-/**
- * Windows-specific headless integration test
- *
- * Tests that Letta Code works correctly on Windows by:
- * 1. Running shell commands (tests PowerShell preference)
- * 2. Creating a multiline echo (tests heredoc avoidance)
- * 3. Checking tool availability (tests PATH)
- *
- * Only runs on Windows (process.platform === 'win32')
- *
- * Usage:
- *   bun run src/test-utils/headless-windows.ts --model haiku
- */
 
 import { createAuthenticatedCliTestEnv } from "./test-process-env";
 
@@ -64,10 +51,7 @@ function parseWireRecords(stdout: string): WireRecord[] {
       if (value && typeof value === "object" && !Array.isArray(value)) {
         records.push(value as WireRecord);
       }
-    } catch {
-      // Ignore output outside the stream-json protocol. Required protocol
-      // records are validated below.
-    }
+    } catch {}
   }
   return records;
 }
@@ -233,7 +217,6 @@ async function runCLI(
     "-m",
     model,
   ];
-  // Use an isolated env so the scenario doesn't mutate the user's saved session state.
   const proc = Bun.spawn(cmd, {
     stdout: "pipe",
     stderr: "pipe",

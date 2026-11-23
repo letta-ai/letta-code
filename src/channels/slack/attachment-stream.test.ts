@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { __testOverrideChannelsRoot } from "@/channels/config";
+import { removeTestDir } from "@/test-utils/test-fs";
 import {
   SlackAttachmentDownloadError,
   saveSlackAttachmentStream,
@@ -18,7 +19,7 @@ beforeEach(async () => {
 afterEach(async () => {
   __testOverrideChannelsRoot(null);
   if (channelsRoot) {
-    await rm(channelsRoot, { recursive: true, force: true });
+    await removeTestDir(channelsRoot);
     channelsRoot = null;
   }
 });
@@ -35,7 +36,6 @@ test("a stalled stream fails with a read-idle timeout and removes the partial fi
   const body = new ReadableStream<Uint8Array>({
     start(controller) {
       controller.enqueue(new Uint8Array([1, 2, 3]));
-      // Never enqueue again and never close: a dead TCP stream.
     },
   });
 

@@ -14,9 +14,6 @@ export const STRICT_SHELL_ENV_VAR = "LETTA_BASH_STRICT";
 export const STRICT_SHELL_PRELUDE = "set -euo pipefail";
 export const POWERSHELL_UTF8_OUTPUT_PREFIX =
   "try { [Console]::OutputEncoding=[System.Text.Encoding]::UTF8 } catch {}\n";
-// `$LASTEXITCODE` remains stale after PowerShell statements. Only propagate it
-// when the parsed final operation is a command that resolves to an application.
-// Language expressions and PowerShell scripts use PowerShell's ERROR semantics.
 export const POWERSHELL_EXIT_CODE_SUFFIX =
   "\n$__lettaCommandSucceeded = $?; " +
   "if ($__lettaCommandSucceeded) { exit 0 }; " +
@@ -148,8 +145,6 @@ function windowsLaunchers(
     preserveExitCode,
   );
 
-  // Match Codex's PowerShell order: prefer PowerShell Core (`pwsh`) when
-  // available, then fall back to Windows PowerShell.
   pushUnique(launchers, seen, [
     "pwsh",
     "-NoProfile",
@@ -175,7 +170,6 @@ function windowsLaunchers(
     powerShellCommand,
   ]);
 
-  // Fall back to cmd.exe if PowerShell fails.
   pushUnique(launchers, seen, ["cmd.exe", "/d", "/s", "/c", trimmed]);
 
   return launchers;
@@ -209,8 +203,6 @@ function hasFileExtension(executable: string): boolean {
 
 function shellCandidateExists(candidate: string): boolean {
   try {
-    // MSIX app execution aliases are reparse points: stat/exists can fail
-    // even though Windows can launch them. Inspect the entry itself.
     lstatSync(candidate);
     return true;
   } catch {
@@ -274,9 +266,6 @@ function unixLaunchers(command: string, login: boolean): string[][] {
   const launchers: string[][] = [];
   const seen = new Set<string>();
 
-  // The preferred shell comes first: /bin/zsh on macOS (bash 3.2's HEREDOC
-  // parsing bug with odd numbers of apostrophes), otherwise $SHELL or
-  // /bin/bash. Session context names this same shell to the model.
   const preferredShell = getPreferredUnixShell(process.env, process.platform);
   pushUnique(launchers, seen, [
     preferredShell,
@@ -284,8 +273,6 @@ function unixLaunchers(command: string, login: boolean): string[][] {
     trimmed,
   ]);
 
-  // Try user's preferred shell from $SHELL environment variable
-  // Use login semantics only when explicitly requested.
   const envShell = process.env.SHELL?.trim();
   if (envShell) {
     pushUnique(launchers, seen, [
@@ -295,13 +282,11 @@ function unixLaunchers(command: string, login: boolean): string[][] {
     ]);
   }
 
-  // Fallback defaults - prefer simple "bash" PATH lookup first (like original code),
-  // then absolute paths.
   const defaults: string[][] =
     process.platform === "darwin"
       ? [
           ["/bin/zsh", shellCommandFlag("/bin/zsh", login), trimmed],
-          ["bash", shellCommandFlag("bash", login), trimmed], // PATH lookup, like original
+          ["bash", shellCommandFlag("bash", login), trimmed],
           ["/bin/bash", shellCommandFlag("/bin/bash", login), trimmed],
           ["/usr/bin/bash", shellCommandFlag("/usr/bin/bash", login), trimmed],
           ["/bin/sh", shellCommandFlag("/bin/sh", login), trimmed],

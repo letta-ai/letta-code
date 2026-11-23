@@ -1,21 +1,11 @@
-/**
- * Local single-instance ownership for standalone remote listeners.
- *
- * Two `letta server` processes launched from the same machine currently derive
- * the same listener instance id from their environment name. If both register,
- * they rotate the same Cloud connection lease. This lock stops the second
- * local process before registration. It never signals the incumbent.
- *
- * Desktop-owned children are out of scope: their spawner supplies distinct
- * listener identities and owns their lifecycle.
- */
-
 import { createHash, randomUUID } from "node:crypto";
 import { link, mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { uptime } from "node:os";
 import path from "node:path";
 import {
+  getOwnProcessStartTime,
   getProcessCommand,
+  getProcessStartTime,
   isPidReusedByNonLetta,
 } from "@/utils/process-liveness";
 import { resolveGlobalConfigDir } from "@/utils/settings-path";
@@ -37,6 +27,7 @@ interface ManualListenerLockRecord {
   ownerToken: string;
   acquiredAt: string;
   scopeHash: string;
+  started?: string;
 }
 
 interface ManualListenerLockDeps {
@@ -44,14 +35,13 @@ interface ManualListenerLockDeps {
   processId: number;
   ownerToken: string;
   isProcessAlive: (pid: number) => boolean;
-  /** Epoch ms of the current OS boot, used to spot pids reused after reboot. */
   bootTimeMs: number;
-  /** Returns the pid's command line, or null when it cannot be determined. */
   getProcessCommand: (pid: number) => string | null;
+  getOwnProcessStartTime: () => Promise<string | null>;
+  getProcessStartTime: (pid: number) => Promise<string | null>;
 }
 
 const RECOVERY_MAX_DEPTH = 64;
-// Tolerates clock jitter between `acquiredAt` and the uptime-derived boot time.
 const BOOT_TIME_SLACK_MS = 60_000;
 
 export class ManualListenerAlreadyRunningError extends Error {
@@ -90,8 +80,6 @@ function defaultIsProcessAlive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (error) {
-    // Only ESRCH proves that the owner is gone. Permission and unfamiliar
-    // platform failures stay fail-closed and report the lock as held.
     return !hasErrorCode(error, "ESRCH");
   }
 }
@@ -100,17 +88,15 @@ function getDefaultBootTimeMs(): number {
   return Date.now() - uptime() * 1000;
 }
 
-/**
- * A live pid recorded before the current boot may have been reused by an
- * unrelated process after a reboot. The boot estimate moves with the wall
- * clock, so it only prompts a closer look: the owner is treated as stale only
- * when its pid is positively identified as something other than letta.
- */
-function isOwnerAlive(
+async function isOwnerAlive(
   record: ManualListenerLockRecord,
   deps: ManualListenerLockDeps,
-): boolean {
+): Promise<boolean> {
   if (!deps.isProcessAlive(record.pid)) return false;
+  if (record.started) {
+    const started = await deps.getProcessStartTime(record.pid);
+    return started === null || started === record.started;
+  }
   const acquiredAtMs = Date.parse(record.acquiredAt);
   if (
     !Number.isFinite(acquiredAtMs) ||
@@ -122,9 +108,6 @@ function isOwnerAlive(
 }
 
 export function getManualListenerLockRoot(): string {
-  // The device id used in the registration key is stored under this same
-  // product-scoped config directory. An unrelated LETTA_HOME override must not
-  // split locks for processes that still share that device identity.
   return resolveGlobalConfigDir();
 }
 
@@ -144,9 +127,6 @@ export function shouldAcquireManualListenerLock(
   spawnerListenerInstanceId: string | null,
   isDesktopSpawn: boolean,
 ): boolean {
-  // Preserve compatibility if this letta-code version is ever bundled by an
-  // older Desktop that sets LETTA_DESKTOP_MODE but not the explicit identity
-  // added by LET-10085. Desktop must never enter the generic manual guard.
   return spawnerListenerInstanceId === null && !isDesktopSpawn;
 }
 
@@ -177,6 +157,8 @@ function parseLockRecord(
       typeof parsed.ownerToken !== "string" ||
       parsed.ownerToken.length === 0 ||
       typeof parsed.acquiredAt !== "string" ||
+      (parsed.started !== undefined &&
+        (typeof parsed.started !== "string" || parsed.started.length === 0)) ||
       parsed.scopeHash !== expectedScopeHash
     ) {
       return null;
@@ -276,7 +258,7 @@ async function recoverDeadOwner(
           lockPath,
         );
       }
-      if (isOwnerAlive(claimOwner, deps)) {
+      if (await isOwnerAlive(claimOwner, deps)) {
         return false;
       }
     }
@@ -306,13 +288,6 @@ async function recoverDeadOwner(
   }
 }
 
-/**
- * Claim the local slot used by a standalone remote listener.
- *
- * The initialized-record hard-link publication makes acquisition atomic. A
- * dead owner is reclaimed through a content-scoped recovery claim so two
- * simultaneous recoverers cannot unlink a newer generation.
- */
 export async function acquireManualListenerLock(
   scope: ManualListenerLockScope,
   overrides: Partial<ManualListenerLockDeps> = {},
@@ -325,16 +300,20 @@ export async function acquireManualListenerLock(
     isProcessAlive: defaultIsProcessAlive,
     bootTimeMs: getDefaultBootTimeMs(),
     getProcessCommand,
+    getOwnProcessStartTime,
+    getProcessStartTime,
     ...overrides,
   };
   const listenerLockDir = path.join(deps.lockRoot, "listeners");
   const lockPath = path.join(listenerLockDir, `manual-${scopeHash}.lock`);
+  const started = (await deps.getOwnProcessStartTime()) ?? undefined;
   const ownerRecord: ManualListenerLockRecord = {
     version: 1,
     pid: deps.processId,
     ownerToken: deps.ownerToken,
     acquiredAt: new Date().toISOString(),
     scopeHash,
+    ...(started ? { started } : {}),
   };
   const ownerContents = JSON.stringify(ownerRecord);
 
@@ -407,7 +386,7 @@ export async function acquireManualListenerLock(
         lockPath,
       );
     }
-    if (isOwnerAlive(incumbent, deps)) {
+    if (await isOwnerAlive(incumbent, deps)) {
       throw new ManualListenerAlreadyRunningError(incumbent.pid, lockPath);
     }
 

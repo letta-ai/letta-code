@@ -107,7 +107,6 @@ export interface ExternalWorkerModelDependencies {
   listNativeModels?: typeof listNativeModels;
 }
 
-/** Native IDs, not Letta backend handles. No inference or persistent sessions. */
 export async function listExternalWorkerModels(
   worker: string,
   deps: ExternalWorkerModelDependencies = {},
@@ -124,7 +123,6 @@ export async function listExternalWorkerModels(
   const secrets = agentId
     ? await resolveExternalCodingAgentSecretEnv(agentId)
     : {};
-  // Match worker launches: daemon/desktop launches don't source login-shell PATH.
   const env = withNativeCliPath({ ...baseEnv, ...secrets });
   const cwd = process.cwd();
   const models: WorkerModel[] = [];

@@ -24,6 +24,7 @@
     "src/gateway-core.ts",
     "src/channels-slack.ts",
     "src/channels-telegram.ts",
+    "src/image-resize-public.ts",
     "src/types/md.d.ts",
     "src/types/mdx.d.ts",
     "src/types/txt.d.ts"

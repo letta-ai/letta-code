@@ -1,4 +1,7 @@
 import { afterEach, expect, mock, test } from "bun:test";
+import { mkdtempSync, rmSync, truncateSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type WebSocket from "ws";
 import {
   markListenerConnectionInitialized,
@@ -11,9 +14,12 @@ import {
 } from "./conversation-runtime";
 import { dispatchInboundMessageWhenReady } from "./inbound-dispatch";
 import {
+  createAcceptedInputDispositionLedger,
   getInputDisposition,
+  MAX_INPUT_DISPOSITION_STORE_BYTES,
   ordinaryInputIdentity,
   rememberInputDisposition,
+  reserveInputDisposition,
   teleportInputIdentity,
 } from "./input-disposition";
 import { createRuntime } from "./lifecycle";
@@ -73,7 +79,6 @@ function parkQueueItem(runtime: ConversationRuntime, content: string): void {
   } as Parameters<typeof runtime.queueRuntime.enqueue>[0]);
 }
 
-/** Fails one enqueue, then behaves normally, so the retry can be observed. */
 function failNextQueueWrite(runtime: ConversationRuntime): void {
   const realEnqueue = runtime.queueRuntime.enqueue.bind(runtime.queueRuntime);
   let armed = true;
@@ -88,7 +93,6 @@ function failNextQueueWrite(runtime: ConversationRuntime): void {
   }) as typeof runtime.queueRuntime.enqueue;
 }
 
-/** Fails one read of listener teleport state from inside the admitted region. */
 function faultyTeleportMap(): Map<string, PendingTeleport> {
   const pendingTeleports = new Map<string, PendingTeleport>();
   const realIterator = pendingTeleports[Symbol.iterator].bind(pendingTeleports);
@@ -266,9 +270,6 @@ test("ordinary and teleport identities never share a ledger key", () => {
   );
 
   rememberInputDisposition(runtime, teleportInputIdentity("tp-1"), "started");
-  // A client is free to choose any stable id, including one that is spelled
-  // like the teleport ledger key. It must not observe or occupy the teleport
-  // domain's entry.
   expect(
     getInputDisposition(runtime, ordinaryInputIdentity("teleport:tp-1")),
   ).toBeUndefined();
@@ -310,7 +311,6 @@ test("a teleport continuation is not suppressed by a colliding client message id
     trackListenerError: () => {},
     processIncomingMessage,
   });
-  // A parked item keeps the create_message on the queue path.
   parkQueueItem(runtime, "parked");
 
   await handleMessage(createMessageFrame("collide", "teleport:tp-1"));
@@ -420,8 +420,6 @@ test("a queued stable ID survives a throwing status callback without replay", as
   expect(processQueuedTurn).toHaveBeenCalledTimes(1);
   expect(listener.acceptedInputDispositionLedger.entries.size).toBe(1);
 
-  // An always-throwing callback must not leave the settled pump unusable for
-  // newly accepted queued work.
   parkQueueItem(runtime, "follow-up-parked");
   dispatchInboundMessageWhenReady({
     listener,
@@ -449,8 +447,6 @@ test("a queued stable ID survives a throwing status callback without replay", as
     disposition: "queued",
   });
 
-  // Exercise the queue-pump catch path itself: its recovery status emission is
-  // also best-effort even when the host callback always throws.
   parkQueueItem(runtime, "catch-path-parked");
   const failingQueuedTurn = mock(async () => {
     throw new Error("queued turn failed");
@@ -544,8 +540,6 @@ test("a teleport admission that throws after admission releases its reservation"
     getInputDisposition(runtime, teleportInputIdentity("tp-1")),
   ).toBeUndefined();
 
-  // Cloud retries the same teleport id; a leaked placeholder would answer
-  // "Stable input ledger is at capacity" and strand the conversation.
   await handleMessage(teleportContinueFrame("tp-retry", "tp-1"));
   await Promise.all(tasks);
 
@@ -558,3 +552,84 @@ test("a teleport admission that throws after admission releases its reservation"
   );
   expect(processIncomingMessage).toHaveBeenCalledTimes(1);
 });
+
+for (const [kind, frame] of [
+  ["message", createMessageFrame],
+  ["teleport", teleportContinueFrame],
+] as const) {
+  test(`${kind} rejection reports the durable store error`, async () => {
+    const directory = mkdtempSync(join(tmpdir(), "input-admission-"));
+    try {
+      const path = join(directory, "ledger.json");
+      writeFileSync(path, "");
+      truncateSync(path, MAX_INPUT_DISPOSITION_STORE_BYTES + 1);
+      const listener = createRuntime();
+      listener.acceptedInputDispositionLedger =
+        createAcceptedInputDispositionLedger({ persistentPath: path });
+      const runtime = getOrCreateScopedRuntime(
+        listener,
+        "agent-1",
+        "conversation-1",
+      );
+      const sent: unknown[] = [];
+      const processIncomingMessage = mock(async () => {});
+      const handleMessage = setupRouter({
+        listener,
+        runtime,
+        sent,
+        tasks: [],
+        trackListenerError: () => {},
+        processIncomingMessage,
+      });
+
+      await handleMessage(frame("store-error", "input-1"));
+
+      expect(sent).toContainEqual(
+        expect.objectContaining({
+          request_id: "store-error",
+          accepted: false,
+          error:
+            "Input ledger unavailable: Accepted-input disposition store exceeds its size limit",
+        }),
+      );
+      expect(JSON.stringify(sent)).not.toContain("at capacity");
+      expect(processIncomingMessage).not.toHaveBeenCalled();
+      expect(runtime.queueRuntime.length).toBe(0);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test(`${kind} held reservation still reports capacity`, async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conversation-1",
+    );
+    const identity =
+      kind === "message"
+        ? ordinaryInputIdentity("input-1")
+        : teleportInputIdentity("input-1");
+    expect(reserveInputDisposition(runtime, identity).kind).toBe("reserved");
+    const sent: unknown[] = [];
+    const handleMessage = setupRouter({
+      listener,
+      runtime,
+      sent,
+      tasks: [],
+      trackListenerError: () => {},
+      processIncomingMessage: async () => {},
+    });
+
+    await handleMessage(frame("held", "input-1"));
+
+    expect(sent).toContainEqual(
+      expect.objectContaining({
+        request_id: "held",
+        accepted: false,
+        error: "Stable input ledger is at capacity",
+      }),
+    );
+  });
+}

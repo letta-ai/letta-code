@@ -3,6 +3,7 @@ import { getModelContextWindow } from "@/agent/available-models";
 import { buildCreateAgentRequest } from "@/agent/create-agent-request";
 import { getModelUpdateArgs } from "@/agent/model";
 import type { MemoryPromptMode } from "@/agent/prompt-assets";
+import { resolveEphemeralSubagentLink } from "@/agent/subagents/ephemeral-subagent";
 import { resolveAndBuildSystemPrompt } from "@/agent/system-prompt-resolution";
 import { type Backend, getBackend } from "@/backend";
 import {
@@ -19,6 +20,7 @@ export interface CreateEphemeralConversationOptions {
 
 export async function buildEphemeralConversationCreateBody(
   options: CreateEphemeralConversationOptions,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<EphemeralConversationCreateBody> {
   const system = options.systemPromptCustom
     ? options.systemPromptCustom
@@ -45,10 +47,10 @@ export async function buildEphemeralConversationCreateBody(
     system: request.system ?? system,
     ...(modelSettings ? { model_settings: modelSettings } : {}),
     ...(contextWindow ? { context_window_limit: contextWindow } : {}),
+    ...resolveEphemeralSubagentLink(env),
   };
 }
 
-/** Local compatibility state only; the conversation still has no agent. */
 export function projectConversationState(conversation: {
   id: string;
   model?: string | null;
@@ -78,16 +80,20 @@ export function projectConversationState(conversation: {
 
 export async function createEphemeralConversation(
   options: CreateEphemeralConversationOptions,
-): Promise<{ agent: AgentState; conversationId: string }> {
+): Promise<{
+  agent: AgentState;
+  conversationId: string;
+  parentAgentId: string | null;
+}> {
   const body = await buildEphemeralConversationCreateBody(options);
   const conversation = await createEphemeralConversationRequest(body);
   return {
     agent: projectConversationState({ ...body, id: conversation.id }),
     conversationId: conversation.id,
+    parentAgentId: body.parent_agent_id ?? null,
   };
 }
 
-/** Load compatibility state without replacing a conversation's history owner. */
 export async function retrieveResumeState(
   agentId: string | null,
   conversationId: string,

@@ -1,8 +1,3 @@
-/**
- * Shared registration helper for letta server / /server command.
- * Owns the HTTP request contract and error handling; callers own UX strings and logging.
- */
-
 import { createHash } from "node:crypto";
 import { getDesktopAccessToken } from "@/auth/desktop-credentials";
 import { getSelfUpdateStatus } from "@/updater/auto-update";
@@ -17,31 +12,20 @@ export interface RegisterResult {
   supportsPairedListenerGenerations: boolean;
 }
 
+export interface CredentialBootstrap {
+  refreshToken: string;
+  expiresIn: number;
+}
+
 export interface RegisterOptions {
   serverUrl: string;
   apiKey: string;
   deviceId: string;
   connectionName: string;
-  /**
-   * Stable identifier for this listener process, so multiple listeners on
-   * one device (e.g. `letta server` in a terminal plus the in-app /listen
-   * command) get separate Cloud environment rows instead of contesting a
-   * single per-device row and rotating each other's connection lease.
-   * Optional: servers that predate the field ignore it.
-   */
   listenerInstanceId?: string;
+  onCredentialBootstrap?: (bootstrap: CredentialBootstrap) => Promise<void>;
 }
 
-/**
- * Derive a stable listener instance id from the listener surface and its
- * connection name. Deterministic (no stored state): the same surface + name
- * maps to the same instance across restarts, while a rename creates a new
- * instance (the old row ages out server-side via lastSeenAt).
- *
- * Surfaces:
- * - "server": `letta server` CLI process
- * - "listen": in-app /listen command
- */
 export function deriveListenerInstanceId(
   surface: "server" | "listen",
   connectionName: string,
@@ -55,10 +39,6 @@ export function deriveListenerInstanceId(
 
 type FetchImpl = typeof fetch;
 
-/**
- * Error thrown by registration that carries the HTTP status code (if any).
- * Network errors (fetch failure) have `statusCode = 0`.
- */
 export class RegistrationError extends Error {
   readonly statusCode: number;
   readonly retryAfterMs?: number;
@@ -70,19 +50,14 @@ export class RegistrationError extends Error {
   }
 }
 
-/** Returns true for errors that are likely transient and worth retrying. */
 function isTransientRegistrationError(error: unknown): boolean {
   if (error instanceof RegistrationError) {
-    // 429 = rate limit. The server explicitly asked us to slow down, not stop.
-    // 5xx = server errors (including Cloudflare 521/522/523/524)
-    // 0 = network-level failure (DNS, TCP, TLS)
     return (
       error.statusCode === 0 ||
       error.statusCode === 429 ||
       error.statusCode >= 500
     );
   }
-  // Non-RegistrationError from fetch (e.g. TypeError for DNS failure)
   return true;
 }
 
@@ -104,10 +79,6 @@ function parseRetryAfterMs(value: string | null): number | undefined {
   return undefined;
 }
 
-/**
- * Register this device with the Letta Cloud environments endpoint.
- * Throws on any failure with an error message suitable for wrapping in caller-specific context.
- */
 export async function registerWithCloud(
   opts: RegisterOptions,
   fetchImpl: FetchImpl = fetch,
@@ -135,15 +106,16 @@ export async function registerWithCloud(
         environmentMessageProtocol: "v2-input",
         supportsPairedListenerGenerations: true,
         supported_commands: SUPPORTED_REMOTE_COMMANDS,
-        // Mirrors app_server_info so callers can check before connecting.
         launch_subagent_notify_caller: true,
         subagent_message: true,
         external_fork_context: true,
+        supportsComputerLinkCredentialBootstrap: opts.onCredentialBootstrap
+          ? true
+          : undefined,
         self_update: getSelfUpdateStatus(),
       },
     }),
   }).catch((fetchError: unknown) => {
-    // Network-level failures (DNS, TCP, TLS, etc.)
     const msg =
       fetchError instanceof Error ? fetchError.message : String(fetchError);
     throw new RegistrationError(`Network error: ${msg}`, 0);
@@ -198,6 +170,25 @@ export async function registerWithCloud(
     );
   }
 
+  if (result.credentialBootstrap !== undefined) {
+    const bootstrap = result.credentialBootstrap as Record<string, unknown>;
+    if (
+      !bootstrap ||
+      typeof bootstrap !== "object" ||
+      typeof bootstrap.refreshToken !== "string" ||
+      typeof bootstrap.expiresIn !== "number"
+    ) {
+      throw new RegistrationError(
+        "Server returned unexpected credential bootstrap shape",
+        response.status,
+      );
+    }
+    await opts.onCredentialBootstrap?.({
+      refreshToken: bootstrap.refreshToken,
+      expiresIn: bootstrap.expiresIn,
+    });
+  }
+
   return {
     connectionId: result.connectionId,
     wsUrl: result.wsUrl,
@@ -209,27 +200,18 @@ export async function registerWithCloud(
 
 const REGISTER_INITIAL_DELAY_MS = 1_000;
 const REGISTER_MAX_DELAY_MS = 30_000;
-const REGISTER_MAX_DURATION_MS = 2 * 60 * 1_000; // 2 minutes
+const REGISTER_MAX_DURATION_MS = 2 * 60 * 1_000;
 const REGISTER_MAX_JITTER_MS = 1_000;
 const REGISTER_JITTER_RATIO = 0.25;
 
 export interface RegisterRetryCallbacks {
-  /** Called before each retry attempt. */
   onRetry?: (attempt: number, delayMs: number, error: Error) => void;
-  /** Maximum total retry duration. Defaults to two minutes. Use Infinity for long-running listeners. */
   maxDurationMs?: number;
-  /** Test seam for avoiding real sleeps. */
   sleep?: (delayMs: number) => Promise<void>;
-  /** Test seam for injecting fetch. */
   fetchImpl?: FetchImpl;
-  /** Test seam for deterministic retry jitter. */
   random?: () => number;
 }
 
-/**
- * Register with Cloud, retrying on transient errors (429, 5xx, network failures)
- * with exponential backoff. Fails immediately on other client errors (4xx).
- */
 export async function registerWithCloudRetry(
   opts: RegisterOptions,
   callbacks?: RegisterRetryCallbacks,

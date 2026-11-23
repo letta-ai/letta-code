@@ -28,9 +28,7 @@ export interface MessageChannelToolDiscoveryResult {
 
 export interface BuildMessageChannelToolOptions {
   channels: readonly MessageChannelToolChannel[];
-  /** Whether this tool is attached to one routed external-channel scope. */
   scoped: boolean;
-  /** Advertise target-based proactive sends when the host can resolve them. */
   allowProactiveTargets?: boolean;
 }
 
@@ -307,7 +305,6 @@ export function buildMessageChannelToolFromDiscovery(params: {
   };
 }
 
-/** Build the exact model-facing MessageChannel tool for an external gateway. */
 export function buildMessageChannelExternalToolDefinition(
   options: BuildMessageChannelToolOptions,
 ): ExternalToolDefinitionPayload {

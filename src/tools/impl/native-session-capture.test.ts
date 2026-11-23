@@ -10,6 +10,7 @@ import {
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { removeTestDir } from "@/test-utils/test-fs";
 import {
   awaitNativeSessionCaptureDrainForTests,
   clearNativeSessionCaptureForTests,
@@ -35,7 +36,7 @@ afterEach(async () => {
   if (server)
     await new Promise<void>((resolve) => server?.close(() => resolve()));
   server = undefined;
-  if (directory) await rm(directory, { recursive: true, force: true });
+  if (directory) await removeTestDir(directory);
   directory = undefined;
   await clearNativeSessionCaptureForTests();
 });

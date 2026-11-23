@@ -12,13 +12,10 @@ interface ProcessIdentity {
 
 interface PidReuseProbe {
   platform: NodeJS.Platform;
-  /** Epoch ms of the current OS boot. */
   bootTimeMs: () => number;
-  /** The pid's command line, or null when it cannot be determined. */
   getProcessCommand: (pid: number) => string | null;
 }
 
-// Tolerates clock jitter between `started_at` and the uptime-derived boot time.
 const BOOT_TIME_SLACK_MS = 60_000;
 
 const defaultPidReuseProbe: PidReuseProbe = {
@@ -41,9 +38,6 @@ function readLinuxProcessIdentity(pid: number): ProcessIdentity | null {
       return null;
     }
 
-    // /proc/<pid>/stat wraps the command name in parentheses as field #2.
-    // Everything after that begins at field #3 ("state"), so starttime
-    // (field #22) is offset 19 in the remaining array.
     const fields = stat
       .slice(endCommand + 2)
       .trim()
@@ -57,9 +51,7 @@ function readLinuxProcessIdentity(pid: number): ProcessIdentity | null {
     try {
       bootId =
         readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim() || null;
-    } catch {
-      // Best effort: boot_id is helpful but not required.
-    }
+    } catch {}
 
     return { startTicks, bootId };
   } catch {
@@ -99,8 +91,6 @@ export function isProcessAlive(
     return false;
   }
 
-  // On Linux, compare the persisted process identity as well. This lets us
-  // distinguish "same PID, different process" across container restarts.
   if (owner) {
     const identity = readProcessIdentity(pid);
     if (identity) {
@@ -128,12 +118,6 @@ export function isProcessAlive(
   return true;
 }
 
-/**
- * Without /proc identity (macOS, Windows), a live pid recorded before the
- * current boot may belong to an unrelated process after a reboot. The boot
- * estimate moves with the wall clock, so it only prompts a closer look: the
- * owner is stale only when its pid is positively identified as non-letta.
- */
 function isPidReusedSinceBoot(pid: number, startedAt?: string): boolean {
   const startedAtMs = startedAt ? Date.parse(startedAt) : Number.NaN;
   if (

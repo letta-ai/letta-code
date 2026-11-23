@@ -53,8 +53,6 @@ test("queued input cannot report completion before its first model request", asy
   let echoed = false;
   let prematureCompletion = false;
   let requestFinished = false;
-  // Remote listeners have a subscribed WebSocket; no local transport or HTTP
-  // processOwnedTurn exemption participates in this turn.
   const socket = {
     readyState: WebSocket.OPEN,
     bufferedAmount: 0,
@@ -67,9 +65,6 @@ test("queued input cannot report completion before its first model request", asy
       ) {
         echoed = true;
       }
-      // A user echo is delivery evidence. An idle frame after that echo tells
-      // a remote consumer that the accepted turn has finished, even if there
-      // has never been a model run to correlate with it.
       if (
         echoed &&
         frame.type === "update_loop_status" &&

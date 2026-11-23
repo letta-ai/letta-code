@@ -14,7 +14,6 @@ import type { TurnLease } from "./turn-lifecycle";
 import { finishListenerTurn } from "./turn-terminal";
 import type { ConversationRuntime, InputIdentity } from "./types";
 
-/** Apply identical teleport fencing to every recovered terminal outcome. */
 export function createRecoveredTurnFinalizer(params: {
   runtime: ConversationRuntime;
   recoveryLease: TurnLease;

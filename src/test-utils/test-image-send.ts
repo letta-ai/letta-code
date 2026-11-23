@@ -4,7 +4,6 @@ import { sendMessageStream } from "@/agent/message";
 import { getClient } from "@/backend/api/client";
 
 async function main() {
-  // Create a simple test image (1x1 red PNG)
   const testImageBase64 =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
   const testImagePath = "/tmp/test.png";
@@ -13,22 +12,18 @@ async function main() {
 
   const client = await getClient();
 
-  // Create agent
   console.log("\nCreating test agent...");
   const { agent } = await createAgent("image-test-agent");
   console.log("Agent created:", agent.id);
 
-  // Create conversation
   console.log("Creating conversation...");
   const conversation = await client.conversations.create({
     agent_id: agent.id,
   });
   console.log("Conversation created:", conversation.id);
 
-  // Read image
   const imageData = readFileSync(testImagePath).toString("base64");
 
-  // Send message with image
   console.log("\nSending image to agent...");
   const stream = await sendMessageStream(conversation.id, [
     {
@@ -50,17 +45,14 @@ async function main() {
     },
   ]);
 
-  // Print response
   console.log("\nAgent response:");
   let fullResponse = "";
   for await (const chunk of stream) {
     if (chunk.message_type === "assistant_message" && chunk.content) {
-      // Handle both string and array content
       let contentText = "";
       if (typeof chunk.content === "string") {
         contentText = chunk.content;
       } else if (Array.isArray(chunk.content)) {
-        // Extract text from content array
         contentText = chunk.content
           .filter((item) => item.type === "text")
           .map((item) => ("text" in item ? item.text : ""))

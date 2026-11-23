@@ -5,10 +5,6 @@ import type {
   ReadSubagentEventsResponse,
 } from "@/types/subagent-protocol";
 
-/**
- * Serve a caller-notified subagent's events to the parent that launched it,
- * oldest first, one page at a time.
- */
 export function handleReadSubagentEventsCommand(
   command: ReadSubagentEventsCommand,
 ): ReadSubagentEventsResponse {
@@ -21,12 +17,7 @@ export function handleReadSubagentEventsCommand(
   const subagent = getSubagents().find(
     (entry) => entry.id === command.subagent_id,
   );
-  if (
-    !subagent ||
-    subagent.parentAgentId !== command.runtime.agent_id ||
-    (subagent.parentConversationId ?? "default") !==
-      command.runtime.conversation_id
-  )
+  if (!subagent || subagent.parentAgentId !== command.runtime.agent_id)
     return {
       ...base,
       success: false,

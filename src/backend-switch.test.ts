@@ -123,9 +123,6 @@ describe("headless backend switches", () => {
         },
       );
 
-      // The ambient agent is inferred and lookup fails before any computer
-      // routing: the run must exit 1 with the ambient-agent error, not fall
-      // through to project/global session resolution or a routing error.
       expect(result.exitCode).toBe(1);
       expect(result.stdout).not.toContain("should-not-run");
       expect(result.stderr).toContain(
@@ -155,8 +152,6 @@ describe("headless backend switches", () => {
         },
       );
 
-      // Without AGENT_ID there is nothing to infer; behavior is unchanged
-      // from before ambient inference existed.
       expect(result.stdout).not.toContain("should-not-run");
       expect(result.stderr).not.toContain("inferred from the AGENT_ID");
       expect(result.stderr).toContain(

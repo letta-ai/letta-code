@@ -24,7 +24,11 @@ export async function createHeadlessEphemeralConversation(params: {
   model: string | undefined;
   systemPromptPreset: string | undefined;
   systemPromptCustom: string | undefined;
-}): Promise<{ agent: AgentState; conversationId: string }> {
+}): Promise<{
+  agent: AgentState;
+  conversationId: string;
+  parentAgentId: string | null;
+}> {
   if (params.personality) {
     throw new Error(
       "--ephemeral cannot be used with --personality because it has no memory blocks",
@@ -37,8 +41,45 @@ export async function createHeadlessEphemeralConversation(params: {
     memoryPromptMode: "standard" as const,
   };
   return params.backendMode === "local"
-    ? createLocalEphemeralConversation(options)
+    ? {
+        ...(await createLocalEphemeralConversation(options)),
+        parentAgentId: null,
+      }
     : createEphemeralConversation(options);
+}
+
+export function initHeadlessSecrets(
+  agentId: string,
+  detached: boolean,
+  parentAgentId: string | null,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<void> {
+  const vaultAgentId = !detached
+    ? agentId
+    : env.LETTA_CODE_AGENT_ROLE === "subagent"
+      ? parentAgentId
+      : null;
+  if (!vaultAgentId) return Promise.resolve();
+  return import("@/utils/secrets-store").then(async (secrets) => {
+    if (vaultAgentId !== agentId) {
+      secrets.linkSecretsVault(agentId, vaultAgentId);
+      (await import("@/utils/variables-store")).linkVariablesVault(
+        agentId,
+        vaultAgentId,
+      );
+    }
+    return secrets.initSecretsFromServer(vaultAgentId);
+  });
+}
+
+export function resolveAmbientAgentId(
+  params: { routed: unknown; ephemeral: unknown; explicitTarget: unknown },
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  if (!params.routed || params.ephemeral || params.explicitTarget) {
+    return undefined;
+  }
+  return (env.LETTA_AGENT_ID || env.AGENT_ID || "").trim() || undefined;
 }
 
 export function clearHeadlessClientToolRules(agent: AgentState): void {
@@ -66,7 +107,6 @@ export function clearHeadlessClientToolRules(agent: AgentState): void {
     });
 }
 
-/** Return the existing parent without treating it as the history owner. */
 export async function retrieveHeadlessConversation(
   backend: Pick<Backend, "retrieveAgent" | "retrieveConversation">,
   conversationId: string,

@@ -18,7 +18,6 @@ import {
 } from "@/tools/impl/shell-env";
 
 const DEFAULT_TARGET = "memory-citations";
-const DEFAULT_MODEL = "auto";
 const DEFAULT_OPTIMIZATION_ITERATIONS = 5;
 const MOD_OPTIMIZATION_PULSE = BRAILLE_ANIMATIONS.pulse;
 const MOD_OPTIMIZATION_RUNNING_LABELS = [
@@ -139,7 +138,7 @@ function resolveRequestedModel(
   requested: string | undefined,
   currentModelId: string | null | undefined,
 ): string | undefined {
-  if (requested === "current") return currentModelId ?? DEFAULT_MODEL;
+  if (requested === "current") return currentModelId ?? undefined;
   return requested;
 }
 
@@ -501,9 +500,7 @@ function extractCommandFailureMessage(
     };
     const message = parsed.error?.error?.detail ?? parsed.error?.error?.message;
     if (typeof message === "string" && message.trim()) return message.trim();
-  } catch {
-    // Fall through to a concise first-line stderr summary.
-  }
+  } catch {}
   return (
     trimmed
       .split("\n")
@@ -757,7 +754,13 @@ async function runLearnCommand(
   const launcher = (ctx.resolveLauncher ?? resolveCurrentLettaLauncher)();
   const headlessEnv = await (ctx.getHeadlessEnv ?? defaultHeadlessEnv)();
   const learningEnv = await resolveEnv(learn, ctx.cwd, readEnvImpl);
-  const model = learn.options.model ?? DEFAULT_MODEL;
+  const model = learn.options.model ?? ctx.currentModelId;
+  if (!model) {
+    command.fail(
+      "No model selected. Pass --model <handle>, or choose one with /model first.",
+    );
+    return;
+  }
   const optimizationIterations = effectiveOptimizationIterations(learn.options);
   let lastProgress: ModLearningProgress | null = null;
   let pulseFrameIndex = 0;

@@ -3,10 +3,12 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, delimiter, join } from "node:path";
 import {
+  getOwnProcessStartTime,
   getProcessStartTime,
   isPidReusedByNonLetta,
   isProcessAlive,
   isSameProcessRunning,
+  resetOwnProcessStartTimeForTests,
 } from "./process-liveness";
 
 test("this process is alive and an exited child is not", async () => {
@@ -49,6 +51,28 @@ test.skipIf(process.platform === "win32")(
   },
 );
 
+test.skipIf(process.platform === "win32")(
+  "a failed own start-time lookup is retried rather than cached",
+  async () => {
+    resetOwnProcessStartTimeForTests();
+    const bin = mkdtempSync(join(tmpdir(), "failing-ps-"));
+    writeFileSync(join(bin, "ps"), "#!/bin/sh\nexit 1\n");
+    chmodSync(join(bin, "ps"), 0o755);
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${bin}${delimiter}${originalPath ?? ""}`;
+    try {
+      expect(await getOwnProcessStartTime()).toBeNull();
+    } finally {
+      process.env.PATH = originalPath;
+      rmSync(bin, { recursive: true, force: true });
+    }
+    const started = await getOwnProcessStartTime();
+    expect(started).not.toBeNull();
+    expect(started).toBe(await getProcessStartTime(process.pid));
+    expect(await getOwnProcessStartTime()).toBe(started);
+  },
+);
+
 test("a recorded start time distinguishes a reused pid from the original", async () => {
   const started = await getProcessStartTime(process.pid);
   expect(await isSameProcessRunning({ pid: process.pid })).toBe(true);
@@ -65,11 +89,9 @@ test("a reused pid is reclaimable only when positively identified as non-letta",
     isPidReusedByNonLetta(pid, () => command);
   expect(reused("/usr/libexec/unrelated --flag")).toBe(true);
   expect(reused("node /usr/local/bin/letta server")).toBe(false);
-  // Dev/bun-run instances: same runtime or entry script, no "letta" in argv.
   expect(reused(`${process.execPath} run src/index.ts`)).toBe(false);
   expect(reused(`/elsewhere/${basename(process.execPath)} x.ts`)).toBe(false);
   expect(reused(`/usr/bin/env ${process.argv[1]}`)).toBe(false);
-  // A failed lookup and our own pid keep the owner held.
   expect(reused(null)).toBe(false);
   expect(reused("/usr/libexec/unrelated", process.pid)).toBe(false);
 });

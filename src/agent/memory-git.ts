@@ -1,8 +1,3 @@
-/**
- * Git operations for agent memory. The remote defaults to api.letta.com;
- * Desktop may proxy transport through localhost but never persists that URL.
- */
-
 import {
   existsSync,
   mkdirSync,
@@ -46,6 +41,7 @@ import {
 } from "./memory-git-hooks";
 import { GIT_DISABLE_COMMIT_SIGNING_ARGS } from "./memory-git-signing";
 import { writeWindowsCredentialHelper } from "./memory-git-windows-credentials";
+import { resolveEffectiveAgentId } from "./subagents/ephemeral-subagent";
 
 const RETRYABLE_GIT_HTTP_ERROR_RE =
   /(?:\bHTTP\s+(?:503|520|521|522|523|524)\b|The requested URL returned error:\s*(?:503|520|521|522|523|524))/i;
@@ -86,12 +82,10 @@ export interface CommitMemoryWriteResult {
   committed: boolean;
   sha?: string;
 }
-/** Get the agent root directory below the active product config root. */
 export function getAgentRootDir(agentId: string): string {
   return join(resolveGlobalConfigDir(), "agents", agentId);
 }
 
-/** Get the git repo directory for memory. */
 export function getMemoryRepoDir(agentId: string): string {
   return join(getAgentRootDir(agentId), "memory");
 }
@@ -100,21 +94,12 @@ function getMemoryRepositoryRepoDir(agentId: string): string {
   return getScopedMemoryFilesystemRoot(agentId);
 }
 
-/**
- * Normalize a configured server URL for use in git credential config keys.
- *
- * Git credential config lookup is sensitive to URL key shape. We normalize to
- * origin form (scheme + host + optional port) and remove trailing slashes so
- * pull/push flows remain resilient when LETTA_MEMFS_BASE_URL /
- * LETTA_BASE_URL has path/trailing-slash variations.
- */
 export function normalizeCredentialBaseUrl(serverUrl: string): string {
   const trimmed = serverUrl.trim().replace(/\/+$/, "");
   try {
     const parsed = new URL(trimmed);
     return parsed.origin;
   } catch {
-    // Fall back to a conservative slash-trimmed value if URL parsing fails.
     return trimmed;
   }
 }
@@ -133,13 +118,6 @@ function redactCredentialedHttpsUrl(value: string): string {
   );
 }
 
-/**
- * Redact git auth material from command/error text before it reaches logs.
- *
- * Node's child_process errors include the full command line in `message`/`cmd`.
- * MemFS git operations pass API keys through `-c http.extraHeader=...`, so a
- * failed clone/fetch/pull/push can otherwise print a reusable credential.
- */
 export function redactGitAuthInText(value: string): string {
   return value
     .replace(
@@ -178,9 +156,6 @@ function redactGitAuthError(error: unknown): Error {
   return new Error(redactGitAuthInText(String(error)));
 }
 
-/**
- * Returns true when a remote URL points to this agent's memfs git endpoint.
- */
 export function isMemfsRemoteUrlForAgent(
   remoteUrl: string,
   agentId: string,
@@ -193,10 +168,6 @@ export function isMemfsRemoteUrlForAgent(
   ).test(normalized);
 }
 
-/**
- * Returns true when an origin URL is clearly intended to be a Letta MemFS
- * remote for this agent, including older/broken forms we can safely repair.
- */
 export function isRepairableMemfsRemoteUrl(
   remoteUrl: string,
   agentId: string,
@@ -208,9 +179,6 @@ export function isRepairableMemfsRemoteUrl(
     return true;
   }
 
-  // Legacy remote shape: /v1/git/{agent_id}. Git appends /info/refs to this,
-  // which server-side compatibility now handles, but the persisted origin
-  // should still be repaired to the canonical /state.git URL.
   if (
     new RegExp(`^https?://[^\\s]+/v1/git/${escapedAgentId}$`, "i").test(
       normalized,
@@ -219,13 +187,9 @@ export function isRepairableMemfsRemoteUrl(
     return true;
   }
 
-  // Broken Desktop/local proxy shape observed in the wild: origin is just the
-  // git proxy prefix (/v1/git) with no agent or repo suffix. The CLI knows the
-  // active agent, so repair this before trying to sync.
   return /^https?:\/\/[^\s]+\/v1\/git$/i.test(normalized);
 }
 
-/** Git remote URL for the agent's state repo */
 export function getGitRemoteUrl(agentId: string, baseUrl?: string): string {
   const resolvedBaseUrl = (baseUrl ?? getMemfsServerUrl())
     .trim()
@@ -328,12 +292,6 @@ async function syncRepoMount(args: RepositoryMountGitArgs): Promise<void> {
   });
 }
 
-/**
- * Keep the local repo's `origin` URL aligned with the current server base URL.
- *
- * Best-effort: if origin is missing or not a memfs endpoint for this agent,
- * this function is a no-op.
- */
 export async function maybeUpdateMemoryRemoteOrigin(
   repoDir: string,
   agentId: string,
@@ -343,7 +301,6 @@ export async function maybeUpdateMemoryRemoteOrigin(
     const { stdout } = await runGit(repoDir, ["remote", "get-url", "origin"]);
     currentOrigin = stdout.trim();
   } catch {
-    // No origin remote configured — create one so pushes have a destination.
     const expectedOrigin = normalizeRemoteUrl(getGitRemoteUrl(agentId));
     await runGit(repoDir, ["remote", "add", "origin", expectedOrigin]);
     console.warn(
@@ -357,7 +314,6 @@ export async function maybeUpdateMemoryRemoteOrigin(
   }
 
   if (!currentOrigin) {
-    // origin key exists but value is empty — set it.
     const expectedOrigin = normalizeRemoteUrl(getGitRemoteUrl(agentId));
     await runGit(repoDir, ["remote", "set-url", "origin", expectedOrigin]);
     console.warn(
@@ -389,14 +345,6 @@ export async function maybeUpdateMemoryRemoteOrigin(
   await clearOriginPushUrl(repoDir, agentId);
 }
 
-/**
- * Git prefers `remote.origin.pushurl` over `remote.origin.url` for pushes.
- * Desktop/local proxy sessions can leave an ephemeral localhost pushurl behind,
- * causing later `git push` calls to fail even after origin.url is repaired.
- *
- * For memfs repos, origin should always push to origin.url; mirrors are managed
- * separately through `letta.memoryRepository.url` and the post-commit hook.
- */
 async function clearOriginPushUrl(
   repoDir: string,
   agentId: string,
@@ -414,7 +362,6 @@ async function clearOriginPushUrl(
       .map((url) => url.trim())
       .filter(Boolean);
   } catch {
-    // No pushurl configured — origin.url will be used for pushes.
     return;
   }
 
@@ -431,19 +378,10 @@ async function clearOriginPushUrl(
   );
 }
 
-/** Git remote URL for the agent's state repo */
 function getMemoryRemoteUrl(agentId: string): string {
   return getGitRemoteUrl(agentId);
 }
 
-/**
- * Header sent on every git smart-HTTP request so cloud-api can route this
- * agent's repo through hosted MemFS instead of the default memfs-py path.
- *
- * Opt-in via `LETTA_MEMFS_BACKEND=hosted` in the letta-code process env.
- * If unset (or set to anything else), no header is added and cloud-api
- * falls through to the existing Python proxy.
- */
 const HOSTED_BACKEND_HEADER = "x-letta-memfs-backend";
 const HOSTED_BACKEND_VALUE = "hosted";
 
@@ -515,9 +453,8 @@ export function buildNonInteractiveGitEnv(
   };
 }
 
-/** Run git in the given directory, passing a token as an auth header when provided. */
-const GIT_DEFAULT_TIMEOUT_MS = 60_000; // 60s
-const GIT_CLONE_TIMEOUT_MS = 180_000; // 3min — clone can be slow on cold CI runners
+const GIT_DEFAULT_TIMEOUT_MS = 60_000;
+const GIT_CLONE_TIMEOUT_MS = 180_000;
 
 export async function runGit(
   cwd: string,
@@ -533,7 +470,6 @@ export async function runGit(
     ...args,
   ];
 
-  // Redact credential helper values to avoid leaking tokens in debug logs.
   let loggableArgs = args;
   if (
     args[0] === "config" &&
@@ -566,12 +502,6 @@ export async function runGit(
   };
 }
 
-/**
- * Returns true when a git error looks transient/retryable (network/edge).
- *
- * These failures are commonly seen during HTTP 503 outages or Cloudflare 52x
- * errors during memfs clone/pull operations.
- */
 export function isRetryableGitTransientError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
 
@@ -579,9 +509,6 @@ export function isRetryableGitTransientError(error: unknown): boolean {
     return true;
   }
 
-  // Git often emits both lines together:
-  // - "error: RPC failed; HTTP 520 ..."
-  // - "fatal: the remote end hung up unexpectedly"
   if (
     message.includes("RPC failed") &&
     RETRYABLE_GIT_NETWORK_ERROR_RE.test(message)
@@ -597,7 +524,6 @@ export function isMissingCwdGitError(error: unknown): boolean {
   return MISSING_CWD_GIT_ERROR_RE.test(message);
 }
 
-/** `git config` write, serialized per repo. See memory-git-config-lock. */
 const gitConfig = (dir: string, args: string[]) =>
   withSerializedGitConfigMutation(dir, () => runGit(dir, args));
 
@@ -618,7 +544,6 @@ export async function runGitWithRetry(
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      // Self-heal against transient cwd removal races.
       if (!existsSync(cwd)) {
         mkdirSync(cwd, { recursive: true });
       }
@@ -627,7 +552,6 @@ export async function runGitWithRetry(
       });
     } catch (error) {
       if (isMissingCwdGitError(error)) {
-        // Recreate cwd and retry once through the normal loop.
         mkdirSync(cwd, { recursive: true });
         if (attempt < attempts) {
           continue;
@@ -651,20 +575,9 @@ export async function runGitWithRetry(
     }
   }
 
-  // Should never be reached (loop either returns or throws).
   throw new Error(`Unexpected retry loop exit for ${operation}`);
 }
 
-/**
- * Configure a local credential helper in the repo's .git/config
- * so plain `git push` / `git pull` work without auth prefixes.
- * Skipped in Desktop proxy transport mode because the listener only has a
- * local session token; persisting that token under api.letta.com would break
- * normal CLI/TUI sessions that share the same memory repo.
- *
- * On Windows, we write a batch script because the bash-style inline
- * helper (`!f() { ... }; f`) doesn't work in PowerShell/cmd.
- */
 async function configureLocalCredentialHelper(
   dir: string,
   token: string,
@@ -688,19 +601,14 @@ async function configureLocalCredentialHelper(
     helper = writeWindowsCredentialHelper(dir, token, publishedDirectory);
     debugLog("memfs-git", `Wrote Windows credential helper script`);
   } else {
-    // Unix/macOS: use inline bash helper
     helper = `!f() { echo "username=letta"; echo "password=${token}"; }; f`;
   }
 
-  // Reset inherited helpers (for example, a stale macOS osxkeychain entry)
-  // for this host before installing Letta's repo-local helper.
   const writeHelperWithReset = async (key: string) => {
     await gitConfig(dir, ["config", "--local", "--replace-all", key, ""]);
     await gitConfig(dir, ["config", "--local", "--add", key, helper]);
   };
-  // Primary config: normalized origin key (most robust for git's credential lookup)
   await writeHelperWithReset(`credential.${normalizedBaseUrl}.helper`);
-  // Backcompat: also set raw configured URL key if it differs (older repos/configs)
   if (rawBaseUrl !== normalizedBaseUrl) {
     await writeHelperWithReset(`credential.${rawBaseUrl}.helper`);
   }
@@ -723,13 +631,10 @@ async function clearLocalCredentialHelper(
   for (const key of keys) {
     try {
       await gitConfig(dir, ["config", "--local", "--unset-all", key]);
-    } catch {
-      // Already unset — ignore.
-    }
+    } catch {}
   }
 }
 
-/** Read a local-scoped git config value. Null when unset; reads take no lock. */
 export async function getLocalGitConfig(
   dir: string,
   key: string,
@@ -739,12 +644,10 @@ export async function getLocalGitConfig(
     const value = stdout.trim();
     return value.length > 0 ? value : null;
   } catch {
-    // Unset keys cause git to exit non-zero — treat as "null".
     return null;
   }
 }
 
-/** Set a local-scoped git config value. Serialized per repo. */
 export async function setLocalGitConfig(
   dir: string,
   key: string,
@@ -753,20 +656,12 @@ export async function setLocalGitConfig(
   await gitConfig(dir, ["config", "--local", "--replace-all", key, value]);
 }
 
-/** Unset a local-scoped git config value. Ignores "not set" errors. */
 async function unsetLocalGitConfig(dir: string, key: string): Promise<void> {
   try {
     await gitConfig(dir, ["config", "--local", "--unset", key]);
-  } catch {
-    // Already unset — ignore.
-  }
+  } catch {}
 }
 
-/**
- * Best-effort lookup of the agent's display name via the API.
- * Returns null if the call fails for any reason — we don't want config setup
- * to block memfs startup.
- */
 async function fetchAgentDisplayName(agentId: string): Promise<string | null> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -802,7 +697,6 @@ async function fetchAgentDisplayName(agentId: string): Promise<string | null> {
   }
 }
 
-/** Ensure local main tracks only origin/main and direct commits use the agent identity. */
 export async function ensureLocalMemfsGitConfig(
   dir: string,
   agentId: string,
@@ -812,17 +706,14 @@ export async function ensureLocalMemfsGitConfig(
   }
 
   try {
-    // Always reconcile — cheap and idempotent.
     const currentAgentId = await getLocalGitConfig(dir, "letta.agentId");
     if (currentAgentId !== agentId) {
       await setLocalGitConfig(dir, "letta.agentId", agentId);
     }
 
-    // Duplicate merge values make both pull modes fail.
     await setLocalGitConfig(dir, "branch.main.remote", "origin");
     await setLocalGitConfig(dir, "branch.main.merge", "refs/heads/main");
 
-    // Respect user overrides: only set identity when unset locally.
     const currentEmail = await getLocalGitConfig(dir, "user.email");
     if (!currentEmail) {
       await setLocalGitConfig(dir, "user.email", `${agentId}@letta.com`);
@@ -835,16 +726,11 @@ export async function ensureLocalMemfsGitConfig(
       await setLocalGitConfig(dir, "user.name", displayName);
     }
 
-    // Default commit signing off (only when unset locally): the agent's
-    // committer identity has no signing key, so a global
-    // `commit.gpgsign=true` would break direct `git commit` runs inside
-    // the memory repo with "gpg: signing failed: No secret key".
     const currentGpgSign = await getLocalGitConfig(dir, "commit.gpgsign");
     if (currentGpgSign === null) {
       await setLocalGitConfig(dir, "commit.gpgsign", "false");
     }
   } catch (err) {
-    // Identity config is nice-to-have; never block memfs startup on it.
     debugWarn(
       "memfs-git",
       `Failed to ensure local memfs git config: ${err instanceof Error ? err.message : String(err)}`,
@@ -852,19 +738,9 @@ export async function ensureLocalMemfsGitConfig(
   }
 }
 
-/* ------------------------------------------------------------------ *
- * Memory repository (/memory-repository slash command helpers)
- *
- * The remote URL lives in each repo's local `.git/config` under
- * `letta.memoryRepository.url`. The post-commit hook reads that key and
- * pushes to it in the background after every commit.
- * See `POST_COMMIT_HOOK_SCRIPT` in memory-git-hooks.ts.
- * ------------------------------------------------------------------ */
-
 const MEMORY_REPOSITORY_CONFIG_KEY = "letta.memoryRepository.url";
 const MEMORY_REPOSITORY_PUSH_LOG = "memory-repository-push.log";
 
-/** Return the currently-configured memory-repository URL for this agent, or null. */
 export async function getMemoryRepositoryUrl(
   agentId: string,
 ): Promise<string | null> {
@@ -875,11 +751,6 @@ export async function getMemoryRepositoryUrl(
   return await getLocalGitConfig(dir, MEMORY_REPOSITORY_CONFIG_KEY);
 }
 
-/**
- * Configure a memory-repository URL for this agent's memfs repo.
- * Re-installs the post-commit hook defensively so that prior manual edits
- * or stale state don't cause silent push drops.
- */
 export async function setMemoryRepositoryUrl(
   agentId: string,
   url: string,
@@ -894,7 +765,6 @@ export async function setMemoryRepositoryUrl(
   installPostCommitHook(dir);
 }
 
-/** Remove the memory-repository URL configuration for this agent. */
 export async function unsetMemoryRepositoryUrl(agentId: string): Promise<void> {
   const dir = getMemoryRepositoryRepoDir(agentId);
   if (!existsSync(join(dir, ".git"))) {
@@ -910,11 +780,6 @@ export interface MemoryRepositoryPushResult {
   output: string;
 }
 
-/**
- * One-shot push to the memory-repository remote. Used by
- * `/memory-repository push` to retry after a failure or to do an initial push
- * without waiting for the next commit.
- */
 export async function pushToMemoryRepository(
   agentId: string,
 ): Promise<MemoryRepositoryPushResult> {
@@ -933,7 +798,6 @@ export async function pushToMemoryRepository(
   try {
     await runGit(dir, ["rev-parse", "--verify", "HEAD"]);
   } catch {
-    // Fresh repo with no commits — nothing to push.
     return {
       ok: false,
       url,
@@ -983,10 +847,6 @@ export async function pushToMemoryRepository(
   }
 }
 
-/**
- * Return the tail of the memory-repository push log.
- * Used by `/memory-repository status`.
- */
 export function readMemoryRepositoryPushLog(
   agentId: string,
   tailLines: number = 20,
@@ -1075,9 +935,7 @@ async function recoverMemoryPullByResettingToRemote(
       backupRef = `refs/letta-backup/pre-sync-${Date.now()}`;
       await runGit(memoryDir, ["update-ref", backupRef, localSha]);
     }
-  } catch {
-    // No local HEAD to preserve.
-  }
+  } catch {}
 
   await runGit(memoryDir, ["reset", "--hard", "refs/remotes/origin/main"]);
   try {
@@ -1087,9 +945,7 @@ async function recoverMemoryPullByResettingToRemote(
       "origin/main",
       "main",
     ]);
-  } catch {
-    // Non-fatal; future explicit git commands can still name origin/main.
-  }
+  } catch {}
 
   return backupRef
     ? `Recovered memory repo by resetting to origin/main (${remoteSha.slice(0, 7)}). Previous local HEAD was preserved at ${backupRef}.`
@@ -1120,7 +976,6 @@ async function prepareLocalOnlyMemoryRepoForGitOps(
       await setLocalGitConfig(memoryDir, key, value);
     }
   }
-  // Signing off when unset locally; see ensureLocalMemfsGitConfig.
   if ((await getLocalGitConfig(memoryDir, "commit.gpgsign")) === null) {
     await setLocalGitConfig(memoryDir, "commit.gpgsign", "false");
   }
@@ -1198,9 +1053,7 @@ async function unstageMemoryPaths(
 
   try {
     await runGit(memoryDir, ["reset", "HEAD", "--", ...pathspecs]);
-  } catch {
-    // Best-effort cleanup only.
-  }
+  } catch {}
 }
 
 export async function commitMemoryWrite(
@@ -1373,7 +1226,6 @@ async function syncAttachedRepository(args: {
   const repositoryName = validateAgentRepositoryName(args.repositoryName);
   const directory = getRepositoryMountDir(args.agentId, repositoryName);
   const remoteUrl = getRepositoryRemoteUrl(args.agentId, repositoryName);
-
   await startCheckout(
     args.agentId,
     directory,
@@ -1398,7 +1250,8 @@ export async function syncAttachedAgentRepositories(
   let jobs: Promise<string>[] = [];
   try {
     const registered = trackCheckoutDiscovery(agentId, async () => {
-      repositories = await listAttachedAgentRepositories(agentId);
+      const effectiveAgentId = resolveEffectiveAgentId(agentId);
+      repositories = await listAttachedAgentRepositories(effectiveAgentId);
       retainCheckouts(
         agentId,
         repositories.map((repository) =>
@@ -1468,11 +1321,6 @@ export async function syncAttachedAgentRepositories(
   return { mounted, skipped: 0, failed, summaries };
 }
 
-/**
- * Clone the agent's state repo into the memory directory.
- *
- * Git root is ~/.letta/agents/{id}/memory/ (not the agent root).
- */
 export async function cloneMemoryRepo(agentId: string): Promise<void> {
   startAttachedAgentRepositories(agentId);
   const token = await getAuthToken();
@@ -1486,8 +1334,6 @@ export async function cloneMemoryRepo(agentId: string): Promise<void> {
           timeoutMs: GIT_CLONE_TIMEOUT_MS,
         });
       } else if (!existsSync(join(dir, ".git"))) {
-        // Directory exists but isn't a git repo (legacy local layout)
-        // Clone to temp, move .git/ into existing dir, then checkout files.
         const tmpDir = `${dir}-git-clone-tmp`;
         try {
           if (existsSync(tmpDir)) {
@@ -1499,15 +1345,8 @@ export async function cloneMemoryRepo(agentId: string): Promise<void> {
             timeoutMs: GIT_CLONE_TIMEOUT_MS,
           });
 
-          // Move .git into the existing memory directory
           renameSync(join(tmpDir, ".git"), join(dir, ".git"));
 
-          // Reset to match remote state. Skip when the remote has no HEAD
-          // yet (empty repo, e.g. a freshly-allocated training agent) —
-          // `git checkout -- .` fails with "pathspec '.' did not match any
-          // file(s) known to git" in that case, which is fatal here. When
-          // there's nothing on the remote there's nothing to restore, so
-          // leaving the existing local files in place is the right move.
           try {
             await runGit(dir, ["rev-parse", "--verify", "HEAD"], token);
             await runGit(dir, ["checkout", "--", "."], token);
@@ -1533,27 +1372,19 @@ export async function cloneMemoryRepo(agentId: string): Promise<void> {
         }
       }
 
-      // Configure local credential helper so the agent can do plain
-      // `git push` / `git pull` without auth prefixes.
       await configureLocalCredentialHelper(
         dir,
         token,
         getMemoryRepoDir(agentId),
       );
 
-      // Install commit hooks (pre-commit validates frontmatter; post-commit mirrors)
       installMemoryGitHooks(dir);
 
-      // Set canonical local git identity (letta.agentId, user.email, user.name)
       await ensureLocalMemfsGitConfig(dir, agentId);
     },
   );
 }
 
-/**
- * Pull latest changes from the server.
- * Called on startup to ensure local state is current.
- */
 export interface PullMemoryOptions {
   throwOnFailure?: boolean;
 }
@@ -1568,7 +1399,6 @@ export async function pullMemory(
 
   await maybeUpdateMemoryRemoteOrigin(dir, agentId);
 
-  // Self-healing: ensure credential helper, hooks, and identity config are current
   await configureLocalCredentialHelper(dir, token);
   installMemoryGitHooks(dir);
   await ensureLocalMemfsGitConfig(dir, agentId);
@@ -1604,7 +1434,6 @@ export async function pullMemory(
       }
     }
 
-    // If ff-only fails (diverged), try rebase
     debugWarn("memfs-git", "Fast-forward pull failed, trying rebase");
     try {
       const { stdout, stderr } = await runGitWithRetry(
@@ -1652,10 +1481,6 @@ export async function pullMemory(
   }
 }
 
-/**
- * Push local memory commits to the server.
- * Keeps remote writes explicit: no automatic pull --rebase.
- */
 export async function pushMemory(agentId: string): Promise<void> {
   const token = await getAuthToken();
   const dir = getMemoryRepoDir(agentId);
@@ -1665,11 +1490,8 @@ export async function pushMemory(agentId: string): Promise<void> {
 }
 
 export interface MemoryGitStatus {
-  /** Uncommitted changes in working tree */
   dirty: boolean;
-  /** Local commits not pushed to remote */
   aheadOfRemote: boolean;
-  /** Human-readable summary for system reminder */
   summary: string;
 }
 
@@ -1689,10 +1511,6 @@ export interface MemoryPostTurnSyncResult {
   localOnly: boolean;
 }
 
-/**
- * Check git status of the memory directory.
- * Used to decide whether to inject a sync reminder.
- */
 export async function getMemoryGitStatus(
   agentId: string,
 ): Promise<MemoryGitStatus> {
@@ -1801,7 +1619,6 @@ export async function getMemoryAheadBehind(
       behind: Number.parseInt(behindRaw ?? "0", 10) || 0,
     };
   } catch {
-    // No upstream configured or unable to inspect divergence.
     return null;
   }
 }
@@ -1952,10 +1769,6 @@ export async function syncPendingMemoryCommitsAfterTurn(
   }
 }
 
-/**
- * Add the git-memory-enabled tag to an agent.
- * This triggers the backend to create the git repo.
- */
 export async function addGitMemoryTag(
   agentId: string,
   prefetchedAgent?: { tags?: string[] | null },
@@ -1963,9 +1776,6 @@ export async function addGitMemoryTag(
   try {
     const { getBackend } = await import("@/backend");
     const backend = getBackend();
-    // Always request tags explicitly: without `include: ["agent.tags"]` the
-    // API can omit tags, and writing back an incomplete list would wipe the
-    // agent's other tags.
     const agent =
       prefetchedAgent ??
       (await backend.retrieveAgent(agentId, { include: ["agent.tags"] }));

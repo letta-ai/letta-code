@@ -20,14 +20,12 @@ export function startStartupAutoUpdateCheck(
 ): Promise<UpdateNotification | undefined> {
   return checkAndAutoUpdate()
     .then((result) => {
-      // Surface ENOTEMPTY failures so users know how to fix
       if (result?.enotemptyFailed) {
         logError("\nAuto-update failed due to filesystem issue (ENOTEMPTY).");
         logError(
           "Fix: rm -rf $(npm prefix -g)/lib/node_modules/@letta-ai/letta-code && npm i -g @letta-ai/letta-code\n",
         );
       }
-      // Return notification payload for the TUI to consume
       if (result?.updateApplied && result.latestVersion) {
         return { latestVersion: result.latestVersion };
       }

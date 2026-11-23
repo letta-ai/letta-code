@@ -12,7 +12,6 @@ export const TASK_HARNESSES = [
   ...EXTERNAL_CODING_AGENT_TYPES,
 ] as const;
 
-/** A named preset owns launch settings; retain the assignment and harness metadata. */
 export function applySubagentPreset<T extends Partial<SubagentLaunchArgs>>(
   args: T,
 ): T {
@@ -22,22 +21,37 @@ export function applySubagentPreset<T extends Partial<SubagentLaunchArgs>>(
     harness: undefined,
     fork_context: undefined,
     model: undefined,
-    computer: undefined,
     agent_id: undefined,
     conversation_id: undefined,
     mcp: undefined,
   };
 }
 
+export function shouldForkTaskContext(args: {
+  fork_context?: unknown;
+  subagent_type?: unknown;
+  agent_id?: unknown;
+  conversation_id?: unknown;
+}): boolean {
+  return (
+    args.subagent_type === undefined &&
+    (args.fork_context === true ||
+      (args.fork_context === undefined &&
+        !args.agent_id &&
+        !args.conversation_id))
+  );
+}
+
 type TaskAgentSelection =
   | { kind: "external"; type: ExternalCodingAgentType }
   | { kind: "letta"; subagentType: string };
 
-/** Resolve a preset first, otherwise the explicitly selected runner and context. */
 export function resolveTaskAgentSelection(args: {
   harness?: unknown;
   subagent_type?: unknown;
   fork_context?: unknown;
+  agent_id?: unknown;
+  conversation_id?: unknown;
 }): { selection: TaskAgentSelection } | { error: string } {
   if (args.subagent_type !== undefined) {
     if (typeof args.subagent_type !== "string" || !args.subagent_type.trim())
@@ -68,12 +82,11 @@ export function resolveTaskAgentSelection(args: {
   return {
     selection: {
       kind: "letta",
-      subagentType: args.fork_context ? "fork" : "general-purpose",
+      subagentType: shouldForkTaskContext(args) ? "fork" : "general-purpose",
     },
   };
 }
 
-/** The subagent_type values to suggest, given the loaded Letta config names. */
 export function listSubagentTypes(configNames: string[]): string {
   return (
     configNames
@@ -82,7 +95,6 @@ export function listSubagentTypes(configNames: string[]): string {
   );
 }
 
-/** Config for an App Server-prepared conversation (`subagent_type: custom`). */
 export function preparedConversationConfig(): SubagentConfig {
   return {
     name: "custom",

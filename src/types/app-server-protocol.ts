@@ -1,4 +1,3 @@
-/** Public app-server websocket protocol export. */
 import type { WsProtocolCommand, WsProtocolMessage } from "./protocol_v2";
 import type {
   ReadSubagentEventsCommand,

@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebSocket, WebSocketServer } from "ws";
 import { settingsManager } from "@/settings-manager";
+import { removeTestDir } from "@/test-utils/test-fs";
 import {
   startListenerClient,
   stopListenerClient,
@@ -82,7 +83,6 @@ beforeEach(async () => {
   wsUrl = `ws://127.0.0.1:${(server.address() as AddressInfo).port}`;
   server.on("connection", (socket) => {
     serverSockets.push(socket);
-    // Keep transport liveness healthy even while startup is blocked.
     const pongs = setInterval(() => {
       if (socket.readyState === WebSocket.OPEN) socket.send('{"type":"pong"}');
     }, 10);
@@ -105,7 +105,7 @@ afterEach(async () => {
   settingsManager.updateSettings = originalUpdateSettings;
   settingsManager.flush = originalFlush;
   await settingsManager.reset();
-  await rm(testHome, { recursive: true, force: true });
+  await removeTestDir(testHome);
   for (const key of ENV_KEYS) {
     const value = originalEnv[key];
     if (value === undefined) delete process.env[key];
@@ -136,7 +136,6 @@ test(
         response.end(JSON.stringify({ id: "agent-1", name: "agent" }));
         return;
       }
-      // Anything else (the resume fetch) never answers.
     });
     await new Promise<void>((resolve) =>
       backend.listen(0, "127.0.0.1", resolve),

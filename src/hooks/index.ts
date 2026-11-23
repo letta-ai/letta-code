@@ -1,6 +1,3 @@
-// src/hooks/index.ts
-// Main hooks module - provides high-level API for running hooks
-
 import { sessionPermissions } from "@/permissions/session";
 import {
   executeHooks,
@@ -25,17 +22,8 @@ import type {
 } from "./types";
 
 export { areHooksDisabled, clearHooksCache } from "./loader";
-// Re-export types for convenience
 export * from "./types";
 
-// ============================================================================
-// High-level hook runner functions
-// ============================================================================
-
-/**
- * Run PreToolUse hooks before a tool is executed
- * Can block the tool call by returning blocked: true
- */
 export async function runPreToolUseHooks(
   toolName: string,
   toolInput: Record<string, unknown>,
@@ -61,14 +49,9 @@ export async function runPreToolUseHooks(
     agent_id: agentId,
   };
 
-  // Run sequentially - stop on first block
   return executeHooks(hooks, input, workingDirectory);
 }
 
-/**
- * Run PostToolUse hooks after a tool has executed
- * These run in parallel since they cannot block
- */
 export async function runPostToolUseHooks(
   toolName: string,
   toolInput: Record<string, unknown>,
@@ -100,15 +83,9 @@ export async function runPostToolUseHooks(
     preceding_assistant_message: precedingAssistantMessage,
   };
 
-  // Run in parallel since PostToolUse cannot block
   return executeHooksParallel(hooks, input, workingDirectory);
 }
 
-/**
- * Run PostToolUseFailure hooks after a tool has failed
- * These run in parallel and cannot block (tool already failed)
- * Stderr from hooks with exit code 2 is fed back to the agent
- */
 export async function runPostToolUseFailureHooks(
   toolName: string,
   toolInput: Record<string, unknown>,
@@ -142,11 +119,8 @@ export async function runPostToolUseFailureHooks(
     preceding_assistant_message: precedingAssistantMessage,
   };
 
-  // Run in parallel since PostToolUseFailure cannot block
-  // Use standard executeHooksParallel - feedback collected on exit 2
   const result = await executeHooksParallel(hooks, input, workingDirectory);
 
-  // PostToolUseFailure never actually blocks (tool already failed)
   return {
     blocked: false,
     errored: result.errored,
@@ -155,10 +129,6 @@ export async function runPostToolUseFailureHooks(
   };
 }
 
-/**
- * Run PermissionRequest hooks when a permission dialog would be shown
- * Can auto-allow (exit 0) or auto-deny (exit 2) the permission
- */
 export async function runPermissionRequestHooks(
   toolName: string,
   toolInput: Record<string, unknown>,
@@ -189,15 +159,9 @@ export async function runPermissionRequestHooks(
     session_permissions: sessionPermissions.getRules(),
   };
 
-  // Run sequentially - first hook that returns 0 or 2 determines outcome
   return executeHooks(hooks, input, workingDirectory);
 }
 
-/**
- * Run UserPromptSubmit hooks before processing a user's prompt
- * Can block the prompt from being processed
- * Skips execution for slash commands (e.g., /help, /clear)
- */
 export async function runUserPromptSubmitHooks(
   prompt: string,
   isCommand: boolean,
@@ -205,7 +169,6 @@ export async function runUserPromptSubmitHooks(
   conversationId?: string,
   workingDirectory: string = process.cwd(),
 ): Promise<HookExecutionResult> {
-  // Skip hooks for slash commands - they don't trigger agent execution
   if (isCommand) {
     return { blocked: false, errored: false, feedback: [], results: [] };
   }
@@ -231,10 +194,6 @@ export async function runUserPromptSubmitHooks(
   return executeHooks(hooks, input, workingDirectory);
 }
 
-/**
- * Run Notification hooks when a notification is sent
- * These run in parallel and cannot block
- */
 export async function runNotificationHooks(
   message: string,
   level: "info" | "warning" | "error" = "info",
@@ -256,14 +215,9 @@ export async function runNotificationHooks(
     level,
   };
 
-  // Run in parallel - notifications cannot block
   return executeHooksParallel(hooks, input, workingDirectory);
 }
 
-/**
- * Run Stop hooks when the agent finishes responding
- * Can block stoppage (exit 2), stderr shown to model
- */
 export async function runStopHooks(
   stopReason: string,
   messageCount?: number,
@@ -289,14 +243,9 @@ export async function runStopHooks(
     user_message: userMessage,
   };
 
-  // Run sequentially - Stop can block
   return executeHooks(hooks, input, workingDirectory);
 }
 
-/**
- * Run SubagentStop hooks when a subagent task completes
- * Can block stoppage (exit 2), stderr shown to subagent
- */
 export async function runSubagentStopHooks(
   subagentType: string,
   subagentId: string,
@@ -326,14 +275,9 @@ export async function runSubagentStopHooks(
     conversation_id: conversationId,
   };
 
-  // Run sequentially - SubagentStop can block
   return executeHooks(hooks, input, workingDirectory);
 }
 
-/**
- * Run PreCompact hooks before a compact operation
- * Cannot block, stderr shown to user only
- */
 export async function runPreCompactHooks(
   contextLength?: number,
   maxContextLength?: number,
@@ -359,15 +303,9 @@ export async function runPreCompactHooks(
     conversation_id: conversationId,
   };
 
-  // Run in parallel - PreCompact cannot block
   return executeHooksParallel(hooks, input, workingDirectory);
 }
 
-/**
- * Run SessionStart hooks when a session begins
- * Unlike other hooks, SessionStart collects stdout (not stderr) on exit 2
- * to inject context into the first user message
- */
 export async function runSessionStartHooks(
   isNewSession: boolean,
   agentId?: string,
@@ -393,10 +331,8 @@ export async function runSessionStartHooks(
     conversation_id: conversationId,
   };
 
-  // Run hooks sequentially (SessionStart shouldn't block, but we collect feedback)
   const result = await executeHooks(hooks, input, workingDirectory);
 
-  // For SessionStart, collect stdout from all hooks regardless of exit code
   const feedback: string[] = [];
   for (const hookResult of result.results) {
     if (hookResult.stdout?.trim()) {
@@ -407,16 +343,13 @@ export async function runSessionStartHooks(
   }
 
   return {
-    blocked: false, // SessionStart never blocks
+    blocked: false,
     errored: result.errored,
     feedback,
     results: result.results,
   };
 }
 
-/**
- * Run SessionEnd hooks when a session ends
- */
 export async function runSessionEndHooks(
   durationMs?: number,
   messageCount?: number,
@@ -444,13 +377,9 @@ export async function runSessionEndHooks(
     conversation_id: conversationId,
   };
 
-  // Run in parallel - SessionEnd cannot block (session is already ending)
   return executeHooksParallel(hooks, input, workingDirectory);
 }
 
-/**
- * Check if hooks are configured for a specific event
- */
 export async function hasHooks(
   event: HookEvent,
   workingDirectory: string = process.cwd(),

@@ -1,0 +1,30 @@
+diff --git a/dist/api/openai-completions.js b/dist/api/openai-completions.js
+index c1b6038c2220633a8caf710288a8f6e6301f7a28..470cd9f08b0dfd6a13f075afe562b45c081160a1 100644
+--- a/dist/api/openai-completions.js
++++ b/dist/api/openai-completions.js
+@@ -855,6 +855,16 @@ function addCacheControlToTextContent(message, cacheControl) {
+     }
+     return false;
+ }
++function isOpenAIHost(baseUrl) {
++    if (!baseUrl) return true;
++    try {
++        const host = new URL(baseUrl).hostname.toLowerCase();
++        return host === "api.openai.com" || host.endsWith(".azure.com");
++    }
++    catch {
++        return true;
++    }
++}
+ export function convertMessages(model, context, compat, options) {
+     const normalizedContext = resolveTranscript(context, compat.supportsMidConvoSystemMessages);
+     const params = [];
+@@ -879,7 +889,7 @@ export function convertMessages(model, context, compat, options) {
+             const prefix = callId.slice(0, Math.max(1, 40 - hash.length - 1));
+             return `${prefix}_${hash}`;
+         }
+-        if (model.provider === "openai")
++        if (model.provider === "openai" && isOpenAIHost(model.baseUrl))
+             return id.length > 40 ? id.slice(0, 40) : id;
+         return id;
+     };

@@ -6,6 +6,7 @@ import type {
   Message,
   Run,
 } from "@letta-ai/letta-client/resources/agents/messages";
+import { isManagedCloudRuntime } from "@/managed-cloud-runtime";
 import {
   type ChatGPTUsageSnapshot,
   normalizeCloudChatGPTUsageResponse,
@@ -26,11 +27,16 @@ import {
   type ReflectionRunRequest,
 } from "./api/reflection-runs";
 import { isCloudServerUrl } from "./api/server-url";
+import { conversationCostModel, withClientUsageCost } from "./api/usage-cost";
 import {
   type BackendMode,
   resolveBackendMode,
   setConfiguredBackendMode,
 } from "./backend-mode";
+import {
+  notifyConversationCompacted,
+  tapConversationCompaction,
+} from "./compaction-events";
 import { LocalBackend } from "./local/local-backend";
 import {
   getLocalBackendStorageDir as getLocalBackendStorageDirFromPaths,
@@ -127,9 +133,6 @@ function toApiConversationMessageListBody(
     return body;
   }
 
-  // The Backend contract uses chronological cursors: before always means older
-  // and after always means newer. The API interprets them relative to sort order,
-  // so descending requests need their cursor keys swapped at this boundary.
   return {
     ...body,
     before: body.after,
@@ -177,11 +180,6 @@ export interface BackendCapabilities {
   byokProviderRefresh: boolean;
   localModelCatalog: boolean;
   localMemfs: boolean;
-  /**
-   * Whether subagent turns can be routed to other computers (connected
-   * environments / Cloud sandboxes). Cloud-only: the environments API does
-   * not exist on local or self-hosted backends.
-   */
   environmentRouting: boolean;
 }
 
@@ -213,20 +211,17 @@ export interface Backend {
     options?: AgentUpdateOptions,
   ): Promise<Awaited<ReturnType<APIClient["agents"]["update"]>>>;
 
-  /** Null means a known non-Cloud API server; lookup errors must propagate. */
   retrieveReflectionConfig?(
     agentId: string,
     options?: { headers: Record<string, string> },
   ): Promise<CloudReflectionConfig | null>;
 
-  /** Cloud admission only; unsupported backends must not run local reflection. */
   enqueueReflectionRun?(
     agentId: string,
     request: ReflectionRunRequest,
     options?: { headers: Record<string, string> },
   ): Promise<ReflectionRunReceipt>;
 
-  /** Optional until every backend supports server-backed agent secrets. */
   listAgentSecrets?(agentId: string): Promise<AgentSecret[]>;
 
   createAgent(
@@ -248,11 +243,6 @@ export interface Backend {
     options?: ConversationCreateOptions,
   ): Promise<Awaited<ReturnType<APIClient["conversations"]["create"]>>>;
 
-  /**
-   * Optional agent-free conversation creation used by SDK query() runtimes.
-   * Backends that implement this must preserve `agent_id: null` rather than
-   * materializing a hidden worker agent.
-   */
   createEphemeralConversation?(body: {
     model: string;
     system: string;
@@ -263,7 +253,6 @@ export interface Backend {
     is_subagent?: boolean;
   }): Promise<Awaited<ReturnType<APIClient["conversations"]["create"]>>>;
 
-  /** Optional: not all backends support deleting conversations. */
   deleteConversation?(
     conversationId: string,
   ): Promise<Awaited<ReturnType<APIClient["conversations"]["delete"]>>>;
@@ -352,7 +341,6 @@ export interface Backend {
     runId?: string | null,
   ): Promise<Awaited<ReturnType<APIClient["agents"]["messages"]["cancel"]>>>;
 
-  /** Latest run created for this conversation, or null when none exists. */
   latestConversationRun(conversationId: string): Promise<Run | null>;
 
   retrieveRun(
@@ -389,9 +377,7 @@ export class APIBackend implements Backend {
       byokProviderRefresh: true,
       localModelCatalog: false,
       localMemfs: false,
-      // Environment routing only exists on Letta Cloud; an APIBackend pointed
-      // at a self-hosted or remote app server has no environments API.
-      environmentRouting: isCloudServerUrl(),
+      environmentRouting: isCloudServerUrl() || isManagedCloudRuntime(),
     };
   }
 
@@ -566,7 +552,17 @@ export class APIBackend implements Backend {
     options?: ConversationMessageCompactOptions,
   ) {
     const client = await this.getClient();
-    return client.conversations.messages.compact(conversationId, body, options);
+    const result = await client.conversations.messages.compact(
+      conversationId,
+      body,
+      options,
+    );
+    notifyConversationCompacted({
+      backend: this,
+      conversationId,
+      agentId: body?.agent_id,
+    });
+    return result;
   }
 
   async listAgentMessages(
@@ -619,8 +615,6 @@ export class APIBackend implements Backend {
 
   async readChatGPTUsage(providerName: string, signal?: AbortSignal) {
     const client = await this.getClient();
-    // Use the same credentials/server as model selection. Do not reuse the
-    // provider selector's name-only cache across authenticated projects.
     const raw = await client.get<unknown>("/v1/providers/chatgpt-usage", {
       query: { provider_name: providerName },
       signal,
@@ -643,13 +637,19 @@ export class APIBackend implements Backend {
     if (
       contentType.split(";")[0]?.trim().toLowerCase() !== "text/event-stream"
     ) {
-      // A gateway can return HTTP 200 HTML while the API is down. Reject it
-      // before callers try to resume a run that never accepted this request.
       stream.controller.abort();
       throw new APIConnectionError({
         message: `Connection error: expected text/event-stream, received ${contentType || "no content type"} (HTTP ${response.status}).`,
       });
     }
+    withClientUsageCost(stream, () =>
+      conversationCostModel(
+        client,
+        conversationId,
+        body?.agent_id,
+        body.override_model,
+      ),
+    );
     return stream;
   }
 
@@ -659,7 +659,19 @@ export class APIBackend implements Backend {
     options?: ConversationMessageStreamOptions,
   ) {
     const client = await this.getClient();
-    return client.conversations.messages.stream(conversationId, body, options);
+    const stream = await client.conversations.messages.stream(
+      conversationId,
+      body,
+      options,
+    );
+    withClientUsageCost(stream, () =>
+      conversationCostModel(client, conversationId, body?.agent_id),
+    );
+    return tapConversationCompaction(stream, {
+      backend: this,
+      conversationId,
+      agentId: body?.agent_id,
+    });
   }
 
   async cancelConversation(conversationIdOrAgentId: string) {
@@ -676,10 +688,6 @@ export class APIBackend implements Backend {
     _conversationId: string,
     _runId?: string | null,
   ): Promise<Awaited<ReturnType<APIClient["agents"]["messages"]["cancel"]>>> {
-    // The public conversations cancellation route cannot scope by run ID. Do
-    // not add a retrieve round-trip here: a run with agent_id:null still has no
-    // agent cancellation route, and waiting on that request would hold the
-    // listener's cancellation fence without making cancellation safer.
     throw new Error(
       "API backend does not support exact cancellation for conversations with agent_id:null",
     );
@@ -706,7 +714,16 @@ export class APIBackend implements Backend {
     options?: RunMessageStreamOptions,
   ) {
     const client = await this.getClient();
-    return client.runs.messages.stream(runId, body, options);
+    const stream = await client.runs.messages.stream(runId, body, options);
+    withClientUsageCost(stream, async () => {
+      const run = await client.runs.retrieve(runId);
+      return conversationCostModel(
+        client,
+        run.conversation_id ?? "default",
+        run.agent_id,
+      );
+    });
+    return stream;
   }
 
   async forkConversation(
@@ -759,10 +776,6 @@ export function getBackend(): Backend {
   return backend;
 }
 
-/**
- * Get a backend instance for a specific mode without switching the global backend.
- * Useful for cross-backend operations like retrieving pinned agents from the other backend.
- */
 export function getBackendForMode(mode: BackendMode): Backend {
   return createBackendForMode(mode);
 }

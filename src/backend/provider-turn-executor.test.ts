@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { type Api, calculateCost, type Model } from "@earendil-works/pi-ai";
+import { ANTHROPIC_MODELS } from "@earendil-works/pi-ai/providers/anthropic.models";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { HeadlessTurnExecutorInput } from "@/backend/dev/headless-turn-executor";
 import {
@@ -22,6 +24,7 @@ import {
   isLocalStateChunkOnly,
   type ProviderStreamPart,
 } from "@/backend/local/local-stream-chunks";
+import type { UsageStatistics } from "@/types/protocol";
 
 function part(value: Record<string, unknown>): ProviderStreamPart {
   return value as unknown as ProviderStreamPart;
@@ -69,6 +72,86 @@ function assistantMessage(usage = emptyLocalUsage()): LocalAssistantMessage {
 }
 
 describe("ProviderTurnExecutor", () => {
+  test.each([
+    ["ollama", 0],
+    ["lmstudio", 0],
+    ["llama-cpp", 0],
+    ["ollama-cloud", null],
+    ["openai-compatible", null],
+    ["custom-provider", null],
+  ] as const)(
+    "reports zero or unknown cost for %s",
+    async (provider, expected) => {
+      const model: Model<Api> = {
+        ...ANTHROPIC_MODELS["claude-sonnet-4-5"],
+        provider,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      };
+      const adapter: ProviderStreamAdapter = {
+        async *stream() {
+          yield providerStreamPart(
+            part({ type: "done", reason: "stop", message: assistantMessage() }),
+            model,
+          );
+        },
+      };
+      const chunks = await collect(
+        await new ProviderTurnExecutor(adapter).execute(input()),
+      );
+      expect(
+        chunks.find((chunk) => chunk.message_type === "usage_statistics"),
+      ).toMatchObject({ api_cost_usd: expected });
+    },
+  );
+
+  test("recalculates priced Anthropic usage including cache reads and writes", async () => {
+    const model = ANTHROPIC_MODELS["claude-sonnet-4-5"];
+    const usage = {
+      ...emptyLocalUsage(),
+      input: 100,
+      output: 40,
+      cacheRead: 200,
+      cacheWrite: 50,
+      cacheWrite1h: 20,
+      totalTokens: 390,
+    };
+    calculateCost(model, usage);
+    const expectedCost = usage.cost.total;
+    usage.cost.total = 99;
+    const adapter: ProviderStreamAdapter = {
+      async *stream() {
+        yield providerStreamPart(
+          part({
+            type: "done",
+            reason: "stop",
+            message: assistantMessage(usage),
+          }),
+          model,
+        );
+      },
+    };
+    const chunks = await collect(
+      await new ProviderTurnExecutor(adapter).execute(input()),
+    );
+    expect(usage.cost.total).toBeGreaterThan(
+      usage.cost.input + usage.cost.output,
+    );
+    expect(
+      chunks.find((chunk) => chunk.message_type === "usage_statistics"),
+    ).toEqual<UsageStatistics>({
+      message_type: "usage_statistics",
+      step_count: 1,
+      api_cost_usd: expectedCost,
+      cache_write_1h_tokens: 20,
+      prompt_tokens: 100,
+      completion_tokens: 40,
+      total_tokens: 390,
+      cached_input_tokens: 200,
+      cache_write_tokens: 50,
+      context_tokens: 390,
+    });
+  });
+
   test("reserves Pi's output headroom before the context window is full", () => {
     expect(contextCompactionThreshold(100_000)).toBe(83_616);
     expect(
@@ -144,6 +227,39 @@ describe("ProviderTurnExecutor", () => {
     expect(
       (chunks.at(-1) as { stop_reason?: string } | undefined)?.stop_reason,
     ).toBe("requires_approval");
+  });
+
+  test("rejects malformed tool arguments before approval", async () => {
+    const adapter: ProviderStreamAdapter = {
+      async *stream() {
+        const message = assistantMessage();
+        yield providerStreamPart(
+          part({
+            type: "toolcall_end",
+            contentIndex: 0,
+            toolCall: {
+              type: "toolCall",
+              id: "bad-call",
+              name: "Read",
+              arguments: {},
+              argumentsError: "Invalid tool arguments",
+            },
+            partial: message,
+          }),
+        );
+        yield providerStreamPart(
+          part({ type: "done", reason: "toolUse", message }),
+        );
+      },
+    };
+
+    const chunks = await collect(
+      await new ProviderTurnExecutor(adapter).execute(input()),
+    );
+    expect(chunks.map((chunk) => chunk.message_type)).toEqual([
+      "error_message",
+      "stop_reason",
+    ]);
   });
 
   test("groups adjacent live blocks and preserves interleaved boundaries", async () => {

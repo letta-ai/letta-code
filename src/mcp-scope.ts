@@ -1,4 +1,5 @@
 import { LETTA_CODE_SUBAGENT_TAG } from "@/agent/agent-tags";
+import { lookupDetachedConversationParent } from "@/agent/subagents/ephemeral-subagent";
 import { getBackend } from "@/backend";
 import { getRuntimeContext } from "@/runtime-context";
 import { getRuntimeExecutionEnv } from "@/runtime-execution-settings";
@@ -10,6 +11,9 @@ export type ParentAgentLookup = (
 export async function lookupParentAgent(
   agentId: string,
 ): Promise<string | undefined> {
+  if (agentId.startsWith("conv-")) {
+    return lookupDetachedConversationParent(agentId, getBackend());
+  }
   const agent = await getBackend().retrieveAgent(agentId, {
     include: ["agent.tags"],
   });
@@ -19,7 +23,6 @@ export async function lookupParentAgent(
     ?.slice("parent:".length);
 }
 
-/** Follow the existing subagent parent relationship, without changing identity. */
 export async function getMcpScopeAgentId(
   agentId: string,
   env = getRuntimeExecutionEnv(

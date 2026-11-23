@@ -105,7 +105,6 @@ function toImagePart(rawUrl: string): UserContentPart | null {
   return null;
 }
 
-/** OpenAI user content → Letta content parts (text and image_url). */
 export function extractUserContentParts(
   content: string | OpenAiChatMessagePart[] | null | undefined,
 ): UserContentPart[] {
@@ -169,7 +168,6 @@ function getPageItems<T>(page: unknown): T[] {
   return [];
 }
 
-// The server's maximum page size.
 const AGENT_LIST_PAGE_LIMIT = 200;
 const AGENT_SEARCH_PAGE_LIMIT = 50;
 
@@ -206,9 +204,6 @@ async function listAgentEntries(options: {
     return items;
   }
 
-  // LocalBackend returns plain pages rather than SDK async iterables. Follow
-  // its id cursor with the same filter so name lookup remains complete without
-  // constructing the global advertised-model map.
   const items: AgentModelEntry[] = [];
   const seenCursors = new Set<string>();
   while (true) {
@@ -249,13 +244,6 @@ async function searchAgentEntries(model: string): Promise<AgentModelEntry[]> {
   });
 }
 
-/**
- * One collision-free advertised-id map, used by both listing and
- * resolution. An agent name is advertised only when it is unique among
- * names AND does not equal any agent id — otherwise the agent id is
- * advertised — so every advertised id resolves to exactly one agent and
- * raw agent-id lookups can never be shadowed by another agent's name.
- */
 function buildAdvertisedModelMap(
   agents: AgentModelEntry[],
 ): Map<string, AgentModelEntry> {
@@ -296,9 +284,6 @@ export async function resolveAgentForModel(
     try {
       return (await backend.retrieveAgent(model)) as AgentModelEntry;
     } catch (error) {
-      // An agent-shaped name can still be an advertised alias. Only a genuine
-      // not-found continues to name lookup; auth and backend failures keep
-      // flowing through the existing request error path.
       if (!isBackendNotFoundError(error)) throw error;
     }
   }
@@ -310,9 +295,6 @@ export async function resolveAgentForModel(
   return exactNames.length === 1 ? (exactNames[0] ?? null) : null;
 }
 
-// Conversation continuity for header-keyed chats. Clients that supply a
-// stable chat identity get a pinned Letta conversation; the bounded FIFO
-// map evicts long-idle chats, which then start a fresh conversation.
 const MAX_TRACKED_TRANSCRIPTS = 4096;
 const conversationIdByTranscript = new Map<string, string>();
 
@@ -329,10 +311,6 @@ export function rememberConversation(
   }
 }
 
-// Conversation creation is serialized per agent: concurrent creations race
-// on initializing the agent's local memory repository (transient git config
-// lock failures). Failures propagate to the caller as a 500 — routing into
-// the shared "default" conversation instead would cross-wire client chats.
 const conversationCreateTailByAgent = new Map<string, Promise<void>>();
 const CONVERSATION_CREATE_RETRIES = 2;
 const CONVERSATION_CREATE_RETRY_DELAY_MS = 200;
@@ -357,9 +335,6 @@ async function createConversationWithRetry(agentId: string): Promise<string> {
   throw lastError;
 }
 
-/** Serialized per-agent conversation creation (see note above). The
- * optional reuseKey is re-checked after the queue drains so a concurrent
- * request with the same key reuses the conversation it created. */
 export async function createConversationSerialized(
   agentId: string,
   reuseKey?: string,
@@ -394,12 +369,6 @@ export async function resolveConversationId(
   return await createConversationSerialized(agentId, chatKey);
 }
 
-// Clients that know their chat identity can pin it explicitly instead of
-// relying on transcript fingerprints, which collide when two chats have
-// byte-identical transcripts (e.g. both start "Hello" and get the same
-// verbatim reply). Open WebUI sends X-OpenWebUI-Chat-Id when
-// ENABLE_FORWARD_USER_INFO_HEADERS is on; X-Letta-Chat-Key is the generic
-// escape hatch for other clients.
 function headerValue(
   request: HttpIncomingMessage,
   name: string,
@@ -410,13 +379,6 @@ function headerValue(
   return null;
 }
 
-/**
- * X-Letta-Chat-Key always pins chat identity. X-OpenWebUI-Chat-Id is
- * honored only for streaming requests: Open WebUI's real chat messages
- * always stream, while its background task requests (title/tags/follow-up
- * generation) are non-streaming yet carry the same chat id — honoring
- * those would route task prompts into the user's pinned conversation.
- */
 export function chatKeyFromHeaders(
   request: HttpIncomingMessage,
   streaming: boolean,
@@ -433,10 +395,6 @@ export function openWebUiChatIdFromHeaders(
   return headerValue(request, "x-openwebui-chat-id");
 }
 
-// Retry idempotency: a client retry carrying the same Idempotency-Key
-// reuses the original request's outcome instead of running (and appending)
-// the message again. In-flight duplicates share the same turn; failed
-// outcomes are evicted so an intentional retry after an error re-runs.
 const IDEMPOTENCY_HEADERS = ["idempotency-key", "x-idempotency-key"] as const;
 const MAX_IDEMPOTENT_OUTCOMES = 1024;
 const outcomeByIdempotencyKey = new Map<string, Promise<TurnOutcome>>();
@@ -478,7 +436,6 @@ export function getIdempotentOutcome(
   return outcomeByIdempotencyKey.get(key);
 }
 
-/** @internal Clears chat-key and idempotency maps between tests. */
 export function resetOpenAiCompatState(): void {
   conversationIdByTranscript.clear();
   outcomeByIdempotencyKey.clear();

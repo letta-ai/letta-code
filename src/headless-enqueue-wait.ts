@@ -10,7 +10,6 @@ import type {
   LatestConversationSuperRun,
 } from "@/backend/api/conversation-enqueue";
 
-/** A send may span approval continuations. Only listener-published run IDs belong to it. */
 export function getSendRunIds(
   status: ConversationSendStatus | null,
   clientMessageId: string,
@@ -54,10 +53,6 @@ export class EnqueuedWaitError extends Error {
   }
 }
 
-/**
- * Subscribe before enqueue so even a fast recipient cannot finish before we
- * see its run-to-message mapping. Stream loss is a waiting error, never a resend.
- */
 export async function waitForEnqueuedReply(params: {
   receipt: EnqueueReceipt;
   events: AsyncIterator<ConversationStatusEvent>;
@@ -103,12 +98,9 @@ export async function waitForEnqueuedReply(params: {
             runIds.add(runId);
         }
         next = params.events.next();
-        // Keep a rejected read handled while the run/message HTTP requests run.
         void next.catch(() => {});
       }
 
-      // Newest mapped run is the current approval continuation, never another
-      // human turn selected by transcript position or role.
       const runId = [...runIds].at(-1);
       if (!runId) {
         const latest = await params.latestSuperRun();
@@ -151,7 +143,6 @@ export async function waitForEnqueuedReply(params: {
       }
       if (completedWithoutText?.runId !== runId)
         completedWithoutText = { runId, at: now() };
-      // Run status and messages can become visible on different reads.
       if (now() - completedWithoutText.at < 15_000) continue;
       throw new Error(
         `Remote run ${runId} completed without an assistant reply (${run.stop_reason ?? "unknown stop reason"})`,

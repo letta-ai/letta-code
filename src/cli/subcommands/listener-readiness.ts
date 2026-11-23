@@ -47,8 +47,6 @@ export async function completeListenerConnectionStartup(
   )
     return false;
   readiness.completeCloudStartup(epoch);
-  // Gateway health is tracked separately. A slow child must not hold the
-  // listener's ready callback (or its startup deadline) open.
   void Promise.resolve().then(startGateway).catch(onGatewayError);
   return true;
 }
@@ -71,7 +69,6 @@ export function applyGatewayLifecycleReadiness(
   }
 }
 
-/** Compose independently changing Cloud and gateway readiness into one lifecycle. */
 export function createListenerReadinessController(
   requiresGateway: boolean,
   emitState: (ready: boolean) => void,
@@ -115,11 +112,6 @@ export function createListenerReadinessController(
   };
 }
 
-/**
- * Memoize a gateway start per listener runtime. Re-registration resumes the
- * same runtime and keeps its gateway; replacing the runtime closes the old
- * gateway and starts a new one.
- */
 export function createRuntimeBoundGatewayStarter<R extends object>(options: {
   getRuntime: () => R | null;
   start: (runtime: R) => Promise<void>;
@@ -149,7 +141,6 @@ export function createRuntimeBoundGatewayStarter<R extends object>(options: {
       try {
         await options.close();
       } catch {
-        // Preserve the startup error; cleanup is best effort.
       } finally {
         if (current === entry) current = null;
       }

@@ -21,8 +21,6 @@ function writeMcpOutput(
     try {
       stream.write(`${message}\n`, (error) => {
         if (error) {
-          // Keep onError installed because Node can emit the same write failure
-          // after invoking this callback.
           fail(error);
           return;
         }
