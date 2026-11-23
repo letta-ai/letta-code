@@ -1075,7 +1075,6 @@ function resolveBaseToolNamesForModel(
   const modelToolset =
     modelIdentifier && isOpenAIModel(modelIdentifier) ? "codex" : "default";
   const toolset = options?.resolvedToolset ?? modelToolset;
-  // CodeMode uses the same permission-filtered registry as direct tool calls.
   const registryToolset = toolset === "codemode" ? modelToolset : toolset;
   const allowlist =
     options?.clientToolAllowlist ?? toolFilter.getEnabledTools();
