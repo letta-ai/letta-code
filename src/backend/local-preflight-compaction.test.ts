@@ -18,11 +18,8 @@ import {
 } from "@/backend/local/local-message";
 import type { LocalStore } from "@/backend/local/local-store";
 
-// A 4,000-token window compacts above 3,200 tokens.
 const CONTEXT_WINDOW = 4_000;
-// About 1,000 tokens of conversation, under the threshold on its own.
 const REQUEST = `Please inspect the logs. ${"context ".repeat(500)}`;
-// Reported usage above the threshold.
 const OVER_THRESHOLD: Partial<Usage> = { input: 3_500 };
 
 type ProviderReply =
@@ -82,11 +79,9 @@ function streamOf(reply: ProviderReply): ReturnType<PiStreamFunction> {
 
 async function drain(stream: AsyncIterable<unknown>): Promise<void> {
   for await (const _chunk of stream) {
-    // drain
   }
 }
 
-/** Role and tool calls of a message; a stored compaction summary is "summary". */
 function label(message: Message | LocalMessage): string {
   if ("metadata" in message && message.metadata?.compaction) return "summary";
   if (message.role === "toolResult") return `toolResult:${message.toolCallId}`;
@@ -121,7 +116,7 @@ async function setup(options: {
   mode: "all" | "self_compact_all";
   replies: ProviderReply[];
 }) {
-  const storageDir = await mkdtemp(join(tmpdir(), "local-post-turn-"));
+  const storageDir = await mkdtemp(join(tmpdir(), "local-preflight-"));
   const providerRequests: Context[] = [];
   const compactionRequests: Context[] = [];
   const backend = new LocalBackend({
@@ -142,7 +137,7 @@ async function setup(options: {
     },
   });
   const agent = await backend.createAgent({
-    name: "Post Turn",
+    name: "Preflight",
     system: "You are a test agent.",
     model: "openai/gpt-5.5",
     model_settings: {
@@ -205,7 +200,7 @@ async function setup(options: {
   };
 }
 
-describe("local post-turn compaction", () => {
+describe("local compaction before a model request", () => {
   test("waits for the tool results before compacting", async () => {
     await withBackend(
       {
@@ -218,11 +213,9 @@ describe("local post-turn compaction", () => {
       async (harness) => {
         await harness.send(REQUEST);
 
-        // The reply is over the threshold, but its call has no result yet.
         expect(harness.compactionRequests).toHaveLength(0);
         expect(harness.storedShape()).toEqual(["user", "assistant:call-1"]);
 
-        // The request that carries the result compacts before it is sent.
         await harness.returnResults({ "call-1": "short output" });
         expect(harness.compactionRequests).toHaveLength(1);
         const transcript = requestText(harness.compactionRequests[0]);
@@ -255,8 +248,6 @@ describe("local post-turn compaction", () => {
         const [first] = harness.providerRequests;
         expect(compaction?.systemPrompt).toBe(first?.systemPrompt);
         expect(compaction?.tools).toEqual(first?.tools);
-        // The request that produced the call, then the call, its result and
-        // the compaction prompt.
         const firstMessages = first?.messages ?? [];
         expect(compaction?.messages.slice(0, firstMessages.length)).toEqual(
           firstMessages,
@@ -275,7 +266,6 @@ describe("local post-turn compaction", () => {
           content: "Summarize the conversation now.",
         });
 
-        // The next request holds only the summary.
         expect(shape(harness.providerRequests[1])).toEqual(["user"]);
         expect(requestText(harness.providerRequests[1])).toContain(
           "Summary 1.",
@@ -284,20 +274,45 @@ describe("local post-turn compaction", () => {
     );
   });
 
-  test("a final text reply over the threshold still compacts after the turn", async () => {
+  test("a reply that ends the turn over the threshold compacts with the next message", async () => {
     await withBackend(
       {
-        mode: "all",
-        replies: [{ text: "All done.", usage: OVER_THRESHOLD }],
+        mode: "self_compact_all",
+        replies: [
+          { text: "All done.", usage: OVER_THRESHOLD },
+          { text: "Checked." },
+        ],
       },
       async (harness) => {
         await harness.send(REQUEST);
 
+        expect(harness.compactionRequests).toHaveLength(0);
+        expect(harness.storedShape()).toEqual(["user", "assistant"]);
+
+        await harness.send("Now check the tests.");
         expect(harness.compactionRequests).toHaveLength(1);
-        expect(requestText(harness.compactionRequests[0])).toContain(
-          "All done.",
+        const [compaction] = harness.compactionRequests;
+        const [first] = harness.providerRequests;
+        const firstMessages = first?.messages ?? [];
+        expect(compaction?.messages.slice(0, firstMessages.length)).toEqual(
+          firstMessages,
         );
-        expect(harness.storedShape()).toEqual(["summary"]);
+        expect(shape(compaction)).toEqual([
+          ...shape(first),
+          "assistant",
+          "user",
+        ]);
+        expect(compaction?.messages.at(-1)).toMatchObject({
+          content: [
+            { type: "text", text: "Now check the tests." },
+            { type: "text", text: "Summarize the conversation now." },
+          ],
+        });
+        expect(shape(harness.providerRequests[1])).toEqual(["user"]);
+        expect(requestText(harness.providerRequests[1])).toContain(
+          "Summary 1.",
+        );
+        expect(harness.storedShape()).toEqual(["summary", "assistant"]);
       },
     );
   });

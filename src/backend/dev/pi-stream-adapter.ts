@@ -46,7 +46,6 @@ import type {
   ProviderTurnInput,
 } from "./provider-turn-executor";
 import {
-  contextTokensFromUsage,
   estimateProviderContextTokens,
   estimateProviderPromptFloorTokens,
   providerLettaChunk,
@@ -71,8 +70,6 @@ export type PiStreamFunction = (
 export interface LocalContextPressure {
   contextTokens: number;
   contextWindow: number;
-  phase: "preflight" | "post_turn";
-  source: "estimate" | "usage";
 }
 
 interface LocalCompactionResult {
@@ -405,12 +402,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       return null;
     }
 
-    return this.onContextPressure(input, {
-      contextTokens,
-      contextWindow,
-      phase: "preflight",
-      source: "estimate",
-    });
+    return this.onContextPressure(input, { contextTokens, contextWindow });
   }
 
   private async *streamOnce(
@@ -555,7 +547,6 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
 
       let streamError: unknown;
       let finalMessage: AssistantMessage | undefined;
-      let finalLocalMessage: LocalAssistantMessage | undefined;
       for await (const part of result) {
         if (part.type === "error") {
           const error = new PiProviderError(part.error);
@@ -574,8 +565,9 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
         }
         if (part.type === "done") {
           finalMessage = part.message;
-          finalLocalMessage = toLocalAssistantMessage(part.message, input);
-          yield providerLocalMessage(finalLocalMessage);
+          yield providerLocalMessage(
+            toLocalAssistantMessage(part.message, input),
+          );
         }
         yield providerStreamPart(part, resolved.model);
       }
@@ -601,39 +593,6 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
         finalMessage.stopReason === "aborted"
       ) {
         throw new PiProviderError(finalMessage);
-      }
-      // A reply that calls tools is not compacted until its results are in:
-      // the request that carries them runs the pre-call check, and its
-      // estimate starts from this reply's usage. Compacting here would leave
-      // the call out of the summary request and keep it after the summary.
-      const awaitingToolResults = finalMessage.content.some(
-        (part) => part.type === "toolCall",
-      );
-      if (this.onContextPressure && !awaitingToolResults) {
-        const usageContextTokens = contextTokensFromUsage(finalMessage.usage);
-        const contextTokens =
-          usageContextTokens ??
-          estimateProviderContextTokens({
-            ...input,
-            uiMessages: [
-              ...input.uiMessages,
-              finalLocalMessage ?? toLocalAssistantMessage(finalMessage, input),
-            ],
-          });
-        const contextWindow = resolved.model.contextWindow;
-        const compaction =
-          shouldCompactForContextPressure({ contextTokens, contextWindow }) &&
-          contextTokens !== undefined
-            ? await this.onContextPressure(input, {
-                contextTokens,
-                contextWindow,
-                phase: "post_turn",
-                source: usageContextTokens === undefined ? "estimate" : "usage",
-              })
-            : null;
-        if (compaction) {
-          yield* this.emitCompactionChunks(compaction, "context_window_limit");
-        }
       }
     } catch (error) {
       if (!llmEnded) {
