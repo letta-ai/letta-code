@@ -869,6 +869,10 @@ async function deliverRemoteExternalCodingAgentMessage(
       connect,
       (reconnected) => follower.attach(reconnected),
       target.computer as string,
+      {
+        canResendOnTimeout:
+          (compareSemver(lettaCodeVersion ?? "", "0.34.64") ?? -1) >= 0,
+      },
     );
   } catch (error) {
     follower.close();
