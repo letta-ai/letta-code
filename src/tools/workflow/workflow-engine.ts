@@ -17,6 +17,11 @@
 
 import { format } from "node:util";
 import vm from "node:vm";
+import {
+  addWorkflowRunCost,
+  runBudgetExceeded,
+  runBudgetLimit,
+} from "@/usage/run-budget";
 import { submitWorkflowDecision } from "./decide.ts";
 import { formatUsd } from "./format-stats.ts";
 import { appendJournalEntry } from "./journal.ts";
@@ -179,9 +184,15 @@ async function executeScript(
 
   function chargeCost(deltaUsd: number): void {
     totalCostUsd += deltaUsd;
+    addWorkflowRunCost(deltaUsd);
     if (maxCostUsd !== undefined && totalCostUsd >= maxCostUsd) {
       stopForBudget(
         `Workflow cost budget of ${formatUsd(maxCostUsd)} reached.`,
+        "budget_exceeded",
+      );
+    } else if (runBudgetExceeded()) {
+      stopForBudget(
+        `Run cost budget of ${formatUsd(runBudgetLimit() ?? 0)} reached.`,
         "budget_exceeded",
       );
     }

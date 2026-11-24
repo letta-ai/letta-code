@@ -31,6 +31,28 @@ describe("expandDreamCommand", () => {
     expect(prompt).toContain("worktree add");
   });
 
+  test("--dynamic sends only the goal and budget, not the workflow", () => {
+    const [, prompt, ...rest] = expandDreamCommand([
+      "dream",
+      "trajectories",
+      "--dynamic",
+      "--budget-usd",
+      "250",
+      "--model",
+      "opus",
+    ]);
+    expect(rest.slice(-2)).toEqual(["--model", "opus"]);
+    expect(rest).not.toContain("--dynamic");
+    expect(prompt).toContain(resolve("trajectories"));
+    expect(prompt).toContain("Your budget is $250 (USD)");
+    expect(prompt).toContain("You are the orchestrator.");
+    expect(prompt).toContain("maxCostUsd");
+    expect(prompt).not.toContain("worktree add");
+    expect(prompt).not.toMatch(/\{\{\w+\}\}/);
+    expect(process.env.LETTA_RUN_MAX_COST_USD).toBe("250");
+    expect(prompt).toContain(String(process.env.LETTA_RUN_SPEND_FILE));
+  });
+
   test("takes --reasoning-effort for the new agent instead of passing it on", () => {
     delete process.env.LETTA_DREAM_REASONING_EFFORT;
     const [, , ...rest] = expandDreamCommand([
