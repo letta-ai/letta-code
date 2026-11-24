@@ -1,7 +1,3 @@
-/**
- * Centralized directory/memfs limits with env overrides for rapid testing.
- */
-
 export const DIRECTORY_LIMIT_ENV = {
   memfsTreeMaxLines: "LETTA_MEMFS_TREE_MAX_LINES",
   memfsTreeMaxChars: "LETTA_MEMFS_TREE_MAX_CHARS",

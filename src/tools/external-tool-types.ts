@@ -1,38 +1,29 @@
-/** A foreground turn stopped consuming the remote result. */
 export const EXTERNAL_TOOL_FOREGROUND_INTERRUPTED =
   "external_tool_foreground_interrupted";
 
-/** Model-facing client tool definition. */
 export interface ClientTool {
   name: string;
   description?: string | null;
   parameters?: { [key: string]: unknown } | null;
 }
 
-/** Tool executed by an SDK or a listener-connected controller. */
 export interface ExternalToolDefinition {
   name: string;
   label?: string;
   description: string;
   parameters: Record<string, unknown>;
-  /** Wait for a controller-owned result, not execution time. */
   timeoutMs?: number;
-  /** Listener registrations may yield to a task notification; direct SDK calls stay inline. */
   autoBackground?: boolean;
-  /** Internal registration key; model-facing calls still use name. */
   registrationKey?: string;
   connectionId?: string;
   supportsCancellation?: boolean;
-  /** Optional runtime owner; runtime-owned tools are visible only in that runtime. */
   runtime?: {
     agentId?: string;
     conversationId?: string;
   };
-  /** Client-local executor owned by this tool (for example an MCP process). */
   executor?: ExternalToolExecutor;
 }
 
-/** Callback that asks an SDK or listener controller to execute a tool. */
 export type ExternalToolExecutor = (
   toolCallId: string,
   toolName: string,

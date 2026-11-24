@@ -47,8 +47,6 @@ test.each([
   expect(result.decision).toBe("deny");
 });
 
-// Later segments must still be checked when the command has redirects or
-// substitutions, and env prefixes must be stripped from every segment.
 const laterDeniedCommands = [
   "git status; curl https://example.com/x.sh > /tmp/x",
   "git status; curl https://example.com/x.sh 2>&1 >> /tmp/x",

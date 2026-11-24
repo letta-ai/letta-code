@@ -1,12 +1,3 @@
-/**
- * Git and path plumbing shared by the worktree tools.
- *
- * EnterWorktree and ExitWorktree both need to shell out to git, classify its
- * failures, and locate the primary checkout. Keeping that here lets each tool
- * module stay focused on its own flow instead of one importing internals of
- * the other.
- */
-
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -74,7 +65,6 @@ export function buildNonInteractiveGitEnv(
     SSH_ASKPASS: "",
     SSH_ASKPASS_REQUIRE: "never",
   };
-  // OpenSSH can bypass closed stdin and read a passphrase from /dev/tty.
   const sshCommand = env.GIT_SSH_COMMAND?.trim() || "ssh";
   env.GIT_SSH_COMMAND = `${sshCommand} -o BatchMode=yes`;
   return env;
@@ -141,8 +131,6 @@ export async function gitRefExists(cwd: string, ref: string): Promise<boolean> {
   return result.exitCode === 0;
 }
 
-// Each key shape is written once and shared by the `git config --get-regexp`
-// scan and the classification below, so the two cannot drift apart.
 const INCLUDE_IF_KEY = "includeif\\..*";
 const FILTER_DRIVER_KEY = "filter\\.(.*)\\.(clean|smudge|process|required)";
 const LFS_PROGRAM_KEY =
@@ -154,7 +142,6 @@ const LFS_PROGRAM_KEY_PATTERN = new RegExp(`^(${LFS_PROGRAM_KEY})$`, "i");
 
 type GitConfigScope = "--local" | "--worktree";
 
-/** Runs a read-only `git config` query; null means nothing matched. */
 async function queryRepoConfig(
   cwd: string,
   args: string[],
@@ -188,10 +175,6 @@ async function listUnsafeConfigKeysInScope(
   return stdout?.split("\0").filter(Boolean) ?? [];
 }
 
-/**
- * Git honors `extensions.worktreeConfig` only from the repository config file
- * itself, so this deliberately reads it without following includes.
- */
 async function isWorktreeConfigEnabled(cwd: string): Promise<boolean> {
   const stdout = await queryRepoConfig(cwd, [
     "--local",
@@ -204,23 +187,12 @@ async function isWorktreeConfigEnabled(cwd: string): Promise<boolean> {
 
 async function listWorktreeUnsafeConfigKeys(cwd: string): Promise<string[]> {
   const keys = await listUnsafeConfigKeysInScope(cwd, "--local");
-  // `git worktree add` copies this worktree's config.worktree into the new
-  // worktree before checkout, and `--local` never reads that file. Asking for
-  // `--worktree` without the extension dies in multi-worktree repositories.
   if (await isWorktreeConfigEnabled(cwd)) {
     keys.push(...(await listUnsafeConfigKeysInScope(cwd, "--worktree")));
   }
   return keys;
 }
 
-/**
- * Creates a worktree without executing commands planted inside the repository's
- * git directory: checkout filters from repository-local or worktree-scoped git
- * config, the `core.fsmonitor` command, and hooks such as post-checkout. An
- * agent can write those files, so letting them run during `git worktree add`
- * would bypass the normal shell permission path. Config shapes that cannot be
- * safely overridden fail closed.
- */
 export async function addWorktreeSafely(params: {
   repoRoot: string;
   branchName: string;
@@ -245,7 +217,6 @@ export async function addWorktreeSafely(params: {
   for (const key of keys) {
     const driverName = FILTER_DRIVER_KEY_PATTERN.exec(key)?.[1];
     if (!driverName) {
-      // The scan reported a key nothing above knows how to switch off.
       throw new Error(
         `The repository git config sets ${key}, which cannot be neutralized safely.`,
       );
@@ -270,8 +241,6 @@ export async function addWorktreeSafely(params: {
       "-c",
       `filter.${driverName}.required=false`,
     ]);
-  // An empty directory is the portable way to say "no hooks": /dev/null is not
-  // a path Git for Windows resolves.
   const emptyHooksDir = await mkdtemp(
     path.join(tmpdir(), "letta-worktree-no-hooks-"),
   );

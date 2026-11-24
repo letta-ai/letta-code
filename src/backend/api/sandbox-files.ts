@@ -100,14 +100,8 @@ export async function uploadFileToSandbox(
 }
 
 export interface SandboxDesktopSession {
-  /** Optional browser viewer URL supplied by the server. */
   viewerUrl?: string;
-  /**
-   * Relay websocket URL. Servers that honor `websocketProtocolAuth` return it
-   * without credentials and put the relay token in `protocols` instead.
-   */
   url: string;
-  /** WebSocket subprotocols carrying the relay token; treat them as secrets. */
   protocols?: string[];
   expiresAt: string;
 }
@@ -146,12 +140,6 @@ export async function createSandboxExposure(
   return (await response.json()) as SandboxExposure;
 }
 
-/**
- * Start the sandbox's graphical desktop and mint a short-lived relay session.
- * The server fixes the lifetime (one hour today). `websocketProtocolAuth`
- * asks for the relay token in Sec-WebSocket-Protocol rather than the relay
- * URL's query string, so it never lands in a request log.
- */
 export async function createSandboxDesktopSession(
   sandboxId: string,
   deps: SandboxFilesApiDeps = defaultDeps,

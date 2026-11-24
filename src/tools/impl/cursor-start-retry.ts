@@ -7,8 +7,6 @@ export function isCursorModelRejection(error: unknown): boolean {
   );
 }
 
-// Retry only the provider's intermittent rejection of an otherwise valid ID.
-// Callers must stop retries after tool execution or cancellation.
 export async function retryCursorStart<T>(
   start: () => Promise<T>,
   canRetry: () => boolean,

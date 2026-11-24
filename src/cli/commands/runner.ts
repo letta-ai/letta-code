@@ -22,7 +22,6 @@ export type CommandHandle = {
     preformatted?: boolean,
   ) => void;
   fail: (output: string) => void;
-  /** Extra context included only in the agent-facing reminder, not shown in the UI. */
   agentHint?: string;
 };
 
@@ -33,7 +32,6 @@ export type CommandFinishedEvent = {
   success: boolean;
   dimOutput?: boolean;
   preformatted?: boolean;
-  /** Extra context included only in the agent-facing reminder, not shown in the UI. */
   agentHint?: string;
 };
 

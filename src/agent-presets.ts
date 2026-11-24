@@ -1,15 +1,3 @@
-/**
- * Package export: `@letta-ai/letta-code/agent-presets`
- *
- * Browser-safe library entry exposing Letta Code's agent creation presets so
- * other surfaces (e.g. the chat web app) can create Letta Code agents through
- * Core with byte-identical payloads to the CLI — personalities, memory block
- * content, system prompts, tags, and the create-agent request builder.
- *
- * Everything reachable from this module must stay free of Node builtins and
- * backend/provider imports; it is bundled with `target: "browser"`.
- */
-
 export {
   type BuildCreatedAgentTagsOptions,
   buildCreatedAgentTags,

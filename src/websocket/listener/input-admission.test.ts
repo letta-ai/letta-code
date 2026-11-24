@@ -79,7 +79,6 @@ function parkQueueItem(runtime: ConversationRuntime, content: string): void {
   } as Parameters<typeof runtime.queueRuntime.enqueue>[0]);
 }
 
-/** Fails one enqueue, then behaves normally, so the retry can be observed. */
 function failNextQueueWrite(runtime: ConversationRuntime): void {
   const realEnqueue = runtime.queueRuntime.enqueue.bind(runtime.queueRuntime);
   let armed = true;
@@ -94,7 +93,6 @@ function failNextQueueWrite(runtime: ConversationRuntime): void {
   }) as typeof runtime.queueRuntime.enqueue;
 }
 
-/** Fails one read of listener teleport state from inside the admitted region. */
 function faultyTeleportMap(): Map<string, PendingTeleport> {
   const pendingTeleports = new Map<string, PendingTeleport>();
   const realIterator = pendingTeleports[Symbol.iterator].bind(pendingTeleports);
@@ -272,9 +270,6 @@ test("ordinary and teleport identities never share a ledger key", () => {
   );
 
   rememberInputDisposition(runtime, teleportInputIdentity("tp-1"), "started");
-  // A client is free to choose any stable id, including one that is spelled
-  // like the teleport ledger key. It must not observe or occupy the teleport
-  // domain's entry.
   expect(
     getInputDisposition(runtime, ordinaryInputIdentity("teleport:tp-1")),
   ).toBeUndefined();
@@ -316,7 +311,6 @@ test("a teleport continuation is not suppressed by a colliding client message id
     trackListenerError: () => {},
     processIncomingMessage,
   });
-  // A parked item keeps the create_message on the queue path.
   parkQueueItem(runtime, "parked");
 
   await handleMessage(createMessageFrame("collide", "teleport:tp-1"));
@@ -426,8 +420,6 @@ test("a queued stable ID survives a throwing status callback without replay", as
   expect(processQueuedTurn).toHaveBeenCalledTimes(1);
   expect(listener.acceptedInputDispositionLedger.entries.size).toBe(1);
 
-  // An always-throwing callback must not leave the settled pump unusable for
-  // newly accepted queued work.
   parkQueueItem(runtime, "follow-up-parked");
   dispatchInboundMessageWhenReady({
     listener,
@@ -455,8 +447,6 @@ test("a queued stable ID survives a throwing status callback without replay", as
     disposition: "queued",
   });
 
-  // Exercise the queue-pump catch path itself: its recovery status emission is
-  // also best-effort even when the host callback always throws.
   parkQueueItem(runtime, "catch-path-parked");
   const failingQueuedTurn = mock(async () => {
     throw new Error("queued turn failed");
@@ -550,8 +540,6 @@ test("a teleport admission that throws after admission releases its reservation"
     getInputDisposition(runtime, teleportInputIdentity("tp-1")),
   ).toBeUndefined();
 
-  // Cloud retries the same teleport id; a leaked placeholder would answer
-  // "Stable input ledger is at capacity" and strand the conversation.
   await handleMessage(teleportContinueFrame("tp-retry", "tp-1"));
   await Promise.all(tasks);
 

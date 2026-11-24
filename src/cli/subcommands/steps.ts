@@ -14,7 +14,6 @@ interface StepsDependencies {
   retrieveTrace?: (id: string) => Promise<ProviderTrace | null>;
 }
 
-/** Read-only access to existing provider traces, using ordinary CLI auth. */
 export async function runStepsSubcommand(
   argv: string[],
   deps: StepsDependencies = {},
@@ -72,8 +71,6 @@ export async function runStepsSubcommand(
     )(values.step);
     if (
       trace &&
-      // Trace identifiers are nullable in the API; only reject identifiers
-      // that are present and disagree.
       ((trace.agent_id != null && trace.agent_id !== values.agent) ||
         (trace.step_id != null && trace.step_id !== step.id))
     ) {

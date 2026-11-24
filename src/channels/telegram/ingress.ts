@@ -1,12 +1,3 @@
-/**
- * Pure Telegram inbound normalization shared by the local grammY adapter and
- * remote hosts (for example Cloud webhook ingress) through the public
- * `@letta-ai/letta-code/channels/telegram` subpath.
- *
- * Everything here operates on plain Bot API update shapes; no grammY import
- * and no node builtins so remote hosts reuse the exact local semantics.
- */
-
 import type { ChannelReplyContext } from "@/channels/types";
 import {
   extractTelegramMessageText,
@@ -194,10 +185,6 @@ export function getTelegramReactionSenderId(
   return null;
 }
 
-/**
- * Diff a Bot API `message_reaction` update into discrete added/removed
- * reaction events, using the same token normalization the local adapter uses.
- */
 export function diffTelegramReactionUpdate(
   update: Pick<TelegramReactionUpdate, "old_reaction" | "new_reaction">,
 ): Array<{ action: "added" | "removed"; emoji: string }> {

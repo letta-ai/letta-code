@@ -9,13 +9,6 @@ import { openAICodexResponsesApi } from "@earendil-works/pi-ai/api/openai-codex-
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
 
-/**
- * ProviderStreams implementations for every pi-ai API, keyed by `model.api`.
- * Used by providers whose models may span multiple APIs (mod-registered
- * providers) and by dispatch-only providers for models whose owner has not
- * yet been migrated onto the Models runtime. All implementations are lazy —
- * the underlying API module loads on first stream.
- */
 export function knownApiStreams(): Partial<Record<KnownApi, ProviderStreams>> {
   return {
     "anthropic-messages": anthropicMessagesApi(),

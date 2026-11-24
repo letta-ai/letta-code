@@ -89,27 +89,21 @@ function defineValues(args: string[], prefix: string): string[] {
 }
 
 test("isFsSandboxEnabled is on by default and only an explicit off-switch disables it", () => {
-  // Default on (unset / empty).
   expect(isFsSandboxEnabled({})).toBe(true);
   expect(isFsSandboxEnabled({ LETTA_FS_SANDBOX: "" })).toBe(true);
-  // Explicit on values still on.
   expect(isFsSandboxEnabled({ LETTA_FS_SANDBOX: "1" })).toBe(true);
   expect(isFsSandboxEnabled({ LETTA_FS_SANDBOX: "true" })).toBe(true);
   expect(isFsSandboxEnabled({ LETTA_FS_SANDBOX: "TRUE" })).toBe(true);
-  // Only the off-switch turns it off.
   expect(isFsSandboxEnabled({ LETTA_FS_SANDBOX: "0" })).toBe(false);
   expect(isFsSandboxEnabled({ LETTA_FS_SANDBOX: "false" })).toBe(false);
   expect(isFsSandboxEnabled({ LETTA_FS_SANDBOX: "FALSE" })).toBe(false);
 });
 
 test("isShellSandboxEnabled is off by default and only an explicit on-switch enables it", () => {
-  // Default off (unset / empty): only memory subagents are sandboxed.
   expect(isShellSandboxEnabled({})).toBe(false);
   expect(isShellSandboxEnabled({ LETTA_FS_SANDBOX: "" })).toBe(false);
-  // Explicit off values stay off.
   expect(isShellSandboxEnabled({ LETTA_FS_SANDBOX: "0" })).toBe(false);
   expect(isShellSandboxEnabled({ LETTA_FS_SANDBOX: "false" })).toBe(false);
-  // Only the on-switch turns it on.
   expect(isShellSandboxEnabled({ LETTA_FS_SANDBOX: "1" })).toBe(true);
   expect(isShellSandboxEnabled({ LETTA_FS_SANDBOX: "true" })).toBe(true);
   expect(isShellSandboxEnabled({ LETTA_FS_SANDBOX: "TRUE" })).toBe(true);
@@ -119,7 +113,6 @@ test("wraps an API subagent with the memory-subagent profile under the backend",
   const result = wrapSubagentLauncher(baseInput());
   expect(result).not.toBeNull();
   expect(result?.command).toBe(SANDBOX_EXEC_PATH);
-  // Original launcher survives intact after the -- separator.
   const sep = result?.args.indexOf("--") ?? -1;
   expect(sep).toBeGreaterThan(0);
   expect(result?.args.slice(sep + 1)).toEqual([
@@ -161,8 +154,6 @@ test("wraps a LOCAL subagent with the memory-subagent profile (deny-list against
     inheritedPrimaryRoot: memoryRoot,
     localBackendStorageDir: storageDir,
   });
-  // Local is no longer skipped: the child is confined under the backend, with
-  // its policy keyed to the memfs tree (asserted in sandbox-policy.test.ts).
   expect(result).not.toBeNull();
   expect(result?.command).toBe(SANDBOX_EXEC_PATH);
   expect(result?.sandboxEnv[SANDBOX_ENV_VAR]).toBe("seatbelt");
@@ -228,7 +219,6 @@ test("an inherited scratchpad outside ~/.letta stays writable", () => {
       scratchpadDir: scratchpad,
     });
     expect(result).not.toBeNull();
-    // Created up front so bwrap's --bind-try does not skip it.
     expect(existsSync(scratchpad)).toBe(true);
     expect(
       defineValues(result?.args ?? [], "-DBASEWRITABLE_").map((value) =>

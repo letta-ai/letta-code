@@ -16,7 +16,6 @@ export interface ApiFetchOptions {
   signal?: AbortSignal;
   baseUrl?: string;
   apiKey?: string;
-  /** `null` suppresses the inherited headless acting user for this request. */
   actingUserId?: string | null;
   headers?: Record<string, string>;
   query?: Record<string, string | number | boolean | null | undefined>;
@@ -44,10 +43,6 @@ export async function getApiRequestConfig(options?: {
       settings.env?.LETTA_BASE_URL ||
       LETTA_CLOUD_API_URL,
     apiKey:
-      // The caller's abort budget reaches the OAuth refresh beneath the
-      // session token lookup (evil-shub round-9 P1): apiFetch observes
-      // options.signal on its own fetch but the refresh PRE-fetch used to
-      // run unbounded, hanging the caller past its deadline.
       (await getSessionAccessToken(options)) ||
       process.env.LETTA_API_KEY ||
       settings.env?.LETTA_API_KEY ||
@@ -69,20 +64,13 @@ function maybeMapKnownApiError(
       typeof errorData.error === "string" &&
       errorData.error.includes("only available for pro or enterprise")
     ) {
-      return new Error("PLAN_UPGRADE_REQUIRED");
+      return Object.assign(new Error("PLAN_UPGRADE_REQUIRED"), { status });
     }
-  } catch {
-    // Fall through to the generic API error below.
-  }
+  } catch {}
 
   return null;
 }
 
-/**
- * Centralized seam for direct Letta API fetches that are not covered by the
- * generated SDK. Keep raw route fetches here so local-mode can swap this layer
- * without hunting through UI/agent code.
- */
 export async function apiFetch(
   path: string,
   options: ApiFetchOptions = {},

@@ -30,8 +30,6 @@ async function createRepo(tempDirs: string[]): Promise<string> {
   const repo = await mkdtemp(path.join(tmpdir(), "letta-worktree-safe-add-"));
   tempDirs.push(repo);
   git(["init", "-b", "main"], repo);
-  // Windows runners enable core.autocrlf, which would check the payload out
-  // with CRLF and break the exact-bytes assertions.
   git(["config", "core.autocrlf", "false"], repo);
   await writeFile(
     path.join(repo, ".gitattributes"),
@@ -90,7 +88,6 @@ function isProcessStillRunning(pid: number): boolean {
     const endCommand = stat.lastIndexOf(")");
     const state =
       endCommand === -1 ? "" : stat.slice(endCommand + 2, endCommand + 3);
-    // kill(pid, 0) still succeeds after exit while Linux waits to reap a zombie.
     return state !== "Z" && state !== "X";
   } catch {
     return false;
@@ -144,13 +141,10 @@ describe("worktree Git runner", () => {
 
   test.each([
     ["repository-local", []],
-    // `git worktree add` copies config.worktree into the new worktree before
-    // checkout, and `git config --local` never reads that file.
     ["worktree-scoped", ["--worktree"]],
   ])("neutralizes %s checkout filters", async (_label, scope) => {
     const repo = await createRepo(tempDirs);
     git(["config", "extensions.worktreeConfig", "true"], repo);
-    // A failing required smudge filter fails a plain `git worktree add`.
     git(["config", ...scope, "filter.watcher.smudge", "false"], repo);
     git(["config", ...scope, "filter.watcher.required", "true"], repo);
 
@@ -187,8 +181,6 @@ describe("worktree Git runner", () => {
 
   test("adds further worktrees when worktree-scoped config is disabled", async () => {
     const repo = await createRepo(tempDirs);
-    // `git config --worktree` dies in a multi-worktree repository unless
-    // extensions.worktreeConfig is on, so the scan must not rely on it.
     await addWorktree(repo, "first");
     await addWorktree(repo, "second");
 
@@ -197,7 +189,6 @@ describe("worktree Git runner", () => {
 
   test("does not run repository hooks", async () => {
     const repo = await createRepo(tempDirs);
-    // A failing post-checkout hook fails a plain `git worktree add`.
     const hook = path.join(repo, ".git", "hooks", "post-checkout");
     await writeFile(hook, "#!/bin/sh\nexit 1\n");
     await chmod(hook, 0o755);

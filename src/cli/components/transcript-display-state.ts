@@ -12,8 +12,6 @@ const listeners: Record<DisplayKind, Set<() => void>> = {
 const repaintListeners = new Set<() => void>();
 
 function notifyDisplayChange(kind: DisplayKind): void {
-  // Repaint listeners run first so Ink forgets the previous static transcript
-  // before the changed display state remounts <Static>.
   for (const listener of repaintListeners) listener();
   for (const listener of listeners[kind]) listener();
 }

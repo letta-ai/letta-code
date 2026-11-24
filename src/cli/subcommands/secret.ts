@@ -1,10 +1,3 @@
-/**
- * `letta secret` subcommand for managing agent-scoped secrets.
- * Values are ingested through the environment (--env) or stdin so agents can
- * persist credentials without the value appearing in shell history, process
- * listings, or agent context.
- */
-
 import { parseArgs } from "node:util";
 import { settingsManager } from "@/settings-manager";
 import {

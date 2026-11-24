@@ -20,13 +20,6 @@ export function isGroupJid(jid: string | null | undefined): boolean {
   return !!jid && stripDeviceSuffix(jid).endsWith(WHATSAPP_GROUP_SUFFIX);
 }
 
-/**
- * Strict phone-JID check: suffix must be `@s.whatsapp.net` AND the localpart
- * (before `@`) must be all digits (device suffix `:N` allowed and stripped).
- *
- * Use this instead of {@link isPhoneJid} when accepting external/untrusted
- * input that could carry a non-numeric localpart (e.g. `garbage@s.whatsapp.net`).
- */
 export function isStrictPhoneJid(jid: string | null | undefined): boolean {
   if (!jid) return false;
   const normalized = stripDeviceSuffix(jid);
@@ -35,13 +28,6 @@ export function isStrictPhoneJid(jid: string | null | undefined): boolean {
   return localpart.length > 0 && /^\d+$/.test(localpart);
 }
 
-/**
- * Strict LID-JID check: suffix must be `@lid` AND the localpart must be all
- * digits (device suffix `:N` allowed and stripped).
- *
- * Use this instead of {@link isLidJid} when accepting external/untrusted
- * input that could carry a non-numeric localpart.
- */
 export function isStrictLidJid(jid: string | null | undefined): boolean {
   if (!jid) return false;
   const normalized = stripDeviceSuffix(jid);

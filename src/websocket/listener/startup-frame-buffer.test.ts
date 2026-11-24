@@ -167,8 +167,6 @@ describe("startup frame buffering", () => {
     staleBuffer.abort();
     closeListenerConnection(runtime, staleConnection.id);
 
-    // App Server may have unrelated B/C connections starting concurrently. They
-    // cannot claim A's requestless input or its output/approval ownership.
     for (const connectionId of ["connection-b", "connection-c"]) {
       const unrelated = openListenerConnection({
         runtime,
@@ -289,8 +287,6 @@ describe("startup frame buffering", () => {
       },
     });
 
-    // The control socket is already buffering while the stream channel is
-    // being prepared, so no ListenerConnectionState exists yet.
     const owner = reserveStartupIngressOwner(runtime, options);
     const buffer = new StartupFrameBuffer();
     for (const frame of [legacyFrame, requestlessV2Frame, ackCapableFrame]) {
@@ -299,9 +295,6 @@ describe("startup frame buffering", () => {
       });
     }
 
-    // The attempt dies in that window. Both the open-handler catch and the
-    // socket close handler abort the same ingress; the frames must be parked
-    // once, not twice and not never.
     expect(handoffRequestlessStartupFrames(runtime, owner, buffer)).toBe(true);
     buffer.abort();
     expect(handoffRequestlessStartupFrames(runtime, owner, buffer)).toBe(false);
@@ -328,7 +321,6 @@ describe("startup frame buffering", () => {
       legacyFrame.toString(),
       requestlessV2Frame.toString(),
     ]);
-    // Claiming is non-destructive until the successor accepts the payload.
     expect(runtime.pendingStartupFramesByLineage.has(owner.lineageId)).toBe(
       true,
     );
@@ -371,8 +363,6 @@ describe("startup frame buffering", () => {
         runtime.pendingStartupFramesByLineage.get(owner.lineageId),
       ).toEqual({ kind: "overflow", capacity: expectedCapacity });
 
-      // The close path runs after overflow cleared local data. It must not
-      // replace durable poison with an apparently healthy empty handoff.
       expect(handoffRequestlessStartupFrames(runtime, owner, buffer)).toBe(
         false,
       );

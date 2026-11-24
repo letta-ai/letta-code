@@ -134,7 +134,7 @@ export function resolveAgentWebhookTarget(currentAgentId) {
 }
 
 export function safeAgentWebhook(webhook) {
-  const safe = /** @type {Record<string, unknown>} */ ({});
+  const safe = {};
   for (const field of [
     "agent_id",
     "created_at",
@@ -759,7 +759,6 @@ function requireWebhookId(args) {
   return requireString(args["webhook-id"], "Pass --webhook-id");
 }
 
-// "cloud" maps to null: run webhook turns in the agent's Cloud sandbox.
 function targetDeviceIdFromArgs(args) {
   const computer = requireString(
     args.computer,

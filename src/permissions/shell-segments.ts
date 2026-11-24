@@ -1,12 +1,3 @@
-// src/permissions/shell-segments.ts
-// Splitting compound shell commands into segments, shared by the read-only
-// auto-approval check and deny-rule matching.
-
-/**
- * True when the `&` at `input[i]` is the background operator, which ends a
- * command like `;` does. `current` is the segment text read so far.
- * `&&`, `&>` and `>&N` / `<&N` fd duplication are not separators.
- */
 export function isBackgroundAmpersand(
   input: string,
   i: number,
@@ -29,10 +20,6 @@ function isSegmentSeparator(input: string, i: number, current: string) {
   );
 }
 
-/**
- * Split on unquoted `;`, `|`, `&`, `&&`, `||` and newlines, keeping redirects
- * inside their segment. Returns null on command substitution.
- */
 export function splitShellSegmentsAllowUnsafeRedirects(
   input: string,
 ): string[] | null {
@@ -121,12 +108,6 @@ export function splitShellSegmentsAllowUnsafeRedirects(
   return segments.map((segment) => segment.trim()).filter(Boolean);
 }
 
-/**
- * Find the end of a `$(...)`, `<(...)`, `>(...)` or backtick substitution
- * starting at `start`.
- * Returns the index just past it and its body. Unterminated substitutions
- * run to the end of the input.
- */
 function readSubstitution(
   input: string,
   start: number,
@@ -141,7 +122,6 @@ function readSubstitution(
     return { end, body: input.slice(start + 1, Math.min(i, input.length)) };
   }
 
-  // `<(...)` and `>(...)` run their body too, but only outside quotes.
   const isProcessSubstitution =
     allowProcessSubstitution &&
     (input.startsWith("<(", start) || input.startsWith(">(", start));
@@ -175,12 +155,6 @@ function readSubstitution(
   return { end: input.length, body: input.slice(start + 2) };
 }
 
-/**
- * Split a command into every segment that may run, for deny-rule matching.
- * Unlike the read-only splitters this never bails out: redirects stay in
- * their segment, and the bodies of `$(...)`, backtick and `<(...)` / `>(...)`
- * process substitutions are split and returned as extra segments.
- */
 export function splitShellSegmentsForDenyMatching(input: string): string[] {
   const segments: string[] = [];
   const nested: string[] = [];

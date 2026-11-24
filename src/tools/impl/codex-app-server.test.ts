@@ -27,15 +27,12 @@ class FakeCodexTransport {
   steerRace = false;
   completeBeforeTurnStartSettles = false;
   initializeError = false;
-  /** Fail this many upcoming turns, each with its own turn ID. */
   failNextTurns = 0;
   failure: Record<string, unknown> = {
     message: CAPACITY_MESSAGE,
     codexErrorInfo: { responseStreamConnectionFailed: { httpStatusCode: 409 } },
   };
-  /** Complete the first turn started after the queued failures. */
   completeAfterFailures?: string;
-  /** Called after a successful `turn/start` reply, e.g. to stream items. */
   onTurnStarted?: () => void;
   private failedTurns = 0;
   account: Record<string, unknown> | null = {
@@ -108,6 +105,7 @@ class FakeCodexTransport {
       if (this.account) this.reply(request.id, this.account);
       else this.send({ id: request.id, error: { message: "unknown method" } });
     }
+    if (method === "skills/extraRoots/set") this.reply(request.id, {});
     if (method === "thread/start" || method === "thread/resume") {
       const params = request.params as Record<string, unknown>;
       if (typeof params.threadId === "string") this.threadId = params.threadId;
@@ -199,6 +197,22 @@ class FakeCodexTransport {
 
 afterEach(() => __resetCodexSessionsForTests());
 
+test("registers Codex repository skills before thread startup", async () => {
+  const fake = new FakeCodexTransport();
+  const options = {
+    prompt: "Work",
+    parentAgentId: "p",
+    cwd: "/",
+    cloudSkillRepositories: ["api"],
+  };
+  await startCodexTurn(options, { createTransport: () => fake.transport() });
+  const [roots, thread] = fake.requests.slice(-3, -1);
+  expect(roots?.method).toBe("skills/extraRoots/set");
+  expect(roots?.params).toEqual({
+    extraRoots: [join("/root/workspace", "api", ".agents", "skills")],
+  });
+  expect(thread?.method).toBe("thread/start");
+});
 describe("Codex app-server lifecycle", () => {
   test("starts a native thread and turn, then resolves completion", async () => {
     const fake = new FakeCodexTransport();
@@ -283,7 +297,6 @@ describe("Codex app-server lifecycle", () => {
       arguments: { id: "LET-1" },
       status: "inProgress",
     });
-    // Web search carries its query only once it completes.
     fake.item("item/started", { type: "webSearch", id: "ws-1", query: "" });
     fake.item("item/completed", {
       type: "webSearch",
@@ -316,7 +329,6 @@ describe("Codex app-server lifecycle", () => {
       { createTransport: () => fake.transport() },
     );
     const message = { type: "agentMessage", id: "m-1", text: "Running tests." };
-    // Started items carry no text yet; only the completed message counts.
     fake.item("item/started", { ...message, text: "" });
     fake.item("item/completed", message);
     fake.item("item/completed", message);
@@ -760,14 +772,11 @@ describe("Codex capacity failures", () => {
       },
       { createTransport: () => fake.transport(), sleep: async () => {} },
     );
-    // The first attempt says something, then fails for capacity.
     fake.item("item/completed", {
       type: "agentMessage",
       id: "m-1",
       text: "Checking the repo.",
     });
-    // The retry replays the prompt, so Codex repeats the message under a new
-    // item ID before saying something new.
     fake.onTurnStarted = () => {
       fake.item("item/completed", {
         type: "agentMessage",
@@ -862,7 +871,6 @@ describe("Codex capacity failures", () => {
       parentAgentId: "parent",
       cwd: "/repo",
     });
-    // The first attempt fails for capacity; interrupt before the retry starts.
     await receipt.interrupt?.();
     const result = await receipt.completion;
     expect(result?.error).toStartWith(CODEX_CAPACITY_ERROR);

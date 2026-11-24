@@ -15,12 +15,6 @@ export type ShellAnalysisNode =
       body: ShellAnalysisNode[];
     };
 
-/**
- * Check if a redirect at position `pos` in `input` is safe to allow.
- * Safe redirects write only to /dev/null or duplicate file descriptors (>&N).
- * Returns the number of characters consumed by the redirect operator and target
- * (0 if the redirect is not safe and should cause rejection).
- */
 function tryConsumeSafeRedirect(input: string, pos: number): number {
   const isAppend = input.startsWith(">>", pos);
   const opLen = isAppend ? 2 : 1;
@@ -58,12 +52,6 @@ function tryConsumeSafeRedirect(input: string, pos: number): number {
   return target === "/dev/null" ? cursor - pos : 0;
 }
 
-/**
- * Split a shell command into segments on unquoted separators: |, &, &&, ||, ;
- * Returns null if dangerous operators are found:
- * - redirects (>, >>) outside quotes (unless targeting /dev/null or fd duplication)
- * - command substitution ($(), backticks) outside single quotes
- */
 export function splitShellSegments(input: string): string[] | null {
   const segments: string[] = [];
   let current = "";
@@ -159,7 +147,6 @@ export function splitShellSegments(input: string): string[] | null {
       continue;
     }
 
-    // Input fd duplication (`<&3`, `<&-`) is not a command separator.
     if (ch === "&" && /<$/.test(current)) {
       const fd = input.slice(i + 1).match(/^(?:\d+|-)/);
       if (fd) {
@@ -169,9 +156,6 @@ export function splitShellSegments(input: string): string[] | null {
       }
     }
 
-    // A lone `&` (background operator) starts a new command, like `;`.
-    // `&&` is handled above; `>&N`/`&>` redirects are consumed or rejected
-    // before we get here.
     if (ch === ";" || ch === "&") {
       segments.push(current);
       current = "";
@@ -201,15 +185,6 @@ export function splitShellSegments(input: string): string[] | null {
   return segments.map((segment) => segment.trim()).filter(Boolean);
 }
 
-/**
- * Split a shell command into segments on top-level separators while tolerating
- * `$(...)` command substitutions. This is useful for approval rule generation
- * and matching, where we still want to identify the outer command even when a
- * setup segment contains an inner pipe (e.g. `export FOO=$(grep ... | cut ...)`).
- *
- * Unlike `splitShellSegments`, this still rejects unsafe redirects, but it does
- * not reject `$()` command substitutions.
- */
 export function splitShellSegmentsAllowCommandSubstitution(
   input: string,
 ): string[] | null {
@@ -355,7 +330,6 @@ export function splitShellSegmentsAllowCommandSubstitution(
       continue;
     }
 
-    // Input fd duplication (`<&3`, `<&-`) is not a command separator.
     if (ch === "&" && /<$/.test(current)) {
       const fd = input.slice(i + 1).match(/^(?:\d+|-)/);
       if (fd) {
@@ -365,9 +339,6 @@ export function splitShellSegmentsAllowCommandSubstitution(
       }
     }
 
-    // A lone `&` (background operator) starts a new command, like `;`.
-    // `&&` is handled above; `>&N`/`&>` redirects are consumed or rejected
-    // before we get here.
     if (ch === ";" || ch === "&") {
       segments.push(current);
       current = "";
@@ -520,10 +491,6 @@ function parseIfNode(
     }
 
     if (segment === "else" || segment.startsWith("else ")) {
-      // Keep the first phase conservative: `else` bodies introduce another
-      // branch that permission validation would need to evaluate. Rejecting the
-      // structure here keeps the analysis boundary simple until we explicitly
-      // decide to support it.
       return null;
     }
 
@@ -607,11 +574,6 @@ function parseForNode(
   return null;
 }
 
-/**
- * Convert already-split shell segments into a structured analysis tree.
- * Returns null when the segment sequence uses unsupported or malformed control
- * flow so callers can fall back to a conservative deny.
- */
 export function parseShellAnalysisSegments(
   segments: string[],
 ): ShellAnalysisNode[] | null {

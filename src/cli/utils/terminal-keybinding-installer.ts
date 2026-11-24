@@ -1,8 +1,3 @@
-/**
- * Terminal keybinding installer for VS Code/Cursor/Windsurf
- * Installs Shift+Enter keybinding that sends ESC+CR for multi-line input
- */
-
 import {
   copyFileSync,
   existsSync,
@@ -22,16 +17,11 @@ interface VSCodeKeybinding {
   when?: string;
 }
 
-/**
- * Detect terminal type from environment variables
- */
 export function detectTerminalType(): TerminalType {
-  // Check for Cursor first (it sets TERM_PROGRAM=vscode for compatibility)
   if (process.env.CURSOR_TRACE_ID || process.env.CURSOR_CHANNEL) {
     return "cursor";
   }
 
-  // Check for Windsurf
   if (process.env.WINDSURF_TRACE_ID || process.env.WINDSURF_CHANNEL) {
     return "windsurf";
   }
@@ -42,22 +32,15 @@ export function detectTerminalType(): TerminalType {
   if (termProgram === "cursor") return "cursor";
   if (termProgram === "windsurf") return "windsurf";
 
-  // Fallback checks
   if (process.env.VSCODE_INJECTION === "1") return "vscode";
 
   return null;
 }
 
-/**
- * Check if running in a VS Code-like terminal (xterm.js-based)
- */
 export function isVSCodeLikeTerminal(): boolean {
   return detectTerminalType() !== null;
 }
 
-/**
- * Get platform-specific path to keybindings.json
- */
 export function getKeybindingsPath(terminal: TerminalType): string | null {
   if (!terminal) return null;
 
@@ -93,9 +76,6 @@ export function getKeybindingsPath(terminal: TerminalType): string | null {
   return null;
 }
 
-/**
- * The keybinding we install - Shift+Enter sends ESC+CR
- */
 const SHIFT_ENTER_KEYBINDING: VSCodeKeybinding = {
   key: "shift+enter",
   command: "workbench.action.terminal.sendSequence",
@@ -103,26 +83,16 @@ const SHIFT_ENTER_KEYBINDING: VSCodeKeybinding = {
   when: "terminalFocus",
 };
 
-/**
- * Strip single-line and multi-line comments from JSONC
- * Also handles trailing commas
- */
 function stripJsonComments(jsonc: string): string {
-  // Remove single-line comments (// ...)
   let result = jsonc.replace(/\/\/.*$/gm, "");
 
-  // Remove multi-line comments (/* ... */)
   result = result.replace(/\/\*[\s\S]*?\*\//g, "");
 
-  // Remove trailing commas before ] or }
   result = result.replace(/,(\s*[}\]])/g, "$1");
 
   return result;
 }
 
-/**
- * Parse keybindings.json (handles JSONC with comments)
- */
 function parseKeybindings(content: string): VSCodeKeybinding[] | null {
   try {
     const stripped = stripJsonComments(content);
@@ -134,9 +104,6 @@ function parseKeybindings(content: string): VSCodeKeybinding[] | null {
   }
 }
 
-/**
- * Check if our Shift+Enter keybinding already exists
- */
 export function keybindingExists(keybindingsPath: string): boolean {
   if (!existsSync(keybindingsPath)) return false;
 
@@ -157,9 +124,6 @@ export function keybindingExists(keybindingsPath: string): boolean {
   }
 }
 
-/**
- * Create backup of keybindings.json
- */
 function createBackup(keybindingsPath: string): string | null {
   if (!existsSync(keybindingsPath)) return null;
 
@@ -168,7 +132,6 @@ function createBackup(keybindingsPath: string): string | null {
     copyFileSync(keybindingsPath, backupPath);
     return backupPath;
   } catch {
-    // Backup failed, but we can continue without it
     return null;
   }
 }
@@ -180,17 +143,12 @@ export interface InstallResult {
   alreadyExists?: boolean;
 }
 
-/**
- * Install the Shift+Enter keybinding
- */
 export function installKeybinding(keybindingsPath: string): InstallResult {
   try {
-    // Check if already exists
     if (keybindingExists(keybindingsPath)) {
       return { success: true, alreadyExists: true };
     }
 
-    // Ensure parent directory exists
     const parentDir = dirname(keybindingsPath);
     if (!existsSync(parentDir)) {
       mkdirSync(parentDir, { recursive: true });
@@ -199,7 +157,6 @@ export function installKeybinding(keybindingsPath: string): InstallResult {
     let keybindings: VSCodeKeybinding[] = [];
     let backupPath: string | null = null;
 
-    // Read existing keybindings if file exists
     if (existsSync(keybindingsPath)) {
       backupPath = createBackup(keybindingsPath);
 
@@ -216,10 +173,8 @@ export function installKeybinding(keybindingsPath: string): InstallResult {
       keybindings = parsed;
     }
 
-    // Add our keybinding
     keybindings.push(SHIFT_ENTER_KEYBINDING);
 
-    // Write back
     const newContent = `${JSON.stringify(keybindings, null, 2)}\n`;
     writeFileSync(keybindingsPath, newContent, { encoding: "utf-8" });
 
@@ -236,13 +191,10 @@ export function installKeybinding(keybindingsPath: string): InstallResult {
   }
 }
 
-/**
- * Remove the Shift+Enter keybinding we installed
- */
 export function removeKeybinding(keybindingsPath: string): InstallResult {
   try {
     if (!existsSync(keybindingsPath)) {
-      return { success: true }; // Nothing to remove
+      return { success: true };
     }
 
     const content = readFileSync(keybindingsPath, { encoding: "utf-8" });
@@ -255,7 +207,6 @@ export function removeKeybinding(keybindingsPath: string): InstallResult {
       };
     }
 
-    // Filter out our keybinding
     const filtered = keybindings.filter(
       (kb) =>
         !(
@@ -265,7 +216,6 @@ export function removeKeybinding(keybindingsPath: string): InstallResult {
         ),
     );
 
-    // Write back
     const newContent = `${JSON.stringify(filtered, null, 2)}\n`;
     writeFileSync(keybindingsPath, newContent, { encoding: "utf-8" });
 
@@ -279,9 +229,6 @@ export function removeKeybinding(keybindingsPath: string): InstallResult {
   }
 }
 
-/**
- * Convenience function to install keybinding for current terminal
- */
 export function installKeybindingForCurrentTerminal(): InstallResult {
   const terminal = detectTerminalType();
   if (!terminal) {
@@ -302,9 +249,6 @@ export function installKeybindingForCurrentTerminal(): InstallResult {
   return installKeybinding(path);
 }
 
-/**
- * Convenience function to remove keybinding for current terminal
- */
 export function removeKeybindingForCurrentTerminal(): InstallResult {
   const terminal = detectTerminalType();
   if (!terminal) {
@@ -325,30 +269,11 @@ export function removeKeybindingForCurrentTerminal(): InstallResult {
   return removeKeybinding(path);
 }
 
-// ============================================================================
-// WezTerm keybinding support
-// WezTerm has a bug where Delete key sends 0x08 (backspace) instead of ESC[3~
-// when kitty keyboard protocol is enabled. This keybinding fixes it.
-// WezTerm auto-reloads config, so the fix takes effect immediately.
-// See: https://github.com/wez/wezterm/issues/3758
-// ============================================================================
-
-/**
- * Check if running in WezTerm
- */
 export function isWezTerm(): boolean {
   return process.env.TERM_PROGRAM === "WezTerm";
 }
 
-/**
- * Get WezTerm config path
- */
 export function getWezTermConfigPath(): string {
-  // WezTerm looks for config in these locations (in order):
-  // 1. $WEZTERM_CONFIG_FILE
-  // 2. $XDG_CONFIG_HOME/wezterm/wezterm.lua
-  // 3. ~/.config/wezterm/wezterm.lua
-  // 4. ~/.wezterm.lua
   if (process.env.WEZTERM_CONFIG_FILE) {
     return process.env.WEZTERM_CONFIG_FILE;
   }
@@ -362,13 +287,9 @@ export function getWezTermConfigPath(): string {
   const configPath = join(homedir(), ".config", "wezterm", "wezterm.lua");
   if (existsSync(configPath)) return configPath;
 
-  // Default to ~/.wezterm.lua
   return join(homedir(), ".wezterm.lua");
 }
 
-/**
- * The Lua code to fix Delete key in WezTerm
- */
 const WEZTERM_DELETE_FIX = `
 -- Letta Code: Fix Delete key sending wrong sequence with kitty keyboard protocol
 -- See: https://github.com/wez/wezterm/issues/3758
@@ -497,8 +418,6 @@ function replaceLuaLine(
 export function injectWezTermDeleteFix(content: string): string {
   let nextContent = content;
 
-  // For simple configs that return a table directly, we need to modify them
-  // to use a config variable. Check if it's a simple "return {" style config.
   const returnTableLine = findLastMatchingLuaLine(
     nextContent,
     RETURN_TABLE_LINE,
@@ -533,15 +452,11 @@ return config
   return `${nextContent.trimEnd()}\n${WEZTERM_DELETE_FIX}\n`;
 }
 
-/**
- * Check if WezTerm config already has our Delete key fix
- */
 export function wezTermDeleteFixExists(configPath: string): boolean {
   if (!existsSync(configPath)) return false;
 
   try {
     const content = readFileSync(configPath, { encoding: "utf-8" });
-    // Check if our fix or equivalent already exists
     return (
       content.includes("Letta Code: Fix Delete key") ||
       (content.includes("key = 'Delete'") &&
@@ -553,14 +468,10 @@ export function wezTermDeleteFixExists(configPath: string): boolean {
   }
 }
 
-/**
- * Install WezTerm Delete key fix
- */
 export function installWezTermDeleteFix(): InstallResult {
   const configPath = getWezTermConfigPath();
 
   try {
-    // Check if already installed
     if (wezTermDeleteFixExists(configPath)) {
       return { success: true, alreadyExists: true };
     }
@@ -576,7 +487,6 @@ export function installWezTermDeleteFix(): InstallResult {
 
     content = injectWezTermDeleteFix(content);
 
-    // Ensure parent directory exists
     const parentDir = dirname(configPath);
     if (!existsSync(parentDir)) {
       mkdirSync(parentDir, { recursive: true });

@@ -33,6 +33,7 @@ test("forwards request and streaming response bytes unchanged without storing au
       parent_conversation_id: "conv-test",
       task_id: "task-test",
       worker_session_id: "session-test",
+      task_description: "Check private response handling",
     },
     secrets: [],
     emit: (row) => rows.push(row),
@@ -55,6 +56,7 @@ test("forwards request and streaming response bytes unchanged without storing au
     expect(JSON.stringify(rows)).not.toContain("private");
     const row = rows[0];
     if (!row) throw new Error("Missing trace");
+    expect(row.task_description).toBe("Check [REDACTED] response handling");
     expect(row.prompt_tokens).toBe(2);
     expect(row.completion_tokens).toBe(3);
     expect(JSON.parse(row.response_json).response.id).toBe("r");
@@ -64,7 +66,7 @@ test("forwards request and streaming response bytes unchanged without storing au
   }
 });
 
-test("compressed responses pass through and oversized payloads keep a metadata row", async () => {
+test("compressed responses pass through and each oversized payload is compacted independently", async () => {
   const { gzipSync } = await import("node:zlib");
   const body = JSON.stringify({
     model: "private-model",
@@ -74,7 +76,6 @@ test("compressed responses pass through and oversized payloads keep a metadata r
   let large = false;
   const upstream = createServer(async (req, res) => {
     for await (const _chunk of req) {
-      /* consume each request before reusing the connection */
     }
     if (large) {
       res.writeHead(200, { "content-type": "application/json" });
@@ -91,7 +92,7 @@ test("compressed responses pass through and oversized payloads keep a metadata r
   const address = upstream.address();
   if (!address || typeof address === "string")
     throw new Error("Missing address");
-  const rows: import("./external-llm-trace-proxy").ExternalTraceRow[] = [];
+  const rows: ExternalTraceRow[] = [];
   const proxy = await startTraceProxy({
     upstream: `http://127.0.0.1:${address.port}`,
     harness: "codex",
@@ -123,8 +124,10 @@ test("compressed responses pass through and oversized payloads keep a metadata r
     expect(JSON.stringify(rows)).not.toContain("private-model");
     expect(rows[1]?.capture_status).toBe("size_limit");
     expect(JSON.parse(rows[1]?.response_json ?? "{}")).toEqual({
-      omitted: "size_limit",
+      text: { truncated: "size_limit" },
+      truncated: "size_limit",
     });
+    expect(JSON.parse(rows[1]?.request_json ?? "")).toEqual({});
     large = false;
     const third = await fetch(`${proxy.url}/responses`, {
       method: "POST",
@@ -135,8 +138,12 @@ test("compressed responses pass through and oversized payloads keep a metadata r
     await proxy.close();
     expect(rows[2]?.capture_status).toBe("size_limit");
     expect(JSON.parse(rows[2]?.request_json ?? "{}")).toEqual({
-      omitted: "size_limit",
+      text: { truncated: "size_limit" },
+      truncated: "size_limit",
     });
+    expect(JSON.parse(rows[2]?.response_json ?? "").usage.output_tokens).toBe(
+      4,
+    );
   } finally {
     await proxy.close();
     upstream.close();
@@ -174,8 +181,6 @@ test("upstream aborts retain an incomplete trace without changing delivered byte
     });
     if (!reply.body) throw new Error("Missing response body");
     const reader = reply.body.getReader();
-    // Read until the transport error. Some Bun versions surface a stray
-    // "\r\n" chunk before rejecting; the stream must never end cleanly.
     const decoder = new TextDecoder();
     let received = "";
     let endedCleanly = false;
@@ -206,14 +211,11 @@ test("upstream aborts retain an incomplete trace without changing delivered byte
 test.each([undefined, "application/json"])(
   "captures a Codex SSE response with content-type %s",
   async (contentType) => {
-    // Recorded Responses event shape; identifiers and model replaced, metadata removed.
-    // The observed successful response had no content-type or content-encoding.
     const response = await Bun.file(
       `${import.meta.dir}/__fixtures__/codex-stream.sse`,
     ).text();
     const upstream = createServer(async (req, res) => {
       for await (const _chunk of req) {
-        /* consume request */
       }
       res.writeHead(200, contentType ? { "content-type": contentType } : {});
       res.end(response);
@@ -256,6 +258,98 @@ test.each([undefined, "application/json"])(
       expect(captured.response.status).toBe("completed");
       expect(captured.response.output[0].content[0].text).toBe("OK");
       expect(captured.events.at(-1).type).toBe("response.completed");
+    } finally {
+      await proxy.close();
+      upstream.close();
+    }
+  },
+);
+
+test.each(["claude_code", "codex"] as const)(
+  "%s captures appended history and falls back when the prefix changes",
+  async (harness) => {
+    const upstream = createServer(async (req, res) => {
+      for await (const _chunk of req) {
+      }
+      res.end('{"id":"reply"}');
+    }).listen(0, "127.0.0.1");
+    await once(upstream, "listening");
+    const address = upstream.address();
+    if (!address || typeof address === "string")
+      throw new Error("Missing address");
+    const rows: ExternalTraceRow[] = [];
+    const proxy = await startTraceProxy({
+      upstream: `http://127.0.0.1:${address.port}`,
+      harness,
+      scope: {
+        parent_agent_id: "a",
+        parent_conversation_id: "c",
+        task_id: "t",
+        worker_session_id: "s",
+      },
+      secrets: ["x"],
+      emit: (row) => rows.push(row),
+    });
+    const historyKey = harness === "claude_code" ? "messages" : "input";
+    const path = harness === "claude_code" ? "messages" : "responses";
+    const original = { role: "user", content: "x".repeat(190000) };
+    const appended = { role: "assistant", content: "é".repeat(120000) };
+    const latest = { role: "user", content: "keep this" };
+    try {
+      for (const payload of [
+        { [historyKey]: [original] },
+        { [historyKey]: [original, appended] },
+        { [historyKey]: [original, appended, latest] },
+        {
+          system: "x".repeat(30000),
+          tools: [{ name: "search" }],
+          [historyKey]: [{ ...original, role: "assistant" }, appended, latest],
+        },
+        { system: "x".repeat(220000), tools: [], [historyKey]: [latest] },
+      ]) {
+        const reply = await fetch(`${proxy.url}/${path}`, {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        await reply.text();
+      }
+      await proxy.close();
+      expect(rows.map((row) => row.capture_status)).toEqual([
+        "complete",
+        "delta",
+        "delta",
+        "size_limit",
+        "size_limit",
+      ]);
+      expect(JSON.parse(rows[1]?.request_json ?? "")).toEqual({
+        [historyKey]: [appended],
+        base_trace_id: rows[0]?.id,
+        prefix_items: 1,
+      });
+      expect(JSON.parse(rows[2]?.request_json ?? "")).toEqual({
+        [historyKey]: [latest],
+        base_trace_id: rows[1]?.id,
+        prefix_items: 2,
+      });
+      expect(JSON.parse(rows[3]?.request_json ?? "")).toEqual({
+        [historyKey]: [{ truncated: "size_limit" }, appended, latest],
+        truncated: "size_limit",
+      });
+      expect(JSON.parse(rows[4]?.request_json ?? "")).toEqual({
+        [historyKey]: [latest],
+        truncated: "size_limit",
+      });
+      for (const row of rows) {
+        expect(Buffer.byteLength(row.request_json)).toBeLessThanOrEqual(
+          2 * 1024 * 1024,
+        );
+        expect(Buffer.byteLength(row.response_json)).toBeLessThanOrEqual(
+          2 * 1024 * 1024,
+        );
+      }
+      expect(rows.map((row) => JSON.parse(row.response_json))).toEqual(
+        Array.from({ length: 5 }, () => ({ id: "reply" })),
+      );
     } finally {
       await proxy.close();
       upstream.close();

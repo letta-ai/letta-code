@@ -1,9 +1,3 @@
-/**
- * Telegram channel adapter using grammY.
- *
- * Uses long-polling (no webhook setup needed).
- */
-
 import { randomUUID } from "node:crypto";
 import type { ReactionType } from "@grammyjs/types";
 import type { Context as GrammYContext } from "grammy";
@@ -875,8 +869,6 @@ export function createTelegramAdapter(
         if (!key || uniqueSources.has(key)) {
           continue;
         }
-        // Source order follows run ownership. Keep the first source as the
-        // causal Telegram reply target when one run consumed several messages.
         uniqueSources.set(key, source);
       }
 
@@ -924,8 +916,3 @@ export function createTelegramAdapter(
 
   return adapter;
 }
-
-/**
- * Validate a Telegram bot token by calling getMe().
- * Returns the bot username on success, throws on failure.
- */

@@ -33,7 +33,6 @@ describe("client_skills baseline", () => {
     planClientSkillsRequest(backend, agentA, [alpha]).accept();
     planClientSkillsRequest(backend, agentB, [alpha]).accept();
     notifyConversationCompacted({ backend, ...agentA });
-    // Another backend instance's compaction is unrelated.
     notifyConversationCompacted({ backend: {}, ...agentB });
     const a = planClientSkillsRequest(backend, agentA, [alpha, bravo]);
     expect(a.clientSkills).toEqual([alpha, bravo]);

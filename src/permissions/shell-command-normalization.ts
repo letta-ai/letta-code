@@ -256,7 +256,6 @@ export function extractPrimaryShellCommand(command: string): string {
   return unwrapped.trim();
 }
 
-// Words that can precede a command in a segment without being the command.
 const LEADING_CONTROL_WORDS = new Set([
   "!",
   "(",
@@ -285,11 +284,6 @@ function stripLeadingControlWords(segment: string): string {
   }
 }
 
-/**
- * Every command a shell string may run, with launcher wrappers (`bash -c`)
- * unwrapped and env prefixes stripped. Used for deny rules, which must fire
- * on any member of a compound command, not just the primary one.
- */
 export function extractAllShellCommands(command: string, depth = 0): string[] {
   const commands: string[] = [];
   const unwrapped = unwrapShellLauncherCommand(command);

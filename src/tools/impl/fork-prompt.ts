@@ -1,4 +1,3 @@
-/** Limit the caller's assignment, excluding harness-provided history. */
 export const FORK_PROMPT_CHARACTER_LIMIT = 2_000;
 
 export function validateForkPrompt(

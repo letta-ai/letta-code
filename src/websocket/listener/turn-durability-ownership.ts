@@ -50,7 +50,6 @@ export async function checkpointTurnInputOwnership(
   );
 }
 
-/** Turn-owned metadata survives every generic approval continuation. */
 export function createTurnDurabilityOwnership() {
   const resultsByToolCallId = new Map<string, ApprovalResult>();
   const executingToolCallIds = new Set<string>();

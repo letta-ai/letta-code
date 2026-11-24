@@ -282,14 +282,6 @@ async function tryResumeBusyConversationStream(params: {
   }
 }
 
-/**
- * Attempt to resolve stale pending approvals by fetching them from the backend.
- * Calls whose result was already checkpointed in the interrupted-turn record are
- * resolved with that result; only calls with no recorded result are auto-denied.
- * This is the Phase 3 bounded recovery mechanism. Reusing recorded results also
- * drops any parked pendingInterruptedResults, as recover-recorded-turn does, so
- * stale denials for the same calls are not sent afterward.
- */
 export async function resolveStaleApprovals(
   runtime: ConversationRuntime,
   socket: ListenerTransport,
@@ -371,8 +363,6 @@ export async function resolveStaleApprovals(
   assertCurrentTurnLease();
   let pendingApprovals = resumeData.pendingApprovals || [];
   if (pendingApprovals.length === 0) return null;
-  // Another client may resolve these calls while we prepare or send the
-  // denial; re-read the server and keep only the calls still pending.
   const filterStillPending = async (approvals: typeof pendingApprovals) => {
     const fresh = await getResumeDataImpl(agent, requestedConversationId, {
       includeMessageHistory: false,
@@ -440,8 +430,6 @@ export async function resolveStaleApprovals(
       );
     }
     rememberPendingApprovalBatchIds(runtime, pendingApprovals, recoveryBatchId);
-    // A call may have executed before its continuation was lost. Send its
-    // checkpointed result instead of claiming no result was recorded.
     const pendingToolCallIds = pendingApprovals.map(
       (approval) => approval.toolCallId,
     );
@@ -460,7 +448,6 @@ export async function resolveStaleApprovals(
         pendingToolCallIds.includes(result.tool_call_id),
       )
     ) {
-      // These saved results replace any parked stale denials for the batch.
       runtime.pendingInterruptedResults = null;
       runtime.pendingInterruptedContext = null;
       runtime.pendingInterruptedToolCallIds = null;
@@ -508,8 +495,6 @@ export async function resolveStaleApprovals(
           authorityGuard: deps.authorityGuard,
         },
       ).catch(async (sendError: unknown) => {
-        // If the server rejected the denial because nothing is pending
-        // anymore, recovery is done; otherwise surface the original error.
         assertCurrentTurnLease();
         const stillPending = await filterStillPending(pendingApprovals).catch(
           () => null,
@@ -546,8 +531,6 @@ export async function resolveStaleApprovals(
       if (drainResult.stopReason !== "requires_approval") {
         return drainResult;
       }
-      // This round is resolved; drop its batch mapping so the next round's
-      // approvals get their own batch instead of looking ambiguous.
       clearPendingApprovalBatchIds(runtime, pendingApprovals);
       pendingApprovals = drainResult.approvals || [];
     } finally {
@@ -556,10 +539,6 @@ export async function resolveStaleApprovals(
   }
   return null;
 }
-/**
- * Wrap sendMessageStream with pre-stream error handling (retry/recovery).
- * Mirrors headless bidirectional mode's pre-stream error handling.
- */
 export async function sendMessageStreamWithRetry(
   conversationId: string,
   messages: Parameters<typeof sendMessageStream>[1],

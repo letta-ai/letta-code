@@ -13,25 +13,9 @@ import { useFrameCycle } from "./use-frame-cycle.js";
 
 interface StreamingStatusSpinnerProps {
   color?: string;
-  /**
-   * Explicit animation override. Wins over `tier`. Used by tests and
-   * temporary local hardcodes.
-   */
   animation?: BrailleAnimationKey;
-  /**
-   * Context-usage tier (0–3). When set, the spinner picks one animation
-   * from `CONTEXT_TIER_ANIMATIONS[tier]`. Ignored if `animation` is
-   * provided.
-   */
   tier?: number;
-  /**
-   * Monotonically increasing integer that selects which animation in
-   * the pool. The parent bumps it on each new stream so consecutive
-   * streams rotate through the pool deterministically (round-robin).
-   * Stable within a stream → stable animation within a stream.
-   */
   streamSeed?: number;
-  /** Target cell width; the frame is centered and space-padded. */
   width?: number;
   marginRight?: number;
 }
@@ -61,20 +45,6 @@ function resolveAnimationKey(
   return pickFromPool(STREAMING_STATUS_ANIMATION_KEYS, seed);
 }
 
-/**
- * Spinner for the streaming-status row of the chat input.
- *
- * Selection priority:
- *   1. `animation` prop (explicit override)
- *   2. `tier` + `streamSeed` — `pool[streamSeed % pool.length]`. The
- *      parent increments `streamSeed` on each new stream so consecutive
- *      streams rotate through the tier's pool; mid-stream tier crossings
- *      pick from the new tier's pool at the same seed.
- *   3. Random-ish from the unconstrained 1-cell pool using the seed.
- *
- * Honors the global `AnimationContext` — when animations are disabled,
- * the first frame is held static.
- */
 export const StreamingStatusSpinner = memo(
   ({
     color = colors.status.processing,

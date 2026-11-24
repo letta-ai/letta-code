@@ -57,7 +57,6 @@ function fixture() {
   return { parent, abortController };
 }
 
-// Keep worker resumes off the real vault and MCP inventory.
 const workerEnv = {
   resolveSecretEnv: async () => ({}),
   resolveMcpReminder: async () => undefined,
@@ -72,11 +71,9 @@ afterEach(async () => {
   await clearNativeSessionCaptureForTests();
 });
 
-/** Launch and finish a published run, then let its background task expire. */
 function evictedFixture() {
   jest.useFakeTimers();
   const { parent } = fixture();
-  // Recorded by the launch on this computer; not a Cloud URL, so no capture.
   rememberNativeSession(
     "claude_code",
     nativeId.slice("claude_".length),
@@ -325,7 +322,6 @@ describe("remote external subagent control", () => {
             pending.push(response);
             if (attempt === 0) {
               await started.promise;
-              // The steer is still pending after the completed-response cache's TTL.
               now = 31_000;
               throw new Error("App-server socket closed");
             }
@@ -364,7 +360,6 @@ describe("remote external subagent control", () => {
     expect(commands[1]).toEqual(commands[0]);
     expect(steers).toBe(1);
     for (const close of closes) expect(close).toHaveBeenCalledTimes(1);
-    // The completed receipt is retained for a full TTL after it settles, too.
     now = 60_000;
     await handleSubagentMessageCommand(
       commands[0] as SubagentMessageCommand,
@@ -461,7 +456,6 @@ describe("remote external subagent control", () => {
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(steers).toBe(2);
 
-    // A late completion from the expired request must not replace the new entry.
     receipts[0].resolve({ mode: "steered", sessionId: nativeId });
     await Promise.all([original, beforeCap]);
     now += 31_000;
@@ -608,10 +602,6 @@ describe("remote external subagent control", () => {
         }) as never,
       },
     );
-    // The worker holds the caller's runtime only as a sideband control scope.
-    // Emitting the notice here starts a turn on the caller's conversation from
-    // the worker's sandbox; claiming the runtime makes Cloud route the
-    // caller's deliveries here. Both must stay off on this path.
     expect(tracked).toMatchObject({
       publishResult: true,
       emitCompletionNotification: false,
@@ -719,7 +709,6 @@ describe("remote external subagent control", () => {
       GITHUB_TOKEN: "vault-token-123",
       LETTA_PARENT_AGENT_ID: "agent-a",
       LETTA_CODE_AGENT_ROLE: "subagent",
-      // One below the listener's own depth, as on launch.
       LETTA_SUBAGENT_DEPTH: String(readSubagentDepth(process.env) + 1),
       LETTA_ACTING_USER_ID: "user-a",
     });
