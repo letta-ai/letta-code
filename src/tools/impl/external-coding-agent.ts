@@ -380,7 +380,8 @@ export function classifyExternalCodingAgentStartupError(
     error.startsWith(CLAUDE_NOT_SIGNED_IN_PREFIX) ||
     error.startsWith(CODEX_NOT_SIGNED_IN_ERROR) ||
     error.startsWith("Cursor is not signed in:") ||
-    error.startsWith("Antigravity is not signed in:")
+    error.startsWith("Antigravity workers require GEMINI_API_KEY") ||
+    error.startsWith("Antigravity authentication failed:")
   )
     return "not_signed_in";
   return undefined;

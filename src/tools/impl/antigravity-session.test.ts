@@ -9,6 +9,21 @@ import {
 } from "./antigravity-session";
 import { persistNativeSessionOwner } from "./native-session-owner";
 
+test("a worker without a Gemini API key fails before looking for agy", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "letta-antigravity-path-"));
+  try {
+    const result = await runAntigravityTurn(
+      { parentAgentId: "owner", prompt: "hello", cwd },
+      { PATH: cwd },
+      {},
+    );
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("GEMINI_API_KEY");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("a different agent cannot resume or enqueue a turn on an owned Antigravity conversation", async () => {
   const dir = await mkdtemp(join(tmpdir(), "letta-antigravity-owner-"));
   const configDir = process.env.LETTA_CONFIG_DIR;

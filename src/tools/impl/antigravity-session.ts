@@ -60,9 +60,9 @@ export async function runAntigravityTurn(
       "--output-format",
       "stream-json",
       "--disable-slash-commands",
+      "--settings",
+      '{"modelProvider":"gemini"}',
     ];
-    if (env.GEMINI_API_KEY)
-      args.push("--settings", '{"modelProvider":"gemini"}');
     if (sessionId) {
       const owner = readNativeSessionOwner("antigravity", sessionId);
       if (
@@ -80,6 +80,8 @@ export async function runAntigravityTurn(
         model: options.model ?? owner.model,
       };
     }
+    if (!env.GEMINI_API_KEY?.trim())
+      throw new Error("Antigravity workers require GEMINI_API_KEY");
     if (options.model) args.push("--model", options.model);
     const running = spawnManagedWorkloadProcess("agy", args, {
       cwd: options.cwd,
@@ -214,7 +216,7 @@ export async function runAntigravityTurn(
         )
       )
         throw new Error(
-          "Antigravity is not signed in: run agy to authenticate",
+          "Antigravity authentication failed: check GEMINI_API_KEY",
         );
       if (
         spawnError ||
