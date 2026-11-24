@@ -1,10 +1,4 @@
 #!/usr/bin/env bun
-/**
- * Records an Amelia Codex watch outcome in the central tracker issue.
- *
- * Usage:
- *   bun scripts/codex-watch/update-tracker.ts --tracker-issue 123 --analysis-file /tmp/analysis.json --outcome no_local_impact --notes "upstream-only"
- */
 
 import { readFileSync } from "node:fs";
 import { editIssueBody, getIssueBody, ghJson } from "./github.ts";

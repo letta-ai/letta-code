@@ -18,28 +18,9 @@ import {
   withLocalProviderAuthLock,
 } from "./local-provider-auth-store";
 
-/**
- * pi-ai CredentialStore over Letta's local provider records (auth.json),
- * keyed by pi-ai provider id. This makes the Models runtime the credential
- * source of truth: `Models.getAuth()` reads stored keys/OAuth tokens from
- * here and persists OAuth refreshes back through `modify`, which is
- * serialized as the contract requires so concurrent requests cannot
- * double-refresh a rotated token. Serialization is per provider within a
- * process and, through a lock file next to auth.json, across every process
- * sharing the storage dir (e.g. a channel listener and an App Server).
- *
- * Records store more than credentials (base URLs, timeouts, regions) —
- * that remains Letta-owned provider config; only the credential facet is
- * exposed through this adapter, and provider-specific OAuth fields (e.g.
- * GitHub Copilot's enterpriseUrl) round-trip untouched.
- */
-
-/** Local auth.json record names that serve a pi-ai provider id. */
 export function localNamesForProviderId(providerId: string): readonly string[] {
   const registered = getRegisteredPiProvider(providerId);
   if (registered) {
-    // A mod overriding a built-in provider id keeps that provider's local
-    // record aliases (e.g. "openai-codex" still reads "chatgpt-plus-pro").
     return getRegisteredPiProviderLocalNames(registered);
   }
   if (isPiProvider(providerId)) {
@@ -48,7 +29,6 @@ export function localNamesForProviderId(providerId: string): readonly string[] {
   return [providerId];
 }
 
-/** Maps a stored record name back to the pi-ai provider id it serves. */
 function providerIdForRecordName(recordName: string): string {
   const registered = getRegisteredPiProvider(recordName);
   if (registered) return registered.providerName;
@@ -73,8 +53,6 @@ function credentialFromRecord(
   record: LocalProviderRecord,
 ): Credential | undefined {
   if (record.auth.type === "oauth") {
-    // Preserve provider-specific fields (enterpriseUrl, accountId, ...);
-    // pi-ai reads them during refresh and toAuth.
     const { type: _type, ...oauthFields } = record.auth;
     return {
       ...oauthFields,
@@ -91,10 +69,6 @@ function credentialFromRecord(
 export function createLocalPiCredentialStore(
   storageDir?: string,
 ): CredentialStore {
-  // Per-provider mutation queue: `modify`/`delete` for the same provider run
-  // strictly in sequence (the pi-ai contract's serialized read-modify-write).
-  // The queue keeps same-process callers off the file lock; the file lock
-  // serializes against other processes sharing auth.json.
   const mutationQueues = new Map<string, Promise<unknown>>();
   function serialized<T>(
     providerId: string,
@@ -148,9 +122,6 @@ export function createLocalPiCredentialStore(
           return next;
         }
         if (next.key) {
-          // Read-modify-write: every non-credential record field survives
-          // (createOrUpdateLocalProvider keeps base URL/timeout itself, but
-          // Bedrock's access key/region/profile must be re-supplied).
           await createOrUpdateLocalProvider({
             providerName,
             providerType: record?.provider_type ?? providerId,

@@ -11,7 +11,6 @@ import { handleRoutingPairingTargetCommand } from "@/channels/protocol-routing-c
 import { isChannelServiceCommandType } from "@/types/service-protocol";
 
 export type { ChannelsCommand } from "@/channels/protocol-command-helpers";
-// Re-export the public API that consumers depend on.
 export { setChannelsServiceLoaderOverride } from "@/channels/protocol-command-helpers";
 
 export function isDetachedChannelsCommand(

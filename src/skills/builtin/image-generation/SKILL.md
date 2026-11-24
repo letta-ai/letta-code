@@ -9,6 +9,8 @@ Generate images via Letta's hosted endpoint `POST /v1/images/generations`. The A
 usually returns base64 image bytes, but some providers return signed image URLs;
 save either form to a local image file before replying.
 
+If the ask names a real thing (a product, place, meme, emoji or person), look up what it actually looks like before drawing it. If the real image is all they asked for, post it (slackmojis.com for Slack emoji); otherwise pass it to the generator as a reference so the thing looks right in the new image. A name you don't recognize may be newer than you know, so search it rather than guessing from the words.
+
 ## Example
 
 Generate the image, save it locally, then show it inline:
@@ -86,16 +88,19 @@ read `billing.credits_charged` from the saved response.
 | `markup_image` | string | Optional (OpenAI edits). Base64 data URL of a transparent annotation layer marking where to change the first input image. |
 | `seed` | int | Optional. |
 
-| Provider | Default model | Use for |
-|----------|---------------|---------|
-| `flux` | `flux-2-pro` | Default for normal text-to-image. High-quality general image generation; commonly returns signed URLs. |
-| `gemini` | `gemini-3-pro-image` | Strong prompt adherence, image editing/remix. |
-| `openai` | `gpt-image-2.6-flare` | Photoreal output, explicit `size`/`quality`, animated GIFs, SVG vectors, markup-guided edits. Use `gpt-image-2.6-sunburst` for detailed work and consistency across edits. |
+## Choose a model for the task
 
-Default to `flux` for normal text-to-image requests. Use `gemini` when the user
-provides input images or wants image editing/remix. Use `openai` when the user
-wants photoreal output, a specific size/quality, an animated GIF, an SVG, or an
-edit guided by a marked-up region.
+These choices reflect models tested as of November 2026; image models change often.
+
+- For edits, multiple reference images, or a real person's face, use `openai`
+  with `model: "gpt-image-2.6-sunburst"`. It holds identity across edits better;
+  Gemini can drift faces.
+- For fast, plain text-to-image work, use `flux` with `model: "flux-2-pro"`.
+- For strong prompt adherence when face identity is not a constraint, `gemini`
+  with `model: "gemini-3-pro-image"` is another option.
+- Use `openai` for explicit size/quality, animated GIFs, SVG vectors, or
+  markup-guided edits. Its default is `gpt-image-2.6-flare`; choose sunburst
+  when detail or consistency matters.
 
 ## Response
 
@@ -116,8 +121,18 @@ your local image file immediately because signed URLs expire. If OpenAI returns 
 ## Editing / remixing images
 
 Pass source images in `input_images` as base64 **data URLs**
-(`data:<mime>;base64,<data>`) and describe the edit in `prompt`. Gemini handles
-multi-image edits well. To build a data URL from a local file:
+(`data:<mime>;base64,<data>`) and describe the edit in `prompt`.
+
+Treat an edit as one full generation and post the model's whole output. Never
+paste or blend a generated piece onto the original: lighting and scale can
+mismatch. To fix one part, run another full edit with the previous output as
+the input and say what to keep.
+
+For a picture of yourself, pass your canonical headshot and full-body reference
+images (often shipped in another skill's `assets/` folder), even if that skill
+isn't loaded.
+
+To build a data URL from a local file:
 
 ```bash
 DATA_URL="data:image/png;base64,$(base64 < input.png | tr -d '\n')"
@@ -157,7 +172,8 @@ and refine one thing at a time.
 9. **Edits: separate the change from what must stay.** "Change only X", then
    list what to preserve (identity, face, pose, geometry, layout, lighting,
    labels, camera angle) and what to exclude. Repeat the preserve list on every
-   follow-up edit.
+   follow-up edit. When matching a reference's look, also describe what is wrong
+   with the current image so the model knows what to correct.
 10. **Give each reference image a role by number**: "image 1 is the scene,
     image 2 is the dog; put the dog on the sofa in image 1, keep everything else
     unchanged". For style references, say which part to borrow (palette,

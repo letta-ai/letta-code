@@ -40,9 +40,7 @@ describe.skipIf(isWindows)("Codex unified exec tools", () => {
     for (const proc of backgroundProcesses.values()) {
       try {
         proc.process.kill("SIGTERM");
-      } catch {
-        // Ignore cleanup failures for already-exited processes.
-      }
+      } catch {}
     }
     backgroundProcesses.clear();
     __clearExecSessionsForTests();

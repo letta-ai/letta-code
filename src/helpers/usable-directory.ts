@@ -42,7 +42,6 @@ export function isConfirmedUnusableDirectory(
   return usability === "missing" || usability === "not-directory";
 }
 
-/** True when the path exists and is a directory. */
 export function isUsableDirectory(dirPath: string | null | undefined): boolean {
   return getDirectoryUsability(dirPath) === "usable";
 }

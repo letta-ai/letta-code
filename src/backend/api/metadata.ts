@@ -7,21 +7,7 @@ export interface BalanceMetadata {
   monthly_credit_balance: number;
   purchased_credit_balance: number;
   billing_tier: string;
-  /** The caller's organization (newer servers). */
   organization_id?: string;
-}
-
-type QuotaBucket = "empty" | "low" | "medium" | "high" | "full";
-
-interface ModelTierQuota {
-  bucket: QuotaBucket;
-  dailyBucket?: QuotaBucket;
-}
-
-export interface ModelQuotaMetadata {
-  lettaTier: ModelTierQuota;
-  quotaWindowEnd: string;
-  dailyQuotaWindowEnd?: string;
 }
 
 export type FeedbackClientType = "desktop" | "chat.letta.com" | "cli";
@@ -47,10 +33,6 @@ export async function getBalanceMetadata(
     undefined,
     options.signal ? { signal: options.signal } : {},
   );
-}
-
-export async function getModelQuotaMetadata(): Promise<ModelQuotaMetadata> {
-  return apiRequest<ModelQuotaMetadata>("GET", "/v1/organizations/self/quotas");
 }
 
 export async function getBillingTier(): Promise<string | null> {
@@ -108,8 +90,6 @@ export async function submitTelemetryMetadata(
   const config = await getMetadataRequestConfig(apiKey);
   await apiRequest<void>("POST", "/v1/metadata/telemetry", payload, {
     ...config,
-    // Telemetry snapshots the acting user when the event is created. `null`
-    // prevents a later headless env value from replacing an empty snapshot.
     actingUserId: options?.actingUserId ?? null,
     headers: {
       "X-Letta-Code-Device-ID": deviceId,

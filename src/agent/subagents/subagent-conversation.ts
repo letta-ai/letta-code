@@ -1,6 +1,6 @@
 import type { ConversationCreateBody } from "@/backend/backend";
+import { SUBAGENT_SUMMARY_ENV } from "@/utils/subagent-launch-marker";
 
-/** Cloud can persist a child's ancestry; other launches keep virtual history. */
 export async function createSubagentConversation(
   cloudBackend: boolean,
   parentConversationId: string | undefined,
@@ -14,7 +14,7 @@ export async function createSubagentConversation(
   ) {
     return "default";
   }
-  // The SDK forwards extra request fields until its types include ancestry.
+  const summary = process.env[SUBAGENT_SUMMARY_ENV]?.trim();
   const body: ConversationCreateBody & {
     parent_conversation_id: string;
     is_subagent: boolean;
@@ -22,6 +22,7 @@ export async function createSubagentConversation(
     agent_id: agentId,
     parent_conversation_id: parentConversationId,
     is_subagent: true,
+    ...(summary ? { summary } : {}),
   };
   return (await create(body)).id;
 }

@@ -230,9 +230,6 @@ function memoryStorage(): McpOAuthStorage {
   };
 }
 
-// The fixture exits with 1 when either port is already taken. A port probed
-// free can be claimed by another process before the fixture binds it, so a
-// startup exit is retried on fresh ports. Its stderr is kept for the error.
 async function startOAuthServer(): Promise<void> {
   const attempts = 3;
   for (let attempt = 1; ; attempt++) {

@@ -74,7 +74,6 @@ export function listInterruptedTurnMainSnapshot(
   }
 }
 
-/** Build a replay fence from validated main JSON without trusting its sidecar. */
 export function collectInterruptedTurnInputOwnership(
   records: InterruptedTurnRecord[],
   readMainView: (record: InterruptedTurnRecord) => InterruptedTurnRecord,

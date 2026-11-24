@@ -1,6 +1,6 @@
-/** Consumed by the child entrypoint; shell commands from that child must not inherit it. */
 export const SUBAGENT_LAUNCH_ENV = "LETTA_SUBAGENT_LAUNCH";
 export const SUBAGENT_LAUNCH_PROFILE_ENV = "LETTA_SUBAGENT_LAUNCH_PROFILE";
+export const SUBAGENT_SUMMARY_ENV = "LETTA_SUBAGENT_SUMMARY";
 export const SUBAGENT_NAME_ENV = "LETTA_SUBAGENT_NAME";
 export const LISTENER_CONNECTION_ENV = "LETTA_RUNTIME_LISTENER_CONNECTION_ID";
 

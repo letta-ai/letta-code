@@ -82,9 +82,6 @@ function hasSameQueueScope(a: QueueItem, b: QueueItem): boolean {
 }
 
 function getBatchActingUserId(items: QueueItem[]): string | null | undefined {
-  // The latest ordinary user message owns a coalesced continuation request.
-  // This deliberately returns undefined for an unattributed latest user so it
-  // clears, rather than inherits, the actor from the turn being continued.
   const userMessages = items.filter((item) => item.kind === "message");
   if (userMessages.length > 0) return userMessages.at(-1)?.actingUserId;
 
@@ -107,20 +104,6 @@ function buildQueuedTurnMessage(
   const messages: IncomingMessage["messages"] = [];
   const durableInputIdentities: InputIdentity[] = [];
   const terminalConsumerIds = new Set<string>();
-  // Every item in the batch must agree on the originator super run for the
-  // merged turn to stay attributed — including cron prompts, task
-  // notifications, and mod continuations, which vote unattributed so
-  // process-owned work can never ride a client message's originator token.
-  // A mixed batch (or one with an unattributed member) runs unattributed
-  // rather than borrowing another run's originator — the same fail-safe as
-  // a mixed acting-user batch.
-  //
-  // The vote is on (super run id, token presence) together, not the id
-  // alone: a token-bearing and a tokenless delivery for the SAME run are
-  // different authority states (the tokenless one is a stale pre-mint frame
-  // whose accept cleared the run's held token). Merging them as "same id"
-  // would let the stale member's work borrow the fresh member's token, so
-  // they vote distinct and the batch runs unattributed.
   const messageOriginatorIds: Array<string | undefined> = [];
   const originatorVotes: Array<string | null> = [];
   for (const item of batch.items) {
@@ -153,8 +136,6 @@ function buildQueuedTurnMessage(
         ),
       );
     } else if (item.kind === "message") {
-      // No stored inbound payload: this message has no originator delivery,
-      // so it votes unattributed in the batch's originator resolution.
       messageOriginatorIds.push(undefined);
       originatorVotes.push(null);
       messages.push(
@@ -164,7 +145,6 @@ function buildQueuedTurnMessage(
         ),
       );
     } else {
-      // Not a client message: no originator delivery, votes unattributed.
       messageOriginatorIds.push(undefined);
       originatorVotes.push(null);
       messages.push({
@@ -190,25 +170,16 @@ function buildQueuedTurnMessage(
       ? ([...distinctOriginatorVotes][0]?.split("|")[0] ?? undefined)
       : undefined;
   if (distinctOriginatorVotes.size > 1) {
-    // The merged turn is unattributed, so constituent runs' held tokens can
-    // never be legitimately used here — and their inputs are consumed by
-    // this merge, so no later turn will use them either. Retire them now
-    // rather than leaking them until session teardown.
     for (const id of messageOriginatorIds) {
       retireMcpOriginatorTokenOnMixedMerge(id);
     }
   }
-  // A batch with no client message (cron prompts, task notifications, mod
-  // continuations) has no client waiting on its output, so its turn must not
-  // block on a subscribed delivery owner after tool execution (see #4925).
   const processOwnedTurn = !batch.items.some((item) => item.kind === "message");
   return {
     type: "message",
     agentId: scopeItem?.agentId ?? runtime.agentId ?? undefined,
     conversationId: scopeItem?.conversationId ?? runtime.conversationId,
     ...template,
-    // Overrides any id the template carried in: only an originator-unanimous
-    // batch keeps one; mixed or unknown batches are explicitly unattributed.
     mcpOriginatorSuperRunId,
     ...(processOwnedTurn ? { processOwnedTurn: true } : {}),
     actingUserId: batchActingUserId ?? undefined,
@@ -243,7 +214,6 @@ function getDequeuedClientMessageIds(
         : []) {
       clientMessageIds.add(clientMessageId);
     }
-    // A background-work notification continues the send that started it.
     if (item.kind === "task_notification") {
       for (const clientMessageId of item.clientMessageIds ?? []) {
         clientMessageIds.add(clientMessageId);
@@ -288,7 +258,6 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
       const preferences = JSON.stringify(
         normalizeClientPreferences(incoming.clientPreferences),
       );
-      // A changed selection starts a new turn; identical UI snapshots can steer it.
       if (
         preferences !== batchPreferences &&
         (queueLen > 0 || runtime.turnLifecycle.kind !== "idle")
@@ -296,8 +265,6 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
         break;
       batchPreferences = preferences;
     }
-    // noCoalesce items run as single-item batches: one never joins an
-    // existing batch, and nothing joins a batch it started.
     if (queueLen > 0 && (isNoCoalesce(item) || isNoCoalesce(firstQueuedItem))) {
       break;
     }
@@ -413,17 +380,6 @@ function computeListenerQueueBlockedReason(
   );
 }
 
-/**
- * Turn-boundary status re-emit (LET-11174). Queue frames are emitted only on
- * change and loop frames only on transition, so one lost frame leaves
- * downstream status consumers stale until the next change happens to land.
- * Re-sending the full snapshot at turn end bounds any silent frame loss to a
- * single turn. It is not sent at dequeue: the turn owner publishes its loop
- * snapshot after acquiring the lease, and an idle loop sent before that would
- * read as a completed turn. Both frames coalesce as status-class snapshots on
- * the outbound wire, so an unchanged re-emit costs at most one extra frame
- * each.
- */
 function emitTurnBoundaryStatus(
   runtime: ConversationRuntime,
   socket: ListenerTransport,
@@ -467,9 +423,6 @@ function emitQueuePumpBoundary(operation: () => void): void {
   try {
     operation();
   } catch (error) {
-    // Queue ownership has already transferred. Outbound projection failures must
-    // not strand committed work, and restoring after a partial send could replay
-    // user-visible side effects.
     trackBoundaryError({
       errorType: "listener_queue_boundary_failed",
       error,
@@ -489,24 +442,14 @@ function resolveQueuePumpTransport(
     first.noCoalesce === true &&
     runtime.queuedMessagesByItemId.get(first.id)?.processOwnedTurn === true
   ) {
-    // An HTTP request owns this single-item turn's output through in-process
-    // observers. It needs neither an open socket nor a subscribed recipient.
-    // noCoalesce ensures this cannot also admit a WebSocket-owned message.
     return getOrCreateProcessTransport(runtime.listener);
   }
-  // A scheduled pump may outlive the socket that accepted its input. Route
-  // through the process transport once connections are tracked so a reconnect
-  // can replace the writer without replacing the queue's single pump.
   if (
     runtime.listener.connections.size > 0 ||
     runtime.listener.processTransport !== null
   ) {
     const transport = getOrCreateProcessTransport(runtime.listener);
     if (!isListenerTransportOpen(transport)) return null;
-    // ProcessRuntimeTransport.isOpen() only means *some* connection is open.
-    // Queued input for this scope must have a live recipient before dequeue;
-    // otherwise its user echo and status are silently dropped. Local channel
-    // listeners intentionally execute without a remote subscriber.
     const localConnection = [...runtime.listener.connections.values()].some(
       (connection) =>
         connection.initialized &&
@@ -514,8 +457,6 @@ function resolveQueuePumpTransport(
         connection.writer.kind === "local" &&
         isListenerTransportOpen(connection.writer),
     );
-    // Only client-sent input waits for a subscriber. Process-originated work
-    // (cron, task notifications) has no client waiting to receive its echo.
     const hasClientInput = runtime.queueRuntime
       .peekReady()
       .some((item) => item.source === "user");
@@ -531,7 +472,6 @@ function resolveQueuePumpTransport(
     }
     return transport;
   }
-  // Untracked test/legacy transports have no process connection to follow.
   return isListenerTransportOpen(socket) ? socket : null;
 }
 
@@ -558,8 +498,6 @@ async function drainQueuedMessages(
         return;
       }
 
-      // Do not consume a batch without a live delivery path. On reconnect,
-      // the next iteration picks up the replacement writer automatically.
       const turnTransport = resolveQueuePumpTransport(runtime, socket);
       if (!turnTransport) return;
 
@@ -570,8 +508,6 @@ async function drainQueuedMessages(
       }
 
       if (runtime.queueRuntime.readyLength === 0) {
-        // Only interrupt-parked user messages remain: report it once and wait
-        // for resume_queue or the next inbound message.
         if (runtime.queueRuntime.length > 0) {
           runtime.queueRuntime.tryDequeue("paused_by_user");
         }
@@ -592,9 +528,6 @@ async function drainQueuedMessages(
           dequeuedBatch,
         ),
       );
-      // Dequeue does not acquire the turn lease. Publishing the idle loop
-      // here, after the user echo, would falsely signal a completed turn.
-      // The turn owner publishes its loop snapshot after acquiring the lease.
       emitQueuePumpBoundary(() =>
         emitQueueUpdate(turnTransport, runtime, {
           agent_id: runtime.agentId,
@@ -614,15 +547,11 @@ async function drainQueuedMessages(
         try {
           opts.onStatusChange?.(preTurnStatus, opts.connectionId);
         } catch (error) {
-          // The item is already dequeued and its stable ID is committed. A host
-          // callback must not strand accepted work that a retry will deduplicate.
           reportQueueStatusCallbackError(error);
         }
       }
       await processQueuedTurn(queuedTurn, dequeuedBatch);
       emitQueueListenerStatus(runtime, opts);
-      // Turn end boundary: repair any queue/loop frame the turn's own
-      // change-driven emissions failed to deliver.
       const endTransport = resolveQueuePumpTransport(runtime, socket);
       if (endTransport) {
         emitQueuePumpBoundary(() =>

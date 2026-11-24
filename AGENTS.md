@@ -58,6 +58,14 @@ tests.
 
 These are the rules enforced by CI and the pre-commit hook, with the reasoning behind each. Understanding the *why* lets you make good decisions in ambiguous cases the rules don't explicitly cover.
 
+### No code comments
+
+**Rule:** Omit prose comments, JSDoc, and section comments. Keep only directives that tools or runtimes read, such as shebangs and lint suppressions.
+
+**Why:** The code and Git history are the source of truth for behavior and the reasoning behind changes.
+
+---
+
 ### No `../` parent imports — use `@/`
 
 **Rule:** All cross-directory imports must use the `@/` alias (`@/` maps to `src/`). Relative parent paths (`../`) are banned and blocked by pre-commit.
@@ -185,6 +193,15 @@ utils/         ← bottom: no domain deps
 
 ---
 
+### Unit test design
+
+**Rule:** Isolated unit tests must guard a security boundary, money math, untrusted-input parsing, concurrency or ordering, or a lint rule's specification.
+Skip prompt, string, or constant equality checks, snapshots, flag truth tables that repeat branches, mock-call plumbing, UI render checks, and trivial helper tests.
+
+**Why:** Tests should catch regressions in behavior rather than pin implementation details.
+
+---
+
 ### Test mock isolation
 
 **Rule:** `mock.module()` calls must follow isolation patterns checked by `scripts/check-test-mock-isolation.js`.
@@ -286,7 +303,7 @@ also rejects staged parent-relative imports (`../`); use the `@/` alias.
 | `LETTA_LOCAL_BACKEND_DIR` | Local-backend storage root (defaults to `<product-config>/lc-local-backend`) |
 | `LETTA_CONFIG_DIR` | Absolute global config directory (defaults to `~/.letta`); product hosts use this to isolate settings, credentials, device identity, schedules, channel accounts/sessions, remote-session state, durable listener control state, global skills, and listener locks without replacing `HOME` |
 | `LETTA_SECRETS_SERVICE_NAME` | OS-keychain service namespace for hosts that isolate credentials (defaults to `letta-code`) |
-| `LETTA_DEFAULT_SUBAGENT_COMPUTER` | `computer` used by Agent launches that omit one (e.g. `cloud`). Explicit `computer` wins; `local`/`self` force the current machine. Ignored by forks and memory-profile subagents. Unset = no change |
+| `LETTA_DEFAULT_SUBAGENT_COMPUTER` | `computer` used by Agent launches that omit one (e.g. `cloud`). Explicit `computer` wins; `local`/`self` force the current machine. Ignored by `memory`, `recall`, and memory-profile subagents. Unset = no change |
 
 When manually smoke-testing the local backend (`letta --backend local` or
 `bun run dev --backend local`), set `LETTA_LOCAL_BACKEND_DIR` to a temporary
@@ -403,7 +420,7 @@ image parts for text-only models), the model catalog, and env key resolution.
 
 LC's responsibility ends at a narrow seam: guarantee that only canonical,
 type-valid `LocalMessage` content enters the pi Context (ingestion sanitizers in
-`local-store.ts`, `toPiMessage`/`toPiMessages` in `pi-stream-adapter.ts`).
+`local-store.ts`, `toPiMessage`/`toPiMessages` in `pi-messages.ts`).
 
 **Any PR that adds capability-gated payload sanitization, image stripping,
 provider format fixups, or model-capability checks inside the LC adapter/dispatch

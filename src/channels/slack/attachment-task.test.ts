@@ -25,8 +25,6 @@ const RUNTIME_SCOPE = { agentId: "agent-1", conversationId: "conv-slack" };
 let queued: QueuedMessage[] = [];
 
 beforeEach(() => {
-  // Other suites exercise MessageChannel downloads and leave settled entries
-  // in the shared registry; start each test from a clean slate.
   backgroundProcesses.clear();
   queued = [];
   clearPendingMessages();
@@ -60,7 +58,6 @@ test("fast downloads settle synchronously and complete the registry entry", asyn
   expect(readFileSync(entry?.outputFile as string, "utf-8")).toContain(
     ATTACHMENT.localPath as string,
   );
-  // The caller already has the result, so nothing else should wake the agent.
   expect(queued).toHaveLength(0);
 });
 

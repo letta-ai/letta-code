@@ -3,24 +3,31 @@
   "properties": {
     "description": {
       "type": "string",
-      "description": "A short (3-5 word) description of the task"
+      "description": "The task this agent owns, in a few words, like a conversation title (for example \"Fix websocket reconnect hang\"). Saved as the new conversation's summary."
     },
     "prompt": {
       "type": "string",
-      "description": "The task for the agent to perform. A forked agent already has this conversation: state the goal, what finished looks like as checks the agent can verify (a measurable threshold, not \"no bad output\"), and paths, links, or IDs to read. Without forked context, the prompt is all it knows."
+      "description": "The task for the agent to perform. A forked agent already has this conversation: state the goal, what finished looks like as checks the agent can verify (a measurable threshold, not \"no bad output\"), and paths, links, or IDs to read. Optional when forking, in which case the description is the assignment. Without forked context, the prompt is all it knows."
     },
     "harness": {
       "type": "string",
-      "enum": ["letta", "claude-code", "codex", "cursor", "opencode"],
+      "enum": [
+        "letta",
+        "claude-code",
+        "codex",
+        "cursor",
+        "opencode",
+        "antigravity"
+      ],
       "description": "The harness that executes the task. Defaults to letta (a Letta subagent). Set to override the harness that runs the subagent worker (requires the harness to be installed on the computer)."
     },
     "subagent_type": {
       "type": "string",
-      "description": "A preset from Available Agents (for example recall, or a custom agent). Supply description and prompt alongside it, and optionally computer to run the preset on another connected computer. The preset determines launch settings; all other optional fields are ignored. Omit subagent_type to configure the launch yourself."
+      "description": "A preset from Available Agents (for example recall, or a custom agent). Supply description and prompt alongside it, and optionally computer and cloud to choose where the preset runs. The preset determines launch settings; all other optional fields are ignored. Omit subagent_type to configure the launch yourself."
     },
     "fork_context": {
       "type": "boolean",
-      "description": "When creating a Letta Code subagent (without subagent_type), whether to include the full conversation history in the subagent. Cannot be applied to existing agents or threads. Defaults to true for new default Letta agents and external workers; existing agent or conversation targets resume without forking."
+      "description": "Whether the new agent starts from this conversation. A fork gives it the source: what people actually said, the evidence gathered so far, and the decisions and corrections made along the way. A brief is your retelling of that, and anything you leave out or reword never reaches the worker. So fork whenever the task comes out of this conversation, however long or noisy it is; the fork is trimmed to fit. If you notice yourself writing a brief to explain the conversation, that's the cue to fork. Skip forking only when the task has nothing to do with this conversation, or the worker shouldn't see what's in it. Applies when creating a Letta Code subagent without subagent_type. Cannot be applied to existing agents or threads. Defaults to true for new default Letta agents and external workers; existing agent or conversation targets resume without forking."
     },
     "model": {
       "type": "string",
@@ -37,6 +44,27 @@
     "computer": {
       "type": "string",
       "description": "Run the subagent on another connected computer instead of this machine. Prefer a stable device ID or computer name; ephemeral connection IDs are also supported to pin a specific listener. Pass \"cloud\" to provision a Cloud sandbox for the subagent's conversation. Fails fast if the device is offline or does not support routing. Omit this field to run on the current machine (the default) — only set it when the task specifically needs to run elsewhere."
+    },
+    "cloud": {
+      "type": "object",
+      "description": "Options for computer: \"cloud\" only. Applied when the sandbox is created. Repositories are cloned to /root/workspace/<repo>.",
+      "properties": {
+        "repositories": {
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9-]+/[A-Za-z0-9._-]+(@[0-9a-fA-F]{40})?$"
+          },
+          "description": "GitHub repositories to clone, as \"owner/repo\" or \"owner/repo@<40-char commit SHA>\". Without a SHA you get the default branch. Only repos the org's GitHub App can access will clone."
+        },
+        "sandbox_size": {
+          "type": "string",
+          "enum": ["regular", "large", "xlarge"],
+          "description": "Machine size for a new sandbox. Omit to use the org default."
+        }
+      },
+      "additionalProperties": false
     },
     "mcp": {
       "type": "object",
@@ -56,7 +84,7 @@
       "additionalProperties": false
     }
   },
-  "required": ["description", "prompt"],
+  "required": ["description"],
   "additionalProperties": false,
   "$schema": "http://json-schema.org/draft-07/schema#"
 }

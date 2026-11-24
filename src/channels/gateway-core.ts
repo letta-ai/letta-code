@@ -175,16 +175,9 @@ function lifecycleOutcome(
   return "error";
 }
 
-/**
- * Process-neutral Channels bridge. It only speaks the public App Server
- * protocol; channel adapters and credentials stay behind the injected hooks.
- */
 export class ChannelGateway {
   private readonly states = new Map<string, GatewayRuntimeState>();
   private readonly disposers: Array<() => void> = [];
-  // Tool publication and runtime_start both replace the same connection-owned
-  // registration. Keep them ordered so a late runtime_start cannot resurrect a
-  // route that an overlapping route-removal update just revoked.
   private registrationQueue = Promise.resolve();
 
   constructor(
@@ -199,8 +192,6 @@ export class ChannelGateway {
           : undefined;
         const active = state?.active;
         const sources = active?.routingSources ?? state?.routedSources ?? [];
-        // Pass the per-turn idempotency scope only when a turn is active;
-        // process-owned calls (no active batch) are not deduped.
         return hooks.executeExternalTool(
           request,
           sources,
@@ -390,7 +381,6 @@ export class ChannelGateway {
     return replayedRequestIds;
   }
 
-  /** Adopt an in-flight turn without submitting its user input again. */
   async adoptActiveDelivery(
     delivery: ChannelGatewayHandoffDelivery,
   ): Promise<void> {
@@ -460,7 +450,6 @@ export class ChannelGateway {
     });
   }
 
-  /** Forget a handed-off turn silently; the caller then releases its tools. */
   releaseActiveDelivery(
     runtime: RuntimeScope,
     clientMessageId: string,
@@ -494,7 +483,6 @@ export class ChannelGateway {
     });
   }
 
-  /** Publish tools for a listener-owned turn without subscribing to its stream. */
   async publishRuntimeTools(
     runtime: RuntimeScope,
     sources: ChannelTurnSource[] = [],
@@ -922,9 +910,6 @@ export class ChannelGateway {
     if (stopReason === "requires_approval" || stopReason === "end_turn") {
       void active.richDraft?.flushPending();
     }
-    // The listener sends a canonical turn_finished event after it classifies
-    // terminal failures. Finalizing from this earlier delta would discard that
-    // user-safe error detail.
   }
 
   private handleTurnFinished(

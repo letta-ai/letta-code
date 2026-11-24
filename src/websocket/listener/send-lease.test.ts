@@ -243,7 +243,6 @@ describe("stale approval recovery races another client", () => {
     toolArgs: '{"command":"pwd"}',
   });
 
-  // Each getResumeData call returns the next snapshot of pending approvals.
   async function recover(
     snapshots: Array<Array<ReturnType<typeof call>>>,
     send: () => Promise<{ kind: "stream"; stream: never }>,

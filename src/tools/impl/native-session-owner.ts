@@ -1,13 +1,19 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { isCloudRepositoryNames } from "@/utils/cloud-repository-roots";
 import { resolveGlobalConfigDir } from "@/utils/settings-path";
 
-type NativeSessionSource = "claude_code" | "codex";
-interface NativeSessionScope {
+type NativeSessionSource = "claude_code" | "codex" | "antigravity";
+export interface NativeSessionOwner {
   agentId: string;
   conversationId: string;
   actingUserId?: string | null;
+  cloudSkillRepositories?: string[];
+  cwd?: string;
+  model?: string;
+  /** The Agent task description the session was launched for. */
+  description?: string;
 }
 
 function ownerPath(source: NativeSessionSource, sessionId: string): string {
@@ -20,14 +26,16 @@ function ownerPath(source: NativeSessionSource, sessionId: string): string {
 export function readNativeSessionOwner(
   source: NativeSessionSource,
   sessionId: string,
-): NativeSessionScope | undefined {
+): NativeSessionOwner | undefined {
   try {
     const owner = JSON.parse(
       readFileSync(ownerPath(source, sessionId), "utf8"),
     );
     if (
       typeof owner.agentId === "string" &&
-      typeof owner.conversationId === "string"
+      typeof owner.conversationId === "string" &&
+      (owner.cloudSkillRepositories === undefined ||
+        isCloudRepositoryNames(owner.cloudSkillRepositories))
     )
       return owner;
     throw new Error("Invalid native session owner record");
@@ -40,19 +48,17 @@ export function readNativeSessionOwner(
 export function persistNativeSessionOwner(
   source: NativeSessionSource,
   sessionId: string,
-  scope: NativeSessionScope,
+  scope: NativeSessionOwner,
 ): void {
   const path = ownerPath(source, sessionId);
   mkdirSync(join(path, ".."), { recursive: true, mode: 0o700 });
   try {
-    // First launch owns the session permanently, including across restarts.
     writeFileSync(path, JSON.stringify(scope), { flag: "wx", mode: 0o600 });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
   }
 }
 
-// Test-only: persisted owners otherwise outlive the in-memory reset.
 export function clearNativeSessionOwnersForTests(): void {
   rmSync(join(resolveGlobalConfigDir(), "native-session-owners"), {
     recursive: true,

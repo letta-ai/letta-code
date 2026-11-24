@@ -4,6 +4,8 @@ import {
   runOutsideRuntimeContext,
   runWithRuntimeContext,
 } from "@/runtime-context";
+import { sendAntigravityMessage } from "@/tools/impl/antigravity-session";
+import { REMOTE_SUBAGENT_MESSAGE_DEDUPE_PENDING_TTL_MS } from "@/tools/impl/claude-steer-timeouts";
 import {
   sendClaudeMessage,
   stopClaudeSession,
@@ -29,6 +31,7 @@ import {
   reportNativeSessionCaptureFailure,
   reserveNativeSessionCapture,
 } from "@/tools/impl/native-session-capture";
+import { readNativeSessionOwner } from "@/tools/impl/native-session-owner";
 import { backgroundTasks, getNextTaskId } from "@/tools/impl/process_manager";
 import { task_stop } from "@/tools/impl/task-stop";
 import type {
@@ -75,9 +78,7 @@ function finishUntrackedNativeCapture(
 function findOwnedTask(runtime: ConversationRuntime, agentId: string) {
   const subagent = getSubagents().find(
     (entry) =>
-      entry.agentId === agentId &&
-      entry.parentAgentId === runtime.agentId &&
-      entry.parentConversationId === runtime.conversationId,
+      entry.agentId === agentId && entry.parentAgentId === runtime.agentId,
   );
   if (!subagent) return undefined;
   return [...backgroundTasks.entries()].find(
@@ -85,26 +86,33 @@ function findOwnedTask(runtime: ConversationRuntime, agentId: string) {
   );
 }
 
-/**
- * Completed background tasks and their subagent rows are evicted within
- * minutes, but the native session stays resumable on disk. Fall back to the
- * record of which conversation launched it.
- */
+function nativeSessionOwner(agentId: string) {
+  const target = parseExternalCodingAgentId(agentId);
+  if (!target || target.computer) return undefined;
+  if (target.type === "antigravity")
+    return readNativeSessionOwner(target.type, target.sessionId);
+  if (target.type !== "claude-code" && target.type !== "codex")
+    return undefined;
+  return getNativeSessionOwner(
+    target.type === "claude-code" ? "claude_code" : "codex",
+    target.sessionId,
+  );
+}
+
 function ownsNativeSession(
   runtime: ConversationRuntime,
   agentId: string,
 ): boolean {
-  const target = parseExternalCodingAgentId(agentId);
-  if (!target || target.computer) return false;
-  if (target.type !== "claude-code" && target.type !== "codex") return false;
-  const owner = getNativeSessionOwner(
-    target.type === "claude-code" ? "claude_code" : "codex",
-    target.sessionId,
-  );
-  return (
-    owner?.agentId === runtime.agentId &&
-    owner.conversationId === runtime.conversationId
-  );
+  return nativeSessionOwner(agentId)?.agentId === runtime.agentId;
+}
+
+function subagentAccessError(agentId: string): string {
+  const known =
+    getSubagents().some((entry) => entry.agentId === agentId) ||
+    nativeSessionOwner(agentId);
+  return known
+    ? "Subagent does not belong to this conversation"
+    : `Subagent ${agentId} was not found on this computer`;
 }
 
 function runtimeContext(
@@ -163,13 +171,16 @@ export async function handleSubagentMessageCommand(
         !findOwnedTask(parent, command.agent_id) &&
         !ownsNativeSession(parent, command.agent_id)
       )
-        throw new Error("Subagent does not belong to this conversation");
+        throw new Error(subagentAccessError(command.agent_id));
       const target = parseExternalCodingAgentId(command.agent_id);
       if (!target || target.computer || !isExternalCodingAgentType(target.type))
         throw new Error("Invalid external coding agent ID");
       if (!target.sessionId)
         throw new Error("External coding agent ID has no session ID");
       const sessionId = target.sessionId;
+      const cloudSkillRepositories = nativeSessionOwner(
+        command.agent_id,
+      )?.cloudSkillRepositories;
       const traceContext = {
         parent_agent_id: parent.agentId,
         parent_conversation_id: parent.conversationId,
@@ -185,7 +196,6 @@ export async function handleSubagentMessageCommand(
         target.type === "cursor"
           ? await resolveExternalCodingAgentSecretEnv(parent.agentId)
           : {};
-      // A resumed worker process needs the same environment as a launch.
       let worker: ExternalWorkerLaunchEnv | undefined;
       const receipt = await runOutsideRuntimeContext(() =>
         runWithRuntimeContext(runtimeContext(parent, command), async () => {
@@ -196,6 +206,18 @@ export async function handleSubagentMessageCommand(
                 actingUserId: command.runtime.acting_user_id,
               },
               deps.workerEnv,
+            );
+          if (target.type === "antigravity" && worker)
+            return sendAntigravityMessage(
+              {
+                resumeSessionId: sessionId,
+                prompt: command.message,
+                parentAgentId: command.runtime.agent_id,
+                cwd: getCurrentWorkingDirectory(),
+                mcpReminder: worker.mcpReminder,
+              },
+              worker.env,
+              worker.secretEnv,
             );
           return target.type === "cursor"
             ? sendCursorMessage(
@@ -220,6 +242,7 @@ export async function handleSubagentMessageCommand(
                     parentAgentId: command.runtime.agent_id,
                     cwd: getCurrentWorkingDirectory(),
                     mcpReminder: worker?.mcpReminder,
+                    cloudSkillRepositories,
                     beforeStart: async () => {
                       captureReservation = await (
                         deps.reserveCapture ?? reserveNativeSessionCapture
@@ -243,6 +266,7 @@ export async function handleSubagentMessageCommand(
                     parentAgentId: command.runtime.agent_id,
                     cwd: getCurrentWorkingDirectory(),
                     mcpReminder: worker?.mcpReminder,
+                    cloudSkillRepositories,
                     beforeStart: async () => {
                       captureReservation = await (
                         deps.reserveCapture ?? reserveNativeSessionCapture
@@ -258,7 +282,12 @@ export async function handleSubagentMessageCommand(
         }),
       );
       if (receipt.mode === "steered")
-        return { ...base, success: true, delivery: "steered" };
+        return {
+          ...base,
+          success: true,
+          delivery:
+            "queued" in receipt && receipt.queued ? "queued" : "steered",
+        };
       if (!receipt.completion || !receipt.interrupt)
         throw new Error("External coding agent returned an incomplete receipt");
       const secretEnv = worker?.secretEnv;
@@ -282,13 +311,6 @@ export async function handleSubagentMessageCommand(
           interrupt: receipt.interrupt,
           captureReservation,
           toolCallId: command.tool_call_id,
-          // This handler always runs on the worker, for a parent runtime that
-          // only exists here as a sideband control scope. Mirror the
-          // `notify: "caller"` launch contract: publish the result back to the
-          // caller and let its own listener raise the notice. Emitting it here
-          // would start a turn on the caller's conversation from the worker's
-          // machine, and claiming the runtime would make Cloud route the
-          // caller's deliveries to this sandbox.
           publishResult: true,
           emitCompletionNotification: false,
           claimsParentRuntime: false,
@@ -313,12 +335,18 @@ export async function handleSubagentMessageCommand(
     }
   })();
   responses.set(key, {
-    expiresAt: now + DEDUPE_TTL_MS,
+    expiresAt: now + REMOTE_SUBAGENT_MESSAGE_DEDUPE_PENDING_TTL_MS,
     response,
   });
   const result = await response;
-  if (!result.success && responses.get(key)?.response === response)
-    responses.delete(key);
+  if (responses.get(key)?.response === response) {
+    if (!result.success) responses.delete(key);
+    else
+      responses.set(key, {
+        expiresAt: (deps.now ?? Date.now)() + DEDUPE_TTL_MS,
+        response,
+      });
+  }
   return result;
 }
 
@@ -358,7 +386,6 @@ export async function handleSubagentStopCommand(
     }
   }
   if (!owned) {
-    // Its task was evicted after it finished: nothing is left to stop.
     if (ownsNativeSession(parent, command.agent_id))
       return {
         ...base,
@@ -366,7 +393,7 @@ export async function handleSubagentStopCommand(
         stopped: nativeStopped,
         cleanup_confirmed: true,
       };
-    return { ...base, error: "Subagent does not belong to this conversation" };
+    return { ...base, error: subagentAccessError(command.agent_id) };
   }
   const [taskId, task] = owned;
   if (task.status !== "running")

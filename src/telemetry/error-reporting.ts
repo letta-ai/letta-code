@@ -46,7 +46,6 @@ export function reportListenerStateWriteFailure(options: {
   runId?: string;
   toolCallId?: string;
 }): void {
-  // Filesystem messages contain paths; report only codes and opaque IDs.
   try {
     const safeId = (id: string | undefined) =>
       id && /^[a-zA-Z0-9_-]{1,128}$/.test(id) ? id : undefined;
@@ -72,9 +71,7 @@ export function reportListenerStateWriteFailure(options: {
       { runId: safeId(options.runId), omitDebugLogTail: true },
     );
     void telemetry.flush().catch(() => {});
-  } catch {
-    // A diagnostic must never mask the original filesystem failure.
-  }
+  } catch {}
 }
 
 export function trackEndTurnNoAssistant(params: {
@@ -107,25 +104,20 @@ export type ExternalWorkerFailureStage =
   | "launch_rejected"
   | "follow_up";
 
-/** The HTTP status an error message starts with or carries after a colon. */
 export function extractHttpStatus(message: string): number | undefined {
-  const match = /(?:^|:\s*)([45]\d{2})\b/.exec(message);
+  const match = /(?:^|:\s*|API error \()(?:HTTP\s+)?([45]\d{2})\b/.exec(
+    message,
+  );
   return match ? Number(match[1]) : undefined;
 }
 
-/**
- * Report a Claude Code / Codex (or other external worker) launch or
- * follow-up that failed before the worker started.
- *
- * Error messages can quote prompts, paths, or server text, so only the stage,
- * worker type, HTTP status, error code, and opaque IDs are sent.
- */
 export function reportExternalWorkerLaunchFailure(options: {
   stage: ExternalWorkerFailureStage;
   harness: string;
   computer?: string;
   error: unknown;
   errorCode?: string;
+  httpStatus?: number | null;
   agentId?: string;
   conversationId?: string;
   toolCallId?: string;
@@ -135,9 +127,10 @@ export function reportExternalWorkerLaunchFailure(options: {
       value && pattern.test(value) ? value : undefined;
     const safeId = (id: string | undefined) =>
       safe(id, /^[a-zA-Z0-9_-]{1,128}$/);
-    const httpStatus = extractHttpStatus(
-      formatTelemetryErrorMessage(options.error),
-    );
+    const httpStatus =
+      options.httpStatus === undefined
+        ? extractHttpStatus(formatTelemetryErrorMessage(options.error))
+        : (options.httpStatus ?? undefined);
     telemetry.trackError(
       "external_worker_launch_failed",
       "External worker launch failed",
@@ -153,7 +146,5 @@ export function reportExternalWorkerLaunchFailure(options: {
       { httpStatus, omitDebugLogTail: true },
     );
     void telemetry.flush().catch(() => {});
-  } catch {
-    // A diagnostic must never mask the launch failure itself.
-  }
+  } catch {}
 }

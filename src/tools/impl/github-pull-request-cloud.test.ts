@@ -13,11 +13,15 @@ import Letta, {
   APIConnectionTimeoutError,
 } from "@letta-ai/letta-client";
 import { __testOverrideGetClient } from "@/backend/api/client";
-import { setConfiguredBackendMode } from "@/backend/backend-mode";
+import {
+  resolveBackendMode,
+  setConfiguredBackendMode,
+} from "@/backend/backend-mode";
 import { telemetry } from "@/telemetry";
 import {
   type CloudSnapshotResponse,
   createGitHubPullRequestSnapshotFetcher,
+  GitHubPullRequestSnapshotPending,
 } from "./github-pull-request-cloud";
 import { diffGitHubPullRequestSnapshots } from "./github-pull-request-diff";
 import type { GitHubPullRequestSnapshot } from "./github-pull-request-types";
@@ -172,10 +176,13 @@ function rateLimited(retryAt: string, stale: boolean) {
 }
 
 let trackError: ReturnType<typeof spyOn<typeof telemetry, "trackError">>;
+let previousBackendMode = resolveBackendMode();
 beforeEach(() => {
+  previousBackendMode = resolveBackendMode();
   trackError = spyOn(telemetry, "trackError").mockImplementation(() => {});
 });
 afterEach(() => {
+  setConfiguredBackendMode(previousBackendMode);
   trackError.mockRestore();
   __testOverrideGetClient(null);
 });
@@ -190,7 +197,6 @@ describe("Cloud snapshot fetcher", () => {
         ["https://api.letta.com", "local", false],
       ] as const) {
         process.env.LETTA_BASE_URL = url;
-        // The backend mode is process-global, so set it explicitly per case.
         setConfiguredBackendMode(mode);
         const request = mock(async () => success());
         const fetchGh = mock(async () => expected);
@@ -300,7 +306,6 @@ describe("Cloud snapshot fetcher", () => {
       expect(result).toEqual(expected);
       expect(trackError).toHaveBeenCalledTimes(1);
       expect(fetchGh).not.toHaveBeenCalled();
-      // Another cooldown in the same watch must not duplicate telemetry.
       wait.mockImplementation(async (ms) => {
         time += ms;
         request.mockImplementation(async () => success());
@@ -335,31 +340,33 @@ describe("Cloud snapshot fetcher", () => {
     }
   });
 
-  test("persistent cooldown falls back once, then returns later polls to the watch loop", async () => {
-    const request = mock(async () => {
-      if (request.mock.calls.length > 4)
-        throw new Error("unbounded cooldown retries");
-      return rateLimited("2099-01-01T00:00:00Z", false);
+  for (const stale of [true, false]) {
+    test(`persistent ${stale ? "stale snapshot" : "rate limit"} falls back once, then returns pending`, async () => {
+      const request = mock(async () => {
+        if (request.mock.calls.length > 4)
+          throw new Error("unbounded cooldown retries");
+        return rateLimited("2099-01-01T00:00:00Z", stale);
+      });
+      const wait = mock(async (_ms: number) => {});
+      const fetchGh = mock(async () => expected);
+      const fetchSnapshot = createGitHubPullRequestSnapshotFetcher({
+        isCloud: () => true,
+        request,
+        wait,
+        fetchGh,
+      });
+      expect(await fetchSnapshot(ref, options)).toBe(expected);
+      expect(wait).toHaveBeenCalledTimes(1);
+      expect(wait.mock.calls[0]?.[0]).toBeLessThanOrEqual(60_000);
+      expect(request).toHaveBeenCalledTimes(2);
+      await expect(fetchSnapshot(ref, options)).rejects.toThrow(
+        GitHubPullRequestSnapshotPending,
+      );
+      expect(fetchGh).toHaveBeenCalledTimes(1);
+      expect(wait).toHaveBeenCalledTimes(2);
+      expect(request).toHaveBeenCalledTimes(4);
     });
-    const wait = mock(async (_ms: number) => {});
-    const fetchGh = mock(async () => expected);
-    const fetchSnapshot = createGitHubPullRequestSnapshotFetcher({
-      isCloud: () => true,
-      request,
-      wait,
-      fetchGh,
-    });
-    expect(await fetchSnapshot(ref, options)).toBe(expected);
-    expect(wait).toHaveBeenCalledTimes(1);
-    expect(wait.mock.calls[0]?.[0]).toBeLessThanOrEqual(60_000);
-    expect(request).toHaveBeenCalledTimes(2);
-    await expect(fetchSnapshot(ref, options)).rejects.toThrow(
-      "still cooling down",
-    );
-    expect(fetchGh).toHaveBeenCalledTimes(1);
-    expect(wait).toHaveBeenCalledTimes(2);
-    expect(request).toHaveBeenCalledTimes(4);
-  });
+  }
 
   for (const error of [
     new APIConnectionError({}),
@@ -401,6 +408,15 @@ describe("Cloud snapshot fetcher", () => {
       inaccessible: true,
       snapshot: null,
     });
+    expect(
+      await createGitHubPullRequestSnapshotFetcher({
+        isCloud: () => true,
+        allowInaccessibleFallback: true,
+        fetchGh,
+        request: async () => inaccessible,
+      })(ref, options),
+    ).toBe(expected);
+    fetchGh.mockClear();
     const missing = { status: 200 as const, body: { snapshots: [] } };
     for (const result of [inaccessible, missing]) {
       await expect(
@@ -429,6 +445,7 @@ describe("Cloud snapshot fetcher", () => {
   });
 
   test("a background watch stays running during cooldown without poll-error output", async () => {
+    setConfiguredBackendMode("local");
     let requests = 0;
     let report!: () => void;
     const reported = new Promise<void>((resolve) => {

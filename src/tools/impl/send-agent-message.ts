@@ -30,6 +30,7 @@ import {
 } from "@/runtime-execution-settings";
 import { debugLog } from "@/utils/debug";
 import { readSubagentDepth } from "@/utils/subagent-depth-env";
+import { sendAntigravityMessage } from "./antigravity-session";
 import { sendClaudeMessage } from "./claude-stream-session";
 import { sendCodexMessage } from "./codex-app-server";
 import { sendCursorMessage } from "./cursor-session";
@@ -49,6 +50,9 @@ import {
 import { sendOpenCodeMessage } from "./opencode-session";
 import { getNextTaskId } from "./process_manager";
 import { sendRemoteExternalCodingAgentMessage } from "./remote-external-coding-agent";
+
+const QUEUED_NOTE =
+  "The worker is in a long tool call and hasn't stopped yet. Your message is queued and will be handled when it does; don't resend it.";
 
 interface SendAgentMessageArgs {
   message: string;
@@ -76,7 +80,6 @@ interface SendAgentMessageDeps {
   spawnLocal?: (command: string, args: string[]) => void;
 }
 
-/** CLI args that deliver a message on the local backend. */
 export function buildLocalSendArgs(
   destination: { agentId?: string; conversationId: string },
   message: string,
@@ -143,7 +146,6 @@ async function finishFailedNativeStartCapture(
   }
 }
 
-/** Truncated or agent IDs would otherwise fail as an opaque 404. */
 function checkConversationId(id: string | undefined): void {
   if (!id || id === "default" || FULL_CONVERSATION_ID.test(id)) return;
   const shown = JSON.stringify(id);
@@ -159,7 +161,6 @@ function checkConversationId(id: string | undefined): void {
   }
 }
 
-/** A subagent's omitted destination is the conversation that launched it. */
 function resolveParentAddress(
   settings: RuntimeExecutionSettings | undefined,
 ): { agentId: string; conversationId: string } | undefined {
@@ -233,7 +234,12 @@ export async function send_agent_message(
             status: "accepted",
             agent_id: args.agent_id,
             delivery:
-              receipt.delivery === "steered" ? "remote/steer" : "remote/resume",
+              receipt.delivery === "queued"
+                ? "remote/queued"
+                : receipt.delivery === "steered"
+                  ? "remote/steer"
+                  : "remote/resume",
+            ...(receipt.delivery === "queued" ? { note: QUEUED_NOTE } : {}),
             ...(receipt.taskId ? { task_id: receipt.taskId } : {}),
             ...(receipt.outputFile ? { output_file: receipt.outputFile } : {}),
           }),
@@ -241,6 +247,7 @@ export async function send_agent_message(
         };
       }
       if (
+        externalTarget.type === "antigravity" ||
         externalTarget.type === "opencode" ||
         externalTarget.type === "cursor"
       ) {
@@ -255,8 +262,27 @@ export async function send_agent_message(
           externalTarget.type === "cursor"
             ? await resolveExternalCodingAgentSecretEnv(parentScope.agentId)
             : {};
-        const receipt =
-          externalTarget.type === "cursor"
+        const worker =
+          externalTarget.type === "antigravity"
+            ? await buildExternalWorkerResumeEnv(
+                {
+                  parentAgentId: parentScope.agentId,
+                  actingUserId: getRuntimeActingUserAttribution(),
+                },
+                deps.workerEnv,
+              )
+            : undefined;
+        const receipt = worker
+          ? sendAntigravityMessage(
+              {
+                ...messageOptions,
+                resumeSessionId: externalTarget.sessionId,
+                mcpReminder: worker.mcpReminder,
+              },
+              worker.env,
+              worker.secretEnv,
+            )
+          : externalTarget.type === "cursor"
             ? await sendCursorMessage(
                 messageOptions,
                 { ...process.env, ...secrets },
@@ -269,9 +295,11 @@ export async function send_agent_message(
               status: "accepted",
               agent_id: args.agent_id,
               delivery:
-                externalTarget.type === "cursor"
-                  ? "run/steer"
-                  : "session/abort+prompt",
+                externalTarget.type === "antigravity"
+                  ? "queued"
+                  : externalTarget.type === "cursor"
+                    ? "run/steer"
+                    : "session/abort+prompt",
             }),
             status: "success",
           };
@@ -309,7 +337,6 @@ export async function send_agent_message(
           throw error;
         }
       }
-      // A resumed worker process needs the same environment as a launch.
       const worker = await buildExternalWorkerResumeEnv(
         {
           parentAgentId: parentScope.agentId,
@@ -454,7 +481,8 @@ export async function send_agent_message(
           content: JSON.stringify({
             status: "accepted",
             agent_id: args.agent_id,
-            delivery: "stream/interrupt",
+            delivery: receipt.queued ? "stream/queued" : "stream/interrupt",
+            ...(receipt.queued ? { note: QUEUED_NOTE } : {}),
           }),
           status: "success",
         };
@@ -566,10 +594,6 @@ export async function send_agent_message(
       },
       signal,
     );
-    // A child spawned by this agent keeps doing its work; show it as running.
-    // The receipt names the conversation's agent (older servers omit it, so
-    // fall back to the passed agent); with neither, tracking is skipped. The
-    // lookup never fails the send: it was already accepted.
     const child = receipt.agent_id
       ? await resolveChildSubagent(backend, receipt.agent_id, sender.agentId)
       : null;

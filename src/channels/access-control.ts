@@ -8,18 +8,6 @@ import type {
 } from "./types";
 import { allowedUsersIncludes as whatsappAllowedUsersIncludes } from "./whatsapp/jid";
 
-/**
- * Centralized sender access control for channel inbound traffic.
- *
- * Modeled on the Hermes gateway's authorization layer: one decision
- * function consulted on every inbound message (DMs and groups), an
- * env-var allowlist axis that works across all channels, and an
- * opt-in admin/user command tier that stays disabled until an
- * operator lists at least one admin.
- */
-
-// ── Scope ─────────────────────────────────────────────────────────
-
 export type ChannelAccessScope = "dm" | "group";
 
 export function resolveChannelAccessScope(
@@ -27,8 +15,6 @@ export function resolveChannelAccessScope(
 ): ChannelAccessScope {
   return chatType === "channel" ? "group" : "dm";
 }
-
-// ── Env-var allowlists ────────────────────────────────────────────
 
 const GLOBAL_ALLOWED_USERS_ENV = "LETTA_CHANNELS_ALLOWED_USERS";
 const GLOBAL_ADMIN_USERS_ENV = "LETTA_CHANNELS_ADMIN_USERS";
@@ -52,7 +38,6 @@ function isEnvFlagEnabled(raw: string | undefined): boolean {
   return normalized === "1" || normalized === "true" || normalized === "yes";
 }
 
-/** Union of the global and per-channel allowed-user env vars. */
 export function getChannelEnvAllowedUsers(channelId: string): string[] {
   return [
     ...parseUserList(process.env[GLOBAL_ALLOWED_USERS_ENV]),
@@ -60,7 +45,6 @@ export function getChannelEnvAllowedUsers(channelId: string): string[] {
   ];
 }
 
-/** Union of the global and per-channel admin-user env vars. */
 export function getChannelEnvAdminUsers(channelId: string): string[] {
   return [
     ...parseUserList(process.env[GLOBAL_ADMIN_USERS_ENV]),
@@ -68,7 +52,6 @@ export function getChannelEnvAdminUsers(channelId: string): string[] {
   ];
 }
 
-/** Explicit opt-out of sender gating (LETTA_CHANNELS_ALLOW_ALL_USERS=1). */
 export function isChannelAllowAllUsersEnabled(channelId: string): boolean {
   return (
     isEnvFlagEnabled(process.env[GLOBAL_ALLOW_ALL_ENV]) ||
@@ -76,13 +59,6 @@ export function isChannelAllowAllUsersEnabled(channelId: string): boolean {
   );
 }
 
-// ── Sender access decisions ───────────────────────────────────────
-
-/**
- * Minimal structural view of a channel account used for access
- * decisions, satisfied by every ChannelAccount variant including
- * custom plugin accounts.
- */
 export interface ChannelAccessAccount {
   accountId: string;
   dmPolicy: DmPolicy;
@@ -113,11 +89,6 @@ function effectiveAllowedUsers(
   ];
 }
 
-/**
- * Channel-aware allowlist membership. WhatsApp and Signal identities
- * have multiple representations (JID vs phone digits, UUID vs E.164),
- * so those channels match through their normalizing helpers.
- */
 function allowlistMatches(
   channelId: string,
   allowed: string[],
@@ -146,33 +117,10 @@ function isPairedApproved(
   if (isUserApproved(channelId, senderId, accountId)) {
     return true;
   }
-  // Reload from disk on miss so standalone CLI pairing approvals apply
-  // without a listener restart (mirrors the historical DM pairing path).
   loadPairingStore(channelId);
   return isUserApproved(channelId, senderId, accountId);
 }
 
-/**
- * Decide whether an inbound sender may reach the agent.
- *
- * Order of checks, most permissive first:
- * 1. Allow-all env flag → allow.
- * 2. Sender in the effective allowlist (account allowedUsers + adminUsers
- *    + env allowlists, `*` wildcard supported) → allow.
- * 3. Sender approved via pairing → allow (pairing grants are a union
- *    with the allowlist, not an alternative).
- * 4. Otherwise the scope policy decides:
- *    - group: `groupPolicy: "allowlist"` denies; an env allowlist being
- *      configured also denies (a configured allowlist restricts
- *      everywhere); default stays open for backwards compatibility.
- *    - dm: `dmPolicy` semantics — open allows (unless an env allowlist
- *      is configured), allowlist denies, pairing asks for a code.
- *
- * Slack exception: Slack DM `dmPolicy: "pairing"` is a legacy default
- * that was never enforced (the workspace membership is the trust
- * boundary and there is no Slack pairing UX), so it behaves as "open".
- * Explicit `dmPolicy: "allowlist"` and env allowlists ARE enforced.
- */
 export function evaluateChannelSenderAccess(
   input: ChannelSenderAccessInput,
 ): ChannelSenderAccessDecision {
@@ -209,8 +157,6 @@ export function evaluateChannelSenderAccess(
   }
 
   if (account.dmPolicy === "pairing" && !envAllowlistConfigured) {
-    // Slack never enforced its legacy "pairing" default and has no
-    // pairing reply surface; keep workspace membership as the boundary.
     return channelId === "slack" ? "allow" : "pair";
   }
 
@@ -229,31 +175,15 @@ export function buildChannelAccessDeniedMessage(channelId: string): string {
   return `You are not on the allowed users list for this ${noun}.`;
 }
 
-// ── Admin/user command tiers ──────────────────────────────────────
-
-/**
- * Read-only commands that stay reachable for every allowed user even
- * when command gating is enabled. Anything an operator lists in
- * `userAllowedCommands` is added on top; the floor is never removed.
- */
 export const CHANNEL_COMMAND_FLOOR = ["help", "status", "whoami"] as const;
 
 export interface ChannelCommandGate {
-  /** Gating is active only when at least one admin is configured. */
   enabled: boolean;
   isAdmin: boolean;
-  /** Normalized extra commands non-admins may run (floor excluded). */
   allowedCommands: string[];
-  /** True when the sender still needs to pair; changes denial wording. */
   pairingPending?: boolean;
 }
 
-/**
- * Gate limiting a sender to the read-only floor. Applied to senders in
- * the pairing handshake regardless of whether admin tiers are enabled,
- * so a not-yet-paired DM sender cannot run mutating commands against a
- * pre-existing route.
- */
 export function floorOnlyChannelCommandGate(): ChannelCommandGate {
   return {
     enabled: true,
@@ -267,17 +197,11 @@ function normalizeCommandName(name: string): string {
   return name.trim().replace(/^\/+/, "").toLowerCase();
 }
 
-/** Resolve command aliases to the canonical name used for gating. */
 export function canonicalizeChannelCommandName(name: string): string {
   const normalized = normalizeCommandName(name);
   return normalized === "reflect" ? "reflection" : normalized;
 }
 
-/**
- * Resolve the command tier for a sender. Mirrors Hermes's backward
- * compatibility rule: when no admin is configured for the account (or
- * via env), gating is disabled and every allowed user has full access.
- */
 export function resolveChannelCommandGate(params: {
   account: ChannelAccessAccount;
   channelId: string;
@@ -293,8 +217,6 @@ export function resolveChannelCommandGate(params: {
     .filter((name) => name.length > 0);
   return {
     enabled,
-    // Channel-aware matching so e.g. a WhatsApp admin configured as a
-    // phone number is recognized when messages arrive with a JID sender.
     isAdmin:
       !enabled || allowlistMatches(params.channelId, admins, params.senderId),
     allowedCommands,

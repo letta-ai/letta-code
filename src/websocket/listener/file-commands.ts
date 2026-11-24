@@ -44,10 +44,8 @@ function trackListenerError(
     context,
   });
 }
-/** File/directory names filtered from directory listings (OS/VCS noise). */
 const DIR_LISTING_IGNORED_NAMES = new Set([".DS_Store", ".git", "Thumbs.db"]);
 
-/** Directories skipped by recursive listener filesystem operations. */
 const RECURSIVE_IGNORED_NAMES = new Set([
   ...DIR_LISTING_IGNORED_NAMES,
   ".cache",
@@ -68,11 +66,6 @@ const RECURSIVE_IGNORED_NAMES = new Set([
   "__pycache__",
 ]);
 
-/**
- * Home-directory children that commonly trigger macOS TCC prompts. When the
- * listener is scoped to the user's home directory, recursive operations skip
- * these before stat/readdir. This mirrors OpenCode's global-home guardrail.
- */
 const PROTECTED_HOME_NAMES = new Set([
   "applications",
   "desktop",
@@ -89,11 +82,6 @@ const MAX_SEARCH_VISITED_ENTRIES = 50_000;
 const MAX_TREE_ENTRIES = 5_000;
 const MAX_SEARCH_RESULTS = 200;
 
-/**
- * Size cap for base64-encoded read_file responses (raw bytes, pre-encoding).
- * Mirrors the desktop app's fs-read-image-as-data-url IPC cap so web image
- * previews and desktop previews share the same ceiling.
- */
 const MAX_BASE64_READ_BYTES = 25 * 1024 * 1024;
 
 interface IgnoreConfig {
@@ -152,10 +140,6 @@ function shouldSkipProtectedHomePath(root: string, absPath: string): boolean {
   const protectedSegment = getProtectedHomeSegment(absPath);
   if (!protectedSegment) return false;
 
-  // If the user explicitly scoped the operation inside a protected home
-  // directory (for example ~/Documents/my-project), allow that workspace.
-  // The guard is intended to stop broad traversal from $HOME into protected
-  // directories, not to make explicitly selected projects disappear.
   return getProtectedHomeSegment(root) !== protectedSegment;
 }
 
@@ -236,11 +220,6 @@ async function shouldSkipEntry(options: {
   return false;
 }
 
-/**
- * List a single directory directly via readdir. This intentionally does not
- * warm or consult the old recursive file index; desktop file tree requests are
- * already bounded/paginated by the caller and should stay path-only.
- */
 async function listDirectoryDirect(
   absDir: string,
   root: string,
@@ -305,9 +284,6 @@ async function searchFilesDirect(options: {
 
   const results: TreeEntry[] = [];
 
-  // Home/global mode is intentionally shallow to avoid recursively touching
-  // protected user directories. Users can scope cwd to a safe subdirectory
-  // (for example ~/dev/project) for deep quick-open/search.
   if (isHomeDirectory(root)) {
     const listing = await listDirectoryDirect(root, root, true, {
       recursive: false,
@@ -426,17 +402,11 @@ export function createFileCommandSession(params: {
 } {
   const { socket, safeSocketSend, runDetachedListenerTask } = params;
 
-  // File watchers are keyed by absolute path and ref-counted so multiple
-  // windows watching the same file share one fs.watch() handle.
   const fileWatchers = new Map<
     string,
     { watcher: import("node:fs").FSWatcher; refCount: number }
   >();
-  // Debounce timers for fs.watch events; macOS/FSEvents can fire multiple
-  // rapid events for a single save.
   const watchDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  // Paths where unwatch_file arrived while the watch_file async task was still
-  // in flight. The task checks this set after its await and bails if present.
   const cancelledWatches = new Set<string>();
 
   const dispose = (): void => {
@@ -453,7 +423,6 @@ export function createFileCommandSession(params: {
   };
 
   const handle = (parsed: unknown): boolean => {
-    // File search (no runtime scope required)
     if (isSearchFilesCommand(parsed)) {
       runDetachedListenerTask("search_files", async () => {
         try {
@@ -499,7 +468,6 @@ export function createFileCommandSession(params: {
       return true;
     }
 
-    // Find-in-files content search (no runtime scope required)
     if (isGrepInFilesCommand(parsed)) {
       runDetachedListenerTask("grep_in_files", async () => {
         try {
@@ -577,7 +545,6 @@ export function createFileCommandSession(params: {
       return true;
     }
 
-    // Directory listing (no runtime scope required)
     if (isListInDirectoryCommand(parsed)) {
       logFileCommand(
         `[Listen] Received list_in_directory command: path=${parsed.path}`,
@@ -596,7 +563,6 @@ export function createFileCommandSession(params: {
           const offset = parsed.offset ?? 0;
           const limit = parsed.limit ?? total;
 
-          // Paginate over the combined [folders, files] list
           const combined = [...allFolders, ...allFiles];
           const page = combined.slice(offset, offset + limit);
           const folderSet = new Set(allFolders);
@@ -653,7 +619,6 @@ export function createFileCommandSession(params: {
       return true;
     }
 
-    // Depth-limited subtree fetch (no runtime scope required)
     if (isGetTreeCommand(parsed)) {
       logFileCommand(
         `[Listen] Received get_tree command: path=${parsed.path}, depth=${parsed.depth}`,
@@ -709,7 +674,6 @@ export function createFileCommandSession(params: {
       return true;
     }
 
-    // File reading (no runtime scope required)
     if (isReadFileCommand(parsed)) {
       const encoding = parsed.encoding ?? "utf8";
       logFileCommand(
@@ -775,7 +739,6 @@ export function createFileCommandSession(params: {
       return true;
     }
 
-    // File writing (no runtime scope required)
     if (isWriteFileCommand(parsed)) {
       logFileCommand(
         `[Listen] Received write_file command: path=${parsed.path}, request_id=${parsed.request_id}`,
@@ -783,7 +746,6 @@ export function createFileCommandSession(params: {
       runDetachedListenerTask("write_file", async () => {
         try {
           if (parsed.encoding === "base64" || parsed.append || parsed.move_to) {
-            // Binary writes bypass the Edit/text path and write bytes directly.
             if (parsed.encoding !== "base64") {
               throw new Error("write_file append/move_to require base64");
             }
@@ -843,7 +805,6 @@ export function createFileCommandSession(params: {
       return true;
     }
 
-    // File watching (no runtime scope required)
     if (isWatchFileCommand(parsed)) {
       runDetachedListenerTask("watch_file", async () => {
         const existing = fileWatchers.get(parsed.path);
@@ -854,19 +815,12 @@ export function createFileCommandSession(params: {
         try {
           const { watch } = await import("node:fs");
           const { stat } = await import("node:fs/promises");
-          // Check if unwatch arrived while we were awaiting imports
           if (cancelledWatches.delete(parsed.path)) return;
           const watcher = watch(
             parsed.path,
             { persistent: false },
             (eventType) => {
-              // Handle both "change" (normal write) and "rename" (atomic
-              // write-then-rename, common on Linux). We stat() the original
-              // path -- if it still exists the content was updated; if not
-              // the file was deleted and the catch handler cleans up.
               if (eventType !== "change" && eventType !== "rename") return;
-              // Debounce: macOS/FSEvents can fire multiple rapid events
-              // for a single save. Collapse into one file_changed push.
               const existing = watchDebounceTimers.get(parsed.path);
               if (existing) clearTimeout(existing);
               watchDebounceTimers.set(
@@ -887,7 +841,6 @@ export function createFileCommandSession(params: {
                       );
                     })
                     .catch(() => {
-                      // File deleted -- stop watching
                       const entry = fileWatchers.get(parsed.path);
                       if (entry) {
                         entry.watcher.close();
@@ -903,9 +856,7 @@ export function createFileCommandSession(params: {
             fileWatchers.delete(parsed.path);
           });
           fileWatchers.set(parsed.path, { watcher, refCount: 1 });
-        } catch {
-          // fs.watch not supported or path invalid -- silently ignore
-        }
+        } catch {}
       });
       return true;
     }
@@ -919,7 +870,6 @@ export function createFileCommandSession(params: {
           fileWatchers.delete(parsed.path);
         }
       } else {
-        // watch_file async task may still be in flight -- mark for cancel
         cancelledWatches.add(parsed.path);
       }
       const timer = watchDebounceTimers.get(parsed.path);
@@ -930,7 +880,6 @@ export function createFileCommandSession(params: {
       return true;
     }
 
-    // File editing (no runtime scope required)
     if (isEditFileCommand(parsed)) {
       logFileCommand(
         `[Listen] Received edit_file command: file_path=${parsed.file_path}, request_id=${parsed.request_id}`,
@@ -952,7 +901,6 @@ export function createFileCommandSession(params: {
           logFileCommand(
             `[Listen] edit_file success: ${result.replacements} replacement(s) at line ${result.startLine}`,
           );
-          // Notify web clients of the new content so they can update live.
           if (result.replacements > 0) {
             try {
               const contentAfter = await readUtf8TextStrict(parsed.file_path);
@@ -969,9 +917,7 @@ export function createFileCommandSession(params: {
                 "listener_edit_file_ops_send_failed",
                 "listener_edit_file",
               );
-            } catch {
-              // Non-fatal: content broadcast is best-effort.
-            }
+            } catch {}
           }
 
           safeSocketSend(
@@ -1016,10 +962,7 @@ export function createFileCommandSession(params: {
       return true;
     }
 
-    // Egwalker CRDT ops (no runtime scope required)
     if (isFileOpsCommand(parsed)) {
-      // Use document_content if provided (reliable, no race conditions).
-      // Falls back to applying ops character-by-character.
       if (parsed.document_content !== undefined) {
         runDetachedListenerTask("file_ops", async () => {
           try {

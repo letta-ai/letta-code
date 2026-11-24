@@ -163,7 +163,6 @@ export function providerManageActions(
   provider: ByokProvider,
   target: ProviderStorageTarget,
   connectedRecords: readonly ProviderResponse[],
-  /** ChatGPT connections that currently have a spendable reset credit. */
   resettableProviderNames: readonly string[] = [],
 ): ProviderManageAction[] {
   const actions: ProviderManageAction[] = connectedRecords.map((record) => ({
@@ -188,11 +187,6 @@ export function providerManageActions(
   return actions;
 }
 
-/**
- * Cursor position after a reset returns to the manage menu. Row 0 is
- * Disconnect, which runs immediately; a repeated Enter from the confirm
- * screen must land on a harmless row ("Refresh usage") instead.
- */
 export function postResetOptionIndex(
   actions: readonly ProviderManageAction[],
 ): number {
@@ -227,8 +221,6 @@ export function fieldValuesFromProviderPlaceholders(
 ): Record<string, string> {
   if (!fields) return {};
 
-  // Optional fields stay empty so an untouched value is not persisted:
-  // e.g. leaving the Ollama base URL blank keeps env/default resolution.
   return Object.fromEntries(
     fields
       .filter(

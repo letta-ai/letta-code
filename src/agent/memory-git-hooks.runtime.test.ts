@@ -58,8 +58,6 @@ describe("MemFS hook runtime", () => {
 
       const hookPath = join(repo, ".git", "hooks", "pre-commit");
       if (process.platform !== "win32") {
-        // The old hook calls bare node, so a failed PATH lookup blocks the
-        // commit before it can even report the invalid frontmatter.
         writeFileSync(join(shimDir, "node"), "#!/bin/sh\nexit 92\n", {
           mode: 0o755,
         });

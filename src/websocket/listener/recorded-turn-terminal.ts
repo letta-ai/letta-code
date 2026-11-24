@@ -159,8 +159,6 @@ export function prepareRecordedInputTerminal(
           (terminal) => terminal.owner.terminalIdentity === terminalIdentity,
         );
     } catch {
-      // Store unavailability is not absence. Retry without minting an owner
-      // that could collide with a terminal whose committed put is unreadable.
       return false;
     }
   }

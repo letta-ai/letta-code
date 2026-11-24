@@ -365,8 +365,6 @@ describe("local transcript residency", () => {
       appendTurn(store, agentId, `turn-${turn}`);
     }
 
-    // Full-history readers see every message: the window keeps all in-context
-    // messages resident even past the 4-message floor.
     const allLocal = store.listLocalMessages("default", agentId);
     expect(allLocal).toHaveLength(12);
     expect(allLocal[0]?.role).toBe("user");
@@ -382,7 +380,6 @@ describe("local transcript residency", () => {
     expect(userRows).toHaveLength(6);
     expect(userRows[0]?.id).toBe(allLocal[0]?.id);
 
-    // The bounded desc+limit resume tail fetch still reads from disk.
     const tail = store.listConversationMessages("default", {
       agent_id: agentId,
       order: "desc",
@@ -395,8 +392,6 @@ describe("local transcript residency", () => {
         .map((row) => row.id),
     );
 
-    // retrieveMessage resolves the oldest message and its assistant row (out-
-    // of-context messages would page through the transcript instead).
     const evictedLocalId = allLocal[0]?.id;
     if (!evictedLocalId) throw new Error("Expected a first message");
     const retrieved = store.retrieveMessage(evictedLocalId);
@@ -411,7 +406,6 @@ describe("local transcript residency", () => {
       store.retrieveMessage(evictedAssistantRow.id).map((row) => row.id),
     ).toEqual([evictedAssistantRow.id]);
 
-    // A fresh store over the same directory sees the identical history.
     const reloaded = new LocalStore(agentId, {
       storageDir,
       residentMessageTailLimit: 4,
@@ -426,8 +420,6 @@ describe("local transcript residency", () => {
       storageDir,
       residentMessageTailLimit: 4,
     });
-    // One oversized early message pushes the transcript beyond the 64 KB tail
-    // window; later turns stay inside the window.
     appendTurn(store, agentId, `bulk-${"x".repeat(96 * 1024)}`);
     for (let turn = 0; turn < 3; turn += 1) {
       appendTurn(store, agentId, `turn-${turn}`);
@@ -442,10 +434,6 @@ describe("local transcript residency", () => {
     const corrupted = `{corrupt-session-header\n${original.slice(firstNewline + 1)}`;
     await writeFile(messagesPath, corrupted);
 
-    // The first append in a new session fails before anything is written:
-    // the tail load parses every in-context row (here the whole file) and any
-    // unparsed head is validated first, so a corrupt head blocks the append
-    // (no dangling row), and every retry throws too.
     const paged = new LocalStore(agentId, {
       storageDir,
       residentMessageTailLimit: 4,
@@ -456,7 +444,6 @@ describe("local transcript residency", () => {
         messages: [{ role: "user", content: "after corruption" }],
       } as ConversationMessageCreateBody),
     ).toThrow();
-    // Retry: still throws, and nothing was appended either time.
     expect(() =>
       paged.appendTurnInput("default", {
         agent_id: agentId,
@@ -474,12 +461,10 @@ describe("local transcript residency", () => {
       storageDir,
       residentMessageTailLimit: 100,
     });
-    // Build 120 messages (60 turns).
     for (let turn = 0; turn < 60; turn += 1) {
       appendTurn(store, agentId, `turn-${turn}`);
     }
 
-    // Compact keeping 105 messages (summary + 104 kept).
     const messagesBefore = store.listLocalMessages("default", agentId);
     expect(messagesBefore.length).toBe(120);
 
@@ -494,16 +479,12 @@ describe("local transcript residency", () => {
     expect(result.numMessagesAfter).toBe(105);
     expect(result.summaryMessage.role).toBe("user");
 
-    // The resident window is trimmed to 100, but in_context_message_ids must
-    // still list all 105.
     const conversation = store.retrieveConversation("default", agentId);
     expect(conversation?.in_context_message_ids).toHaveLength(105);
     expect(conversation?.in_context_message_ids?.[0]).toBe(
       result.summaryMessage.id,
     );
 
-    // Reload: persisted state must reflect the full 105 ids, not the trimmed
-    // resident window.
     const reloaded = new LocalStore(agentId, {
       storageDir,
       residentMessageTailLimit: 100,
@@ -530,8 +511,6 @@ describe("local transcript residency", () => {
     for (let turn = 0; turn < 3; turn += 1) {
       appendTurn(store, agentId, `turn-${turn}`);
     }
-    // Compact to a small active set: the resident window then covers every
-    // in-context id, while the bulky pre-compaction rows stay on disk.
     const before = store.listLocalMessages("default", agentId);
     const compacted = store.compactConversationAll({
       conversationId: "default",
@@ -547,18 +526,12 @@ describe("local transcript residency", () => {
       `default:${agentId}`,
     );
 
-    // New session: the first append loads the bounded tail window (the head
-    // is still clean, so one-time head validation passes) and the resident
-    // window covers every in-context id.
     const paged = new LocalStore(agentId, {
       storageDir,
       residentMessageTailLimit: 100,
     });
     appendTurn(paged, agentId, "turn-3");
 
-    // The head corrupts after the session is resident. Reads must be served
-    // from the resident window without a disk read, so the corrupt line is
-    // never parsed.
     const original = await readFile(messagesPath, "utf8");
     const firstNewline = original.indexOf("\n");
     await writeFile(
@@ -583,9 +556,6 @@ describe("local transcript residency", () => {
       appendTurn(store, agentId, `turn-${turn}`);
     }
 
-    // A conversation.json that lost its in-context ids (legacy record) must
-    // not reorder history: the new message goes to the end, and the older
-    // disk rows keep their positions.
     const conversationDir = join(
       storageDir,
       "conversations",
@@ -634,8 +604,6 @@ describe("local transcript residency", () => {
       appendTurn(store1, agentId, `turn-${turn}`);
     }
 
-    // A second store compacts; store1's resident window is now stale (it
-    // still holds pre-compaction ids the new active set dropped).
     const store2 = new LocalStore(agentId, {
       storageDir,
       residentMessageTailLimit: 100,
@@ -650,7 +618,6 @@ describe("local transcript residency", () => {
     });
     expect(result.numMessagesAfter).toBe(5);
 
-    // store1 must not serve the stale pre-compaction window.
     const fromStore1 = store1.listLocalMessages("default", agentId);
     expect(fromStore1[0]?.id).toBe(result.summaryMessage.id);
     expect(fromStore1.length).toBe(5);
@@ -668,7 +635,6 @@ describe("local transcript residency", () => {
       agent_id: agentId,
       messages: [{ role: "user", content: "run the tool" }],
     } as ConversationMessageCreateBody);
-    // ESC while the tool call streams: the final snapshot is aborted.
     const aborted = {
       id: "provider-aborted",
       role: "assistant",
@@ -693,8 +659,6 @@ describe("local transcript residency", () => {
       message_type: "stop_reason",
       stop_reason: "cancelled",
     } as LettaStreamingResponse);
-    // The next turn start settles the call with a synthetic error result; it
-    // must stay right after its call instead of drifting to the end.
     expect(store.settleInterruptedToolCalls("default", { agentId })).toBe(1);
     for (const turn of ["turn-1", "turn-2"]) {
       appendTurn(store, agentId, turn);
@@ -703,7 +667,7 @@ describe("local transcript residency", () => {
         .map((message) =>
           message.role === "toolResult" ? message.toolCallId : message.role,
         );
-      expect(ids.indexOf("tool-esc")).toBe(4); // user, reply, user, call
+      expect(ids.indexOf("tool-esc")).toBe(4);
     }
   });
 
@@ -718,7 +682,6 @@ describe("local transcript residency", () => {
       appendTurn(store, agentId, `turn-${turn}`);
     }
 
-    // A pending tool call at the tail (requires_approval stop).
     store.appendStreamChunk("default", agentId, {
       message_type: "approval_request_message",
       tool_call: {
@@ -732,8 +695,6 @@ describe("local transcript residency", () => {
       stop_reason: "requires_approval",
     });
 
-    // The approval response resolves the pending call; the earlier turns stay
-    // resident past the 3-message floor because they are still in context.
     store.appendTurnInput("default", {
       agent_id: agentId,
       messages: [
@@ -758,7 +719,6 @@ describe("local transcript residency", () => {
     expect(approvalResult).toBeDefined();
     expect(JSON.stringify(approvalResult)).toContain("approved-output");
 
-    // A second pending call left unsettled gets a synthetic error result.
     store.appendStreamChunk("default", agentId, {
       message_type: "approval_request_message",
       tool_call: {
@@ -785,8 +745,6 @@ describe("local transcript residency", () => {
     expect(settledResult).toBeDefined();
     expect(JSON.stringify(settledResult)).toContain("turn did not complete");
 
-    // A fresh store recovers the full history (both results included) from
-    // disk.
     const reloaded = new LocalStore(agentId, {
       storageDir,
       residentMessageTailLimit: 3,
@@ -836,7 +794,6 @@ describe("local transcript residency", () => {
     const forked = store.forkConversation("default", { agentId });
     expect(store.listLocalMessages(forked.id, agentId)).toHaveLength(8);
 
-    // Appending to the fork keeps the full forked history readable.
     appendTurn(store, agentId, "after-fork", forked.id);
     expect(store.listLocalMessages(forked.id, agentId)).toHaveLength(10);
 
@@ -924,9 +881,6 @@ describe("local transcript residency", () => {
       agentId,
     ).projectedIndexSize;
 
-    // `before` the first row is an empty page; an early cursor still forces
-    // the suffix to expand to the start (bootstrap pagination) without
-    // returning nothing.
     const page = reloaded.listConversationMessages("default", {
       agent_id: agentId,
       order: "desc",

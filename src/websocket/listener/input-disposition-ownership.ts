@@ -1,9 +1,3 @@
-/**
- * Durable input-ownership reads derived from the accepted-input disposition
- * ledger. Lives outside input-disposition.ts to keep that module under the
- * source-file size cap; all ledger access goes through its exported helpers.
- */
-
 import {
   dispositionKey,
   durableTransaction,
@@ -35,10 +29,6 @@ function entryHasLiveAcceptedInputOwner(
   );
 }
 
-/**
- * Read the full durable disposition entry for one identity, following the
- * same durable-first / in-memory fallback pattern as getInputDisposition.
- */
 function readInputDispositionEntry(
   runtime: ConversationRuntime,
   identity: InputIdentity | undefined,
@@ -63,16 +53,6 @@ function readInputDispositionEntry(
   return ledger.entries.get(key) ?? undefined;
 }
 
-/**
- * Whether the durable ledger still shows a LIVE accepted owner for this
- * input: a started or queued disposition that has not replay-completed, has
- * not been terminal-prepared, and has no completed terminal outcome. This is
- * the proof the MCP originator token store needs before (re)creating an
- * entry for a refresh-path delivery after a process crash or ACK loss — a
- * live disposition means a finalizer still exists for the work, while a
- * terminal tombstone means the run is done and any re-delivered token would
- * be orphaned. Expired entries are not live.
- */
 export function hasLiveAcceptedInputOwner(
   runtime: ConversationRuntime,
   identity: InputIdentity | undefined,
@@ -82,13 +62,6 @@ export function hasLiveAcceptedInputOwner(
   );
 }
 
-/**
- * Atomically prove a duplicate input still has a live owner and attach the
- * caller's durable terminal consumer before acknowledging it. The finalizer
- * rereads these consumer IDs from the ledger, so a started turn and a queued
- * turn both publish the recovery consumer even though the duplicate creates
- * no new work.
- */
 export function attachTerminalConsumerToLiveAcceptedInput(
   runtime: ConversationRuntime,
   identity: InputIdentity | undefined,
@@ -136,11 +109,6 @@ export function attachTerminalConsumerToLiveAcceptedInput(
   return attach(ledger.entries.get(key));
 }
 
-/**
- * The mayRecreateOwner callback shape the originator token ack path needs:
- * undefined when the input has no identity (nothing provable), otherwise a
- * thunk proving the durable ledger still shows a live accepted owner.
- */
 export function liveAcceptedInputOwnerProof(
   runtime: ConversationRuntime,
   identity: InputIdentity | undefined,
@@ -150,17 +118,6 @@ export function liveAcceptedInputOwnerProof(
     : undefined;
 }
 
-/**
- * Stricter recreation proof for teleport continuation duplicates
- * (evil-shub round-5 P2): recreating a token entry is only safe when the
- * persisted continuation can also RETIRE it. A continuation persisted by a
- * pre-owner-id build (650eb75f) carries no `mcpOriginatorSuperRunId` in its
- * durable record; after an upgrade, replaying that old-format record's
- * finalizer still cannot retire a recreated entry — the token would be
- * orphaned for the rest of its TTL. Such records fail closed here: the
- * re-delivered token is dropped and the continuation runs headerless,
- * which is exactly the pre-upgrade behavior for that record.
- */
 export function hasLiveAcceptedInputOwnerWithOriginatorRetirement(
   runtime: ConversationRuntime,
   identity: InputIdentity | undefined,

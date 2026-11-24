@@ -54,10 +54,6 @@ const removeResizeHandlerIfIdle = () => {
   resizeHandlerRegistered = false;
 };
 
-/**
- * Hook to get terminal width and reactively update on resize
- * Uses a shared resize listener to avoid exceeding WriteStream listener limits.
- */
 export function useTerminalWidth(): number {
   const [columns, setColumns] = useState(trackedColumns);
 
@@ -77,10 +73,6 @@ export function useTerminalWidth(): number {
   return columns;
 }
 
-/**
- * Hook to get terminal rows and reactively update on resize.
- * Uses the same shared resize listener as useTerminalWidth.
- */
 export function useTerminalRows(): number {
   const [rows, setRows] = useState(trackedRows);
 

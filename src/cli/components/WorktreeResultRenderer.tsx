@@ -7,11 +7,6 @@ import {
   parseExitWorktreeResult,
 } from "./ExitWorktreeResultRenderer.js";
 
-/**
- * Single dispatch point for the worktree tools' compact result summaries, so
- * ToolCallMessageRich carries one branch rather than one per tool. A failed
- * call keeps the raw tool return, which carries the error text.
- */
 export function hasWorktreeResultRenderer(
   toolName: string,
   resultText: string,

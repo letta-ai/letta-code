@@ -64,7 +64,6 @@ describe("task progress log", () => {
     recordTaskProgressText(SUBAGENT, "   ");
     recordTaskProgressText(SUBAGENT, "x".repeat(5_000));
     recordTaskProgressToolCall(SUBAGENT, { id: "t", name: "Bash", args: "" });
-    // The same text after a tool call is new progress.
     recordTaskProgressText(SUBAGENT, "Waiting.");
     const written = lines(file);
     expect(written).toHaveLength(4);
@@ -152,7 +151,6 @@ describe("task log secret scrubbing", () => {
       now: () => new Date(0),
       redactions: { DEPLOY_KEY: secret },
     });
-    // Letta and remote events arrive without any worker-side scrubbing.
     recordTaskProgressToolCall(SUBAGENT, {
       id: "c1",
       name: "Bash",
@@ -191,7 +189,6 @@ describe("remote worker progress texts", () => {
       getSnapshot().agents.find((agent) => agent.id === SUBAGENT)
         ?.progressTexts ?? [];
     expect(texts).toHaveLength(MAX_PROGRESS_TEXTS);
-    // Two texts were recorded before the steps, so IDs keep counting past them.
     expect(texts[0]).toEqual({
       id: "text-3",
       at: "1970-01-01T00:00:00.000Z",

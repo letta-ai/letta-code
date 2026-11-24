@@ -1,11 +1,3 @@
-/**
- * Subagent configuration, discovery, and management
- *
- * Built-in subagents are bundled with the package.
- * Users can also define custom subagents as Markdown files with YAML frontmatter
- * in the .letta/agents/ directory.
- */
-
 import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -19,7 +11,6 @@ import {
   parseFrontmatter,
 } from "@/utils/frontmatter";
 import { resolveGlobalConfigDir } from "@/utils/settings-path";
-// Built-in subagent definitions (embedded at build time)
 import forkAgentMd from "./builtin/fork.md";
 import generalPurposeAgentMd from "./builtin/general-purpose.md";
 import initAgentMd from "./builtin/init.md";
@@ -50,30 +41,18 @@ const LOCAL_MEMFS_BUILTIN_SOURCES = [
 
 const MEMFS_V2_BUILTIN_SOURCES = [initV2AgentMd, reflectionV2AgentMd];
 
-// ============================================================================
-// Types
-// ============================================================================
-
-/**
- * Subagent configuration
- */
 export type SubagentLaunchProfile = "default" | "memory-subagent";
 export type SubagentRecommendedModelSource = "builtin" | "user";
 
-/** Exact memory scope handed to a harness-created memory worktree. */
 export interface SubagentMemoryScope {
   primaryRoot: string | null;
   writableRoots: string[];
   readonlyRoots?: string[];
 }
 
-/**
- * Subagent execution result
- */
 export interface SubagentResult {
   agentId: string;
   conversationId?: string;
-  /** Native session/thread identifier for a non-Letta execution runtime. */
   runtimeSessionId?: string;
   model?: string;
   report: string;
@@ -85,54 +64,31 @@ export interface SubagentResult {
 }
 
 export interface SubagentConfig {
-  /** Unique identifier for the subagent */
   name: string;
-  /** Description of when to use this subagent */
   description: string;
-  /** System prompt for the subagent */
   systemPrompt: string;
-  /** Allowed tools - specific list or "all" (invalid names are ignored at runtime) */
   allowedTools: string[] | "all";
-  /** Recommended model - any runtime catalog ID or full handle */
   recommendedModel: string;
-  /** Whether the recommended model came from bundled defaults or user config. */
   recommendedModelSource?: SubagentRecommendedModelSource;
-  /** Skills to auto-load */
   skills: string[];
-  /** Whether this subagent should fork the parent conversation before launch. */
   fork: boolean;
-  /** Filesystem and env launch behavior for this subagent. */
   launchProfile: SubagentLaunchProfile;
 }
 
-/**
- * Result of subagent discovery
- */
 export interface SubagentDiscoveryResult {
   subagents: SubagentConfig[];
   errors: Array<{ path: string; message: string }>;
 }
 
-// ============================================================================
-// Constants
-// ============================================================================
-
-/**
- * Directory for subagent files (relative to project root)
- */
 export const AGENTS_DIR = ".letta/agents";
 
-/**
- * Global directory for subagent files (in user's home directory)
- */
 export function getGlobalAgentsDir(): string {
   return join(resolveGlobalConfigDir(), "agents");
 }
 
 export const GLOBAL_AGENTS_DIR = getGlobalAgentsDir();
-// Runtime support is separate from advertising an adapter in the prompt.
-// `letta` is the Agent tool's default harness, not a subagent name.
 const RESERVED_EXTERNAL_SUBAGENT_NAMES = new Set([
+  "antigravity",
   "letta",
   "claude-code",
   "codex",
@@ -140,15 +96,6 @@ const RESERVED_EXTERNAL_SUBAGENT_NAMES = new Set([
   "cursor",
 ]);
 
-// ============================================================================
-// Cache
-// ============================================================================
-
-/**
- * Consolidated cache for subagent configurations
- * - builtins: parsed once from bundled markdown, never changes
- * - configs: builtins + custom agents, invalidated when workingDir changes
- */
 const cache = {
   builtins: {
     standard: null as Record<string, SubagentConfig> | null,
@@ -159,21 +106,10 @@ const cache = {
   localMemfs: null as boolean | null,
 };
 
-// ============================================================================
-// Parsing Helpers
-// ============================================================================
-
-/**
- * Validate a subagent name
- */
 function isValidName(name: string): boolean {
   return /^[a-z][a-z0-9-]*$/.test(name);
 }
 
-/**
- * Parse comma-separated tools string
- * Invalid tool names are kept - they'll be filtered out at runtime when matching against actual tools
- */
 function parseTools(toolsStr: string | undefined): string[] | "all" {
   if (
     !toolsStr ||
@@ -186,9 +122,6 @@ function parseTools(toolsStr: string | undefined): string[] | "all" {
   return tools.length > 0 ? tools : "all";
 }
 
-/**
- * Parse comma-separated skills string
- */
 function parseSkills(skillsStr: string | undefined): string[] {
   return parseCommaSeparatedList(skillsStr);
 }
@@ -199,10 +132,6 @@ function parseLaunchProfile(
   return launchProfile === "memory-subagent" ? "memory-subagent" : "default";
 }
 
-/**
- * Validate subagent frontmatter
- * Only validates required fields - optional fields are validated at runtime where needed
- */
 function validateFrontmatter(
   frontmatter: Record<string, string | string[]>,
   options: { requireDescription?: boolean } = {},
@@ -212,7 +141,6 @@ function validateFrontmatter(
 } {
   const errors: string[] = [];
 
-  // Check required fields only
   const name = frontmatter.name;
   if (!name || typeof name !== "string") {
     errors.push("Missing required field: name");
@@ -228,10 +156,6 @@ function validateFrontmatter(
       errors.push("Missing required field: description");
     }
   }
-
-  // Don't validate model or launchProfile here - they're handled at runtime:
-  // - model: resolveModel() returns null for invalid values, subagent-manager falls back
-  // - launchProfile: unknown values default to normal launch behavior
 
   return { valid: errors.length === 0, errors };
 }
@@ -287,9 +211,6 @@ function applySubagentOverlay(
   };
 }
 
-/**
- * Parse a subagent from markdown content
- */
 function parseSubagentContent(
   content: string,
   options: ParseSubagentContentOptions = {},
@@ -317,7 +238,6 @@ function parseSubagentContent(
     return applySubagentOverlay(inherited, frontmatter, options.modelSource);
   }
 
-  // Validate frontmatter for full-replacement custom subagents.
   const validation = validateFrontmatter(frontmatter);
   if (!validation.valid) {
     throw new Error(validation.errors.join("; "));
@@ -341,9 +261,6 @@ function parseSubagentContent(
   };
 }
 
-/**
- * Parse a subagent file
- */
 async function parseSubagentFile(
   filePath: string,
   inheritedConfigs: Record<string, SubagentConfig>,
@@ -355,10 +272,6 @@ async function parseSubagentFile(
   });
 }
 
-/**
- * Built-in subagents that ship with the package
- * These are available to all users without configuration
- */
 function usesLocalMemfsBuiltinPrompts(): boolean {
   return getBackend().capabilities.localMemfs;
 }
@@ -383,7 +296,6 @@ function getBuiltinSubagents(
       });
       builtins[config.name] = config;
     } catch (error) {
-      // Built-in subagents should always be valid; log error but don't crash
       console.warn(
         `[subagent] Failed to parse built-in subagent: ${getErrorMessage(error)}`,
       );
@@ -425,7 +337,6 @@ export function resolveSubagentConfigForMemoryFormat(
   return {
     ...config,
     systemPrompt: v2Builtin.systemPrompt,
-    // Keep an override's explicit skill list; upgrade only the built-in default.
     skills:
       config.skills.join(",") === v1Builtin.skills.join(",")
         ? [...v2Builtin.skills]
@@ -433,16 +344,10 @@ export function resolveSubagentConfigForMemoryFormat(
   };
 }
 
-/**
- * Get the names of built-in subagents
- */
 export function getBuiltinSubagentNames(): Set<string> {
   return new Set(Object.keys(getBuiltinSubagents()));
 }
 
-/**
- * Discover subagents from a single directory
- */
 async function discoverSubagentsFromDir(
   agentsDir: string,
   configsByName: Record<string, SubagentConfig>,
@@ -470,7 +375,6 @@ async function discoverSubagentsFromDir(
           !RESERVED_EXTERNAL_SUBAGENT_NAMES.has(config.name) &&
           config.name !== "memory"
         ) {
-          // Check for duplicate names (later directories override earlier ones)
           const existingIndex = subagents.findIndex(
             (s) => s.name === config.name,
           );
@@ -496,10 +400,6 @@ async function discoverSubagentsFromDir(
   }
 }
 
-/**
- * Discover subagents from global (~/.letta/agents) and project (.letta/agents) directories
- * Project-level subagents override global ones with the same name
- */
 export async function discoverSubagents(
   workingDirectory: string = process.cwd(),
   inheritedConfigs: Record<string, SubagentConfig> = {
@@ -509,7 +409,6 @@ export async function discoverSubagents(
   const errors: Array<{ path: string; message: string }> = [];
   const subagents: SubagentConfig[] = [];
 
-  // First, discover from global directory (~/.letta/agents)
   await discoverSubagentsFromDir(
     getGlobalAgentsDir(),
     inheritedConfigs,
@@ -517,8 +416,6 @@ export async function discoverSubagents(
     errors,
   );
 
-  // Then, discover from project directory (.letta/agents)
-  // Project-level overrides global with same name
   const projectAgentsDir = join(workingDirectory, AGENTS_DIR);
   await discoverSubagentsFromDir(
     projectAgentsDir,
@@ -530,17 +427,10 @@ export async function discoverSubagents(
   return { subagents, errors };
 }
 
-/**
- * Get all subagent configurations
- * Includes built-in subagents and any user-defined ones from .letta/agents/
- * User-defined subagents override built-ins with the same name
- * Results are cached per working directory
- */
 export async function getAllSubagentConfigs(
   workingDirectory: string = process.cwd(),
 ): Promise<Record<string, SubagentConfig>> {
   const localMemfs = usesLocalMemfsBuiltinPrompts();
-  // Return cached if same working directory
   if (
     cache.configs &&
     cache.workingDir === workingDirectory &&
@@ -549,18 +439,15 @@ export async function getAllSubagentConfigs(
     return cache.configs;
   }
 
-  // Start with a copy of built-in subagents (don't mutate the cache)
   const configs: Record<string, SubagentConfig> = {
     ...getBuiltinSubagents(localMemfs),
   };
 
-  // Discover user-defined subagents from .letta/agents/
   const { subagents, errors } = await discoverSubagents(
     workingDirectory,
     configs,
   );
 
-  // Log any discovery errors
   for (const error of errors) {
     console.warn(`[subagent] Warning: ${error.path}: ${error.message}`);
   }
@@ -575,12 +462,10 @@ export async function getAllSubagentConfigs(
     }
   }
 
-  // User-defined subagents override built-ins with the same name
   for (const subagent of subagents) {
     configs[subagent.name] = subagent;
   }
 
-  // Cache results
   cache.configs = configs;
   cache.workingDir = workingDirectory;
   cache.localMemfs = localMemfs;
@@ -594,8 +479,6 @@ export async function getModelFacingSubagentDescriptors(
   Array<{ name: string; description: string; recommendedModel: string }>
 > {
   const configs = await getAllSubagentConfigs(workingDirectory);
-  // Available Agents lists the `subagent_type` values the model may pass.
-  // External workers are `harness` values, described by the tool itself.
   return Object.entries(configs)
     .filter(([name]) => !MODEL_HIDDEN_SUBAGENT_NAMES.has(name))
     .map(([name, config]) => ({
@@ -605,9 +488,6 @@ export async function getModelFacingSubagentDescriptors(
     }));
 }
 
-/**
- * Clear the subagent config cache (useful when files change)
- */
 export function clearSubagentConfigCache(): void {
   cache.configs = null;
   cache.workingDir = null;

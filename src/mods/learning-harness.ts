@@ -893,9 +893,7 @@ export function extractHeadlessResultText(
       ) {
         assistantParts.push(payload.content);
       }
-    } catch {
-      // Ignore non-JSON diagnostic lines; raw stdout is still saved as trace.
-    }
+    } catch {}
   }
   return finalResult ?? assistantParts.join("");
 }

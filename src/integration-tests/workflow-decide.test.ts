@@ -5,8 +5,6 @@ import { join } from "node:path";
 import { settingsManager } from "@/settings-manager";
 import { executeWorkflow } from "@/tools/workflow/workflow-engine";
 
-// The CI API integration matrix provides LETTA_API_KEY; a missing key is a
-// configuration failure, not a reason to skip live endpoint coverage.
 test("Workflow decide() evaluates choice and noul through Letta Cloud", async () => {
   if (!process.env.LETTA_API_KEY) {
     throw new Error(
