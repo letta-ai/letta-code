@@ -16,6 +16,7 @@ export interface ExternalTraceScope {
   parent_agent_id: string;
   parent_conversation_id: string;
   task_id: string;
+  task_description?: string;
   worker_session_id: string;
 }
 export interface ExternalTraceRow extends ExternalTraceScope {
@@ -217,6 +218,15 @@ export async function startTraceProxy(options: {
       options.emit(
         {
           ...scope,
+          task_description:
+            scope.task_description === undefined
+              ? undefined
+              : JSON.parse(
+                  sanitizeTraceJson(
+                    JSON.stringify(scope.task_description),
+                    credentials,
+                  ),
+                ),
           id,
           harness: options.harness,
           model: JSON.parse(

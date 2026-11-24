@@ -9,6 +9,7 @@ export interface EphemeralConversationCreateBody {
   parent_agent_id?: string;
   is_subagent?: boolean;
   name?: string;
+  summary?: string;
 }
 
 export interface EphemeralConversation {

@@ -699,6 +699,7 @@ export async function runExternalCodingAgent(
                   parent_agent_id: scope.agentId,
                   parent_conversation_id: scope.conversationId,
                   task_id: options.taskId ?? randomUUID(),
+                  task_description: options.description,
                 }
               : undefined,
             prompt: options.prompt,
@@ -768,6 +769,7 @@ export async function runExternalCodingAgent(
                   parent_agent_id: scope.agentId,
                   parent_conversation_id: scope.conversationId,
                   task_id: options.taskId ?? randomUUID(),
+                  task_description: options.description,
                 }
               : undefined,
             prompt: options.prompt,

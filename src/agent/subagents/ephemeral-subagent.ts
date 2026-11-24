@@ -1,6 +1,9 @@
 import { getCurrentAgentId } from "@/agent/context";
 import type { BackendMode } from "@/backend";
-import { SUBAGENT_NAME_ENV } from "@/utils/subagent-launch-marker";
+import {
+  SUBAGENT_NAME_ENV,
+  SUBAGENT_SUMMARY_ENV,
+} from "@/utils/subagent-launch-marker";
 import { resolveCreatedAgentName } from "./names";
 
 export const EPHEMERAL_SUBAGENTS_ENV = "LETTA_CODE_EPHEMERAL_SUBAGENTS";
@@ -29,6 +32,7 @@ export interface EphemeralSubagentLink {
   parent_agent_id: string;
   is_subagent: true;
   name: string;
+  summary?: string;
 }
 
 export function resolveEphemeralSubagentLink(
@@ -37,7 +41,9 @@ export function resolveEphemeralSubagentLink(
   if (env.LETTA_CODE_AGENT_ROLE !== "subagent") return null;
   const parentAgentId = env.LETTA_PARENT_AGENT_ID?.trim();
   if (!parentAgentId) return null;
+  const summary = env[SUBAGENT_SUMMARY_ENV]?.trim();
   return {
+    ...(summary ? { summary } : {}),
     parent_agent_id: parentAgentId,
     is_subagent: true,
     name: resolveCreatedAgentName(
