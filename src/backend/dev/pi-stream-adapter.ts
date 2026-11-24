@@ -72,10 +72,22 @@ export interface LocalContextPressure {
   contextWindow: number;
 }
 
-interface LocalCompactionResult {
+export interface LocalTurnCompaction {
   uiMessages: LocalMessage[];
   summary: string;
   stats?: LocalCompactionStats;
+  systemPrompt?: string;
+}
+
+function inputAfterCompaction(
+  input: ProviderTurnInput,
+  compaction: LocalTurnCompaction,
+): ProviderTurnInput {
+  return {
+    ...input,
+    uiMessages: compaction.uiMessages,
+    systemPrompt: compaction.systemPrompt ?? input.systemPrompt,
+  };
 }
 
 export interface PiStreamAdapterOptions {
@@ -86,15 +98,11 @@ export interface PiStreamAdapterOptions {
   onContextWindowOverflow?: (
     input: ProviderTurnInput,
     error: unknown,
-  ) => Promise<{
-    uiMessages: LocalMessage[];
-    summary: string;
-    stats?: LocalCompactionStats;
-  } | null>;
+  ) => Promise<LocalTurnCompaction | null>;
   onContextPressure?: (
     input: ProviderTurnInput,
     pressure: LocalContextPressure,
-  ) => Promise<LocalCompactionResult | null>;
+  ) => Promise<LocalTurnCompaction | null>;
   onLlmStart?: (info: LlmStartInfo) => void | Promise<void>;
   onLlmEnd?: (info: LlmEndInfo) => void | Promise<void>;
 }
@@ -376,7 +384,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
 
   private async compactBeforeProviderCall(
     input: ProviderTurnInput,
-  ): Promise<LocalCompactionResult | null> {
+  ): Promise<LocalTurnCompaction | null> {
     if (!this.onContextPressure) return null;
 
     const contextTokens = estimateProviderContextTokens(input);
@@ -620,7 +628,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
         preflightCompactionChecked = true;
         const compaction = await this.compactBeforeProviderCall(activeInput);
         if (compaction) {
-          activeInput = { ...activeInput, uiMessages: compaction.uiMessages };
+          activeInput = inputAfterCompaction(activeInput, compaction);
           yield* this.emitCompactionChunks(compaction, "context_window_limit");
           continue;
         }
@@ -650,7 +658,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           if (!compaction) throw error;
 
           contextOverflowCompactions += 1;
-          activeInput = { ...activeInput, uiMessages: compaction.uiMessages };
+          activeInput = inputAfterCompaction(activeInput, compaction);
           yield* this.emitCompactionChunks(
             compaction,
             "context_window_overflow",
@@ -693,7 +701,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           }
           if (compaction) {
             contextOverflowCompactions += 1;
-            activeInput = { ...activeInput, uiMessages: compaction.uiMessages };
+            activeInput = inputAfterCompaction(activeInput, compaction);
             yield* this.emitCompactionChunks(
               compaction,
               "context_window_overflow",

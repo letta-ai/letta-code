@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -100,8 +101,14 @@ function requestText(context: Context | undefined): string {
   return JSON.stringify(context?.messages ?? []);
 }
 
+interface HarnessOptions {
+  mode: "all" | "self_compact_all";
+  replies: ProviderReply[];
+  memfs?: boolean;
+}
+
 async function withBackend(
-  options: { mode: "all" | "self_compact_all"; replies: ProviderReply[] },
+  options: HarnessOptions,
   run: (harness: Awaited<ReturnType<typeof setup>>) => Promise<void>,
 ): Promise<void> {
   const harness = await setup(options);
@@ -112,16 +119,15 @@ async function withBackend(
   }
 }
 
-async function setup(options: {
-  mode: "all" | "self_compact_all";
-  replies: ProviderReply[];
-}) {
+async function setup(options: HarnessOptions) {
   const storageDir = await mkdtemp(join(tmpdir(), "local-preflight-"));
+  const memoryDir = join(storageDir, "memory");
   const providerRequests: Context[] = [];
   const compactionRequests: Context[] = [];
   const backend = new LocalBackend({
     storageDir,
-    memfsEnabled: false,
+    memoryDir,
+    memfsEnabled: options.memfs === true,
     stream: (_model, context) => {
       providerRequests.push(context);
       const reply = options.replies.shift();
@@ -164,6 +170,22 @@ async function setup(options: {
     storageDir,
     providerRequests,
     compactionRequests,
+    async editMemory(content: string) {
+      await writeFile(join(memoryDir, "MEMORY.md"), content);
+      execFileSync(
+        "git",
+        [
+          "-c",
+          "user.name=Test",
+          "-c",
+          "user.email=test@example.com",
+          "commit",
+          "-qam",
+          "Edit memory",
+        ],
+        { cwd: memoryDir },
+      );
+    },
     async send(content: string) {
       await drain(
         await backend.createConversationMessageStream(conversation.id, {
@@ -313,6 +335,60 @@ describe("local compaction before a model request", () => {
           "Summary 1.",
         );
         expect(harness.storedShape()).toEqual(["summary", "assistant"]);
+      },
+    );
+  });
+
+  test("the system prompt stays the same through a compaction and the next turn", async () => {
+    await withBackend(
+      {
+        mode: "self_compact_all",
+        replies: [
+          { calls: [call("call-1")], usage: OVER_THRESHOLD },
+          { text: "Done." },
+          { text: "Checked." },
+        ],
+      },
+      async (harness) => {
+        await harness.send(REQUEST);
+        await harness.returnResults({ "call-1": "short output" });
+        await harness.send("Now check the tests.");
+
+        expect(harness.compactionRequests).toHaveLength(1);
+        expect(harness.providerRequests).toHaveLength(3);
+        const prompts = [
+          ...harness.providerRequests,
+          ...harness.compactionRequests,
+        ].map((request) => request.systemPrompt);
+        expect(new Set(prompts).size).toBe(1);
+      },
+    );
+  });
+
+  test("a memory edit reaches the system prompt on the request right after the compaction", async () => {
+    await withBackend(
+      {
+        mode: "all",
+        memfs: true,
+        replies: [
+          { calls: [call("call-1")], usage: OVER_THRESHOLD },
+          { text: "Done." },
+          { text: "Checked." },
+        ],
+      },
+      async (harness) => {
+        await harness.send(REQUEST);
+        await harness.editMemory("# Memory\n\nThe user prefers tabs.\n");
+        await harness.returnResults({ "call-1": "short output" });
+        await harness.send("Now check the tests.");
+
+        expect(harness.compactionRequests).toHaveLength(1);
+        const [before, after, next] = harness.providerRequests.map(
+          (request) => request.systemPrompt,
+        );
+        expect(before).not.toContain("The user prefers tabs.");
+        expect(after).toContain("The user prefers tabs.");
+        expect(next).toBe(after);
       },
     );
   });
