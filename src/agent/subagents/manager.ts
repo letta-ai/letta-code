@@ -3,7 +3,7 @@ import { platform } from "node:os";
 import { getConversationId } from "@/agent/context";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { detectMemoryFormat } from "@/agent/memory-format";
-import { updateSubagent } from "@/agent/subagent-state.js";
+import { getSubagents, updateSubagent } from "@/agent/subagent-state.js";
 import { wrapSubagentLauncher } from "@/agent/subagents/sandbox";
 import { getSessionAccessToken } from "@/auth/org-credentials-session";
 import {
@@ -346,6 +346,11 @@ async function executeSubagent(
       actingUserId: actingUserIdOverride,
       transcriptPath,
       subagentId,
+      subagentSummary:
+        existingAgentId || existingConversationId
+          ? undefined
+          : getSubagents().find((agent) => agent.id === subagentId)
+              ?.description,
       subagentName:
         existingAgentId || existingConversationId
           ? undefined

@@ -496,6 +496,14 @@ describe("Startup Flow - Integration", () => {
             expect.arrayContaining([expect.stringContaining(prompt)]),
           );
         }
+      } catch (error) {
+        if (listener) {
+          throw new Error(
+            `${error instanceof Error ? error.message : String(error)}\nListener output (tail):\n${listenerOutput.slice(-4000)}`,
+            { cause: error },
+          );
+        }
+        throw error;
       } finally {
         listener?.kill();
         if (

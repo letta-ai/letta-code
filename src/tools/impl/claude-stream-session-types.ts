@@ -80,6 +80,8 @@ export interface ClaudeTurnOptions
   signal?: AbortSignal;
   resumeSessionId?: string;
   sessionId?: string;
+  /** Display name for a new session (the Agent task description). */
+  sessionName?: string;
   onStarted?: (sessionId: string) => void;
   onToolCall?: ExternalToolCallListener;
   onText?: ExternalTextListener;

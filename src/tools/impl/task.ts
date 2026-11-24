@@ -77,6 +77,7 @@ import {
   shouldForkTaskContext,
 } from "./task-agent-selection";
 import { parseTaskCloudOptions } from "./task-cloud-options";
+import { recordTaskSummary, resolveTaskInput } from "./task-summary";
 import {
   buildTaskResultHeader,
   closeTaskProgressLog,
@@ -88,7 +89,6 @@ import {
   writeTaskTranscriptStart,
 } from "./task-transcript";
 import { LIMITS, truncateByChars } from "./truncation.js";
-import { validateRequiredParams } from "./validation";
 
 interface TaskArgs extends Partial<SubagentLaunchArgs> {
   command?: "run" | "refresh";
@@ -632,10 +632,9 @@ export async function launchSubagent(
   const mcpValidationError = validateExternalCodingAgentMcpOptions(args.mcp);
   if (mcpValidationError) return { success: false, error: mcpValidationError };
 
-  validateRequiredParams(args, ["prompt", "description"], "Task");
-
-  const inputPrompt = args.prompt as string;
-  const description = args.description as string;
+  const input = resolveTaskInput(args, shouldForkTaskContext(args));
+  if ("error" in input) return { success: false, error: input.error };
+  const { description, prompt: inputPrompt } = input;
   const allConfigs =
     prepared || isExternalCodingAgent
       ? {}
@@ -683,7 +682,7 @@ export async function launchSubagent(
     return { success: false, error: resolvedComputer.error };
   }
 
-  const cloud = parseTaskCloudOptions(args.computer, args.cloud);
+  const cloud = parseTaskCloudOptions(resolvedComputer.computer, args.cloud);
   if ("error" in cloud) return { success: false, error: cloud.error };
   let effectiveAgentId = args.agent_id;
   let effectiveConversationId = args.conversation_id;
@@ -770,6 +769,7 @@ export async function launchSubagent(
               ([, task]) => task.subagentId === workerSubagentId,
             )?.[0],
             prompt,
+            description,
             model,
             parentAgentId,
             parentConversationId: resolvedParentScope?.conversationId,
@@ -867,13 +867,12 @@ export async function launchSubagent(
     }
   }
 
-  const prompt = inputPrompt;
   signal?.throwIfAborted();
 
   const { taskId, outputFile, subagentId } = spawnBackgroundSubagentTask({
     subagentType: configName,
     config,
-    prompt,
+    prompt: inputPrompt,
     description,
     model,
     toolCallId,
@@ -891,9 +890,14 @@ export async function launchSubagent(
   const abortStartup = () =>
     backgroundTasks.get(taskId)?.abortController?.abort(signal?.reason);
   signal?.addEventListener("abort", abortStartup, { once: true });
+  let linkedConversationId: string | null;
   try {
     if (signal?.aborted) abortStartup();
-    await waitForBackgroundSubagentLink(subagentId, timeoutMs, signal);
+    linkedConversationId = await waitForBackgroundSubagentLink(
+      subagentId,
+      timeoutMs,
+      signal,
+    );
     signal?.throwIfAborted();
   } finally {
     signal?.removeEventListener("abort", abortStartup);
@@ -908,13 +912,18 @@ export async function launchSubagent(
       error: backgroundTasks.get(taskId)?.error ?? "Subagent launch failed",
     };
   }
+  const conversationId =
+    linkedConversationId ??
+    linkedAgent?.conversationId ??
+    effectiveConversationId ??
+    null;
+  if (!isDeployingExisting) void recordTaskSummary(conversationId, description);
   return {
     success: true,
     task_id: taskId,
     output_file: outputFile,
     agent_id: linkedAgent?.agentId ?? effectiveAgentId ?? null,
-    conversation_id:
-      linkedAgent?.conversationId ?? effectiveConversationId ?? null,
+    conversation_id: conversationId,
   };
 }
 export async function task(

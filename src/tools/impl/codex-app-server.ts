@@ -15,9 +15,11 @@ import {
   codexReasoningText,
   describeCodexToolItem,
   describeCodexToolResult,
+  errorMessage,
   isCapacityError,
   readString,
   TOOL_ITEM_TYPES,
+  textInput,
   turnFailureMessage,
   turnReport,
 } from "./codex-app-server-payloads";
@@ -113,6 +115,7 @@ export interface CodexTurnOptions
   mcpReminder?: string;
   signal?: AbortSignal;
   resumeThreadId?: string;
+  threadName?: string;
   onStarted?: (threadId: string, turnId: string) => void;
   onToolCall?: ExternalToolCallListener;
   onText?: ExternalTextListener;
@@ -215,13 +218,6 @@ export async function listCodexModels(
   }
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function textInput(text: string): Array<{ type: "text"; text: string }> {
-  return [{ type: "text", text }];
-}
 function spawnTransport(options: {
   configArgs?: string[];
   cwd: string;
@@ -665,6 +661,10 @@ async function createSession(
     throw new Error("Codex app-server returned no native thread ID");
   }
   trace?.setSessionId(threadId);
+  if (options.threadName && !options.resumeThreadId)
+    await client
+      .request("thread/name/set", { threadId, name: options.threadName })
+      .catch(() => undefined);
   session = {
     threadId,
     client,

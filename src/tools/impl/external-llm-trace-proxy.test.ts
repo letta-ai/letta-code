@@ -33,6 +33,7 @@ test("forwards request and streaming response bytes unchanged without storing au
       parent_conversation_id: "conv-test",
       task_id: "task-test",
       worker_session_id: "session-test",
+      task_description: "Check private response handling",
     },
     secrets: [],
     emit: (row) => rows.push(row),
@@ -55,6 +56,7 @@ test("forwards request and streaming response bytes unchanged without storing au
     expect(JSON.stringify(rows)).not.toContain("private");
     const row = rows[0];
     if (!row) throw new Error("Missing trace");
+    expect(row.task_description).toBe("Check [REDACTED] response handling");
     expect(row.prompt_tokens).toBe(2);
     expect(row.completion_tokens).toBe(3);
     expect(JSON.parse(row.response_json).response.id).toBe("r");

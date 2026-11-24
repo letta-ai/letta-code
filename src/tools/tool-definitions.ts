@@ -53,6 +53,7 @@ import { read_lsp } from "./impl/read-lsp";
 import { send_agent_message } from "./impl/send-agent-message";
 import { set_working_directory } from "./impl/set-working-directory";
 import { skill } from "./impl/skill";
+import { resolveSubagentComputer } from "./impl/subagent-computer";
 import { task } from "./impl/task";
 import { task_create } from "./impl/task-create";
 import { task_get } from "./impl/task-get";
@@ -118,6 +119,32 @@ export function buildBashDescriptionForPlatform(
   return platform === "win32"
     ? `${baseDescription}\n\n${WINDOWS_BASH_EXECUTION_GUIDANCE}`
     : baseDescription;
+}
+
+export function buildTaskSchema(env: NodeJS.ProcessEnv = process.env) {
+  const { computer } = resolveSubagentComputer({
+    requested: undefined,
+    subagentType: "general-purpose",
+    config: { fork: false, launchProfile: "default" },
+    env,
+  });
+  if (!computer) return TaskSchema;
+
+  const destination =
+    computer.toLowerCase() === "cloud"
+      ? "a fresh Cloud sandbox, where this machine's files are unavailable"
+      : `the connected computer ${JSON.stringify(computer)}; unless that is this machine, this machine's files are unavailable there`;
+
+  return {
+    ...TaskSchema,
+    properties: {
+      ...TaskSchema.properties,
+      computer: {
+        ...TaskSchema.properties.computer,
+        description: `Omitting computer sends subagents to ${destination}. memory and recall subagents always stay on this machine. Pass "local" to stay on this machine, "cloud" for a fresh Cloud sandbox, or a connected computer ID or name. Prefer a stable device ID or computer name; ephemeral connection IDs are also supported to pin a specific listener. Fails fast if the device is offline or does not support routing.`,
+      },
+    },
+  };
 }
 
 function execCommandDescription(): string {
@@ -231,7 +258,7 @@ const toolDefinitions = {
     impl: skill,
   }),
   Task: defineTool({
-    schema: TaskSchema,
+    schema: buildTaskSchema(),
     description: TaskDescription.trim(),
     impl: task,
   }),
