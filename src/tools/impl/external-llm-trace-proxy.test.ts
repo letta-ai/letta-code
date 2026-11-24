@@ -380,26 +380,26 @@ test("moving cache breakpoints retains images once and oversized image deltas pr
       task_id: "t",
       worker_session_id: "s",
     },
-    secrets: [],
+    secrets: ["X", "Y", "Z"],
     emit: (row, delta) => {
       rows.push(row);
       if (delta) fallbacks.push(delta.fallbackJson);
     },
   });
-  const image = (bytes: number) => ({
+  const image = (data: string) => ({
     type: "image",
     source: {
       type: "base64",
       media_type: "image/png",
-      data: "A".repeat(bytes),
+      data,
     },
   });
   const cacheControl = { type: "ephemeral" };
-  const screenshot = image(1_700_000);
+  const screenshot = image("X".repeat(170_000));
   const original = { role: "user", content: [screenshot] };
   const assistant = {
     role: "assistant",
-    content: [{ type: "text", text: "a".repeat(500_000) }],
+    content: [{ type: "text", text: "Z".repeat(50_000) }],
   };
   const cachedAssistant = {
     ...assistant,
@@ -409,9 +409,9 @@ test("moving cache breakpoints retains images once and oversized image deltas pr
     type: "tool_result",
     tool_use_id: "tool-1",
     content: [
-      image(2_200_000),
+      image("Y".repeat(220_000)),
       { type: "text", text: "Tool output to retain" },
-      image(128),
+      image("D".repeat(128)),
     ],
   };
   const result = { role: "user", content: [toolResult] };
@@ -447,8 +447,18 @@ test("moving cache breakpoints retains images once and oversized image deltas pr
     const [base, firstDelta, imageDelta, finalDelta] = rows.map((row) =>
       JSON.parse(row.request_json),
     );
-    expect(base.messages[0].content[0].source).toEqual(screenshot.source);
-    expect(firstDelta.messages).toEqual([cachedAssistant]);
+    expect(base.messages[0].content[0].source).toEqual({
+      ...screenshot.source,
+      data: "[REDACTED]".repeat(170_000),
+    });
+    expect(firstDelta.messages).toEqual([
+      {
+        ...cachedAssistant,
+        content: [
+          { ...cachedAssistant.content[0], text: "[REDACTED]".repeat(50_000) },
+        ],
+      },
+    ]);
     expect(firstDelta.base_trace_id).toBe(rows[0]?.id);
     expect(imageDelta.base_trace_id).toBe(rows[1]?.id);
     expect(imageDelta.messages).toEqual([
