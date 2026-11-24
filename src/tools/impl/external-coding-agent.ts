@@ -723,10 +723,10 @@ export async function runExternalCodingAgent(
             onText: options.onText,
             onToolResult: options.onToolResult,
             onReasoning: options.onReasoning,
-            beforeStart: async (threadId) => {
+            beforeStart: async (threadId, model) => {
               if (scope && !captureReservation) {
                 if (!options.resumeSessionId) {
-                  rememberNativeSession("codex", threadId, scope);
+                  rememberNativeSession("codex", threadId, { ...scope, model });
                 }
                 await reserveCapture(threadId);
               }

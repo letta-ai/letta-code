@@ -1,200 +1,23 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
+import { settingsManager } from "@/settings-manager";
 import {
   __resetCodexSessionsForTests,
   CODEX_NOT_SIGNED_IN_ERROR,
-  type CodexAppServerTransport,
   listCodexModels,
   sendCodexMessage,
   startCodexTurn,
   stopCodexSession,
 } from "./codex-app-server";
 import { CODEX_CAPACITY_ERROR } from "./codex-app-server-payloads";
+import { CAPACITY_MESSAGE, FakeCodexTransport } from "./codex-test-transport";
+import { runExternalCodingAgent } from "./external-coding-agent";
+import { clearNativeSessionCaptureForTests } from "./native-session-capture";
 
-const CAPACITY_MESSAGE =
-  'unexpected status 409 Conflict: {"error":{"message":"No account capacity is available."}}';
-
-class FakeCodexTransport {
-  readonly requests: Array<Record<string, unknown>> = [];
-  readonly stdout = new PassThrough();
-  readonly stderr = new PassThrough();
-  readonly stdin = new PassThrough();
-  private threadId = "thread-1";
-  private turnId = "turn-1";
-  steerRace = false;
-  completeBeforeTurnStartSettles = false;
-  initializeError = false;
-  failNextTurns = 0;
-  failure: Record<string, unknown> = {
-    message: CAPACITY_MESSAGE,
-    codexErrorInfo: { responseStreamConnectionFailed: { httpStatusCode: 409 } },
-  };
-  completeAfterFailures?: string;
-  onTurnStarted?: () => void;
-  private failedTurns = 0;
-  account: Record<string, unknown> | null = {
-    account: { type: "chatgpt" },
-    requiresOpenaiAuth: true,
-  };
-  killed = false;
-
-  constructor() {
-    let buffered = "";
-    this.stdin.setEncoding("utf8");
-    this.stdin.on("data", (chunk: string) => {
-      buffered += chunk;
-      while (buffered.includes("\n")) {
-        const index = buffered.indexOf("\n");
-        const line = buffered.slice(0, index);
-        buffered = buffered.slice(index + 1);
-        if (line) this.handle(JSON.parse(line) as Record<string, unknown>);
-      }
-    });
-  }
-
-  transport(): CodexAppServerTransport {
-    return {
-      stdin: this.stdin,
-      stdout: this.stdout,
-      stderr: this.stderr,
-      kill: () => {
-        this.killed = true;
-      },
-    };
-  }
-
-  complete(text = "done", items = true): void {
-    if (!items) {
-      this.send({
-        method: "item/completed",
-        params: {
-          threadId: this.threadId,
-          turnId: this.turnId,
-          item: { type: "agentMessage", text },
-        },
-      });
-    }
-    this.send({
-      method: "turn/completed",
-      params: {
-        threadId: this.threadId,
-        turn: {
-          id: this.turnId,
-          status: "completed",
-          items: items ? [{ type: "agentMessage", text }] : [],
-        },
-      },
-    });
-  }
-
-  private handle(request: Record<string, unknown>): void {
-    this.requests.push(request);
-    if (typeof request.id !== "number") return;
-    const method = request.method;
-    if (method === "initialize") {
-      if (this.initializeError) {
-        this.send({ id: request.id, error: { message: "initialize failed" } });
-      } else {
-        this.reply(request.id, {});
-      }
-    }
-    if (method === "account/read") {
-      if (this.account) this.reply(request.id, this.account);
-      else this.send({ id: request.id, error: { message: "unknown method" } });
-    }
-    if (method === "skills/extraRoots/set") this.reply(request.id, {});
-    if (method === "thread/start" || method === "thread/resume") {
-      const params = request.params as Record<string, unknown>;
-      if (typeof params.threadId === "string") this.threadId = params.threadId;
-      this.reply(request.id, { thread: { id: this.threadId } });
-    }
-    if (method === "turn/start" && this.failNextTurns > 0) {
-      this.failNextTurns--;
-      const turnId = `failed-turn-${++this.failedTurns}`;
-      this.reply(request.id, {
-        turn: { id: turnId, status: "inProgress", items: [] },
-      });
-      this.fail(turnId);
-      return;
-    }
-    if (method === "turn/start") {
-      this.reply(request.id, {
-        turn: { id: this.turnId, status: "inProgress", items: [] },
-      });
-      if (this.completeBeforeTurnStartSettles) {
-        this.complete("fast completion", false);
-      }
-      this.onTurnStarted?.();
-      if (this.completeAfterFailures !== undefined) {
-        this.complete(this.completeAfterFailures);
-      }
-    }
-    if (method === "turn/steer") {
-      if (this.steerRace) {
-        this.complete("first turn done");
-        this.turnId = "turn-2";
-        this.send({
-          id: request.id,
-          error: { message: "active turn changed" },
-        });
-      } else {
-        this.reply(request.id, { turnId: this.turnId });
-      }
-    }
-    if (method === "turn/interrupt") this.reply(request.id, {});
-  }
-
-  private reply(id: number, result: Record<string, unknown>): void {
-    this.send({ id, result });
-  }
-
-  item(
-    method: "item/started" | "item/completed",
-    item: Record<string, unknown>,
-  ): void {
-    this.send({
-      method,
-      params: { threadId: this.threadId, turnId: this.turnId, item },
-    });
-  }
-
-  errorNotification(
-    error: Record<string, unknown>,
-    turnId = this.turnId,
-    willRetry = false,
-  ): void {
-    this.send({
-      method: "error",
-      params: { threadId: this.threadId, turnId, error, willRetry },
-    });
-  }
-
-  fail(
-    turnId = this.turnId,
-    error: Record<string, unknown> | null = this.failure,
-  ) {
-    this.send({
-      method: "turn/completed",
-      params: {
-        threadId: this.threadId,
-        turn: { id: turnId, status: "failed", items: [], error },
-      },
-    });
-  }
-
-  close(detail = "transport died"): void {
-    this.stderr.write(detail);
-    this.stdout.end();
-  }
-
-  private send(message: Record<string, unknown>): void {
-    this.stdout.write(`${JSON.stringify(message)}\n`);
-  }
-}
-
+beforeAll(() => settingsManager.initialize());
 afterEach(() => __resetCodexSessionsForTests());
 
 test("registers Codex repository skills before thread startup", async () => {
@@ -666,6 +489,67 @@ describe("Codex app-server lifecycle", () => {
     expect(second.requests.map((request) => request.method)).toContain(
       "thread/resume",
     );
+  });
+
+  test("keeps the launch model on live and cold follow-ups", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "codex-resume-model-"));
+    const previous = process.env.LETTA_CONFIG_DIR;
+    process.env.LETTA_CONFIG_DIR = directory;
+    const model = "gpt-5.4";
+    const first = new FakeCodexTransport();
+    first.onTurnStarted = () => first.complete();
+    const followup = {
+      threadId: "thread-1",
+      prompt: "Continue",
+      parentAgentId: "parent",
+      cwd: directory,
+    };
+    try {
+      const launch = await runExternalCodingAgent(
+        {
+          type: "codex",
+          prompt: "Initial",
+          parentAgentId: "parent",
+          parentConversationId: "conversation",
+          cwd: directory,
+          model,
+        },
+        {
+          env: {},
+          resolveSecretEnv: async () => ({}),
+          runPreflight: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+          runCodexTurn: async (options) => {
+            const handle = await startCodexTurn(options, {
+              createTransport: () => first.transport(),
+            });
+            return handle.completion;
+          },
+        },
+      );
+      expect(launch).toMatchObject({ success: true, model });
+
+      const live = await sendCodexMessage(followup);
+      expect(await live.completion).toMatchObject({ success: true, model });
+
+      __resetCodexSessionsForTests();
+      const second = new FakeCodexTransport();
+      second.onTurnStarted = () => second.complete();
+      const cold = await sendCodexMessage(followup, {
+        createTransport: () => second.transport(),
+      });
+      expect(
+        second.requests.find(({ method }) => method === "thread/resume"),
+      ).toMatchObject({ params: { threadId: followup.threadId, model } });
+      expect(
+        second.requests.find(({ method }) => method === "turn/start"),
+      ).toMatchObject({ params: { threadId: followup.threadId, model } });
+      expect(await cold.completion).toMatchObject({ success: true, model });
+    } finally {
+      await clearNativeSessionCaptureForTests();
+      if (previous === undefined) delete process.env.LETTA_CONFIG_DIR;
+      else process.env.LETTA_CONFIG_DIR = previous;
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   test.each([false, true])(
