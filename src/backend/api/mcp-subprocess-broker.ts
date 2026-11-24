@@ -10,6 +10,7 @@ import {
 import type { Socket } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { APIError } from "@letta-ai/letta-client";
 import { getClient } from "./client";
 import type { UnifiedMcpClient } from "./unified-mcp";
 
@@ -22,6 +23,8 @@ const MCP_ORIGINATOR_ISOLATION_HEADER = "x-letta-mcp-originator-isolation";
 const MAX_REQUEST_BYTES = 8 * 1024 * 1024;
 const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 const BROKER_PATH = "/mcp";
+const GOOGLE_WORKSPACE_TOKEN_PATH =
+  "/v1/integrations/google-workspace/access-token";
 const TCP_RENDEZVOUS_PREFIX = "tcp-file:";
 
 type BrokerRequest = {
@@ -178,6 +181,7 @@ export function createMcpSubprocessBroker(options: {
   agentId: string;
   getAllowedAgentIds?: () => Promise<ReadonlySet<string>>;
   getScope: () => McpBrokerScope | null;
+  getGoogleWorkspaceOriginatorToken?: () => string | undefined;
   getClient: () => Promise<BrokerUpstreamClient>;
 }): McpSubprocessBroker {
   const socket = socketPath();
@@ -198,7 +202,11 @@ export function createMcpSubprocessBroker(options: {
   const server = createServer(
     (request: IncomingMessage, response: ServerResponse) => {
       void (async () => {
-        if (request.method !== "POST" || request.url !== BROKER_PATH) {
+        const googleWorkspace = request.url === GOOGLE_WORKSPACE_TOKEN_PATH;
+        if (
+          request.method !== "POST" ||
+          (request.url !== BROKER_PATH && !googleWorkspace)
+        ) {
           sendJson(response, 404, { ok: false, error: "Not found" });
           return;
         }
@@ -226,6 +234,55 @@ export function createMcpSubprocessBroker(options: {
             return;
           }
           chunks.push(buffer);
+        }
+
+        if (googleWorkspace) {
+          let body: {
+            agent_id?: unknown;
+            account_id?: unknown;
+            account_email?: unknown;
+          } | null;
+          try {
+            body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+          } catch {
+            sendJson(response, 400, { ok: false, error: "Invalid JSON" });
+            return;
+          }
+          if (body?.agent_id !== options.agentId) {
+            sendJson(response, 403, { ok: false, error: "Forbidden" });
+            return;
+          }
+          const client = await options.getClient();
+          const headers = originatorHeaders(
+            options.getGoogleWorkspaceOriginatorToken?.(),
+          );
+          if (closed || !headers) {
+            sendJson(response, 403, { ok: false, error: "Forbidden" });
+            return;
+          }
+          try {
+            const value = await client.post(GOOGLE_WORKSPACE_TOKEN_PATH, {
+              body: {
+                agent_id: options.agentId,
+                account_id: body.account_id,
+                account_email: body.account_email,
+              },
+              headers,
+            });
+            response.writeHead(200, { "content-type": "application/json" });
+            response.end(JSON.stringify(value));
+          } catch (error) {
+            if (!(error instanceof APIError) || !error.status) throw error;
+            response.writeHead(error.status, {
+              "content-type": "application/json",
+            });
+            response.end(
+              JSON.stringify(
+                error.error ?? { message: "Token request failed" },
+              ),
+            );
+          }
+          return;
         }
 
         let payload: BrokerRequest;
@@ -339,6 +396,12 @@ export function createMcpSubprocessBroker(options: {
     env: {
       [MCP_SUBPROCESS_BROKER_SOCKET_ENV]: endpoint,
       [MCP_SUBPROCESS_BROKER_KEY_ENV]: key,
+      ...(options.getGoogleWorkspaceOriginatorToken &&
+      process.platform !== "win32"
+        ? {
+            LETTA_GOOGLE_WORKSPACE_BROKER_URL: `http://localhost${GOOGLE_WORKSPACE_TOKEN_PATH}`,
+          }
+        : {}),
     },
     redactions: {
       [MCP_SUBPROCESS_BROKER_SOCKET_ENV]: endpoint,

@@ -423,6 +423,16 @@ export function startShellProcess(
               : {}),
           };
         },
+        getGoogleWorkspaceOriginatorToken: initialOrigin
+          ? () => {
+              const activeOrigin = dynamicOrigin
+                ? dynamicOrigin()
+                : runtimeContext.mcpOriginatorSuperRunId;
+              return activeOrigin === initialOrigin
+                ? resolveMcpOriginatorToken(initialOrigin)
+                : undefined;
+            }
+          : undefined,
         getClient: async () => await getClient(),
       });
     } catch {}
