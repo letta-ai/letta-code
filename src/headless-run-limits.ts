@@ -2,11 +2,12 @@ import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import type { DrainStreamHook } from "@/cli/helpers/stream";
 import { getScopedMemoryFilesystemRoot } from "./agent/memory-filesystem";
 import type { Buffers } from "./cli/helpers/accumulator";
 import { writeWireMessageAsync } from "./stream-json-writer";
 import type { ErrorMessage } from "./types/protocol";
-import { calculateUsageCost } from "./usage/cost";
+import { priceUsageEvent } from "./usage/cost";
 import {
   runBudgetExceeded,
   runBudgetLimit,
@@ -58,21 +59,33 @@ export function createHeadlessRunLimits(options: RunLimitOptions) {
     }
   };
 
+  let agentUsd = 0;
+  const withUsageMeter = (
+    hook?: DrainStreamHook,
+  ): DrainStreamHook | undefined => {
+    if (runBudgetLimit() === undefined) return hook;
+    return (context) => {
+      const { chunk, shouldOutput } = context;
+      if (shouldOutput && chunk.message_type === "usage_statistics") {
+        const reportedCost = (
+          chunk as typeof chunk & { api_cost_usd?: number | null }
+        ).api_cost_usd;
+        const cost =
+          typeof reportedCost === "number" &&
+          Number.isFinite(reportedCost) &&
+          reportedCost >= 0
+            ? reportedCost
+            : priceUsageEvent(chunk, options.model).api_cost_usd;
+        agentUsd += cost ?? 0;
+      }
+      return hook?.(context);
+    };
+  };
+
   const checkRunBudget = async (): Promise<void> => {
     const limit = runBudgetLimit();
     if (limit === undefined) return;
-    const u = buffers.usage;
-    setAgentRunCost(
-      calculateUsageCost(options.model, {
-        input: Math.max(
-          0,
-          u.promptTokens - u.cachedInputTokens - u.cacheWriteTokens,
-        ),
-        output: u.completionTokens,
-        cacheRead: u.cachedInputTokens,
-        cacheWrite: u.cacheWriteTokens,
-      }),
-    );
+    setAgentRunCost(agentUsd);
     if (runBudgetExceeded()) {
       commitMemoryAtBudgetStop(
         getScopedMemoryFilesystemRoot(options.sessionId),
@@ -85,7 +98,7 @@ export function createHeadlessRunLimits(options: RunLimitOptions) {
     }
   };
 
-  return { checkMaxTurns, checkRunBudget };
+  return { checkMaxTurns, checkRunBudget, withUsageMeter };
 }
 
 /**

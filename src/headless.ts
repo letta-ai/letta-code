@@ -1970,12 +1970,12 @@ export async function handleHeadlessCommand(
   const chatgptExhaustedProviders = new Set<string>();
   markMilestone("HEADLESS_FIRST_STREAM_START");
   measureSinceMilestone("headless-setup-total", "HEADLESS_CLIENT_READY");
-  const { checkMaxTurns, checkRunBudget } = createHeadlessRunLimits({
+  const runLimits = createHeadlessRunLimits({
     maxTurns,
     buffers,
     outputFormat,
     sessionId,
-    model: agent.llm_config?.handle ?? undefined,
+    model: agent.llm_config?.handle ?? agent.model ?? undefined,
     exit: exitHeadless,
   });
 
@@ -1996,7 +1996,7 @@ export async function handleHeadlessCommand(
       );
 
       if (!hasApprovalContinuation) {
-        await checkMaxTurns();
+        await runLimits.checkMaxTurns();
       }
 
       {
@@ -2277,7 +2277,7 @@ export async function handleHeadlessCommand(
         () => {},
         interruptSignal,
         undefined,
-        streamJsonHook,
+        runLimits.withUsageMeter(streamJsonHook),
         reminderContextTracker,
         undefined,
         HEADLESS_STREAM_RESUME_POLICY,
@@ -2294,13 +2294,13 @@ export async function handleHeadlessCommand(
         await exitInterrupted();
       }
 
-      await checkRunBudget();
+      await runLimits.checkRunBudget();
       if (
         stopReason !== "requires_approval" &&
         !approvalPendingRecovery &&
         !(stopReason === "error" && fallbackError)
       ) {
-        await checkMaxTurns();
+        await runLimits.checkMaxTurns();
       }
 
       if (approvalPendingRecovery) {
