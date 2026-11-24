@@ -194,12 +194,15 @@ export async function handleSubagentMessageCommand(
 
     let captureReservation: NativeSessionCaptureReservation | undefined;
     const source = target.type === "claude-code" ? "claude_code" : "codex";
-    const beforeStart = async () => {
+    const beforeResume = () => {
       if (queuedReply?.())
         throw new Error(
           "Worker turn ended before the queued steer was delivered",
         );
       steering = false;
+    };
+    const beforeStart = async () => {
+      beforeResume();
       captureReservation = await (
         deps.reserveCapture ?? reserveNativeSessionCapture
       )(source, sessionId, {
@@ -231,6 +234,7 @@ export async function handleSubagentMessageCommand(
               parentAgentId: command.runtime.agent_id,
               cwd: getCurrentWorkingDirectory(),
               mcpReminder: worker.mcpReminder,
+              beforeResume,
             },
             worker.env,
             worker.secretEnv,
@@ -242,6 +246,7 @@ export async function handleSubagentMessageCommand(
                 prompt: command.message,
                 parentAgentId: command.runtime.agent_id,
                 cwd: getCurrentWorkingDirectory(),
+                beforeResume,
               },
               { ...process.env, ...secrets },
               secrets,

@@ -37,3 +37,36 @@ test("a different agent cannot resume or enqueue a turn on an owned Antigravity 
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("Antigravity rejects a queued steer when its active turn has ended", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "letta-antigravity-owner-"));
+  const configDir = process.env.LETTA_CONFIG_DIR;
+  try {
+    process.env.LETTA_CONFIG_DIR = dir;
+    const id = randomUUID();
+    persistNativeSessionOwner("antigravity", id, {
+      agentId: "owner",
+      conversationId: "conversation",
+    });
+    const rejected = new Error("Queued steer could not be delivered");
+    expect(() =>
+      sendAntigravityMessage(
+        {
+          parentAgentId: "owner",
+          resumeSessionId: id,
+          prompt: "continue",
+          cwd: dir,
+          beforeResume: () => {
+            throw rejected;
+          },
+        },
+        {},
+        {},
+      ),
+    ).toThrow(rejected);
+  } finally {
+    if (configDir === undefined) delete process.env.LETTA_CONFIG_DIR;
+    else process.env.LETTA_CONFIG_DIR = configDir;
+    await rm(dir, { recursive: true, force: true });
+  }
+});

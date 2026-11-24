@@ -260,7 +260,7 @@ export async function runAntigravityTurn(
 }
 
 export function sendAntigravityMessage(
-  options: Options & { resumeSessionId: string },
+  options: Options & { resumeSessionId: string; beforeResume?: () => void },
   env: NodeJS.ProcessEnv,
   secrets: Record<string, string>,
 ) {
@@ -278,6 +278,7 @@ export function sendAntigravityMessage(
     active.queue.push(options.prompt);
     return { mode: "steered" as const, queued: true };
   }
+  options.beforeResume?.();
   const controller = new AbortController();
   const signal = options.signal
     ? AbortSignal.any([controller.signal, options.signal])
