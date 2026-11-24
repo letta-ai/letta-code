@@ -5,6 +5,7 @@ import { redactWsEventForLogging } from "@/websocket/ws-event-redaction";
 import { hasRunningBackgroundWork } from "./background-process-snapshot";
 import { getWorkingDirectoryScopeKey } from "./cwd";
 import { cancelFailedTeleportCleanup } from "./failed-teleport-cleanup";
+import { setActiveListenerIdentity } from "./identity";
 import {
   normalizeConversationId,
   normalizeCwdAgentId,
@@ -45,6 +46,7 @@ export function setActiveRuntime(runtime: ListenerRuntime | null): void {
     authorityEpochByRuntime.set(runtime, activeRuntimeAuthorityEpoch);
   }
   activeRuntime = runtime;
+  setActiveListenerIdentity(runtime);
 }
 
 export function safeEmitWsEvent(

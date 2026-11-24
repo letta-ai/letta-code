@@ -5,8 +5,16 @@ import {
   getApiRequestConfig,
 } from "@/backend/api/request";
 import { resolveBackendMode } from "@/backend/backend-mode";
+import { isManagedCloudRuntime } from "@/managed-cloud-runtime";
 import { debugWarn } from "@/utils/debug";
-import { traceCaptureEnabled } from "./external-llm-trace-payload";
+import {
+  getActiveListenerConnectionName,
+  getSpawnerListenerInstanceId,
+} from "@/websocket/listener/identity";
+import {
+  sanitizeTraceJson,
+  traceCaptureEnabled,
+} from "./external-llm-trace-payload";
 import {
   type ExternalTraceRow,
   type ExternalTraceScope,
@@ -15,8 +23,21 @@ import {
 
 export type ExternalTraceContext = Omit<
   ExternalTraceScope,
-  "worker_session_id"
+  "worker_session_id" | "worker_computer"
 > & { actingUserId?: string | null; secretValues?: string[] };
+
+export function describeWorkerComputer(
+  env: NodeJS.ProcessEnv,
+  connectionName: string | null | undefined,
+  listenerId?: string | null,
+): string {
+  if (listenerId?.startsWith("sandbox:")) return listenerId;
+  const sandboxId = env.DAYTONA_SANDBOX_ID?.trim();
+  if (sandboxId) return `sandbox:${sandboxId}`;
+  if (isManagedCloudRuntime(env)) return "cloud";
+  const name = connectionName?.trim();
+  return name ? `computer:${name}` : "local";
+}
 
 const sessionScopes = new Map<string, ExternalTraceScope>();
 export function updateExternalTraceTask(
@@ -108,7 +129,26 @@ export async function createTraceSession(
     if (!traceCaptureEnabled(env, config.baseUrl, config.apiKey))
       return undefined;
     const { actingUserId: _actingUserId, secretValues = [], ...ids } = context;
-    const scope = { ...ids, worker_session_id: workerSessionId };
+    const secrets = [
+      config.apiKey,
+      ...secretValues,
+      ...Object.entries(env)
+        .filter(([key]) => /token|secret|password|api[_-]?key/i.test(key))
+        .map(([, value]) => value ?? ""),
+    ];
+    const computer = describeWorkerComputer(
+      env,
+      getActiveListenerConnectionName(),
+      getSpawnerListenerInstanceId(),
+    );
+    const cleanComputer: string = JSON.parse(
+      sanitizeTraceJson(JSON.stringify(computer), secrets),
+    );
+    const scope = {
+      ...ids,
+      worker_session_id: workerSessionId,
+      worker_computer: cleanComputer.slice(0, 255).toWellFormed(),
+    };
     sessionScopes.set(workerSessionId, scope);
     const queue: {
       row: ExternalTraceRow;
@@ -192,13 +232,6 @@ export async function createTraceSession(
       });
       return draining;
     };
-    const secrets = [
-      config.apiKey,
-      ...secretValues,
-      ...Object.entries(env)
-        .filter(([key]) => /token|secret|password|api[_-]?key/i.test(key))
-        .map(([, value]) => value ?? ""),
-    ];
     const proxy = await startTraceProxy({
       upstream,
       harness,

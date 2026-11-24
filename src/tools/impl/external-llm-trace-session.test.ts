@@ -15,7 +15,10 @@ import { once } from "node:events";
 import { createServer } from "node:http";
 import { ApiRequestError } from "@/backend/api/request";
 import type { ExternalTraceRow } from "./external-llm-trace-proxy";
-import { createTraceSession } from "./external-llm-trace-session";
+import {
+  createTraceSession,
+  describeWorkerComputer,
+} from "./external-llm-trace-session";
 
 const context = {
   parent_agent_id: "agent-test",
@@ -24,6 +27,23 @@ const context = {
   actingUserId: "user-test",
   secretValues: ["vault-value-from-arbitrary-name"],
 };
+test.each([
+  [{}, null, "local", undefined],
+  [{}, "Workstation", "computer:Workstation", undefined],
+  [{ LETTA_MANAGED_CLOUD_RUNTIME: "1" }, "Worker", "cloud", undefined],
+  [
+    { DAYTONA_SANDBOX_ID: "sandbox-42" },
+    "Worker",
+    "sandbox:sandbox-42",
+    undefined,
+  ],
+  [{}, "Worker", "sandbox:sandbox-42", "sandbox:sandbox-42"],
+] as const)(
+  "records the worker execution location (%j, %j)",
+  (env, name, expected, listenerId) => {
+    expect(describeWorkerComputer(env, name, listenerId)).toBe(expected);
+  },
+);
 test("opt-out never resolves credentials or starts an upload", async () => {
   let calls = 0;
   const deps = {
@@ -93,7 +113,7 @@ test("flush batches retain native session/task IDs and acting-user attribution",
   const trace = await createTraceSession(
     "codex",
     context,
-    {},
+    { DAYTONA_SANDBOX_ID: "sandbox-42" },
     `http://127.0.0.1:${address.port}`,
     "session-test",
     {
@@ -125,6 +145,7 @@ test("flush batches retain native session/task IDs and acting-user attribution",
     expect(batches).toHaveLength(1);
     expect(batches[0]).toHaveLength(2);
     expect(batches[0]?.[0]?.worker_session_id).toBe("session-test");
+    expect(batches[0]?.[0]?.worker_computer).toBe("sandbox:sandbox-42");
     expect(batches[0]?.[0]?.task_id).toBe("task-test");
     expect(batches[0]?.[0]).not.toHaveProperty("actingUserId");
   } finally {
