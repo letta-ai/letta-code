@@ -145,6 +145,22 @@ describe("MCP originator token forwarding", () => {
     ]);
   });
 
+  test("keeps the Google Workspace direct path available without a held originator token", () => {
+    const broker = createMcpSubprocessBroker({
+      agentId: "agent-cloud",
+      getScope: () => ({ agentId: "agent-cloud" }),
+      getGoogleWorkspaceOriginatorToken: () => undefined,
+      getClient: async () => {
+        throw new Error("Unexpected upstream request");
+      },
+    });
+    try {
+      expect(broker.env.LETTA_GOOGLE_WORKSPACE_BROKER_URL).toBeUndefined();
+    } finally {
+      broker.close();
+    }
+  });
+
   test.skipIf(process.platform === "win32")(
     "only brokers Google Workspace credentials for the shell's agent and active originator",
     async () => {

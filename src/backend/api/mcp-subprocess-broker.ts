@@ -396,7 +396,7 @@ export function createMcpSubprocessBroker(options: {
     env: {
       [MCP_SUBPROCESS_BROKER_SOCKET_ENV]: endpoint,
       [MCP_SUBPROCESS_BROKER_KEY_ENV]: key,
-      ...(options.getGoogleWorkspaceOriginatorToken &&
+      ...(options.getGoogleWorkspaceOriginatorToken?.() &&
       process.platform !== "win32"
         ? {
             LETTA_GOOGLE_WORKSPACE_BROKER_URL: `http://localhost${GOOGLE_WORKSPACE_TOKEN_PATH}`,
