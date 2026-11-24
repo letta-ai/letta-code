@@ -888,9 +888,14 @@ export async function launchSubagent(
   const abortStartup = () =>
     backgroundTasks.get(taskId)?.abortController?.abort(signal?.reason);
   signal?.addEventListener("abort", abortStartup, { once: true });
+  let linkedConversationId: string | null;
   try {
     if (signal?.aborted) abortStartup();
-    await waitForBackgroundSubagentLink(subagentId, null, signal);
+    linkedConversationId = await waitForBackgroundSubagentLink(
+      subagentId,
+      null,
+      signal,
+    );
     signal?.throwIfAborted();
   } finally {
     signal?.removeEventListener("abort", abortStartup);
@@ -906,7 +911,10 @@ export async function launchSubagent(
     };
   }
   const conversationId =
-    linkedAgent?.conversationId ?? effectiveConversationId ?? null;
+    linkedConversationId ??
+    linkedAgent?.conversationId ??
+    effectiveConversationId ??
+    null;
   if (!isDeployingExisting) void recordTaskSummary(conversationId, description);
   return {
     success: true,
