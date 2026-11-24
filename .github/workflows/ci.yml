@@ -263,6 +263,32 @@ jobs:
           bun build src/tools/impl/opencode-session.node-test.ts --target=node --format=esm --outfile="$RUNNER_TEMP/opencode-node-test.mjs"
           node --test "$RUNNER_TEMP/opencode-node-test.mjs"
 
+  antigravity-integration:
+    needs: classify
+    if: ${{ needs.classify.outputs.run_heavy_ci == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)) }}
+    name: Antigravity native lifecycle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install Antigravity CLI
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl -fsSLo agy.tar.gz https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.15-5514532022517760/linux-x64/cli_linux_x64.tar.gz
+          echo 'af3f0be58b8475940d79f9abea19e762ecc3d265ea9f56cff8dd805e27ba299b44a305a79504a7ffe6ebdfa29a294c56edc4caed1875990bfaf2fef1508ec8b0  agy.tar.gz' | sha512sum -c -
+          tar -xzf agy.tar.gz antigravity
+          install -Dm755 antigravity "$HOME/.local/bin/agy"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Run native Antigravity tests
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: bun test ./src/tools/impl/antigravity-session.integration.ts
+
   cursor-integration:
     needs: classify
     if: ${{ needs.classify.outputs.run_heavy_ci == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)) }}

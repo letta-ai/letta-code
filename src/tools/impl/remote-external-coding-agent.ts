@@ -102,6 +102,7 @@ export interface RemoteExternalCodingAgentDeps {
 }
 
 const DISPLAY_NAMES: Record<ExternalCodingAgentType, string> = {
+  antigravity: "Antigravity",
   "claude-code": "Claude Code",
   codex: "Codex",
   opencode: "OpenCode",
