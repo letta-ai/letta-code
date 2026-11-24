@@ -208,7 +208,7 @@ Use `--output-format stream-json` with `--verbose` and `--include-partial-messag
 claude -p "Explain recursion" --output-format stream-json --verbose --include-partial-messages
 ```
 
-The last line of the stream is a `result` message with the final response text, cost, and session metadata.
+Find each [`result` message](https://code.claude.com/docs/en/agent-sdk/typescript#sdkresultmessage) by `type`, because a message such as a task notification can follow a result and start another turn. A successful `result` message holds any final response text, the running cost total, and session metadata.
 
 If your consumer reads the stream slowly, Claude Code waits for the queued output to drain before exiting, scaling the wait with how much is still queued, capped at 30 seconds.
 

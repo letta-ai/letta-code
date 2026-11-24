@@ -72,7 +72,7 @@ When you exit an interactive worktree session, Claude checks the worktree for wo
 
 * **Claude Code finds another session in the worktree**: the worktree and branch stay even if you choose removal. Follow the `Worktree kept at` message
 * **The worktree is clean**: for an unnamed session, Claude removes the worktree and its branch automatically. A [named](https://code.claude.com/docs/en/sessions.md#name-your-sessions) session prompts you first so you can keep the worktree for later
-* **The worktree has work in it**: Claude prompts you to keep or remove the worktree. Keeping preserves the directory and branch. To return later, run the `claude --worktree <name> --resume` command that Claude Code prints on exit. Removing deletes the worktree directory and its branch, along with all the work in them
+* **The worktree has work in it**: Claude prompts you to keep or remove the worktree. Keeping preserves the directory and branch so you can [return later](#resume-a-worktree-session). Removing deletes the worktree directory and its branch, along with all the work in them
 * **Another branch is checked out**: if the worktree is on a branch other than its own that has commits past the worktree's starting commit, Claude prompts you to keep or remove the worktree. Either answer keeps that other branch and its commits. Removing deletes the worktree directory and the worktree's own branch, the one Claude created with it
 * **The worktree's state can't be verified**: when Claude Code can't count the worktree's changes or can't inspect its submodule checkouts, it prompts you rather than removing the worktree automatically. The prompt names what it couldn't check
 
@@ -81,6 +81,10 @@ Non-interactive runs with `-p` have no exit prompt, so Claude doesn't clean up t
 On Windows, removing a worktree doesn't delete files outside it. If a folder inside the worktree is a link to somewhere else, such as an NTFS junction or a directory symlink, Claude Code deletes only the link.
 
 ## Resume a worktree session
+
+To return to a worktree you kept, run `claude --worktree <name> --resume <session-id>` from the main checkout, using the session ID printed on exit. For `<name>`, type the folder name under `.claude/worktrees/` with `/` in place of any `+`.
+
+### Resume without `--worktree`
 
 When you resume a session that ended [isolated](#how-claude-code-enforces-isolation) in its worktree without [exiting it](#clean-up-worktrees), Claude Code returns the session there and keeps it isolated. This holds for interactive resumes, for `--continue` and `--resume` in [non-interactive mode](https://code.claude.com/docs/en/headless.md) with `-p`, and for the Agent SDK. Back inside the worktree, Claude can leave with the [`ExitWorktree`](https://code.claude.com/docs/en/tools-reference) tool [when the session has that tool](#claude-has-no-enterworktree-tool).
 
@@ -96,6 +100,8 @@ Where you launch from, and how you resume, change what Claude Code re-enters:
 > [!NOTE]
 >
 > Before v2.1.212, a non-interactive resume stayed in the starting directory and `ExitWorktree` reported that there was no active worktree session to exit.
+
+### Transcript location
 
 When Claude enters or exits a worktree that Claude Code created with git, the transcript follows. Claude Code records the session under the session's new working directory, the same way [`/cd`](https://code.claude.com/docs/en/commands) does, so `/desktop` and `--resume` find it there. Exiting moves it back the same way. A worktree created by a [`WorktreeCreate` hook](#non-git-version-control) keeps its transcript at the launch directory.
 
@@ -151,9 +157,7 @@ When you [background](https://code.claude.com/docs/en/agent-view.md#send-the-ses
 * A checked-out submodule in the worktree holds changed or untracked files, or Claude Code can't inspect the worktree's submodules. This check requires Claude Code v2.1.274 or later.
 * One of the [four cases that also block worktree creation](#git-lfs-content-is-missing-from-a-worktree-claude-code-created) applies: Claude Code can't determine which filter drivers the repository config defines, or finds a setting there it can't switch off.
 * The worktree belongs to a `--worktree` session you haven't backgrounded, whatever its age.
-* You created the worktree yourself with `git worktree add`, even if you then ran a `--worktree <name>` session in it and backgrounded that session.
-
-Claude Code writes a marker into the git metadata of every worktree it creates with git, and the sweep keeps any worktree without one, including a worktree a [`WorktreeCreate` hook](#non-git-version-control) created.
+* You created the worktree with `git worktree add` outside `.claude/worktrees/`.
 
 #### Worktree locks and manual removal
 
@@ -200,11 +204,11 @@ To branch from a specific pull request or merge request, pass `--worktree` the n
 claude --worktree "#1234"
 ```
 
-Claude Code reads only the number from the URL. It always fetches from your repository's `origin` remote, and picks the fetch path by `origin`'s host:
+Claude Code ignores the host and repository in a URL you pass, and picks the fetch path by `origin`'s host:
 
 * **github.com**: fetches `pull/<number>/head`
 * **gitlab.com**: fetches `merge-requests/<number>/head`
-* **GitHub Enterprise, self-managed GitLab, or any other host**: tries `pull/<number>/head` first, then `merge-requests/<number>/head`
+* **GitHub Enterprise, self-managed GitLab, or any other host**: uses `pull/` for a pull request URL, `merge-requests/` for a merge request URL, and whichever exists for a `#` number. If both exist at different commits, follow the `Cannot use PR/MR #<number>` message.
 
 This fetch never waits for input in your terminal. If git or ssh would ask for a password, a key passphrase, or confirmation of a new SSH host, the fetch fails instead and Claude Code exits with an `Error creating worktree: Failed to fetch PR/MR #<number>` message. A key that `ssh-agent` holds still works, so load your key there and run `git fetch` once by hand to record a new host before you start.
 

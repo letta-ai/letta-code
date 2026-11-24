@@ -1383,12 +1383,12 @@ This example syncs a shared skills repository and requests the re-scan:
 #!/bin/bash
 
 git -C ~/.claude/skills/team-skills pull --quiet 2>/dev/null || \
-  git clone --quiet https://git.example.com/your-org/team-skills.git ~/.claude/skills/team-skills
+  git -c protocol.file.allow=never clone --quiet https://git.example.com/your-org/team-skills.git ~/.claude/skills/team-skills
 
 echo '{"hookSpecificOutput": {"hookEventName": "SessionStart", "reloadSkills": true}}'
 ```
 
-The repository URL is a placeholder. Replace it with your own skills repository.
+The repository URL is a placeholder. Replace it with your skills repository's HTTPS or SSH URL. With `protocol.file.allow=never` in the command, you can't clone from a folder path.
 
 #### Persist environment variables
 

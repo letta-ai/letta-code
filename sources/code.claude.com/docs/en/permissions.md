@@ -534,7 +534,7 @@ In Claude Code v2.1.292 and later, each of these leaves the prompt in place:
 * **PreToolUse hooks**: a [hook](#extend-permissions-with-hooks) that returns `"allow"` doesn't skip the prompt
 * **Auto mode**: the prompt comes to you, and the [classifier](https://code.claude.com/docs/en/permission-modes.md#eliminate-prompts-with-auto-mode) doesn't decide the read
 
-In `dontAsk` mode, Claude Code denies the read instead of prompting. In `bypassPermissions` mode, and in interactive terminal sessions in plan mode with [bypass permissions](https://code.claude.com/docs/en/permission-modes.md#skip-all-checks-with-bypasspermissions-mode) available, the read runs without this prompt.
+In `dontAsk` mode, Claude Code denies the read instead of prompting. In `bypassPermissions` mode, and in interactive terminal sessions in plan mode with [bypass permissions](https://code.claude.com/docs/en/permission-modes.md#skip-all-checks-with-bypasspermissions-mode) available, the read can run without this prompt.
 
 To read files on a network share without this prompt, give the share a local path first:
 
