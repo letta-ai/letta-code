@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.331:docs:f7790cd742e00a1d7aadf70cfebe89281801a9f99d7e840d36500ee22d3b9d43:runtime:39b20117d51f182c3977ea228aeb2ec9fddaf26efdfb81099a8bbe9ea1dc094b",
+  "candidate_id": "claude@2.1.331:docs:72b18956028303623724dbbfb4dfd65b55d657405470bf76af5219ad5392395e:runtime:418105656285cc3c722ea0dadb7e52db30ae8d87dfddfd5a1c6cb23d80d2c777",
   "package_version": "2.1.331",
   "npm_integrity": "sha512-E6IE7pon8YAtlzIBB0yhhQgopGvsYuSjnCaoP9ATw64T/f3I4ZfwVcj5jWV9yD7XkrSQZCwO7PgS+qMcP817gA==",
   "npm_published_at": "2026-11-23T18:36:26.468Z",
@@ -512,7 +512,7 @@
       },
       "https://code.claude.com/docs/en/commands.md": {
         "url": "https://code.claude.com/docs/en/commands.md",
-        "hash": "2d23b6e80ce59661c531649916d2d20338a3a8231a3fbca5812a281d08e019d2",
+        "hash": "9ac997398740f747ffa7a8795cdf54d6549f6f543c5aae053d90518e076e6746",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/commands.md"
       },
@@ -620,7 +620,7 @@
       },
       "https://code.claude.com/docs/en/env-vars.md": {
         "url": "https://code.claude.com/docs/en/env-vars.md",
-        "hash": "4410bafdd9b4373e5309d9c3ce2a577a27b6d8377b12ab049cfce07f31ac86f2",
+        "hash": "2099f658a4a5a66e15763b0d707707c27dda12eefcf8994043b19fe6a8138a9a",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/env-vars.md"
       },
@@ -704,7 +704,7 @@
       },
       "https://code.claude.com/docs/en/headless.md": {
         "url": "https://code.claude.com/docs/en/headless.md",
-        "hash": "b9bb6c1392edfc7f999349ac99ea6bc33f9ebd05f2940d5ea5dfe35668d116f5",
+        "hash": "7c463aca46d1ef84102b22d1e891e2d5bb0c85a45576319bdfc9b5d9c5c818dd",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/headless.md"
       },
@@ -794,7 +794,7 @@
       },
       "https://code.claude.com/docs/en/managed-settings.md": {
         "url": "https://code.claude.com/docs/en/managed-settings.md",
-        "hash": "f805ded23691942d617c59ebf53936b65925af9f999abc82261bcb0665c0aede",
+        "hash": "f4bf099ccefb1f37f7e4b8f69374765b475ac83da1143c65fc85e5fa9ca0116f",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/managed-settings.md"
       },
@@ -1214,13 +1214,13 @@
       },
       "https://code.claude.com/docs/en/settings-reference.md": {
         "url": "https://code.claude.com/docs/en/settings-reference.md",
-        "hash": "5f20b1359c416f38157083c44221e9b51ddea7bd736888cd581443d4d2ce6298",
+        "hash": "b1c11e0e008f0f2ef2f5f2e75017dd079e08072a91788276293cc8a136dd2e40",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/settings-reference.md"
       },
       "https://code.claude.com/docs/en/settings.md": {
         "url": "https://code.claude.com/docs/en/settings.md",
-        "hash": "1c2b06c686476ca33341f319e27d3d6a0a75c1d1ce08f3f546dae65c341f0862",
+        "hash": "db27bceb64784e9431eef99c2c7cdf64c5e70ff948bcabecba15e246c5754e13",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/settings.md"
       },
@@ -1286,7 +1286,7 @@
       },
       "https://code.claude.com/docs/en/tools-reference.md": {
         "url": "https://code.claude.com/docs/en/tools-reference.md",
-        "hash": "acfb2f5d6090825cd731cd0cc08b05359cd429ad2d7ae788036098d38f0e4356",
+        "hash": "7db25a74b5ab6c3f440235e0cfd3801f9dc201458076aa18ce43476dcd4309c8",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/tools-reference.md"
       },
@@ -1351,7 +1351,7 @@
         "source_path": "sources/raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
       }
     },
-    "digest": "f7790cd742e00a1d7aadf70cfebe89281801a9f99d7e840d36500ee22d3b9d43"
+    "digest": "72b18956028303623724dbbfb4dfd65b55d657405470bf76af5219ad5392395e"
   },
   "runtime": {
     "probe_contract_version": 2,
@@ -1361,7 +1361,7 @@
     "help_hash": "e8ff5fd4f4a523bf34f63e2fc8541a38ff290f47caa1729e623b5af7e6b0b197",
     "doctor": {
       "exit_code": 0,
-      "summary": "Claude Code doctor\nRunning: npm-global (<version>)\nCommit: <commit>\nPlatform: linux-x64\nPath: /watch/install/node_modules/@anthropic-ai/claude-code/bin/claude.exe\nConfig install method: not set\nSearch: OK (bundled)\nAuto-updates: disabled (set by env: DISABLE_UPDATES)\nAuto-update channel: latest\nLast update attempt: none recorded\nManaged settings (remote): not fetched — no usable credentials for the settings fetch\nOrganization policy: not fetched: no API key or claude.ai sign-in for the policy lookup (apiKeyHelper keys are not used for it)\nAPI connectivity\n- API (api.anthropic.com): answered HTTP 200 in 61 ms\n- Sign-in (platform.claude.com): answered HTTP 200 in 86 ms\n- ANTHROPIC_BASE_URL: not set · NODE_EXTRA_CA_CERTS: not set · CLAUDE_CODE_CLIENT_CERT: not set\nRemote Control\nRemote Control requires a claude.ai subscription. Run claude auth login to sign in with your claude.ai account.\n- Not signed in to claude.ai\n- claude.ai subscription auth not active\n- Sign-in is missing the user:profile scope\n- Organization not found\n- Remote Control availability could not be verified (no server response this session)\nNo installation issues found.\nFor a full setup checkup that can also fix issues, run /doctor in a Claude Code session."
+      "summary": "Claude Code doctor\nRunning: npm-global (<version>)\nCommit: <commit>\nPlatform: linux-x64\nPath: /watch/install/node_modules/@anthropic-ai/claude-code/bin/claude.exe\nConfig install method: not set\nSearch: OK (bundled)\nAuto-updates: disabled (set by env: DISABLE_UPDATES)\nAuto-update channel: latest\nLast update attempt: none recorded\nManaged settings (remote): not fetched — no usable credentials for the settings fetch\nOrganization policy: not fetched: no API key or claude.ai sign-in for the policy lookup (apiKeyHelper keys are not used for it)\nAPI connectivity\n- API (api.anthropic.com): answered HTTP 200 in 83 ms\n- Sign-in (platform.claude.com): answered HTTP 200 in 121 ms\n- ANTHROPIC_BASE_URL: not set · NODE_EXTRA_CA_CERTS: not set · CLAUDE_CODE_CLIENT_CERT: not set\nRemote Control\nRemote Control requires a claude.ai subscription. Run claude auth login to sign in with your claude.ai account.\n- Not signed in to claude.ai\n- claude.ai subscription auth not active\n- Sign-in is missing the user:profile scope\n- Organization not found\n- Remote Control availability could not be verified (no server response this session)\nNo installation issues found.\nFor a full setup checkup that can also fix issues, run /doctor in a Claude Code session."
     },
     "auto_mode_defaults": {
       "allow": [
@@ -1550,57 +1550,56 @@
     ],
     "probes": [
       {
-        "assertions": {
-          "exact_line_10": true,
-          "exact_line_9": true,
-          "no_arrow_separator": true,
-          "no_line_9_padding": true,
-          "result_not_error": true
-        },
-        "attempts": 1,
-        "error": null,
-        "filesystem_changes": [],
         "name": "read-lines-9-10-tab-prefix",
         "status": "passed",
+        "attempts": 1,
+        "assertions": {
+          "exact_line_9": true,
+          "exact_line_10": true,
+          "no_line_9_padding": true,
+          "no_arrow_separator": true,
+          "result_not_error": true
+        },
         "tool_calls": [
           {
+            "name": "Read",
             "input": {
               "file_path": "/watch/repo/read-fixture.txt",
               "limit": 2,
               "offset": 9
-            },
-            "name": "Read"
+            }
           }
         ],
         "tool_results": [
           "9\tline9\n10\tline10"
-        ]
+        ],
+        "filesystem_changes": [],
+        "error": null
       },
       {
-        "assertions": {
-          "deleted_task_absent": true,
-          "deleted_task_get_errors": true,
-          "metadata_arbitrary_values_accepted": true,
-          "metadata_null_update_accepted": true
-        },
-        "attempts": 1,
-        "error": null,
-        "filesystem_changes": [],
         "name": "task-metadata-delete-contract",
         "status": "passed",
+        "attempts": 1,
+        "assertions": {
+          "metadata_arbitrary_values_accepted": true,
+          "metadata_null_update_accepted": true,
+          "deleted_task_get_errors": true,
+          "deleted_task_absent": true
+        },
         "tool_calls": [
           {
+            "name": "TaskCreate",
             "input": {
-              "description": "Probe task for exercising task tools.",
+              "description": "Probe task for exercising task tools metadata handling.",
               "metadata": {
                 "keep": "yes",
                 "probe": "remove"
               },
               "subject": "probe-task"
-            },
-            "name": "TaskCreate"
+            }
           },
           {
+            "name": "TaskUpdate",
             "input": {
               "metadata": {
                 "count": 3,
@@ -1613,47 +1612,48 @@
                 "probe": null
               },
               "taskId": "1"
-            },
-            "name": "TaskUpdate"
+            }
           },
           {
+            "name": "TaskGet",
             "input": {
               "taskId": "1"
-            },
-            "name": "TaskGet"
+            }
           },
           {
+            "name": "TaskUpdate",
             "input": {
               "status": "deleted",
               "taskId": "1"
-            },
-            "name": "TaskUpdate"
+            }
           },
           {
+            "name": "TaskGet",
             "input": {
               "taskId": "1"
-            },
-            "name": "TaskGet"
+            }
           },
           {
-            "input": {},
-            "name": "TaskList"
+            "name": "TaskList",
+            "input": {}
           }
         ],
         "tool_results": [
           "Task #1 created successfully: probe-task",
           "Updated task #1 metadata",
-          "Task #1: probe-task\nStatus: pending\nDescription: Probe task for exercising task tools.",
+          "Task #1: probe-task\nStatus: pending\nDescription: Probe task for exercising task tools metadata handling.",
           "Updated task #1 deleted",
           "Task not found",
           "No tasks found"
-        ]
+        ],
+        "filesystem_changes": [],
+        "error": null
       }
     ],
-    "digest": "39b20117d51f182c3977ea228aeb2ec9fddaf26efdfb81099a8bbe9ea1dc094b"
+    "digest": "418105656285cc3c722ea0dadb7e52db30ae8d87dfddfd5a1c6cb23d80d2c777"
   },
-  "fetched_at": "2026-11-24T16:21:11.521Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/45435933407",
-  "state_commit_parent": "f0c74c50da82f0cf1d820f09e2cf1f1704549cf4",
-  "analysis_parent_sha": "f0c74c50da82f0cf1d820f09e2cf1f1704549cf4"
+  "fetched_at": "2026-11-24T18:21:09.560Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/45458345124",
+  "state_commit_parent": "446ead41ba822aae247b91c527da39e4e9f1d39c",
+  "analysis_parent_sha": "446ead41ba822aae247b91c527da39e4e9f1d39c"
 }

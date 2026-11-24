@@ -377,6 +377,7 @@ The `--allowedTools` flag uses [permission rule syntax](https://code.claude.com/
 > Command support differs in `-p` mode:
 >
 > * User-invoked [skills](https://code.claude.com/docs/en/skills.md) and custom commands work. Include `/skill-name` in the prompt string and Claude Code expands it before running.
+> * [Skills from MCP servers](https://code.claude.com/docs/en/mcp.md#requirements-for-skills-from-mcp-servers) aren't supported.
 > * Built-in commands that only run in the terminal interface, such as `/login`, aren't available.
 > * `/model`, `/effort`, `/fast`, `/color`, and `/rename` accept the value as an argument, for example `/model sonnet`, and `/mcp` with no argument prints a text summary of server status. These forms follow each command's [availability notes](https://code.claude.com/docs/en/commands.md#all-commands).
 > * To change a setting, pass `key=value` to `/config`, for example `/config verbose=true`.
