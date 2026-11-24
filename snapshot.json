@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.331:docs:e54305b60795f769e01d094a56bf290f7505a5bf01c1eee0308204e044420c6c:runtime:81f4811ccc87cbe4c2e815413747dc36f4e7647881291df30543856f391f7a21",
+  "candidate_id": "claude@2.1.331:docs:835432956ec8c13f37cb036f559655a5c2e505035d321f5a59f02896fbda70e0:runtime:5c0e2d0a75f5dcba728129e305c6bfe514db722e2f9bee7d1d8d50e9c87d0eb4",
   "package_version": "2.1.331",
   "npm_integrity": "sha512-E6IE7pon8YAtlzIBB0yhhQgopGvsYuSjnCaoP9ATw64T/f3I4ZfwVcj5jWV9yD7XkrSQZCwO7PgS+qMcP817gA==",
   "npm_published_at": "2026-11-23T18:36:26.468Z",
@@ -10,7 +10,7 @@
   "dist_tags": {
     "latest": "2.1.331",
     "stable": "2.1.325",
-    "next": "2.1.331"
+    "next": "2.1.332"
   },
   "docs": {
     "index_url": "https://code.claude.com/docs/llms.txt",
@@ -512,7 +512,7 @@
       },
       "https://code.claude.com/docs/en/commands.md": {
         "url": "https://code.claude.com/docs/en/commands.md",
-        "hash": "9ac997398740f747ffa7a8795cdf54d6549f6f543c5aae053d90518e076e6746",
+        "hash": "cbfdd08e90be08824138d97f11b5c8f5f1068d542c864f854c9f0f9c2660704d",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/commands.md"
       },
@@ -620,7 +620,7 @@
       },
       "https://code.claude.com/docs/en/env-vars.md": {
         "url": "https://code.claude.com/docs/en/env-vars.md",
-        "hash": "2735bf20fa52c7246598cf0ae3d55cde63aecf33fe07241f8fc7be3e02217d92",
+        "hash": "9fc5ef2971d1df40766abcca967e77205b9b891c27a2c34c5fda45d80b7bb81e",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/env-vars.md"
       },
@@ -1351,7 +1351,7 @@
         "source_path": "sources/raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
       }
     },
-    "digest": "e54305b60795f769e01d094a56bf290f7505a5bf01c1eee0308204e044420c6c"
+    "digest": "835432956ec8c13f37cb036f559655a5c2e505035d321f5a59f02896fbda70e0"
   },
   "runtime": {
     "probe_contract_version": 2,
@@ -1361,7 +1361,7 @@
     "help_hash": "e8ff5fd4f4a523bf34f63e2fc8541a38ff290f47caa1729e623b5af7e6b0b197",
     "doctor": {
       "exit_code": 0,
-      "summary": "Claude Code doctor\nRunning: npm-global (<version>)\nCommit: <commit>\nPlatform: linux-x64\nPath: /watch/install/node_modules/@anthropic-ai/claude-code/bin/claude.exe\nConfig install method: not set\nSearch: OK (bundled)\nAuto-updates: disabled (set by env: DISABLE_UPDATES)\nAuto-update channel: latest\nLast update attempt: none recorded\nManaged settings (remote): not fetched — no usable credentials for the settings fetch\nOrganization policy: not fetched: no API key or claude.ai sign-in for the policy lookup (apiKeyHelper keys are not used for it)\nAPI connectivity\n- API (api.anthropic.com): answered HTTP 200 in 103 ms\n- Sign-in (platform.claude.com): answered HTTP 200 in 124 ms\n- ANTHROPIC_BASE_URL: not set · NODE_EXTRA_CA_CERTS: not set · CLAUDE_CODE_CLIENT_CERT: not set\nRemote Control\nRemote Control requires a claude.ai subscription. Run claude auth login to sign in with your claude.ai account.\n- Not signed in to claude.ai\n- claude.ai subscription auth not active\n- Sign-in is missing the user:profile scope\n- Organization not found\n- Remote Control availability could not be verified (no server response this session)\nNo installation issues found.\nFor a full setup checkup that can also fix issues, run /doctor in a Claude Code session."
+      "summary": "Claude Code doctor\nRunning: npm-global (<version>)\nCommit: <commit>\nPlatform: linux-x64\nPath: /watch/install/node_modules/@anthropic-ai/claude-code/bin/claude.exe\nConfig install method: not set\nSearch: OK (bundled)\nAuto-updates: disabled (set by env: DISABLE_UPDATES)\nAuto-update channel: latest\nLast update attempt: none recorded\nManaged settings (remote): not fetched — no usable credentials for the settings fetch\nOrganization policy: not fetched: no API key or claude.ai sign-in for the policy lookup (apiKeyHelper keys are not used for it)\nAPI connectivity\n- API (api.anthropic.com): answered HTTP 200 in 95 ms\n- Sign-in (platform.claude.com): answered HTTP 200 in 112 ms\n- ANTHROPIC_BASE_URL: not set · NODE_EXTRA_CA_CERTS: not set · CLAUDE_CODE_CLIENT_CERT: not set\nRemote Control\nRemote Control requires a claude.ai subscription. Run claude auth login to sign in with your claude.ai account.\n- Not signed in to claude.ai\n- claude.ai subscription auth not active\n- Sign-in is missing the user:profile scope\n- Organization not found\n- Remote Control availability could not be verified (no server response this session)\nNo installation issues found.\nFor a full setup checkup that can also fix issues, run /doctor in a Claude Code session."
     },
     "auto_mode_defaults": {
       "allow": [
@@ -1650,10 +1650,10 @@
         "error": null
       }
     ],
-    "digest": "81f4811ccc87cbe4c2e815413747dc36f4e7647881291df30543856f391f7a21"
+    "digest": "5c0e2d0a75f5dcba728129e305c6bfe514db722e2f9bee7d1d8d50e9c87d0eb4"
   },
-  "fetched_at": "2026-11-24T20:19:26.929Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/45479360493",
-  "state_commit_parent": "98d3ea841d8bfbaf9cb358184a0e2e2db432f799",
-  "analysis_parent_sha": "98d3ea841d8bfbaf9cb358184a0e2e2db432f799"
+  "fetched_at": "2026-11-24T22:19:33.122Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/45499578067",
+  "state_commit_parent": "3a2cfc71db6ca3f5c311456e591f8e8b6e72c917",
+  "analysis_parent_sha": "3a2cfc71db6ca3f5c311456e591f8e8b6e72c917"
 }
