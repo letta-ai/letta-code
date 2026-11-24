@@ -356,3 +356,123 @@ test.each(["claude_code", "codex"] as const)(
     }
   },
 );
+
+test("moving cache breakpoints retains images once and oversized image deltas preserve tool results", async () => {
+  const forwarded: string[] = [];
+  const upstream = createServer(async (req, res) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(chunk);
+    forwarded.push(Buffer.concat(chunks).toString("utf8"));
+    res.end('{"id":"reply"}');
+  }).listen(0, "127.0.0.1");
+  await once(upstream, "listening");
+  const address = upstream.address();
+  if (!address || typeof address === "string")
+    throw new Error("Missing address");
+  const rows: ExternalTraceRow[] = [];
+  const fallbacks: string[] = [];
+  const proxy = await startTraceProxy({
+    upstream: `http://127.0.0.1:${address.port}`,
+    harness: "claude_code",
+    scope: {
+      parent_agent_id: "a",
+      parent_conversation_id: "c",
+      task_id: "t",
+      worker_session_id: "s",
+    },
+    secrets: [],
+    emit: (row, delta) => {
+      rows.push(row);
+      if (delta) fallbacks.push(delta.fallbackJson);
+    },
+  });
+  const image = (bytes: number) => ({
+    type: "image",
+    source: {
+      type: "base64",
+      media_type: "image/png",
+      data: "A".repeat(bytes),
+    },
+  });
+  const cacheControl = { type: "ephemeral" };
+  const screenshot = image(1_700_000);
+  const original = { role: "user", content: [screenshot] };
+  const assistant = {
+    role: "assistant",
+    content: [{ type: "text", text: "a".repeat(500_000) }],
+  };
+  const cachedAssistant = {
+    ...assistant,
+    content: [{ ...assistant.content[0], cache_control: cacheControl }],
+  };
+  const toolResult = {
+    type: "tool_result",
+    tool_use_id: "tool-1",
+    content: [
+      image(2_200_000),
+      { type: "text", text: "Tool output to retain" },
+      image(128),
+    ],
+  };
+  const result = { role: "user", content: [toolResult] };
+  const last = { role: "assistant", content: [{ type: "text", text: "done" }] };
+  const requests = [
+    [
+      {
+        ...original,
+        content: [{ ...screenshot, cache_control: cacheControl }],
+      },
+    ],
+    [original, cachedAssistant],
+    [original, assistant, result],
+    [original, assistant, result, last],
+  ].map((messages) => JSON.stringify({ messages }));
+
+  try {
+    for (const body of requests) {
+      const reply = await fetch(`${proxy.url}/messages`, {
+        method: "POST",
+        body,
+      });
+      await reply.text();
+    }
+    await proxy.close();
+    expect(forwarded).toEqual(requests);
+    expect(rows.map((row) => row.capture_status)).toEqual([
+      "complete",
+      "delta",
+      "delta",
+      "delta",
+    ]);
+    const [base, firstDelta, imageDelta, finalDelta] = rows.map((row) =>
+      JSON.parse(row.request_json),
+    );
+    expect(base.messages[0].content[0].source).toEqual(screenshot.source);
+    expect(firstDelta.messages).toEqual([cachedAssistant]);
+    expect(firstDelta.base_trace_id).toBe(rows[0]?.id);
+    expect(imageDelta.base_trace_id).toBe(rows[1]?.id);
+    expect(imageDelta.messages).toEqual([
+      {
+        ...result,
+        content: [
+          {
+            ...toolResult,
+            content: [
+              { truncated: "size_limit" },
+              ...toolResult.content.slice(1),
+            ],
+          },
+        ],
+      },
+    ]);
+    expect(imageDelta.truncated).toBe("size_limit");
+    const fallback = JSON.parse(fallbacks[1] ?? "");
+    expect(fallback.messages[2]).toEqual(imageDelta.messages[0]);
+    expect(fallback.truncated).toBe("size_limit");
+    expect(finalDelta.base_trace_id).toBe(rows[2]?.id);
+    expect(finalDelta.messages).toEqual([last]);
+  } finally {
+    await proxy.close();
+    upstream.close();
+  }
+});
