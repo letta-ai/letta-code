@@ -871,7 +871,7 @@ async function deliverRemoteExternalCodingAgentMessage(
       target.computer as string,
       {
         canResendOnTimeout:
-          (compareSemver(lettaCodeVersion ?? "", "0.34.64") ?? -1) >= 0,
+          (compareSemver(lettaCodeVersion ?? "", "0.34.70") ?? -1) > 0,
       },
     );
   } catch (error) {
