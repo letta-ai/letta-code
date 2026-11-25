@@ -214,11 +214,12 @@ export async function send_agent_message(
       }
       args.signal?.throwIfAborted();
       const parentScope = sender;
+      const steerActingUserId = getRuntimeActingUserAttribution();
       const recordSteer = () =>
         resumeSubagentWriter(
           parentScope.conversationId,
           { worker_session_id: args.agent_id },
-          getRuntimeActingUserAttribution(),
+          steerActingUserId,
         );
       if (externalTarget.computer) {
         const receipt = await (
