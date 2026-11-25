@@ -1,8 +1,9 @@
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   resolveChildSubagent,
   trackChildSend,
+  trackLocalChildSend,
 } from "@/agent/subagents/child-send-tracking";
 import { resolveSubagentLauncher } from "@/agent/subagents/subagent-launcher";
 import { type Backend, getBackend } from "@/backend";
@@ -77,7 +78,7 @@ interface SendAgentMessageDeps {
   trackExternalFollowup?: typeof trackExternalFollowupCompletion;
   sendRemoteExternalMessage?: typeof sendRemoteExternalCodingAgentMessage;
   workerEnv?: ExternalWorkerResumeEnvDependencies;
-  spawnLocal?: (command: string, args: string[]) => void;
+  spawnLocal?: (command: string, args: string[]) => ChildProcess;
 }
 
 export function buildLocalSendArgs(
@@ -97,7 +98,7 @@ export function buildLocalSendArgs(
   ];
 }
 
-function spawnDetached(command: string, args: string[]): void {
+function spawnDetached(command: string, args: string[]): ChildProcess {
   const child = spawn(command, args, {
     cwd: getCurrentWorkingDirectory(),
     env: getRuntimeExecutionEnv(
@@ -111,6 +112,7 @@ function spawnDetached(command: string, args: string[]): void {
     debugLog("SendAgentMessage", "Local send failed to start", error),
   );
   child.unref();
+  return child;
 }
 
 const FULL_CONVERSATION_ID =
@@ -567,15 +569,47 @@ export async function send_agent_message(
       signal,
     );
     signal.throwIfAborted();
-    submissionAttempted = true;
     if (!backend.capabilities.environmentRouting) {
+      // Conversation-only sends need their owning agent for the existing
+      // parent-tag check. A failed lookup must not prevent delivery.
+      let localAgentId =
+        destination.conversationId === "default"
+          ? destination.agentId
+          : undefined;
+      if (destination.conversationId !== "default") {
+        try {
+          localAgentId =
+            (await backend.retrieveConversation(destination.conversationId))
+              .agent_id ?? undefined;
+        } catch {
+          // Keep unrecognized destinations fire-and-forget.
+        }
+      }
+      const child = localAgentId
+        ? await resolveChildSubagent(backend, localAgentId, sender.agentId)
+        : null;
+      signal.throwIfAborted();
       const launcher = resolveSubagentLauncher(
         buildLocalSendArgs(
           destination,
           buildAgentSendReminder(sender, true) + args.message,
         ),
       );
-      (deps.spawnLocal ?? spawnDetached)(launcher.command, launcher.args);
+      submissionAttempted = true;
+      const process = (deps.spawnLocal ?? spawnDetached)(
+        launcher.command,
+        launcher.args,
+      );
+      if (child && localAgentId) {
+        trackLocalChildSend({
+          process,
+          agentId: localAgentId,
+          conversationId: destination.conversationId,
+          child,
+          prompt: args.message,
+          parentScope: sender,
+        });
+      }
       return {
         content: JSON.stringify({
           status: "spawned",
@@ -584,6 +618,7 @@ export async function send_agent_message(
         status: "success",
       };
     }
+    submissionAttempted = true;
     const receipt = await (deps.enqueue ?? enqueueConversationMessage)(
       {
         ...destination,
