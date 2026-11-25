@@ -91,6 +91,50 @@ const store: SubagentStore = {
   listeners: new Set(),
 };
 
+const stateObservers = new WeakMap<
+  SubagentState,
+  (state: SubagentState) => void
+>();
+
+export function observeSubagentState(
+  id: string,
+  observer: (state: SubagentState) => void,
+): void {
+  const state = store.agents.get(id);
+  if (state) stateObservers.set(state, observer);
+}
+
+export function captureSubagentStop(id: string): () => void {
+  const state = store.agents.get(id);
+  const observer = state && stateObservers.get(state);
+  return () => {
+    if (!state || !observer) return;
+    const current = store.agents.get(id) ?? state;
+    observer({
+      ...current,
+      stopOutcome: { attempt: current.stopAttempts ?? 0, kind: "stopped" },
+    });
+  };
+}
+
+function observeStateChange(
+  previous: SubagentState,
+  next: SubagentState,
+): void {
+  const observer = stateObservers.get(previous);
+  if (!observer) return;
+  stateObservers.set(next, observer);
+  if (
+    previous.status !== next.status ||
+    previous.agentId !== next.agentId ||
+    previous.conversationId !== next.conversationId ||
+    previous.cancelPending !== next.cancelPending ||
+    previous.stopOutcome?.kind !== next.stopOutcome?.kind
+  ) {
+    observer(next);
+  }
+}
+
 let cachedSnapshot: { agents: SubagentState[]; expanded: boolean } = {
   agents: [],
   expanded: false,
@@ -276,6 +320,7 @@ export function updateSubagent(
 
   const updatedAgent = { ...agent, ...updates, maxToolCallsSeen: nextMax };
   store.agents.set(id, updatedAgent);
+  observeStateChange(agent, updatedAgent);
   if (updatedAgent.status === "completed" || updatedAgent.status === "error") {
     scheduleCompletedSubagentCleanup(id);
   } else {
@@ -307,6 +352,7 @@ export function addToolCall(
     ),
   };
   store.agents.set(subagentId, updatedAgent);
+  observeStateChange(agent, updatedAgent);
   notifyListeners();
 }
 
@@ -321,14 +367,16 @@ export function addProgressText(
   const previous = agent.progressTexts?.at(-1);
   if (!excerpt || previous?.text === excerpt) return;
   const count = (agent.progressTextCount ?? 0) + 1;
-  store.agents.set(subagentId, {
+  const updatedAgent = {
     ...agent,
     progressTexts: [
       ...(agent.progressTexts ?? []),
       { id: `text-${count}`, at: now().toISOString(), text: excerpt },
     ].slice(-MAX_PROGRESS_TEXTS),
     progressTextCount: count,
-  });
+  };
+  store.agents.set(subagentId, updatedAgent);
+  observeStateChange(agent, updatedAgent);
   notifyListeners();
 }
 
@@ -357,6 +405,7 @@ export function completeSubagent(
     maxToolCallsSeen: Math.max(agent.maxToolCallsSeen, agent.toolCalls.length),
   } as SubagentState;
   store.agents.set(id, updatedAgent);
+  observeStateChange(agent, updatedAgent);
   scheduleCompletedSubagentCleanup(id);
   notifyListeners();
 }
@@ -536,6 +585,7 @@ export function interruptActiveSubagents(
         stopFailed: undefined,
       };
       store.agents.set(id, updatedAgent);
+      observeStateChange(agent, updatedAgent);
       scheduleCompletedSubagentCleanup(id);
       anyInterrupted = true;
     }
@@ -568,6 +618,7 @@ export function interruptStopFailedSubagents(
       stopFailed: undefined,
     };
     store.agents.set(id, updatedAgent);
+    observeStateChange(agent, updatedAgent);
     scheduleCompletedSubagentCleanup(id);
     interrupted.push(id);
   }
