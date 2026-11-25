@@ -3,7 +3,6 @@ import { resolveParentModelLimits } from "@/agent/subagents/parent-model-limits"
 import { getBackend } from "@/backend";
 
 describe("parent model limits", () => {
-  // Description, conversation ID/state, expected model/output/context.
   test.each([
     ["agent defaults", "default", {}, "openai/parent", 16000, 128000],
     [
@@ -80,7 +79,10 @@ describe("parent model limits", () => {
         );
         expect(result?.contextWindowLimit).toBe(context);
         if (conversationId === "default") expect(lookup).not.toHaveBeenCalled();
-        else expect(lookup).toHaveBeenCalledWith("conv-parent");
+        else
+          expect(lookup).toHaveBeenCalledWith("conv-parent", {
+            query: { include_context_message_ids: false },
+          });
       } finally {
         lookup.mockRestore();
         agent.mockRestore();

@@ -9,7 +9,6 @@ setupRuntimeModelCatalogFixture();
 
 const MODEL = "openai/gpt-5.6-luna";
 describe("workflow parent limit forwarding", () => {
-  // Backend, conversation model, workflow model, child model, inherits limits.
   test.each([
     ["api", MODEL, undefined, undefined, true],
     ["api", MODEL, undefined, MODEL, true],

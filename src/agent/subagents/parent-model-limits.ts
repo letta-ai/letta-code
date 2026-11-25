@@ -38,6 +38,7 @@ function limits(entity: unknown): Omit<ParentModelLimits, "model"> {
     ...(context !== undefined ? { contextWindowLimit: context } : {}),
   };
 }
+
 export async function resolveParentModelLimits(
   agentId: string,
   conversationId?: string | null,
@@ -49,7 +50,9 @@ export async function resolveParentModelLimits(
     const parent: ParentModelLimits = { model, ...limits(agent) };
     if (!conversationId || conversationId === "default") return parent;
     const conversation = await backend
-      .retrieveConversation(conversationId)
+      .retrieveConversation(conversationId, {
+        query: { include_context_message_ids: false },
+      })
       .catch(() => null);
     if (!conversation) return { model };
     const conversationModel = getModelHandleFromAgent(conversation);
