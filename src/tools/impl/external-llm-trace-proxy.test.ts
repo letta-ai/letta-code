@@ -155,7 +155,10 @@ test("upstream aborts retain an incomplete trace without changing delivered byte
   const upstream = createServer((_req, res) => {
     res.writeHead(200, { "content-type": "text/event-stream" });
     res.write(partial);
-    setTimeout(() => res.destroy(), 20);
+    setTimeout(() => {
+      res.socket?.destroy();
+      res.destroy();
+    }, 20);
   }).listen(0, "127.0.0.1");
   await once(upstream, "listening");
   const address = upstream.address();
@@ -197,7 +200,7 @@ test("upstream aborts retain an incomplete trace without changing delivered byte
       })(),
     ).rejects.toThrow();
     expect(endedCleanly).toBe(false);
-    expect(received.replace(/\r\n$/, "")).toBe(partial);
+    expect(received).toBe(partial);
     await proxy.close();
     expect(rows).toHaveLength(1);
     expect(rows[0]?.capture_status).toBe("incomplete");

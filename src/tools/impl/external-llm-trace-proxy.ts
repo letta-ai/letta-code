@@ -327,6 +327,7 @@ export async function startTraceProxy(options: {
         reply.on("end", () => finish());
         reply.on("error", () => {
           finish(true);
+          res.socket?.destroy();
           res.destroy();
         });
         reply.pipe(res);
