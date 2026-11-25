@@ -475,6 +475,7 @@ Claude Code fires hook events at specific points in its lifecycle. When an event
 | `Setup` | When you start Claude Code with `--init-only`, or with `--init` or `--maintenance` in `-p` mode. For one-time preparation in CI or scripts |
 | `UserPromptSubmit` | When a prompt is submitted, before Claude processes it. Also fires on [turns Claude Code starts on its own](https://code.claude.com/docs/en/hooks.md#userpromptsubmit) |
 | `UserPromptExpansion` | When a user-typed command expands into a prompt, before it reaches Claude. Can block the expansion |
+| `PreSkillShellCommand` | Before a skill's [injected shell command](https://code.claude.com/docs/en/skills.md#inject-dynamic-context) runs. Can block the command |
 | `PreToolUse` | Before a tool call executes. Can block it |
 | `PermissionRequest` | When a tool call needs a permission decision |
 | `PermissionDenied` | When auto mode denies a tool call, including denials without a classifier verdict. Use JSON `hookSpecificOutput.retry: true` to tell the model it may retry the denied tool call. Claude Code ignores `retry` when the classifier produced no verdict |
@@ -694,6 +695,7 @@ Each event type matches on a specific field:
 | `ElicitationResult` | MCP server name | same values as `Elicitation` |
 | `FileChanged` | literal filenames to watch (see [FileChanged](https://code.claude.com/docs/en/hooks.md#filechanged)) | `.envrc\|.env` |
 | `UserPromptExpansion` | command name | your skill or command names |
+| `PreSkillShellCommand` | tool that runs the command | `Bash`, `PowerShell` |
 | `UserPromptSubmit`, `PostToolBatch`, `Stop`, `TeammateIdle`, `TaskCreated`, `TaskCompleted`, `WorktreeCreate`, `WorktreeRemove`, `CwdChanged`, `MessageDisplay` | no matcher support | always fires on every occurrence |
 
 The tabs below show a few more matchers on different event types.
@@ -805,7 +807,9 @@ When Claude Code can't split the Bash input into subcommands, it runs your hook 
 
 The `if` field accepts the same patterns as permission rules: `"Bash(git *)"`, `"Edit(*.ts)"`, and so on. To match multiple tool names, use separate handlers each with its own `if` value, or match at the `matcher` level where pipe alternation is supported.
 
-`if` only works on tool events: `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PermissionRequest`, and `PermissionDenied`. Adding it to any other event prevents the hook from running.
+> [!NOTE]
+>
+> `if` only works on `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PermissionRequest`, `PermissionDenied`, and `PreSkillShellCommand`. If you add it on any other event, the hook doesn't run.
 
 ### Configure hook location
 

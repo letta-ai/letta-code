@@ -183,7 +183,7 @@ One team's shared settings, committed to the repository so everyone who clones i
 >       "Read(./secrets/**)"
 >     ]
 >   },
->   // Before every Bash command, run a script in the repo that can block it
+>   // Before every Bash tool call, run a script in the repo that can block it
 >   "hooks": {
 >     "PreToolUse": [
 >       {

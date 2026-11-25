@@ -24,7 +24,7 @@ Events fall into three cadences:
 * per turn: `UserPromptSubmit`, `Stop`, and `StopFailure`
 * on every tool call inside the agentic loop: `PreToolUse` and `PostToolUse`, except [`EndConversation`](https://code.claude.com/docs/en/tools-reference#endconversation-tool-behavior) calls, which skip both
 
-![Hook lifecycle diagram showing optional Setup feeding into SessionStart, then a per-turn loop containing UserPromptSubmit, UserPromptExpansion for slash commands, the nested agentic loop (PreToolUse, PermissionRequest, PostToolUse, PostToolUseFailure, PostToolBatch, SubagentStart/Stop, TaskCreated, TaskCompleted), and Stop or StopFailure, followed by TeammateIdle, PreCompact, PostCompact, and SessionEnd, with Elicitation and ElicitationResult nested inside MCP tool execution, PermissionDenied as a side branch from PermissionRequest for auto-mode denials, WorktreeCreate, WorktreeRemove, Notification, ConfigChange, InstructionsLoaded, CwdChanged, FileChanged, and DirectoryAdded as standalone async events, PreModelSwitch as a standalone sequential event that runs before a requested model switch, PostModelSwitch as a standalone async event that runs after the session's model changes, and MessageDisplay as a display-only event that runs while assistant message text streams](https://mintcdn.com/claude-code/x7pO8l4XcvAXCoVc/images/hooks-lifecycle.svg?fit=max\&auto=format\&n=x7pO8l4XcvAXCoVc\&q=85\&s=81b9256c1bbe8832553485f5d9e9c746)
+![Hook lifecycle diagram showing optional Setup feeding into SessionStart, then a per-turn loop containing UserPromptSubmit, UserPromptExpansion for slash commands, the nested agentic loop (PreToolUse, PermissionRequest, PostToolUse, PostToolUseFailure, PostToolBatch, SubagentStart/Stop, TaskCreated, TaskCompleted), and Stop or StopFailure, followed by TeammateIdle, PreCompact, PostCompact, and SessionEnd, with Elicitation and ElicitationResult nested inside MCP tool execution, PermissionDenied as a side branch from PermissionRequest for auto-mode denials, WorktreeCreate, WorktreeRemove, Notification, ConfigChange, InstructionsLoaded, CwdChanged, FileChanged, and DirectoryAdded as standalone async events, PreSkillShellCommand as a standalone blocking event that runs before a shell command in a loading skill, PreModelSwitch as a standalone sequential event that runs before a requested model switch, PostModelSwitch as a standalone async event that runs after the session's model changes, and MessageDisplay as a display-only event that runs while assistant message text streams](https://mintcdn.com/claude-code/IWhl7FXSx6ARoVoo/images/hooks-lifecycle.svg?fit=max\&auto=format\&n=IWhl7FXSx6ARoVoo\&q=85\&s=a8adf56a3d13b8a8ba9c446bbd7171f8)
 
 The table below summarizes when each event fires. The [Hook events](#hook-events) section documents the full input schema and decision control options for each one.
 
@@ -34,6 +34,7 @@ The table below summarizes when each event fires. The [Hook events](#hook-events
 | `Setup` | When you start Claude Code with `--init-only`, or with `--init` or `--maintenance` in `-p` mode. For one-time preparation in CI or scripts |
 | `UserPromptSubmit` | When a prompt is submitted, before Claude processes it. Also fires on [turns Claude Code starts on its own](https://code.claude.com/docs/en/hooks.md#userpromptsubmit) |
 | `UserPromptExpansion` | When a user-typed command expands into a prompt, before it reaches Claude. Can block the expansion |
+| `PreSkillShellCommand` | Before a skill's [injected shell command](https://code.claude.com/docs/en/skills.md#inject-dynamic-context) runs. Can block the command |
 | `PreToolUse` | Before a tool call executes. Can block it |
 | `PermissionRequest` | When a tool call needs a permission decision |
 | `PermissionDenied` | When auto mode denies a tool call, including denials without a classifier verdict. Use JSON `hookSpecificOutput.retry: true` to tell the model it may retry the denied tool call. Claude Code ignores `retry` when the classifier produced no verdict |
@@ -308,6 +309,7 @@ Each event type matches on a different field:
 | `StopFailure` | error type | `rate_limit`, `authentication_failed`, `oauth_org_not_allowed`, `account_on_hold`, `billing_error`, `invalid_request`, `model_not_found`, `server_error`, `max_output_tokens`, `cloud_credential_error`, `unknown` |
 | `InstructionsLoaded` | load reason | `session_start`, `nested_traversal`, `path_glob_match`, `include`, `compact` |
 | `UserPromptExpansion` | command name | your skill or command names |
+| `PreSkillShellCommand` | tool that runs the command | `Bash`, `PowerShell` |
 | `Elicitation` | MCP server name | your configured MCP server names |
 | `ElicitationResult` | MCP server name | same values as `Elicitation` |
 | `UserPromptSubmit`, `PostToolBatch`, `Stop`, `TeammateIdle`, `TaskCreated`, `TaskCompleted`, `WorktreeCreate`, `WorktreeRemove`, `MessageDisplay` | no matcher support | always fires on every occurrence |
@@ -421,7 +423,7 @@ These fields apply to all hook types:
 | Field | Required | Description |
 | :- | :- | :- |
 | `type` | yes | `"command"`, `"http"`, `"mcp_tool"`, `"prompt"`, or `"agent"` |
-| `if` | no | [Permission rule syntax](https://code.claude.com/docs/en/permissions.md#permission-rule-syntax) to filter when this hook runs, such as `"Bash(git *)"` or `"Edit(*.ts)"`. The hook command only runs if the tool call matches the pattern. See the [Bash matching table](#bash-if-matching) for how Bash patterns evaluate against subcommands, `$()`, and backticks. Only evaluated on tool events: `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PermissionRequest`, and `PermissionDenied`. On other events, a hook with `if` set never runs |
+| `if` | no | [Permission rule syntax](https://code.claude.com/docs/en/permissions.md#permission-rule-syntax) to filter when this hook runs, such as `"Bash(git *)"` or `"Edit(*.ts)"`. The hook command only runs if the tool call matches the pattern. See the [Bash matching table](#bash-if-matching) for how Bash patterns evaluate against subcommands, `$()`, and backticks. Only evaluated on `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PermissionRequest`, `PermissionDenied`, and `PreSkillShellCommand`. On other events, a hook with `if` set doesn't run |
 | `timeout` | no | Seconds before canceling. Claude Code doesn't enforce it on a command hook you run with [`async: true`](#run-hooks-in-the-background). Defaults: 600 for `command`, `http`, and `mcp_tool`; 30 for `prompt`; 60 for `agent`. Claude Code lowers the `command`, `http`, and `mcp_tool` default to 30 on [`UserPromptSubmit`](#userpromptsubmit), [`PreModelSwitch`](#premodelswitch), and [`PostModelSwitch`](#postmodelswitch), and to 10 on [`MessageDisplay`](#messagedisplay). [`SessionEnd`](#sessionend) hooks share a 1.5-second budget; if your settings set a longer per-hook `timeout`, Claude Code raises the budget to match, up to 60 seconds |
 | `statusMessage` | no | Custom spinner message displayed while the hook runs |
 | `once` | no | If `true`, Claude Code removes the hook after its first successful run. A run that fails, blocks with exit code 2, or times out leaves the hook in place, so it runs again on the next matching event. Only honored for hooks declared in [skill frontmatter](#hooks-in-skills-and-agents); ignored in settings files and agent frontmatter |
@@ -943,9 +945,9 @@ For Agent SDK callback hooks, see [Block the action when a callback fails](https
 
 > [!NOTE]
 >
-> On Windows without Git Bash, a shell-form `PreToolUse` or `PermissionRequest` command hook that fails with `onFailure` unset can instead [block the tool call](#failed-hooks-on-windows-without-git-bash).
+> On Windows without Git Bash, a shell-form `PreToolUse`, `PermissionRequest`, or `PreSkillShellCommand` command hook that fails with `onFailure` unset can instead [block the action](#failed-hooks-on-windows-without-git-bash).
 
-This `PreToolUse` hook in `.claude/settings.json` runs a project script before each Bash command, and blocks the command if the script fails:
+This `PreToolUse` hook in `.claude/settings.json` runs a project script before each Bash tool call, and blocks the command if the script fails:
 
 ```json theme={null}
 {
@@ -998,7 +1000,7 @@ The field has no effect on these hooks:
 
 #### Failed hooks on Windows without Git Bash
 
-If the error for a blocked tool call includes this text, a `PreToolUse` or `PermissionRequest` command hook failed or timed out and blocked the call:
+If the error for a blocked tool call or [injected command](#preskillshellcommand) includes this text, a command hook on `PreToolUse`, `PermissionRequest`, or `PreSkillShellCommand` failed or timed out and blocked it:
 
 ```text theme={null}
 blocking because Git Bash wasn't found, so only exit code 0 or 2 counts as this hook's verdict.
@@ -1037,6 +1039,7 @@ If your hook exits 2 and also sets `continue: false`, check [Exit code 2](#exit-
 | `PermissionRequest` | No | Not read as a decision. Deny through the [`decision` object](#permissionrequest-decision-control) instead |
 | `UserPromptSubmit` | Yes | Blocks the prompt. See [What a blocked prompt leaves behind](#what-a-blocked-prompt-leaves-behind) |
 | `UserPromptExpansion` | Yes | Blocks the expansion |
+| `PreSkillShellCommand` | Yes | Blocks the command, and the skill loads without its output |
 | `Stop` | Yes | Prevents Claude from stopping, continues the conversation |
 | `SubagentStop` | Yes | Prevents the subagent from stopping |
 | `TeammateIdle` | Yes | Prevents the teammate from going idle, so it continues working |
@@ -1213,6 +1216,7 @@ Not every event supports blocking or controlling behavior through JSON. The even
 | TaskCreated | Exit code or top-level `decision` | Exit code 2 or `decision: "block"` [cancels the task](#taskcreated-decision-control) and returns the message to Claude. `continue: false` is ignored |
 | PreToolUse | `hookSpecificOutput` | `permissionDecision` (allow/deny/ask/defer), `permissionDecisionReason` |
 | PreModelSwitch | `hookSpecificOutput` or top-level `decision` | `permissionDecision` (allow/deny/ask), `permissionDecisionReason`. `decision: "block"` also [cancels the switch](#premodelswitch-decision-control) |
+| PreSkillShellCommand | `hookSpecificOutput` or top-level `decision` | `permissionDecision`, `permissionDecisionReason`. The hook [can only block](#preskillshellcommand-decision-control) |
 | PermissionRequest | `hookSpecificOutput` | `decision.behavior` (allow/deny) |
 | PermissionDenied | `hookSpecificOutput` | `retry: true` tells the model it may retry the denied tool call; Claude Code ignores it for [no-verdict denials](#permissiondenied-decision-control) |
 | WorktreeCreate | path return | Command hook prints path on stdout; HTTP hook returns `hookSpecificOutput.worktreePath`. Hook failure or missing path fails creation |
@@ -1652,6 +1656,79 @@ A hook that blocks by exiting 2 routes the same way as `reason`: the block messa
 }
 ```
 
+### PreSkillShellCommand
+
+Runs before an [injected command](https://code.claude.com/docs/en/skills.md#inject-dynamic-context), a shell command that runs while a skill or a command such as `/security-review` loads. [PreToolUse](#pretooluse) hooks don't fire for injected commands. To log or block them with a script you already run on PreToolUse, add the script to this event too. In a skill's file, injected commands appear as `` !`<command>` `` or in a ` ```! ` block.
+
+Requires Claude Code v2.1.332 or later, including in the desktop app and VS Code extension. Update before you add the hook, because earlier versions run injected commands without calling it. If you add it to a settings file first, an earlier version such as v2.1.331 opens each interactive terminal session with a [warning dialog](https://code.claude.com/docs/en/settings.md#fix-a-broken-settings-file): `Unknown hook event "PreSkillShellCommand" was ignored`. To enforce a minimum version, see [`requiredMinimumVersion`](https://code.claude.com/docs/en/settings-reference#requiredminimumversion).
+
+For a hook that has to block commands, set the matcher, type, location, and failure handling this way:
+
+* **Matcher**: use `Bash|PowerShell` to cover [both tools that run injected commands](https://code.claude.com/docs/en/skills.md#how-injected-commands-run).
+* **Type**: use a `command`, `http`, or `mcp_tool` hook that isn't [async](#run-hooks-in-the-background), because an async hook can't block. If you configure a `prompt` or `agent` hook on this event, Claude Code can't run it and blocks each command the hook matches.
+* **Location**: define the hook in a [settings file](#hook-locations), such as managed settings, or in a plugin. A skill's injected commands run without the hooks in its own frontmatter on its first load in a session and on loads inside a subagent. A [forked skill](https://code.claude.com/docs/en/skills.md#run-skills-in-a-subagent)'s injected commands run without the hooks in its own frontmatter or in its subagent's definition.
+* **Failures**: set [`onFailure: "block"`](#block-the-action-when-a-hook-fails) so the command doesn't run when the hook fails or times out.
+
+You can reuse the blocking script from [How a hook resolves](#how-a-hook-resolves).
+
+On macOS and Linux, this entry in `.claude/settings.json` runs the script in [exec form](#exec-form-and-shell-form):
+
+```json theme={null}
+{
+  "hooks": {
+    "PreSkillShellCommand": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/block-rm.sh", "args": [], "onFailure": "block" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+On Windows, replace `command` and `args` in this entry with the ones in the Windows tab of [How a hook resolves](#how-a-hook-resolves).
+
+To test this example on macOS or Linux, create `.claude/skills/hook-test/SKILL.md` with the single line `` !`echo 'rm -rf'` ``. This [read-only command](https://code.claude.com/docs/en/permissions.md#read-only-commands) needs no approval and deletes nothing. Start a session in your terminal and type `/hook-test`. You see `Not run in /hook-test: echo 'rm -rf' (blocked by hook: Destructive command blocked by hook)`.
+
+#### Commands that reach a PreSkillShellCommand hook
+
+Your script runs after the [permission check on injected commands](https://code.claude.com/docs/en/skills.md#permission-checks-on-injected-commands), so it gets the commands that passed. It also runs in `bypassPermissions` mode.
+
+In auto mode, a command that would otherwise need approval doesn't run while the skill loads. Claude can run it afterward as a tool call, which fires `PreToolUse` and not this event, so keep your script on both events.
+
+#### PreSkillShellCommand input
+
+In addition to the [common input fields](#common-input-fields), which include `permission_mode`, PreSkillShellCommand hooks receive the fields in this table:
+
+| Field | Description |
+| :- | :- |
+| `tool_name` | The tool that runs the command, `Bash` or `PowerShell` |
+| `tool_input.command` | The shell command as it would run |
+| `tool_use_id` | ID of this command, which names no tool call in the transcript |
+| `command_name` | Name of the skill or command that is loading, such as `pr-summary`, or `my-plugin:deploy` for a plugin's skill |
+| `command_source` | Where the skill or command comes from, such as `userSettings`, `projectSettings`, `policySettings`, `plugin`, or `builtin` |
+| `invoked_by` | `"user"` when you typed the skill's name or an Agent SDK app sent it, or `"claude"` when Claude or a [session-scoped scheduled task](https://code.claude.com/docs/en/scheduled-tasks.md) invoked the skill. `"other"` for anything else, such as a subagent that [preloads the skill](https://code.claude.com/docs/en/sub-agents.md#preload-skills-into-subagents). |
+
+#### PreSkillShellCommand decision control
+
+To block an injected command, have your script exit 2 or return `permissionDecision: "deny"`, and the skill loads without running that command. You can block a command from this hook, but you can't approve or change one.
+
+For a JSON response, use the [PreToolUse format](#pretooluse-decision-control). To use one script on both events, leave `hookEventName` as `PreToolUse`. For a script you run only on this event, you can set `hookEventName` to `PreSkillShellCommand`.
+
+| Hook outcome | What happens |
+| :- | :- |
+| Exit 0 with no decision, or `permissionDecision: "allow"` | The command runs unless another hook blocks it |
+| Exit 2, `permissionDecision: "deny"`, or top-level `decision: "block"` | The command doesn't run. The skill still loads, and Claude reads `[not run: blocked by hook: <reason>]` in place of the command's output. |
+| `permissionDecision: "ask"` or `"defer"`, or any `updatedInput` | Claude Code blocks the command the same way as `"deny"` |
+| `continue: false` | Invoking the skill fails with `Operation stopped by hook: <stopReason>`. None of its injected commands runs, because Claude Code collects your hooks' answers before it runs the first one. |
+| A `command`, `http`, or `mcp_tool` hook fails, for example by exiting 1 with no JSON output, or times out | The command runs unless the hook is [one whose failure blocks the action](#block-the-action-when-a-hook-fails). In a [Code Mode](https://code.claude.com/docs/en/code-mode.md#tool-call-refused-by-a-hook) session where Claude has already run code, a timeout blocks the command by default. |
+
+When you type a skill's name in your terminal, a `Not run in /<name>` line reports a blocked command. A `Ran anyway in /<name>` line reports a command that ran after its hook failed or timed out.
+
+To give a reason for a block, write it to stderr when you exit 2. In JSON, put it in `permissionDecisionReason`, or in `reason` beside a top-level `decision`. While [Remote Control](https://code.claude.com/docs/en/remote-control.md) is connected, the hook still blocks, and neither you nor Claude sees the reason. Find it in the [debug log](#debug-hooks).
+
 ### MessageDisplay
 
 Runs while an assistant message streams to the screen. Claude Code displays the message in increments: each time a batch of newly completed lines is ready to render, the hook runs once with those lines and Claude Code renders the hook's replacement text in their place. A long message produces several calls; a short message may produce only one.
@@ -1789,7 +1866,9 @@ To run a hook when a specific file changes on disk, whatever wrote it, use [File
 
 > [!WARNING]
 >
-> PreToolUse runs only when Claude calls a tool. By default, files you [reference with `@` in your prompt](https://code.claude.com/docs/en/common-workflows#reference-files-and-directories) are added without any tool call. Claude Code inserts their contents while building the prompt, so no PreToolUse hook fires for them, including hooks matching `Read`. PreToolUse also doesn't fire for [`EndConversation`](https://code.claude.com/docs/en/tools-reference#endconversation-tool-behavior).
+> PreToolUse runs when Claude calls a tool. It doesn't fire for [injected commands](https://code.claude.com/docs/en/skills.md#inject-dynamic-context), the shell commands that pass a [permission check](https://code.claude.com/docs/en/skills.md#permission-checks-on-injected-commands) and run while a skill loads. To log or block those, add a [PreSkillShellCommand](#preskillshellcommand) hook.
+>
+> By default, files you [reference with `@` in your prompt](https://code.claude.com/docs/en/common-workflows#reference-files-and-directories) are added without any tool call. Claude Code inserts their contents while building the prompt, so no PreToolUse hook fires for them, including hooks matching `Read`. PreToolUse also doesn't fire for [`EndConversation`](https://code.claude.com/docs/en/tools-reference#endconversation-tool-behavior).
 >
 > You can block specific paths from `@` references, or turn the insertion off:
 >
@@ -4030,6 +4109,7 @@ Events that support `command`, `http`, and `mcp_tool` hooks but not `prompt` or 
 * `PostModelSwitch`
 * `PreCompact`
 * `PreModelSwitch`
+* `PreSkillShellCommand`
 * `SessionEnd`
 * `StopFailure`
 * `SubagentStart`
