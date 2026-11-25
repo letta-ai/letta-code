@@ -120,18 +120,29 @@ export function captureSubagentStop(id: string): () => void {
 function observeStateChange(
   previous: SubagentState,
   next: SubagentState,
+  resultIdentity?: Pick<SubagentState, "agentId" | "conversationId">,
 ): void {
   const observer = stateObservers.get(previous);
   if (!observer) return;
   stateObservers.set(next, observer);
   if (
+    resultIdentity ||
     previous.status !== next.status ||
     previous.agentId !== next.agentId ||
     previous.conversationId !== next.conversationId ||
     previous.cancelPending !== next.cancelPending ||
     previous.stopOutcome?.kind !== next.stopOutcome?.kind
   ) {
-    observer(next);
+    observer(
+      resultIdentity
+        ? {
+            ...next,
+            agentId: next.agentId || resultIdentity.agentId,
+            conversationId:
+              resultIdentity.conversationId || next.conversationId,
+          }
+        : next,
+    );
   }
 }
 
@@ -389,6 +400,7 @@ export function completeSubagent(
     result?: string;
     published?: boolean;
   },
+  resultIdentity?: Pick<SubagentState, "agentId" | "conversationId">,
 ): void {
   const agent = store.agents.get(id);
   if (!agent) return;
@@ -405,7 +417,7 @@ export function completeSubagent(
     maxToolCallsSeen: Math.max(agent.maxToolCallsSeen, agent.toolCalls.length),
   } as SubagentState;
   store.agents.set(id, updatedAgent);
-  observeStateChange(agent, updatedAgent);
+  observeStateChange(agent, updatedAgent, resultIdentity);
   scheduleCompletedSubagentCleanup(id);
   notifyListeners();
 }

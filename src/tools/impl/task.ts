@@ -366,18 +366,6 @@ export function spawnBackgroundSubagentTask(
   const taskLifecycle = subagentExecution
     .then(async (result) => {
       closeTaskProgressLog(subagentId);
-      if (args.observePersistedState) {
-        const current = getSubagentSnapshotFn().agents.find(
-          (agent) => agent.id === subagentId,
-        );
-        updateSubagent(subagentId, {
-          agentId: current?.agentId || result.agentId || existingAgentId,
-          conversationId:
-            result.conversationId ||
-            current?.conversationId ||
-            existingConversationId,
-        });
-      }
       await copyGitHubPullRequestTagsFn(
         result.conversationId,
         resolvedParentScope?.conversationId,
@@ -398,22 +386,31 @@ export function spawnBackgroundSubagentTask(
       scheduleBackgroundTaskCleanup(taskId);
       clearSubagentAbortHook(subagentId);
 
-      completeSubagentFn(subagentId, {
-        success: result.success,
-        error: result.error,
-        totalTokens: result.totalTokens,
-        ...(publishResult ? { published: true } : {}),
-        ...(publishResult && result.success
+      completeSubagentFn(
+        subagentId,
+        {
+          success: result.success,
+          error: result.error,
+          totalTokens: result.totalTokens,
+          ...(publishResult ? { published: true } : {}),
+          ...(publishResult && result.success
+            ? {
+                result: truncateByChars(
+                  result.report || "",
+                  LIMITS.TASK_OUTPUT_CHARS,
+                  "Task",
+                  { workingDirectory: getCurrentWorkingDirectory() },
+                ).content,
+              }
+            : {}),
+        },
+        args.observePersistedState
           ? {
-              result: truncateByChars(
-                result.report || "",
-                LIMITS.TASK_OUTPUT_CHARS,
-                "Task",
-                { workingDirectory: getCurrentWorkingDirectory() },
-              ).content,
+              agentId: result.agentId || existingAgentId,
+              conversationId: result.conversationId || existingConversationId,
             }
-          : {}),
-      });
+          : undefined,
+      );
 
       try {
         await onComplete?.({

@@ -52,6 +52,7 @@ export function createLaunchSubagentObserver(
     const write = createSubagentWriter(input, actingUserId);
     let previous: string | undefined;
     let stopped = false;
+    let resolvedLinks: SubagentLinks = {};
     return (state) => {
       const links: SubagentLinks =
         harness === "letta"
@@ -68,7 +69,8 @@ export function createLaunchSubagentObserver(
         ? "stopped"
         : persistedSubagentStatus(state);
       stopped = status === "stopped";
-      const change = { ...links, status };
+      resolvedLinks = { ...resolvedLinks, ...links };
+      const change = { ...resolvedLinks, status };
       const serialized = JSON.stringify(change);
       if (serialized === previous) return;
       previous = serialized;
