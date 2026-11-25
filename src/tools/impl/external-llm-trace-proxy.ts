@@ -43,6 +43,22 @@ export interface ExternalTraceRow extends ExternalTraceScope {
   created_at: string;
 }
 
+function withoutCacheBreakpoints(item: unknown): unknown {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+  const block = { ...item } as Record<string, unknown>;
+  const cacheControl = block.cache_control;
+  if (
+    cacheControl &&
+    typeof cacheControl === "object" &&
+    "type" in cacheControl &&
+    cacheControl.type === "ephemeral"
+  )
+    delete block.cache_control;
+  if (Array.isArray(block.content))
+    block.content = block.content.map(withoutCacheBreakpoints);
+  return block;
+}
+
 export async function startTraceProxy(options: {
   upstream: string;
   harness: ExternalTraceRow["harness"];
@@ -62,6 +78,8 @@ export async function startTraceProxy(options: {
     throw new Error("Unsupported trace upstream");
   const prefix = `/${randomUUID()}`;
   const historyKey = options.harness === "claude_code" ? "messages" : "input";
+  const comparable = (item: unknown) =>
+    options.harness === "claude_code" ? withoutCacheBreakpoints(item) : item;
   let previous: { id: string; sessionId: string; items: unknown[] } | undefined;
   let activeCaptures = 0;
   const pending = new Set<Promise<void>>();
@@ -175,16 +193,19 @@ export async function startTraceProxy(options: {
             prefixItems > 0 &&
             items.length > prefixItems &&
             previous.items.every((item, index) =>
-              isDeepStrictEqual(item, items[index]),
+              isDeepStrictEqual(item, comparable(items[index])),
             )
           ) {
-            const deltaJson = JSON.stringify({
+            const rawDelta = JSON.stringify({
               ...request,
               [historyKey]: items.slice(prefixItems),
               base_trace_id: previous.id,
               prefix_items: prefixItems,
             });
-            if (tracePayloadFits(deltaJson)) {
+            const deltaJson = tracePayloadFits(rawDelta)
+              ? rawDelta
+              : compactTracePayload(rawDelta, "images");
+            if (deltaJson !== TRUNCATED_TRACE_JSON) {
               requestJson = deltaJson;
               delta = { baseId: previous.id, fallbackJson };
             }
@@ -193,7 +214,11 @@ export async function startTraceProxy(options: {
       }
       previous =
         Array.isArray(items) && (!requestTruncated || delta)
-          ? { id, sessionId: scope.worker_session_id, items }
+          ? {
+              id,
+              sessionId: scope.worker_session_id,
+              items: items.map(comparable),
+            }
           : undefined;
       const response = assembled.response;
       const usage = response.usage ?? {};

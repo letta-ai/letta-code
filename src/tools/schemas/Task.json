@@ -11,7 +11,14 @@
     },
     "harness": {
       "type": "string",
-      "enum": ["letta", "claude-code", "codex", "cursor", "opencode"],
+      "enum": [
+        "letta",
+        "claude-code",
+        "codex",
+        "cursor",
+        "opencode",
+        "antigravity"
+      ],
       "description": "The harness that executes the task. Defaults to letta (a Letta subagent). Set to override the harness that runs the subagent worker (requires the harness to be installed on the computer)."
     },
     "subagent_type": {

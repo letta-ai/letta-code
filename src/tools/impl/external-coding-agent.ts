@@ -31,6 +31,7 @@ import type { SubagentStartupErrorCode } from "@/types/subagent-protocol";
 import { debugLog } from "@/utils/debug";
 import { withNativeCliPath } from "@/utils/native-cli-env";
 import { SUBAGENT_DEPTH_ENV } from "@/utils/subagent-depth-env";
+import { runAntigravityTurn } from "./antigravity-session";
 import { runClaudeTurn } from "./claude-stream-session";
 import { CODEX_NOT_SIGNED_IN_ERROR, runCodexTurn } from "./codex-app-server";
 import { runCursorTurn } from "./cursor-session";
@@ -45,6 +46,7 @@ import {
 import { runOpenCodeTurn } from "./opencode-session";
 
 export const EXTERNAL_CODING_AGENT_TYPES = [
+  "antigravity",
   "claude-code",
   "codex",
   "opencode",
@@ -136,6 +138,7 @@ export function isExternalCodingAgentType(
 }
 
 const EXTERNAL_AGENT_ID_PREFIXES: Record<ExternalCodingAgentType, string> = {
+  antigravity: "antigravity_",
   "claude-code": "claude_",
   codex: "codex_",
   opencode: "opencode_",
@@ -376,7 +379,8 @@ export function classifyExternalCodingAgentStartupError(
   if (
     error.startsWith(CLAUDE_NOT_SIGNED_IN_PREFIX) ||
     error.startsWith(CODEX_NOT_SIGNED_IN_ERROR) ||
-    error.startsWith("Cursor is not signed in:")
+    error.startsWith("Cursor is not signed in:") ||
+    error.startsWith("Antigravity is not signed in:")
   )
     return "not_signed_in";
   return undefined;
@@ -585,12 +589,16 @@ export async function runExternalCodingAgent(
     options,
     deps,
   );
+  if (options.type === "antigravity" && env.GEMINI_API_KEY)
+    secretEnv.GEMINI_API_KEY = env.GEMINI_API_KEY;
   options = {
     ...options,
     ...scrubWorkerListeners(options, secretEnv),
     mcpReminder,
   };
   const cwd = options.cwd ?? getCurrentWorkingDirectory();
+  if (options.type === "antigravity")
+    return runAntigravityTurn({ ...options, cwd }, env, secretEnv);
   const captureActingUserId =
     options.actingUserId !== undefined
       ? options.actingUserId

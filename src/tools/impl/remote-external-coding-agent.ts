@@ -102,6 +102,7 @@ export interface RemoteExternalCodingAgentDeps {
 }
 
 const DISPLAY_NAMES: Record<ExternalCodingAgentType, string> = {
+  antigravity: "Antigravity",
   "claude-code": "Claude Code",
   codex: "Codex",
   opencode: "OpenCode",
@@ -720,9 +721,8 @@ async function connectQualifiedTarget(
   return {
     target,
     lettaCodeVersion: resolved.environment.metadata?.lettaCodeVersion,
-    client: await (deps.connect ?? defaultConnect)(
-      resolved.connectionId,
-      parentScope,
+    client: await connectRemoteWorkerWithRetry(() =>
+      (deps.connect ?? defaultConnect)(resolved.connectionId, parentScope),
     ),
   };
 }

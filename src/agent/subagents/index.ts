@@ -88,6 +88,7 @@ export function getGlobalAgentsDir(): string {
 
 export const GLOBAL_AGENTS_DIR = getGlobalAgentsDir();
 const RESERVED_EXTERNAL_SUBAGENT_NAMES = new Set([
+  "antigravity",
   "letta",
   "claude-code",
   "codex",
