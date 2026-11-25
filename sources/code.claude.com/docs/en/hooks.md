@@ -1229,8 +1229,6 @@ A few events can also rewrite content rather than only allow or block it:
 * `PostToolUse`: `updatedToolOutput` replaces the tool's result. See [PostToolUse decision control](#posttooluse-decision-control), including limits in a [Cowork](https://claude.com/docs/cowork/overview) cloud session
 * `UserPromptSubmit`: can't replace the prompt; it only injects `additionalContext` alongside it
 
-For redaction or transformation use cases, intercept at `PreToolUse` for outbound tool inputs and `PostToolUse` for the results of successful calls. `PostToolUseFailure` can't rewrite a result, so it can't redact a failing command's output.
-
 Here are examples of each pattern in action:
 
 > [tab] Top-level decision
