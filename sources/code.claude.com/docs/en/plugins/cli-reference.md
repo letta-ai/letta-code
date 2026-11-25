@@ -493,7 +493,7 @@ The optional `target` defaults to the current directory and takes any of these f
 * An installed plugin as `name` or `name@marketplace`
 * `name@skills-dir`
 
-Put the target before `--tag`, `--allow-tools`, and `--json`. Each of these options takes the words that follow it as its value, so a target written after one of them is read as a tag, a tool name, or the JSON output path instead of as the target.
+Put the target before `--tag`, `--allow-tools`, [`--disallow-tools`](https://code.claude.com/docs/en/plugin-evals#disallow-tools), and `--json`. A target written after one of them can be read as a tag, a tool name, or the JSON output path.
 
 This table lists the options most runs use. Run `claude plugin eval --help` for the complete set, including `--case`, `--tag`, `--output-dir`, `--report`, `--allow-real-servers`, `--keep-temp`, and `--verbose`.
 

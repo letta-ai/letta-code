@@ -88,7 +88,7 @@ Claude Code runs in three environments, each with different tradeoffs for where 
 
 ### Interfaces
 
-You can access Claude Code through the terminal, the [desktop app](https://code.claude.com/docs/en/desktop.md), [IDE extensions](https://code.claude.com/docs/en/vs-code.md), [claude.ai/code](https://claude.ai/code), [Remote Control](https://code.claude.com/docs/en/remote-control.md), [Slack](https://code.claude.com/docs/en/slack.md), and [CI/CD pipelines](https://code.claude.com/docs/en/github-actions.md). The interface determines how you see and interact with Claude, but the underlying agentic loop is identical. See [Use Claude Code everywhere](https://code.claude.com/docs/en/overview.md#use-claude-code-everywhere) for the full list.
+You can access Claude Code through the terminal, the [desktop app](https://code.claude.com/docs/en/desktop.md), [IDE extensions](https://code.claude.com/docs/en/vs-code.md), [claude.ai/code](https://claude.ai/code), [Remote Control](https://code.claude.com/docs/en/remote-control.md), and [CI/CD pipelines](https://code.claude.com/docs/en/github-actions.md). The interface determines how you see and interact with Claude, but the underlying agentic loop is identical. See [Use Claude Code everywhere](https://code.claude.com/docs/en/overview.md#use-claude-code-everywhere) for the list.
 
 ## Work with sessions
 

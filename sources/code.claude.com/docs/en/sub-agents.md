@@ -310,7 +310,7 @@ Multi-word field names use camelCase, such as `maxTurns` and `disallowedTools`, 
 | `background` | No | Set to `true` to keep this subagent in the background even when Claude asks to wait for it. By default, custom subagents Claude spawns from the main conversation already [start in the background](#run-subagents-in-foreground-or-background) |
 | `omitClaudeMd` | No | Set to `true` to start this subagent without the user, project, and local CLAUDE.md files in its [initial context](#what-loads-at-startup); [managed policy files](https://code.claude.com/docs/en/memory.md#how-claude-md-files-load) still load, except for [managed subagents](#choose-the-subagent-scope). Use it for subagents that take everything they need from the delegation prompt. Ignored when the agent runs as the main session agent via `--agent` or the `agent` setting. Requires Claude Code v2.1.271 or later |
 | `effort` | No | Effort level when this subagent is active. Overrides the session effort level, but not the [`CLAUDE_CODE_EFFORT_LEVEL`](https://code.claude.com/docs/en/env-vars#variables) environment variable. Options: `low`, `medium`, `high`, `xhigh`, `max`; available levels depend on the model. See [Choose an effort level](#choose-an-effort-level) |
-| `isolation` | No | Set to `worktree` to run the subagent in a temporary [git worktree](https://code.claude.com/docs/en/worktrees.md), giving it an isolated copy of the repository branched by default from your [default branch](https://code.claude.com/docs/en/worktrees.md#choose-the-base-branch) rather than the parent session's `HEAD`. The worktree is automatically cleaned up if the subagent makes no changes |
+| `isolation` | No | Set to `worktree` to run the subagent in a temporary [git worktree](https://code.claude.com/docs/en/worktrees.md), giving it an isolated copy of the repository. By default, the copy branches from your [default branch](https://code.claude.com/docs/en/worktrees.md#choose-the-base-branch) rather than the parent session's `HEAD`. Claude Code [can remove the worktree](https://code.claude.com/docs/en/worktrees.md#isolate-subagents-with-worktrees) if the subagent makes no changes |
 | `color` | No | Display color for the subagent in the task list and transcript. Accepts `red`, `blue`, `green`, `yellow`, `purple`, `orange`, `pink`, or `cyan` |
 | `initialPrompt` | No | Auto-submitted as the first user turn when this agent runs as the main session agent (via `--agent` or the `agent` setting). [Commands](https://code.claude.com/docs/en/commands.md) and [skills](https://code.claude.com/docs/en/skills.md) are processed. Prepended to any user-provided prompt. Ignored for [plugin subagents](#choose-the-subagent-scope) |
 | `experimental` | No | Map of experimental options. Set its `cacheTtl` key to `5m` or `1h` to choose the [prompt cache lifetime](https://code.claude.com/docs/en/prompt-caching.md#choose-the-ttl-yourself) for this subagent's requests, at the frontmatter's place in the [cache lifetime precedence](https://code.claude.com/docs/en/prompt-caching.md#choose-the-ttl-yourself). Claude Code ignores any other value, ignores `1h` while your Claude subscription is using usage credits, and reads the field only from subagent files. Requires Claude Code v2.1.248 or later |
@@ -410,7 +410,7 @@ By default, a subagent with a model alias runs on the [version the alias points 
 
 #### When an allowlist blocks a subagent model
 
-If your organization's [`availableModels`](https://code.claude.com/docs/en/model-config#restrict-model-selection) allowlist blocks the model set for a subagent other than [`web-fetch`](https://code.claude.com/docs/en/tools-reference#which-model-the-web-fetch-subagent-runs-on), the subagent runs on the first of these that applies:
+If an [`availableModels`](https://code.claude.com/docs/en/model-config#restrict-model-selection) allowlist in your settings blocks the model set for a subagent other than [`web-fetch`](https://code.claude.com/docs/en/tools-reference#which-model-the-web-fetch-subagent-runs-on), the subagent runs on the first of these that applies:
 
 1. For a blocked family alias, the newest permitted version in that family, on [providers that support this substitution](https://code.claude.com/docs/en/model-config.md#restrict-model-selection)
 2. The model in `CLAUDE_CODE_SUBAGENT_MODEL`, if you set it, under these same rules
@@ -458,7 +458,7 @@ On macOS, Linux, and WSL, a subagent can also receive the Glob and Grep tools wh
 * `WaitForMcpServers`
 * `Workflow`
 
-The second filter applies to subagents running in the background. `Agent` and `ExitPlanMode` follow the first filter's conditions wherever the subagent runs. A background subagent keeps every MCP tool, and [`SubagentHandback`](https://code.claude.com/docs/en/tools-reference) if it reports through that tool. It also keeps `Read`, `Grep`, `Glob`, `LSP`, `Bash`, `PowerShell`, `Edit`, `Write`, `NotebookEdit`, `WebFetch`, `WebSearch`, `TodoWrite`, `Skill`, `ToolSearch`, `EnterWorktree`, `ExitWorktree`, `Monitor`, `TaskStop`, `SendMessage`, `Artifact`, `ListPlugins`, `ListSkills`, `SearchPlugins`, and `SearchSkills`.
+The second filter applies to subagents running in the background. `Agent` and `ExitPlanMode` follow the first filter's conditions wherever the subagent runs. A background subagent keeps every MCP tool, and [`SubagentHandback`](https://code.claude.com/docs/en/tools-reference) if it reports through that tool. It also keeps `Read`, `Grep`, `Glob`, `LSP`, `Bash`, `PowerShell`, `Edit`, `Write`, `NotebookEdit`, `WebFetch`, `WebSearch`, `TodoWrite`, `Skill`, `ToolSearch`, `EnterWorktree`, `ExitWorktree`, `Monitor`, `TaskStop`, `SendMessage`, `Artifact`, `ListPlugins`, `ListSkills`, `SearchPlugins`, `SearchSkills`, and `REPL`.
 
 Don't rely on other built-in tools in a background subagent: Claude Code removes most of them, whether inherited or listed in the `tools` field. The removal reports no error unless it leaves the `tools` list [resolving to nothing](https://code.claude.com/docs/en/errors.md#agent-would-be-spawned-with-zero-tools).
 
@@ -555,7 +555,7 @@ The `Agent(agent_type)` allowlist syntax applies only to an agent running as the
 
 #### Scope MCP servers to a subagent
 
-Use the `mcpServers` field to give a subagent access to [MCP](https://code.claude.com/docs/en/mcp.md) servers that aren't available in the main conversation. Inline servers defined here are connected when the subagent starts, subject to the [trust rule for the agent file's folder](#inline-server-trust), and disconnected when it finishes. String references share the parent session's connection.
+Use the `mcpServers` field to give a subagent access to [MCP](https://code.claude.com/docs/en/mcp.md) servers that aren't available in the main conversation. Inline servers defined here are connected when the subagent starts, subject to the [trust rule for the agent file's folder](#inline-server-trust), and disconnected when the last agent using them finishes. String references share the parent session's connection.
 
 > [!NOTE]
 >
@@ -927,7 +927,7 @@ claude --agent my-plugin:security-reviewer
 
 If the plugin places the agent in a subfolder of its `agents/` directory, include the subfolder in the scoped name, for example `claude --agent my-plugin:review:security`.
 
-To make it the default for every session in a project, set `agent` in `.claude/settings.json`:
+To make a subagent the default for sessions in a project, set `agent` in `.claude/settings.json`:
 
 ```json theme={null}
 {

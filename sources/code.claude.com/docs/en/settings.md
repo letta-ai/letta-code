@@ -72,7 +72,7 @@ Some of what you commit waits until each teammate [trusts the folder](https://co
 
 ### Keep personal settings out of a repository
 
-To change a setting for yourself in one project without changing it for your teammates, save it in `.claude/settings.local.json` inside the project. Claude Code applies that file over the committed `.claude/settings.json`, so if your team's file sets `"model": "claude-sonnet-5"` and you want Opus, put `"model": "claude-opus-5-5"` in your local file and only your sessions change.
+To change a setting for yourself in one project, save it in `.claude/settings.local.json` inside the project. Claude Code applies that file over the committed `.claude/settings.json`, so if the committed file sets `"model": "claude-sonnet-5"` and you want Opus, put `"model": "claude-opus-5-5"` in your local file and only your sessions change.
 
 Claude Code also writes to this file, keeps it out of your commits, and applies its allow rules without the trust step:
 
@@ -230,7 +230,7 @@ In order, highest precedence first:
 1. **Managed settings**: settings your organization deploys, by a `managed-settings.json` file, an MDM policy, or [server-managed settings](https://code.claude.com/docs/en/server-managed-settings.md) from the claude.ai console. Nothing in your own settings files or `--settings` overrides a managed key, and a flag such as `--model` picks only from the models your organization allows. A managed [`model`](https://code.claude.com/docs/en/settings-reference#model) is a starting default, not a lock; the locks are [`availableModels`](https://code.claude.com/docs/en/settings-reference#availablemodels) and [`deniedModels`](https://code.claude.com/docs/en/settings-reference#deniedmodels). When your organization delivers more than one managed source, the rules for [precedence within the managed tier](https://code.claude.com/docs/en/managed-settings.md#precedence-within-the-managed-tier) say what Claude Code reads from each.
 2. **Command line**: JSON you pass with `--settings <file-or-json>` when you start `claude`, for that session only; see [Change a setting for one session](#change-a-setting-for-one-session). A key you set there overrides the same key in your project and user settings files, and a key you leave out keeps its value from those files. Other flags, such as `--model`, set one thing for the session and aren't part of this stack; a key's entry on the [settings reference](https://code.claude.com/docs/en/settings-reference.md) says which flags override it.
 3. **Project local settings** (`.claude/settings.local.json`): your personal settings for this project.
-4. **Shared project settings** (`.claude/settings.json`): settings your team checks into source control.
+4. **Shared project settings** (`.claude/settings.json`): settings checked into source control.
 5. **User settings** (`~/.claude/settings.json`): your personal settings for every project.
 
 Environment variables aren't a level in this stack. When a behavior has both a shell variable and a settings key, which one applies is decided per pair, not by level: `ANTHROPIC_MODEL` exported in your shell applies over the `model` key from any file, while `ANTHROPIC_DEFAULT_MODEL` applies only when no file sets `model`. The [environment variables reference](https://code.claude.com/docs/en/env-vars.md#precedence) says which keys have a pair and which one Claude Code reads first. An `env` block inside a settings file is an ordinary key and follows the levels above.

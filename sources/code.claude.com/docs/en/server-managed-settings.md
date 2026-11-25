@@ -12,7 +12,7 @@ Server-managed settings let organization Owners centrally configure Claude Code 
 >
 > Server-managed settings are available for [Claude for Teams](https://claude.com/pricing?utm_source=claude_code\&utm_medium=docs\&utm_content=server_settings_teams#team-&-enterprise) and [Claude for Enterprise](https://anthropic.com/contact-sales?utm_source=claude_code\&utm_medium=docs\&utm_content=server_settings_enterprise) customers.
 >
-> If you set your provider or gateway at claude.ai under **Organization settings > Desktop 3P**, follow the [Enterprise Admin Console guide](https://claude.com/docs/third-party/claude-desktop/admin-console-claude-code) instead.
+> If you set your provider or gateway at claude.ai under [**Organization settings > Desktop 3P**](https://claude.ai/admin-settings/desktop-deployment), follow the [Enterprise Admin Console guide](https://claude.com/docs/third-party/claude-desktop/admin-console-claude-code) instead.
 
 ## Requirements
 

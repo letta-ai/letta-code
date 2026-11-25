@@ -2088,7 +2088,8 @@ type SDKStartupFailureReason =
   | "org_config_required_unavailable"
   | "org_config_refused"
   | "sandbox_required_unavailable"
-  | "config_file_invalid";
+  | "config_file_invalid"
+  | "sideload_flags_disabled";
 ```
 
 Each value names one refusal:
@@ -2116,6 +2117,7 @@ Each value names one refusal:
 | `org_config_refused` | Anthropic refused to provide the organization's policies and managed settings for this sign-in, for example because the sign-in expired or was revoked, or the organization doesn't allow Claude Code for this account. Requires Agent SDK v0.3.293 or later |
 | `sandbox_required_unavailable` | [`failIfUnavailable`](#sandboxsettings) is on and the sandbox can't start. The text in `errors` ends with `Set sandbox.failIfUnavailable=false to allow unsandboxed execution.` Requires Agent SDK v0.3.314 or later |
 | `config_file_invalid` | `~/.claude.json` isn't valid JSON. Claude Code leaves the file unchanged, so a retry fails the same way until someone repairs it. `errors` names the file and says how to restore or repair it. See [Configuration error in \~/.claude.json](https://code.claude.com/docs/en/errors.md#configuration-error-in-claude-json). Requires TypeScript Agent SDK v0.3.318 or later and Claude Code v2.1.318 or later |
+| `sideload_flags_disabled` | A flag or launch option violates managed [`disableSideloadFlags`](https://code.claude.com/docs/en/settings-reference#disablesideloadflags). Requires TypeScript Agent SDK v0.3.331 or later and Claude Code v2.1.331 or later |
 
 ### `SDKSystemMessage`
 

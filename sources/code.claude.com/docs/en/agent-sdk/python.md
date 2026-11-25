@@ -2809,6 +2809,7 @@ The `ws` source requires Claude Code v2.1.195 or later. When Monitor runs a comm
     "taskId": str,  # ID of the background monitor task
     "timeoutMs": int,  # The watch's effective deadline in milliseconds
     "persistent": bool | None,  # False: every watch has a deadline
+    "keptInSandboxByCheck": bool | None,
 }
 ```
 

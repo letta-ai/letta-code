@@ -141,7 +141,7 @@ Apply the requested refactor across every affected file, then run the tests
 and report the results.
 ```
 
-Each subagent gets a temporary worktree that Claude Code removes automatically when the subagent finishes without changes; a worktree with changes stays on disk until the [periodic sweep below](#clean-up-subagent-and-background-session-worktrees) can remove it without losing work. For a worktree your [WorktreeCreate hook](https://code.claude.com/docs/en/hooks.md#worktreecreate) created, see [WorktreeRemove](https://code.claude.com/docs/en/hooks.md#worktreeremove) instead.
+When a subagent finishes, Claude Code keeps the worktree if git shows changed files, untracked files, or new commits there. Otherwise, Claude Code can remove the worktree right away. A kept worktree stays on disk until the [periodic sweep](#clean-up-subagent-and-background-session-worktrees) can remove it without losing work. For a worktree your [WorktreeCreate hook](https://code.claude.com/docs/en/hooks.md#worktreecreate) created, see [WorktreeRemove](https://code.claude.com/docs/en/hooks.md#worktreeremove) instead.
 
 Subagent worktrees use the same [base branch](#choose-the-base-branch) as `--worktree`, so they branch from your repository's default branch unless `worktree.baseRef` is set to `"head"`.
 
@@ -161,7 +161,7 @@ When you [background](https://code.claude.com/docs/en/agent-view.md#send-the-ses
 
 #### Worktree locks and manual removal
 
-While an agent is running, Claude Code holds a `git worktree lock` on its worktree so that concurrent cleanup can't remove it, and releases the lock when the agent finishes. Claude Code holds the same lock on the worktree it created for a backgrounded session while the session runs, so the sweep leaves the worktree in place and `git worktree remove` refuses to remove it.
+Claude Code takes a `git worktree lock` on the worktree it creates for an agent, so that concurrent cleanup can't remove it during the agent's first run, before any [resume](https://code.claude.com/docs/en/sub-agents.md#resume-subagents). The worktree Claude Code created for a backgrounded session has the same lock while the session runs, so the sweep keeps the worktree and `git worktree remove` refuses it.
 
 The sweep also releases a lock Claude Code set for a session whose process has exited, so a killed background session doesn't leave its worktree permanently locked. The sweep never releases a lock you set yourself with `git worktree lock`.
 
