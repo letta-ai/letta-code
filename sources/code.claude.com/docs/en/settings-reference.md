@@ -2527,7 +2527,7 @@ Have Claude Code snapshot files before each edit so [`/rewind`](https://code.cla
 }
 ```
 
-In a `-p` run or an Agent SDK session, Claude Code ignores this key. The SDK turns checkpointing on with its `enableFileCheckpointing` option, and a bare `-p` run needs `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=true`. See [File checkpointing in the Agent SDK](https://code.claude.com/docs/en/agent-sdk/file-checkpointing.md).
+In a `-p` run or an Agent SDK session, Claude Code ignores this key unless your organization's [managed settings](https://code.claude.com/docs/en/managed-settings.md) set it to `false`, and then checkpointing stays off. That exception requires Claude Code v2.1.331 or later. Without that `false`, turn checkpointing on with the SDK's `enableFileCheckpointing` option, or with `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=true` in a bare `-p` run. See [File checkpointing in the Agent SDK](https://code.claude.com/docs/en/agent-sdk/file-checkpointing.md).
 
 ### `idleCompaction`
 
