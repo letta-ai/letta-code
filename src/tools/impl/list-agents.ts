@@ -5,6 +5,7 @@ import {
   usesCloudSubagents,
 } from "@/backend/api/subagents";
 import { getRuntimeActingUserAttribution } from "@/runtime-context";
+import ListAgentsSchema from "@/tools/schemas/ListAgents.json";
 import { resolveNotificationScope } from "@/utils/task-notifications";
 import { persistedSubagentStatus } from "./subagent-persistence";
 
@@ -28,10 +29,18 @@ export async function list_agents({
 }: {
   limit?: number;
   cursor?: string;
-  status?: PersistedSubagentStatus;
+  status?: Exclude<PersistedSubagentStatus, "idle">;
 } = {}) {
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
     throw new Error("ListAgents limit must be an integer between 1 and 100.");
+  }
+  if (
+    status !== undefined &&
+    !ListAgentsSchema.properties.status.enum.includes(status)
+  ) {
+    throw new Error(
+      "ListAgents status must be running, completed, failed, or stopped.",
+    );
   }
   const scope = resolveNotificationScope();
   if (!scope) throw new Error("ListAgents requires a calling conversation.");

@@ -15,7 +15,7 @@
     },
     "status": {
       "type": "string",
-      "enum": ["running", "idle", "completed", "failed", "stopped"],
+      "enum": ["running", "completed", "failed", "stopped"],
       "description": "Only return subagents with this status."
     }
   },
