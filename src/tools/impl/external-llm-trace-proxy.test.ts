@@ -33,6 +33,7 @@ test("forwards request and streaming response bytes unchanged without storing au
       parent_conversation_id: "conv-test",
       task_id: "task-test",
       worker_session_id: "session-test",
+      task_description: "Check private response handling",
     },
     secrets: [],
     emit: (row) => rows.push(row),
@@ -55,6 +56,7 @@ test("forwards request and streaming response bytes unchanged without storing au
     expect(JSON.stringify(rows)).not.toContain("private");
     const row = rows[0];
     if (!row) throw new Error("Missing trace");
+    expect(row.task_description).toBe("Check [REDACTED] response handling");
     expect(row.prompt_tokens).toBe(2);
     expect(row.completion_tokens).toBe(3);
     expect(JSON.parse(row.response_json).response.id).toBe("r");
@@ -153,7 +155,10 @@ test("upstream aborts retain an incomplete trace without changing delivered byte
   const upstream = createServer((_req, res) => {
     res.writeHead(200, { "content-type": "text/event-stream" });
     res.write(partial);
-    setTimeout(() => res.destroy(), 20);
+    setTimeout(() => {
+      res.socket?.destroy();
+      res.destroy();
+    }, 20);
   }).listen(0, "127.0.0.1");
   await once(upstream, "listening");
   const address = upstream.address();
@@ -195,7 +200,7 @@ test("upstream aborts retain an incomplete trace without changing delivered byte
       })(),
     ).rejects.toThrow();
     expect(endedCleanly).toBe(false);
-    expect(received.replace(/\r\n$/, "")).toBe(partial);
+    expect(received).toBe(partial);
     await proxy.close();
     expect(rows).toHaveLength(1);
     expect(rows[0]?.capture_status).toBe("incomplete");
@@ -354,3 +359,133 @@ test.each(["claude_code", "codex"] as const)(
     }
   },
 );
+
+test("moving cache breakpoints retains images once and oversized image deltas preserve tool results", async () => {
+  const forwarded: string[] = [];
+  const upstream = createServer(async (req, res) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(chunk);
+    forwarded.push(Buffer.concat(chunks).toString("utf8"));
+    res.end('{"id":"reply"}');
+  }).listen(0, "127.0.0.1");
+  await once(upstream, "listening");
+  const address = upstream.address();
+  if (!address || typeof address === "string")
+    throw new Error("Missing address");
+  const rows: ExternalTraceRow[] = [];
+  const fallbacks: string[] = [];
+  const proxy = await startTraceProxy({
+    upstream: `http://127.0.0.1:${address.port}`,
+    harness: "claude_code",
+    scope: {
+      parent_agent_id: "a",
+      parent_conversation_id: "c",
+      task_id: "t",
+      worker_session_id: "s",
+    },
+    secrets: ["X", "Y", "Z"],
+    emit: (row, delta) => {
+      rows.push(row);
+      if (delta) fallbacks.push(delta.fallbackJson);
+    },
+  });
+  const image = (data: string) => ({
+    type: "image",
+    source: {
+      type: "base64",
+      media_type: "image/png",
+      data,
+    },
+  });
+  const cacheControl = { type: "ephemeral" };
+  const screenshot = image("X".repeat(170_000));
+  const original = { role: "user", content: [screenshot] };
+  const assistant = {
+    role: "assistant",
+    content: [{ type: "text", text: "Z".repeat(50_000) }],
+  };
+  const cachedAssistant = {
+    ...assistant,
+    content: [{ ...assistant.content[0], cache_control: cacheControl }],
+  };
+  const toolResult = {
+    type: "tool_result",
+    tool_use_id: "tool-1",
+    content: [
+      image("Y".repeat(220_000)),
+      { type: "text", text: "Tool output to retain" },
+      image("D".repeat(128)),
+    ],
+  };
+  const result = { role: "user", content: [toolResult] };
+  const last = { role: "assistant", content: [{ type: "text", text: "done" }] };
+  const requests = [
+    [
+      {
+        ...original,
+        content: [{ ...screenshot, cache_control: cacheControl }],
+      },
+    ],
+    [original, cachedAssistant],
+    [original, assistant, result],
+    [original, assistant, result, last],
+  ].map((messages) => JSON.stringify({ messages }));
+
+  try {
+    for (const body of requests) {
+      const reply = await fetch(`${proxy.url}/messages`, {
+        method: "POST",
+        body,
+      });
+      await reply.text();
+    }
+    await proxy.close();
+    expect(forwarded).toEqual(requests);
+    expect(rows.map((row) => row.capture_status)).toEqual([
+      "complete",
+      "delta",
+      "delta",
+      "delta",
+    ]);
+    const [base, firstDelta, imageDelta, finalDelta] = rows.map((row) =>
+      JSON.parse(row.request_json),
+    );
+    expect(base.messages[0].content[0].source).toEqual({
+      ...screenshot.source,
+      data: "[REDACTED]".repeat(170_000),
+    });
+    expect(firstDelta.messages).toEqual([
+      {
+        ...cachedAssistant,
+        content: [
+          { ...cachedAssistant.content[0], text: "[REDACTED]".repeat(50_000) },
+        ],
+      },
+    ]);
+    expect(firstDelta.base_trace_id).toBe(rows[0]?.id);
+    expect(imageDelta.base_trace_id).toBe(rows[1]?.id);
+    expect(imageDelta.messages).toEqual([
+      {
+        ...result,
+        content: [
+          {
+            ...toolResult,
+            content: [
+              { truncated: "size_limit" },
+              ...toolResult.content.slice(1),
+            ],
+          },
+        ],
+      },
+    ]);
+    expect(imageDelta.truncated).toBe("size_limit");
+    const fallback = JSON.parse(fallbacks[1] ?? "");
+    expect(fallback.messages[2]).toEqual(imageDelta.messages[0]);
+    expect(fallback.truncated).toBe("size_limit");
+    expect(finalDelta.base_trace_id).toBe(rows[2]?.id);
+    expect(finalDelta.messages).toEqual([last]);
+  } finally {
+    await proxy.close();
+    upstream.close();
+  }
+});

@@ -318,8 +318,6 @@ describe("local compaction fallback keeps custom prompt", () => {
       {
         contextTokens: 1,
         contextWindow: 1,
-        phase: "post_turn",
-        source: "usage",
       },
     );
     expect(compaction).toBeNull();
@@ -375,8 +373,6 @@ describe("local compaction fallback keeps custom prompt", () => {
           {
             contextTokens,
             contextWindow: 1000,
-            phase: "post_turn",
-            source: "usage",
           },
         );
       const before = await backend.listConversationMessages(conversation.id, {
@@ -453,8 +449,6 @@ describe("local compaction fallback keeps custom prompt", () => {
         {
           contextTokens: 2000,
           contextWindow: 1000,
-          phase: "post_turn",
-          source: "estimate",
         },
       );
       expect(result).toBeNull();

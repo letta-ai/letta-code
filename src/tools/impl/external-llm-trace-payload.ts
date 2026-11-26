@@ -160,10 +160,29 @@ export function tracePayloadFits(json: string): boolean {
   );
 }
 
-export function compactTracePayload(json: string): string {
+function isInlineImage(value: JsonObject): boolean {
+  if (value.type === "image")
+    return (
+      value.source?.type === "base64" && typeof value.source.data === "string"
+    );
+  const url =
+    typeof value.image_url === "string"
+      ? value.image_url
+      : value.image_url?.url;
+  return (
+    (value.type === "input_image" || value.type === "image_url") &&
+    typeof url === "string" &&
+    /^data:image\/[^;,]+;base64,/i.test(url)
+  );
+}
+
+export function compactTracePayload(
+  json: string,
+  mode: "full" | "images" = "full",
+): string {
   const payload: unknown = JSON.parse(json);
   if (!payload || typeof payload !== "object") return TRUNCATED_TRACE_JSON;
-  if (!Array.isArray(payload)) {
+  if (mode === "full" && !Array.isArray(payload)) {
     const object = payload as Record<string, unknown>;
     delete object.system;
     delete object.tools;
@@ -180,44 +199,54 @@ export function compactTracePayload(json: string): string {
   let encodedBytes = Buffer.byteLength(JSON.stringify(initial));
   if (traceJsonFits(bytes, encodedBytes)) return initial;
 
-  const candidates: {
-    bytes: number;
-    encodedBytes: number;
-    replace: () => void;
-  }[] = [];
-  function collect(container: Record<string, unknown> | unknown[]) {
-    for (const [key, value] of Object.entries(container)) {
-      if (
-        Array.isArray(value) ||
-        (key === "response" && value && typeof value === "object")
-      ) {
-        collect(value as Record<string, unknown>);
-        continue;
-      }
-      const serialized = JSON.stringify(value);
-      const bytes =
-        Buffer.byteLength(serialized) - Buffer.byteLength(TRUNCATED_TRACE_JSON);
-      const encodedBytes =
-        Buffer.byteLength(JSON.stringify(serialized)) -
-        Buffer.byteLength(JSON.stringify(TRUNCATED_TRACE_JSON));
-      if (bytes > 0 && encodedBytes > 0) {
-        candidates.push({
-          bytes,
-          encodedBytes,
-          replace: () => {
-            (container as Record<string, unknown>)[key] = truncated;
-          },
-        });
+  function shrink(imagesOnly: boolean) {
+    const candidates: {
+      bytes: number;
+      encodedBytes: number;
+      replace: () => void;
+    }[] = [];
+    function collect(container: Record<string, unknown> | unknown[]) {
+      for (const [key, value] of Object.entries(container)) {
+        const isObject = value !== null && typeof value === "object";
+        if (imagesOnly && (!isObject || !isInlineImage(value as JsonObject))) {
+          if (isObject) collect(value as Record<string, unknown>);
+          continue;
+        }
+        if (
+          !imagesOnly &&
+          (Array.isArray(value) || (key === "response" && isObject))
+        ) {
+          collect(value as Record<string, unknown>);
+          continue;
+        }
+        const serialized = JSON.stringify(value);
+        const bytes =
+          Buffer.byteLength(serialized) -
+          Buffer.byteLength(TRUNCATED_TRACE_JSON);
+        const encodedBytes =
+          Buffer.byteLength(JSON.stringify(serialized)) -
+          Buffer.byteLength(JSON.stringify(TRUNCATED_TRACE_JSON));
+        if (bytes > 0 && encodedBytes > 0) {
+          candidates.push({
+            bytes,
+            encodedBytes,
+            replace: () => {
+              (container as Record<string, unknown>)[key] = truncated;
+            },
+          });
+        }
       }
     }
+    collect(payload as Record<string, unknown>);
+    candidates.sort((a, b) => b.bytes - a.bytes);
+    for (const candidate of candidates) {
+      if (traceJsonFits(bytes, encodedBytes)) break;
+      candidate.replace();
+      bytes -= candidate.bytes;
+      encodedBytes -= candidate.encodedBytes;
+    }
   }
-  collect(payload as Record<string, unknown>);
-  candidates.sort((a, b) => b.bytes - a.bytes);
-  for (const candidate of candidates) {
-    if (traceJsonFits(bytes, encodedBytes)) break;
-    candidate.replace();
-    bytes -= candidate.bytes;
-    encodedBytes -= candidate.encodedBytes;
-  }
+  shrink(true);
+  if (mode === "full" && !traceJsonFits(bytes, encodedBytes)) shrink(false);
   return traceJsonFits(bytes, encodedBytes) ? marked() : TRUNCATED_TRACE_JSON;
 }

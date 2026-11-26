@@ -735,6 +735,7 @@ function getDefaultDecision(
     "TaskGet",
     "TaskList",
     "TaskUpdate",
+    "ListAgents",
     "read_artifact_file",
     "write_artifact_file",
     "Wake",

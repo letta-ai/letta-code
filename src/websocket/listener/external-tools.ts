@@ -1,6 +1,7 @@
 import type { ListenerExternalToolNotificationGuard } from "@/tools/external-tool-background-eligibility";
 import { enableListenerExternalToolBackground } from "@/tools/external-tool-background-eligibility";
 import { EXTERNAL_TOOL_FOREGROUND_INTERRUPTED } from "@/tools/external-tool-types";
+import { clampForegroundYieldMs } from "@/tools/foreground-yield";
 import {
   type ExternalToolDefinition,
   registerExternalTools,
@@ -189,6 +190,9 @@ function toExternalToolDefinition(
   return enableListenerExternalToolBackground(toolDefinition, {
     createNotificationGuard: () =>
       captureExternalToolNotificationGuard(listener, runtimeScope),
+    ...(tool.foreground_yield_ms !== undefined
+      ? { yieldMs: clampForegroundYieldMs(tool.foreground_yield_ms) }
+      : {}),
   });
 }
 
