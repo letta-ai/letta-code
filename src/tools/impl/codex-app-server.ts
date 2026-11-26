@@ -39,7 +39,6 @@ import {
   type ExternalWorkerListeners,
   emitProgress,
 } from "./external-tool-call";
-import { readNativeSessionOwner } from "./native-session-owner";
 
 declare const LETTA_VERSION: string | undefined;
 
@@ -120,7 +119,7 @@ export interface CodexTurnOptions
   onStarted?: (threadId: string, turnId: string) => void;
   onToolCall?: ExternalToolCallListener;
   onText?: ExternalTextListener;
-  beforeStart?: (threadId: string, model?: string) => Promise<void>;
+  beforeStart?: (threadId: string) => Promise<void>;
 }
 
 export interface CodexTurnHandle {
@@ -578,15 +577,6 @@ async function createSession(
   options: CodexTurnOptions,
   deps: CodexAppServerDependencies,
 ): Promise<CodexSession> {
-  const owner =
-    options.resumeThreadId && !options.model
-      ? readNativeSessionOwner("codex", options.resumeThreadId)
-      : undefined;
-  const model =
-    options.model ??
-    (owner?.agentId === options.parentAgentId
-      ? readString(owner, "model")
-      : undefined);
   const env = withNativeCliPath({
     ...(deps.env ?? process.env),
     AGENT_ID: options.parentAgentId,
@@ -621,7 +611,12 @@ async function createSession(
     await assertCodexSignedIn(client);
     trace = deps.createTransport
       ? undefined
-      : await traceCodexLaunch(options.traceContext, env, client);
+      : await traceCodexLaunch(
+          options.traceContext,
+          env,
+          client,
+          options.resumeThreadId,
+        );
     if (trace) {
       client.dispose();
       transport = spawnTransport({
@@ -647,19 +642,19 @@ async function createSession(
     const params = options.resumeThreadId
       ? {
           threadId: options.resumeThreadId,
-          model,
+          model: options.model,
           ...(options.mcpReminder
             ? { developerInstructions: options.mcpReminder }
             : {}),
         }
       : {
           cwd: options.cwd,
-          model,
+          model: options.model,
           approvalPolicy: "never",
           sandbox: "danger-full-access",
           developerInstructions: options.mcpReminder,
         };
-    response = await client.request(method, { ...params, ...trace?.params });
+    response = await client.request(method, params);
   } catch (error) {
     void trace?.close();
     client.dispose();
@@ -681,7 +676,7 @@ async function createSession(
     client,
     cwd: readString(thread, "cwd") ?? options.cwd,
     parentAgentId: options.parentAgentId,
-    model: readString(response, "model") ?? model,
+    model: readString(response, "model") ?? options.model,
     startLock: Promise.resolve(),
     pendingNotifications,
     idleTimeoutMs: deps.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS,
@@ -719,7 +714,6 @@ async function startTurnAttempt(
     threadId: session.threadId,
     input: textInput(prompt),
     cwd: session.cwd,
-    model: session.model,
     approvalPolicy: "never",
     sandboxPolicy: { type: "dangerFullAccess" },
   });
@@ -833,7 +827,7 @@ function startTurn(
   >,
 ): Promise<CodexTurnHandle> {
   return withSessionLock(session, async () => {
-    await options.beforeStart?.(session.threadId, session.model);
+    await options.beforeStart?.(session.threadId);
     return startTurnUnlocked(
       session,
       options.prompt,
@@ -917,7 +911,7 @@ export async function sendCodexMessage(
         }
         options.signal?.throwIfAborted();
         updateExternalTraceTask(session.threadId, options.traceContext);
-        await options.beforeStart?.(session.threadId, session.model);
+        await options.beforeStart?.(session.threadId);
         const handle = await startTurnUnlocked(
           session,
           options.prompt,

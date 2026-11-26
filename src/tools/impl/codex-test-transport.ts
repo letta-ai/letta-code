@@ -21,6 +21,7 @@ export class FakeCodexTransport {
   };
   completeAfterFailures?: string;
   onTurnStarted?: () => void;
+  resumedModel?: string;
   private failedTurns = 0;
   account: Record<string, unknown> | null = {
     account: { type: "chatgpt" },
@@ -96,7 +97,10 @@ export class FakeCodexTransport {
     if (method === "thread/start" || method === "thread/resume") {
       const params = request.params as Record<string, unknown>;
       if (typeof params.threadId === "string") this.threadId = params.threadId;
-      this.reply(request.id, { thread: { id: this.threadId } });
+      this.reply(request.id, {
+        thread: { id: this.threadId },
+        model: method === "thread/resume" ? this.resumedModel : params.model,
+      });
     }
     if (method === "turn/start" && this.failNextTurns > 0) {
       this.failNextTurns--;
