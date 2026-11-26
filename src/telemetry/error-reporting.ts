@@ -105,7 +105,9 @@ export type ExternalWorkerFailureStage =
   | "follow_up";
 
 export function extractHttpStatus(message: string): number | undefined {
-  const match = /(?:^|:\s*)(?:HTTP\s+)?([45]\d{2})\b/.exec(message);
+  const match = /(?:^|:\s*|API error \()(?:HTTP\s+)?([45]\d{2})\b/.exec(
+    message,
+  );
   return match ? Number(match[1]) : undefined;
 }
 
@@ -115,6 +117,7 @@ export function reportExternalWorkerLaunchFailure(options: {
   computer?: string;
   error: unknown;
   errorCode?: string;
+  httpStatus?: number | null;
   agentId?: string;
   conversationId?: string;
   toolCallId?: string;
@@ -124,9 +127,10 @@ export function reportExternalWorkerLaunchFailure(options: {
       value && pattern.test(value) ? value : undefined;
     const safeId = (id: string | undefined) =>
       safe(id, /^[a-zA-Z0-9_-]{1,128}$/);
-    const httpStatus = extractHttpStatus(
-      formatTelemetryErrorMessage(options.error),
-    );
+    const httpStatus =
+      options.httpStatus === undefined
+        ? extractHttpStatus(formatTelemetryErrorMessage(options.error))
+        : (options.httpStatus ?? undefined);
     telemetry.trackError(
       "external_worker_launch_failed",
       "External worker launch failed",

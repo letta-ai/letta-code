@@ -185,16 +185,34 @@ export function environmentMatchesSelector(
 }
 
 export class ComputerResolutionError extends Error {
+  readonly httpStatus: number | undefined;
+
   constructor(
     public readonly code:
       | "computer_selector_empty"
       | "computer_not_found"
       | "computer_offline"
-      | "computer_ambiguous",
+      | "computer_ambiguous"
+      | "cloud_conversation_create_failed"
+      | "cloud_sandbox_create_failed"
+      | "cloud_sandbox_register_timeout"
+      | "cloud_sandbox_online_timeout",
     message: string,
+    cause?: unknown,
   ) {
-    super(message);
+    super(message, { cause });
     this.name = "ComputerResolutionError";
+    if (cause && typeof cause === "object" && "status" in cause) {
+      const status = cause.status;
+      if (
+        typeof status === "number" &&
+        Number.isInteger(status) &&
+        status >= 400 &&
+        status <= 599
+      ) {
+        this.httpStatus = status;
+      }
+    }
   }
 }
 
@@ -268,8 +286,19 @@ export async function resolveAgentSandboxConnectionId(
 ): Promise<{ connectionId: string; environment: EnvironmentConnection }> {
   const timeoutMs = options.timeoutMs ?? 3 * 60_000;
   const pollIntervalMs = options.pollIntervalMs ?? 2_000;
-  const sandbox = await createAgentSandbox(agentId, options);
-  const deviceId = sandbox.deviceId || `sandbox-${agentId}`;
+  let deviceId: string;
+  let connectionName: string;
+  try {
+    const sandbox = await createAgentSandbox(agentId, options);
+    deviceId = sandbox.deviceId || `sandbox-${agentId}`;
+    connectionName = sandbox.connectionName;
+  } catch (error) {
+    throw new ComputerResolutionError(
+      "cloud_sandbox_create_failed",
+      error instanceof Error ? error.message : String(error),
+      error,
+    );
+  }
   const deadline = Date.now() + timeoutMs;
   let lastEnvironment: EnvironmentConnection | null = null;
   let lastError: unknown = null;
@@ -288,13 +317,17 @@ export async function resolveAgentSandboxConnectionId(
   }
 
   if (lastEnvironment) {
-    throw new Error(
-      `Timed out waiting for cloud sandbox ${sandbox.connectionName} to come online. Last status: ${describeEnvironment(lastEnvironment)}`,
+    throw new ComputerResolutionError(
+      "cloud_sandbox_online_timeout",
+      `Timed out waiting for cloud sandbox ${connectionName} to come online. Last status: ${describeEnvironment(lastEnvironment)}`,
+      lastError,
     );
   }
 
-  throw new Error(
-    `Timed out waiting for cloud sandbox ${sandbox.connectionName} to register${lastError instanceof Error ? `: ${lastError.message}` : ""}`,
+  throw new ComputerResolutionError(
+    "cloud_sandbox_register_timeout",
+    `Timed out waiting for cloud sandbox ${connectionName} to register${lastError instanceof Error ? `: ${lastError.message}` : ""}`,
+    lastError,
   );
 }
 

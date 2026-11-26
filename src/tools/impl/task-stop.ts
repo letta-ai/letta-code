@@ -1,4 +1,8 @@
-import { getSubagents, updateSubagent } from "@/agent/subagent-state.js";
+import {
+  captureSubagentStop,
+  getSubagents,
+  updateSubagent,
+} from "@/agent/subagent-state.js";
 import { getBackend } from "@/backend";
 import { ApiRequestError } from "@/backend/api/request";
 import { runWithRuntimeContext } from "@/runtime-context";
@@ -119,6 +123,7 @@ export async function task_stop(
     if (task.cancelPendingWakes) return finishPendingWakeCancellation(task);
     if (task.status === "running" && task.abortController) {
       const initialStop = task.stop;
+      const markStopped = captureSubagentStop(task.subagentId);
       const child = getSubagents().find(
         (agent) => agent.id === task.subagentId,
       );
@@ -205,6 +210,7 @@ export async function task_stop(
           if (!remoteExternalStopped)
             throw new Error("Subagent process exit was not confirmed");
           task.status = "failed";
+          markStopped();
           scheduleBackgroundTaskCleanup(task_id);
           return {
             killed: true,
@@ -237,6 +243,7 @@ export async function task_stop(
           }
           task.status = "failed";
           scheduleBackgroundTaskCleanup(task_id);
+          markStopped();
           task.cancelPendingWakes = () =>
             runWithRuntimeContext(
               {
@@ -252,6 +259,7 @@ export async function task_stop(
       }
       task.status = "failed";
       scheduleBackgroundTaskCleanup(task_id);
+      markStopped();
       return remote ?? { killed: true };
     }
     return { killed: false };

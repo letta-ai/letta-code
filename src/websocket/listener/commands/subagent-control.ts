@@ -4,6 +4,7 @@ import {
   runOutsideRuntimeContext,
   runWithRuntimeContext,
 } from "@/runtime-context";
+import { sendAntigravityMessage } from "@/tools/impl/antigravity-session";
 import { REMOTE_SUBAGENT_MESSAGE_DEDUPE_PENDING_TTL_MS } from "@/tools/impl/claude-steer-timeouts";
 import {
   sendClaudeMessage,
@@ -30,6 +31,7 @@ import {
   reportNativeSessionCaptureFailure,
   reserveNativeSessionCapture,
 } from "@/tools/impl/native-session-capture";
+import { readNativeSessionOwner } from "@/tools/impl/native-session-owner";
 import { backgroundTasks, getNextTaskId } from "@/tools/impl/process_manager";
 import { task_stop } from "@/tools/impl/task-stop";
 import type {
@@ -87,6 +89,8 @@ function findOwnedTask(runtime: ConversationRuntime, agentId: string) {
 function nativeSessionOwner(agentId: string) {
   const target = parseExternalCodingAgentId(agentId);
   if (!target || target.computer) return undefined;
+  if (target.type === "antigravity")
+    return readNativeSessionOwner(target.type, target.sessionId);
   if (target.type !== "claude-code" && target.type !== "codex")
     return undefined;
   return getNativeSessionOwner(
@@ -202,6 +206,18 @@ export async function handleSubagentMessageCommand(
                 actingUserId: command.runtime.acting_user_id,
               },
               deps.workerEnv,
+            );
+          if (target.type === "antigravity" && worker)
+            return sendAntigravityMessage(
+              {
+                resumeSessionId: sessionId,
+                prompt: command.message,
+                parentAgentId: command.runtime.agent_id,
+                cwd: getCurrentWorkingDirectory(),
+                mcpReminder: worker.mcpReminder,
+              },
+              worker.env,
+              worker.secretEnv,
             );
           return target.type === "cursor"
             ? sendCursorMessage(

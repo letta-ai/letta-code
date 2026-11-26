@@ -10,6 +10,7 @@ import ExecCommandDescription from "./descriptions/ExecCommand.md";
 import ExitWorktreeDescription from "./descriptions/ExitWorktree.md";
 import GlobDescription from "./descriptions/Glob.md";
 import GrepDescription from "./descriptions/Grep.md";
+import ListAgentsDescription from "./descriptions/ListAgents.md";
 import ListSubagentsDescription from "./descriptions/ListSubagents.md";
 import LSDescription from "./descriptions/LS.md";
 import MemoryDescription from "./descriptions/Memory.md";
@@ -45,6 +46,7 @@ import { exec_command, write_stdin } from "./impl/exec-command";
 import { exit_worktree } from "./impl/exit-worktree";
 import { glob } from "./impl/glob";
 import { grep } from "./impl/grep";
+import { list_agents } from "./impl/list-agents";
 import { list_subagents } from "./impl/list-subagents";
 import { ls } from "./impl/ls";
 import { memory } from "./impl/memory";
@@ -55,6 +57,7 @@ import { read_lsp } from "./impl/read-lsp";
 import { send_agent_message } from "./impl/send-agent-message";
 import { set_working_directory } from "./impl/set-working-directory";
 import { skill } from "./impl/skill";
+import { resolveSubagentComputer } from "./impl/subagent-computer";
 import { task } from "./impl/task";
 import { task_create } from "./impl/task-create";
 import { task_get } from "./impl/task-get";
@@ -67,7 +70,6 @@ import { wake } from "./impl/wake";
 import { watch_pr } from "./impl/watch-pr";
 import { workflow } from "./impl/workflow";
 import { write } from "./impl/write";
-
 import ApplyPatchSchema from "./schemas/ApplyPatch.json";
 import AskUserQuestionSchema from "./schemas/AskUserQuestion.json";
 import BashSchema from "./schemas/Bash.json";
@@ -78,6 +80,7 @@ import ExecCommandSchema from "./schemas/ExecCommand.json";
 import ExitWorktreeSchema from "./schemas/ExitWorktree.json";
 import GlobSchema from "./schemas/Glob.json";
 import GrepSchema from "./schemas/Grep.json";
+import ListAgentsSchema from "./schemas/ListAgents.json";
 import ListSubagentsSchema from "./schemas/ListSubagents.json";
 import LSSchema from "./schemas/LS.json";
 import MemorySchema from "./schemas/Memory.json";
@@ -121,6 +124,32 @@ export function buildBashDescriptionForPlatform(
   return platform === "win32"
     ? `${baseDescription}\n\n${WINDOWS_BASH_EXECUTION_GUIDANCE}`
     : baseDescription;
+}
+
+export function buildTaskSchema(env: NodeJS.ProcessEnv = process.env) {
+  const { computer } = resolveSubagentComputer({
+    requested: undefined,
+    subagentType: "general-purpose",
+    config: { fork: false, launchProfile: "default" },
+    env,
+  });
+  if (!computer) return TaskSchema;
+
+  const destination =
+    computer.toLowerCase() === "cloud"
+      ? "a fresh Cloud sandbox, where this machine's files are unavailable"
+      : `the connected computer ${JSON.stringify(computer)}; unless that is this machine, this machine's files are unavailable there`;
+
+  return {
+    ...TaskSchema,
+    properties: {
+      ...TaskSchema.properties,
+      computer: {
+        ...TaskSchema.properties.computer,
+        description: `Omitting computer sends subagents to ${destination}. memory and recall subagents always stay on this machine. Pass "local" to stay on this machine, "cloud" for a fresh Cloud sandbox, or a connected computer ID or name. Prefer a stable device ID or computer name; ephemeral connection IDs are also supported to pin a specific listener. Fails fast if the device is offline or does not support routing.`,
+      },
+    },
+  };
 }
 
 function execCommandDescription(): string {
@@ -213,6 +242,11 @@ const toolDefinitions = {
     description: ReadLSPDescription.trim(),
     impl: read_lsp,
   }),
+  ListAgents: defineTool({
+    schema: ListAgentsSchema,
+    description: ListAgentsDescription.trim(),
+    impl: list_agents,
+  }),
   ListSubagents: defineTool({
     schema: ListSubagentsSchema,
     description: ListSubagentsDescription.trim(),
@@ -239,7 +273,7 @@ const toolDefinitions = {
     impl: skill,
   }),
   Task: defineTool({
-    schema: TaskSchema,
+    schema: buildTaskSchema(),
     description: TaskDescription.trim(),
     impl: task,
   }),

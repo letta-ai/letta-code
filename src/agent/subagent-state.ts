@@ -43,6 +43,7 @@ export interface SubagentState {
   published?: boolean;
   model?: string;
   startTime: number;
+  updatedAt?: number;
   taskId?: string;
   computer?: string;
   stoppedByCaller?: boolean;
@@ -93,6 +94,61 @@ const store: SubagentStore = {
   expanded: false,
   listeners: new Set(),
 };
+
+const stateObservers = new WeakMap<
+  SubagentState,
+  (state: SubagentState) => void
+>();
+
+export function observeSubagentState(
+  id: string,
+  observer: (state: SubagentState) => void,
+): void {
+  const state = store.agents.get(id);
+  if (state) stateObservers.set(state, observer);
+}
+
+export function captureSubagentStop(id: string): () => void {
+  const state = store.agents.get(id);
+  const observer = state && stateObservers.get(state);
+  return () => {
+    if (!state || !observer) return;
+    const current = store.agents.get(id) ?? state;
+    observer({
+      ...current,
+      stopOutcome: { attempt: current.stopAttempts ?? 0, kind: "stopped" },
+    });
+  };
+}
+
+function observeStateChange(
+  previous: SubagentState,
+  next: SubagentState,
+  resultIdentity?: Pick<SubagentState, "agentId" | "conversationId">,
+): void {
+  const observer = stateObservers.get(previous);
+  if (!observer) return;
+  stateObservers.set(next, observer);
+  if (
+    resultIdentity ||
+    previous.status !== next.status ||
+    previous.agentId !== next.agentId ||
+    previous.conversationId !== next.conversationId ||
+    previous.cancelPending !== next.cancelPending ||
+    previous.stopOutcome?.kind !== next.stopOutcome?.kind
+  ) {
+    observer(
+      resultIdentity
+        ? {
+            ...next,
+            agentId: next.agentId || resultIdentity.agentId,
+            conversationId:
+              resultIdentity.conversationId || next.conversationId,
+          }
+        : next,
+    );
+  }
+}
 
 let cachedSnapshot: { agents: SubagentState[]; expanded: boolean } = {
   agents: [],
@@ -301,8 +357,14 @@ export function updateSubagent(
     nextMax === agent.maxToolCallsSeen;
   if (isNoop) return;
 
-  const updatedAgent = { ...agent, ...updates, maxToolCallsSeen: nextMax };
+  const updatedAgent = {
+    ...agent,
+    ...updates,
+    maxToolCallsSeen: nextMax,
+    updatedAt: Date.now(),
+  };
   putAgent(id, updatedAgent);
+  observeStateChange(agent, updatedAgent);
   if (updatedAgent.status === "completed" || updatedAgent.status === "error") {
     scheduleCompletedSubagentCleanup(id);
   } else {
@@ -334,6 +396,7 @@ export function addToolCall(
     ),
   };
   putAgent(subagentId, updatedAgent);
+  observeStateChange(agent, updatedAgent);
   notifyListeners();
 }
 
@@ -348,14 +411,16 @@ export function addProgressText(
   const previous = agent.progressTexts?.at(-1);
   if (!excerpt || previous?.text === excerpt) return;
   const count = (agent.progressTextCount ?? 0) + 1;
-  putAgent(subagentId, {
+  const updatedAgent = {
     ...agent,
     progressTexts: [
       ...(agent.progressTexts ?? []),
       { id: `text-${count}`, at: now().toISOString(), text: excerpt },
     ].slice(-MAX_PROGRESS_TEXTS),
     progressTextCount: count,
-  });
+  };
+  putAgent(subagentId, updatedAgent);
+  observeStateChange(agent, updatedAgent);
   notifyListeners();
 }
 
@@ -368,6 +433,7 @@ export function completeSubagent(
     result?: string;
     published?: boolean;
   },
+  resultIdentity?: Pick<SubagentState, "agentId" | "conversationId">,
 ): void {
   const agent = store.agents.get(id);
   if (!agent) return;
@@ -375,6 +441,7 @@ export function completeSubagent(
   const updatedAgent = {
     ...agent,
     status: result.success ? "completed" : "error",
+    updatedAt: Date.now(),
     error: result.error,
     stopFailed: undefined,
     ...(result.result !== undefined ? { result: result.result } : {}),
@@ -384,6 +451,7 @@ export function completeSubagent(
     maxToolCallsSeen: Math.max(agent.maxToolCallsSeen, agent.toolCalls.length),
   } as SubagentState;
   putAgent(id, updatedAgent);
+  observeStateChange(agent, updatedAgent, resultIdentity);
   scheduleCompletedSubagentCleanup(id);
   notifyListeners();
 }
@@ -556,6 +624,7 @@ export function interruptActiveSubagents(
       const updatedAgent: SubagentState = {
         ...agent,
         status: "error",
+        updatedAt: Date.now(),
         error: errorMessage,
         durationMs: Date.now() - agent.startTime,
         ...(hook
@@ -564,6 +633,7 @@ export function interruptActiveSubagents(
         stopFailed: undefined,
       };
       putAgent(id, updatedAgent);
+      observeStateChange(agent, updatedAgent);
       scheduleCompletedSubagentCleanup(id);
       anyInterrupted = true;
     }
@@ -596,6 +666,7 @@ export function interruptStopFailedSubagents(
       stopFailed: undefined,
     };
     putAgent(id, updatedAgent);
+    observeStateChange(agent, updatedAgent);
     scheduleCompletedSubagentCleanup(id);
     interrupted.push(id);
   }

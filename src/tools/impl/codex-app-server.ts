@@ -39,6 +39,7 @@ import {
   type ExternalWorkerListeners,
   emitProgress,
 } from "./external-tool-call";
+import { readNativeSessionOwner } from "./native-session-owner";
 
 declare const LETTA_VERSION: string | undefined;
 
@@ -119,7 +120,7 @@ export interface CodexTurnOptions
   onStarted?: (threadId: string, turnId: string) => void;
   onToolCall?: ExternalToolCallListener;
   onText?: ExternalTextListener;
-  beforeStart?: (threadId: string) => Promise<void>;
+  beforeStart?: (threadId: string, model?: string) => Promise<void>;
 }
 
 export interface CodexTurnHandle {
@@ -577,6 +578,15 @@ async function createSession(
   options: CodexTurnOptions,
   deps: CodexAppServerDependencies,
 ): Promise<CodexSession> {
+  const owner =
+    options.resumeThreadId && !options.model
+      ? readNativeSessionOwner("codex", options.resumeThreadId)
+      : undefined;
+  const model =
+    options.model ??
+    (owner?.agentId === options.parentAgentId
+      ? readString(owner, "model")
+      : undefined);
   const env = withNativeCliPath({
     ...(deps.env ?? process.env),
     AGENT_ID: options.parentAgentId,
@@ -637,13 +647,14 @@ async function createSession(
     const params = options.resumeThreadId
       ? {
           threadId: options.resumeThreadId,
+          model,
           ...(options.mcpReminder
             ? { developerInstructions: options.mcpReminder }
             : {}),
         }
       : {
           cwd: options.cwd,
-          model: options.model,
+          model,
           approvalPolicy: "never",
           sandbox: "danger-full-access",
           developerInstructions: options.mcpReminder,
@@ -670,7 +681,7 @@ async function createSession(
     client,
     cwd: readString(thread, "cwd") ?? options.cwd,
     parentAgentId: options.parentAgentId,
-    model: options.model,
+    model: readString(response, "model") ?? model,
     startLock: Promise.resolve(),
     pendingNotifications,
     idleTimeoutMs: deps.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS,
@@ -822,7 +833,7 @@ function startTurn(
   >,
 ): Promise<CodexTurnHandle> {
   return withSessionLock(session, async () => {
-    await options.beforeStart?.(session.threadId);
+    await options.beforeStart?.(session.threadId, session.model);
     return startTurnUnlocked(
       session,
       options.prompt,
@@ -906,7 +917,7 @@ export async function sendCodexMessage(
         }
         options.signal?.throwIfAborted();
         updateExternalTraceTask(session.threadId, options.traceContext);
-        await options.beforeStart?.(session.threadId);
+        await options.beforeStart?.(session.threadId, session.model);
         const handle = await startTurnUnlocked(
           session,
           options.prompt,

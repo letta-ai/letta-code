@@ -102,6 +102,7 @@ export interface RemoteExternalCodingAgentDeps {
 }
 
 const DISPLAY_NAMES: Record<ExternalCodingAgentType, string> = {
+  antigravity: "Antigravity",
   "claude-code": "Claude Code",
   codex: "Codex",
   opencode: "OpenCode",
@@ -435,6 +436,7 @@ export async function launchRemoteExternalCodingAgent(
     stage: ExternalWorkerFailureStage,
     error: string,
     errorCode?: string,
+    httpStatus?: number | null,
   ): SubagentLaunchResult => {
     reportExternalWorkerLaunchFailure({
       stage,
@@ -442,6 +444,7 @@ export async function launchRemoteExternalCodingAgent(
       computer: stage === "resolve_computer" ? undefined : computer,
       error,
       errorCode,
+      httpStatus,
       agentId: parentScope.agentId,
       conversationId: parentScope.conversationId,
       toolCallId: params.toolCallId,
@@ -479,10 +482,13 @@ export async function launchRemoteExternalCodingAgent(
     );
     if (outdated) return fail("outdated_computer", outdated);
   } catch (error) {
+    const resolutionError =
+      error instanceof ComputerResolutionError ? error : undefined;
     return fail(
       "resolve_computer",
       errorMessage(error),
-      error instanceof ComputerResolutionError ? error.code : undefined,
+      resolutionError?.code,
+      resolutionError ? (resolutionError.httpStatus ?? null) : undefined,
     );
   }
   params.signal?.throwIfAborted();
@@ -715,9 +721,8 @@ async function connectQualifiedTarget(
   return {
     target,
     lettaCodeVersion: resolved.environment.metadata?.lettaCodeVersion,
-    client: await (deps.connect ?? defaultConnect)(
-      resolved.connectionId,
-      parentScope,
+    client: await connectRemoteWorkerWithRetry(() =>
+      (deps.connect ?? defaultConnect)(resolved.connectionId, parentScope),
     ),
   };
 }

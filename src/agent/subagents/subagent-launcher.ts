@@ -23,6 +23,7 @@ import {
   SUBAGENT_LAUNCH_ENV,
   SUBAGENT_LAUNCH_PROFILE_ENV,
   SUBAGENT_NAME_ENV,
+  SUBAGENT_SUMMARY_ENV,
 } from "@/utils/subagent-launch-marker";
 import { TRANSCRIPT_ROOT_ENV } from "@/utils/transcript-paths";
 import { getActiveRuntime } from "@/websocket/listener/runtime";
@@ -145,6 +146,7 @@ export interface ComposeSubagentChildEnvOptions {
   actingUserId?: string | null;
   transcriptPath?: string | null;
   subagentName?: string;
+  subagentSummary?: string;
   subagentId?: string;
 }
 
@@ -200,6 +202,7 @@ export function composeSubagentChildEnv(
     }),
     LETTA_PARENT_AGENT_ID: parentAgentId,
     LETTA_PARENT_CONVERSATION_ID: options.parentConversationId,
+    [SUBAGENT_SUMMARY_ENV]: options.subagentSummary,
     [SUBAGENT_DEPTH_ENV]: String(readSubagentDepth(parentProcessEnv) + 1),
     ...(transcriptPath && { TRANSCRIPT_PATH: transcriptPath }),
   };

@@ -29,8 +29,10 @@ export function updateExternalTraceTask(
     context &&
     scope.parent_agent_id === context.parent_agent_id &&
     scope.parent_conversation_id === context.parent_conversation_id
-  )
+  ) {
     scope.task_id = context.task_id;
+    scope.task_description = context.task_description;
+  }
 }
 
 interface TraceSessionDependencies {

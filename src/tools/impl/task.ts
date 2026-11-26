@@ -6,6 +6,7 @@ import {
   generateSubagentId,
   getSnapshot as getSubagentSnapshot,
   getSubagentToolCount,
+  observeSubagentState,
   registerSubagent,
   registerSubagentAbortHook,
   updateSubagent,
@@ -68,6 +69,7 @@ import {
 } from "./process_manager.js";
 import { launchRemoteExternalCodingAgent } from "./remote-external-coding-agent";
 import { resolveLaunchComputer } from "./subagent-computer";
+import { createLaunchSubagentObserver } from "./subagent-persistence";
 import { buildBackgroundTaskAbortHook } from "./task-abort-hook.js";
 import {
   applySubagentPreset,
@@ -107,6 +109,7 @@ export {
 } from "@/agent/subagents/background-link";
 
 export interface SpawnBackgroundSubagentTaskArgs {
+  observePersistedState?: () => Parameters<typeof observeSubagentState>[1];
   taskId?: string;
   subagentType: string;
   config?: SubagentConfig;
@@ -296,6 +299,8 @@ export function spawnBackgroundSubagentTask(
   writeTaskTranscriptStart(outputFile, description, subagentType);
   openTaskProgressLog(subagentId, outputFile, resolvedParentScope?.agentId);
   if (publishResult) serveTaskEvents(subagentId);
+  if (args.observePersistedState)
+    observeSubagentState(subagentId, args.observePersistedState());
   const parentAgentIdForSpawn = resolvedParentScope?.agentId;
   const workerMemoryDir =
     subagentType === "memory" && resolvedParentScope
@@ -386,22 +391,31 @@ export function spawnBackgroundSubagentTask(
       scheduleBackgroundTaskCleanup(taskId);
       clearSubagentAbortHook(subagentId);
 
-      completeSubagentFn(subagentId, {
-        success: result.success,
-        error: result.error,
-        totalTokens: result.totalTokens,
-        ...(publishResult ? { published: true } : {}),
-        ...(publishResult && result.success
+      completeSubagentFn(
+        subagentId,
+        {
+          success: result.success,
+          error: result.error,
+          totalTokens: result.totalTokens,
+          ...(publishResult ? { published: true } : {}),
+          ...(publishResult && result.success
+            ? {
+                result: truncateByChars(
+                  result.report || "",
+                  LIMITS.TASK_OUTPUT_CHARS,
+                  "Task",
+                  { workingDirectory: getCurrentWorkingDirectory() },
+                ).content,
+              }
+            : {}),
+        },
+        args.observePersistedState
           ? {
-              result: truncateByChars(
-                result.report || "",
-                LIMITS.TASK_OUTPUT_CHARS,
-                "Task",
-                { workingDirectory: getCurrentWorkingDirectory() },
-              ).content,
+              agentId: result.agentId || existingAgentId,
+              conversationId: result.conversationId || existingConversationId,
             }
-          : {}),
-      });
+          : undefined,
+      );
 
       try {
         await onComplete?.({
@@ -685,8 +699,20 @@ export async function launchSubagent(
     return { success: false, error: resolvedComputer.error };
   }
 
-  const cloud = parseTaskCloudOptions(args.computer, args.cloud);
+  const cloud = parseTaskCloudOptions(resolvedComputer.computer, args.cloud);
   if ("error" in cloud) return { success: false, error: cloud.error };
+  const observePersistedState = args.notifyCaller
+    ? undefined
+    : createLaunchSubagentObserver(
+        resolvedParentScope,
+        args,
+        description,
+        inputPrompt,
+        externalCodingAgentType ?? "letta",
+        Boolean(config.fork),
+        resolvedComputer.computer,
+        cloud.options,
+      );
   let effectiveAgentId = args.agent_id;
   let effectiveConversationId = args.conversation_id;
   const callerNotification = args.notifyCaller
@@ -725,7 +751,10 @@ export async function launchSubagent(
           },
           signal,
         },
-        { spawn: spawnBackgroundSubagentTask },
+        {
+          spawn: (task) =>
+            spawnBackgroundSubagentTask({ ...task, observePersistedState }),
+        },
       );
     }
     const worker = await prepareExternalWorkerPrompt({
@@ -752,6 +781,7 @@ export async function launchSubagent(
     const { taskId, outputFile, subagentId } = spawnBackgroundSubagentTask({
       subagentType: configName,
       config,
+      observePersistedState,
       prompt: worker.prompt,
       description,
       model,
@@ -879,6 +909,7 @@ export async function launchSubagent(
     description,
     model,
     toolCallId,
+    observePersistedState,
     existingAgentId: effectiveAgentId,
     existingConversationId: effectiveConversationId,
     maxTurns: args.max_turns,
@@ -893,9 +924,14 @@ export async function launchSubagent(
   const abortStartup = () =>
     backgroundTasks.get(taskId)?.abortController?.abort(signal?.reason);
   signal?.addEventListener("abort", abortStartup, { once: true });
+  let linkedConversationId: string | null;
   try {
     if (signal?.aborted) abortStartup();
-    await waitForBackgroundSubagentLink(subagentId, null, signal);
+    linkedConversationId = await waitForBackgroundSubagentLink(
+      subagentId,
+      null,
+      signal,
+    );
     signal?.throwIfAborted();
   } finally {
     signal?.removeEventListener("abort", abortStartup);
@@ -911,7 +947,10 @@ export async function launchSubagent(
     };
   }
   const conversationId =
-    linkedAgent?.conversationId ?? effectiveConversationId ?? null;
+    linkedConversationId ??
+    linkedAgent?.conversationId ??
+    effectiveConversationId ??
+    null;
   if (!isDeployingExisting) void recordTaskSummary(conversationId, description);
   return {
     success: true,

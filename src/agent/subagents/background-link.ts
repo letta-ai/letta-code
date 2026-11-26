@@ -11,28 +11,12 @@ function deadlineReached(deadline: number | null): boolean {
   return deadline !== null && Date.now() >= deadline;
 }
 
-export async function waitForBackgroundSubagentLink(
+export function waitForBackgroundSubagentLink(
   subagentId: string,
   timeoutMs: number | null = null,
   signal?: AbortSignal,
-): Promise<void> {
-  const deadline = deadlineFor(timeoutMs);
-  while (!signal?.aborted) {
-    const agent = getSubagentSnapshot().agents.find(
-      (entry) => entry.id === subagentId,
-    );
-    if (
-      !agent ||
-      agent.agentURL ||
-      agent.conversationId ||
-      agent.status === "error" ||
-      agent.status === "completed" ||
-      deadlineReached(deadline)
-    ) {
-      return;
-    }
-    await sleep(BACKGROUND_STARTUP_POLL_MS);
-  }
+): Promise<string | null> {
+  return waitForBackgroundSubagentConversationId(subagentId, timeoutMs, signal);
 }
 
 export async function waitForBackgroundSubagentAgentId(
