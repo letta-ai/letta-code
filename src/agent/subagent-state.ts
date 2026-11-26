@@ -43,6 +43,7 @@ export interface SubagentState {
   published?: boolean;
   model?: string;
   startTime: number;
+  updatedAt?: number;
   toolCallId?: string;
   isBackground?: boolean;
   claimsParentRuntime?: boolean;
@@ -329,7 +330,12 @@ export function updateSubagent(
     nextMax === agent.maxToolCallsSeen;
   if (isNoop) return;
 
-  const updatedAgent = { ...agent, ...updates, maxToolCallsSeen: nextMax };
+  const updatedAgent = {
+    ...agent,
+    ...updates,
+    maxToolCallsSeen: nextMax,
+    updatedAt: Date.now(),
+  };
   store.agents.set(id, updatedAgent);
   observeStateChange(agent, updatedAgent);
   if (updatedAgent.status === "completed" || updatedAgent.status === "error") {
@@ -408,6 +414,7 @@ export function completeSubagent(
   const updatedAgent = {
     ...agent,
     status: result.success ? "completed" : "error",
+    updatedAt: Date.now(),
     error: result.error,
     stopFailed: undefined,
     ...(result.result !== undefined ? { result: result.result } : {}),
@@ -589,6 +596,7 @@ export function interruptActiveSubagents(
       const updatedAgent: SubagentState = {
         ...agent,
         status: "error",
+        updatedAt: Date.now(),
         error: errorMessage,
         durationMs: Date.now() - agent.startTime,
         ...(hook

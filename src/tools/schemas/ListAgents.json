@@ -1,5 +1,23 @@
 {
   "type": "object",
-  "properties": {},
+  "properties": {
+    "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100,
+      "default": 20,
+      "description": "Maximum number of subagents to return."
+    },
+    "cursor": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The next_cursor from the previous page. Keep the same status filter."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["running", "idle", "completed", "failed", "stopped"],
+      "description": "Only return subagents with this status."
+    }
+  },
   "additionalProperties": false
 }

@@ -42,6 +42,7 @@ interface SubagentRecord extends SubagentUpdate {
   description: string;
   harness: string;
   subagent_type: string | null;
+  created_at: string;
   updated_at: string;
 }
 
@@ -49,25 +50,30 @@ export function usesCloudSubagents(): boolean {
   return resolveBackendMode() === "api" && isCloudServerUrl();
 }
 
-function requestPage(
+export function listCloudSubagentsPage(
   conversationId: string,
   actingUserId: string | null | undefined,
-  archived: boolean,
-  after?: string,
+  options: {
+    archived?: boolean;
+    after?: string;
+    limit: number;
+    status?: PersistedSubagentStatus;
+  },
 ): Promise<SubagentRecord[]> {
   return apiRequest("GET", "/v1/subagents", undefined, {
     actingUserId,
     signal: AbortSignal.timeout(15_000),
     query: {
       parent_conversation_id: conversationId,
-      archived,
-      after,
-      limit: 200,
+      archived: options.archived ?? false,
+      after: options.after,
+      limit: options.limit,
+      status: options.status,
     },
   });
 }
 
-export async function listCloudSubagents(
+async function listCloudSubagents(
   conversationId: string,
   actingUserId?: string | null,
   archived = false,
@@ -75,12 +81,11 @@ export async function listCloudSubagents(
   const records: SubagentRecord[] = [];
   let after: string | undefined;
   while (true) {
-    const page = await requestPage(
-      conversationId,
-      actingUserId,
+    const page = await listCloudSubagentsPage(conversationId, actingUserId, {
       archived,
       after,
-    );
+      limit: 200,
+    });
     records.push(...page);
     if (page.length < 200) return records;
     after = page.at(-1)?.subagent_id;

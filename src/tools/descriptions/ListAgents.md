@@ -1,1 +1,1 @@
-List subagents launched by the current conversation, including their statuses and addresses for SendAgentMessage.
+List unarchived subagents launched by the current conversation, most recently updated first. Each entry includes timestamps, status, and the address for SendAgentMessage. Returns up to 20 entries by default. When has_more is true, pass next_cursor as cursor to get the next page with the same status filter.
