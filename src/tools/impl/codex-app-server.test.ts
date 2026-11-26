@@ -14,8 +14,6 @@ import {
 } from "./codex-app-server";
 import { CODEX_CAPACITY_ERROR } from "./codex-app-server-payloads";
 import { CAPACITY_MESSAGE, FakeCodexTransport } from "./codex-test-transport";
-import { runExternalCodingAgent } from "./external-coding-agent";
-import { clearNativeSessionCaptureForTests } from "./native-session-capture";
 
 beforeAll(() => settingsManager.initialize());
 afterEach(() => __resetCodexSessionsForTests());
@@ -491,65 +489,25 @@ describe("Codex app-server lifecycle", () => {
     );
   });
 
-  test("keeps the launch model on live and cold follow-ups", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "codex-resume-model-"));
-    const previous = process.env.LETTA_CONFIG_DIR;
-    process.env.LETTA_CONFIG_DIR = directory;
+  test("lets Codex restore the model and effort on a cold follow-up", async () => {
+    const fake = new FakeCodexTransport();
     const model = "gpt-5.4";
-    const first = new FakeCodexTransport();
-    first.onTurnStarted = () => first.complete();
-    const followup = {
-      threadId: "thread-1",
-      prompt: "Continue",
-      parentAgentId: "parent",
-      cwd: directory,
-    };
-    try {
-      const launch = await runExternalCodingAgent(
-        {
-          type: "codex",
-          prompt: "Initial",
-          parentAgentId: "parent",
-          parentConversationId: "conversation",
-          cwd: directory,
-          model,
-        },
-        {
-          env: {},
-          resolveSecretEnv: async () => ({}),
-          runPreflight: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
-          runCodexTurn: async (options) => {
-            const handle = await startCodexTurn(options, {
-              createTransport: () => first.transport(),
-            });
-            return handle.completion;
-          },
-        },
-      );
-      expect(launch).toMatchObject({ success: true, model });
+    fake.resumedModel = model;
+    fake.onTurnStarted = () => fake.complete();
+    const threadId = "thread-1";
 
-      const live = await sendCodexMessage(followup);
-      expect(await live.completion).toMatchObject({ success: true, model });
+    const cold = await sendCodexMessage(
+      { threadId, prompt: "Continue", parentAgentId: "parent", cwd: "/repo" },
+      { createTransport: () => fake.transport() },
+    );
 
-      __resetCodexSessionsForTests();
-      const second = new FakeCodexTransport();
-      second.onTurnStarted = () => second.complete();
-      const cold = await sendCodexMessage(followup, {
-        createTransport: () => second.transport(),
-      });
-      expect(
-        second.requests.find(({ method }) => method === "thread/resume"),
-      ).toMatchObject({ params: { threadId: followup.threadId, model } });
-      expect(
-        second.requests.find(({ method }) => method === "turn/start"),
-      ).toMatchObject({ params: { threadId: followup.threadId, model } });
-      expect(await cold.completion).toMatchObject({ success: true, model });
-    } finally {
-      await clearNativeSessionCaptureForTests();
-      if (previous === undefined) delete process.env.LETTA_CONFIG_DIR;
-      else process.env.LETTA_CONFIG_DIR = previous;
-      rmSync(directory, { recursive: true, force: true });
-    }
+    expect(
+      fake.requests.find(({ method }) => method === "thread/resume")?.params,
+    ).toEqual({ threadId });
+    const turn = fake.requests.find(({ method }) => method === "turn/start");
+    expect(turn?.params).not.toHaveProperty("model");
+    expect(turn?.params).not.toHaveProperty("effort");
+    expect(await cold.completion).toMatchObject({ success: true, model });
   });
 
   test.each([false, true])(
