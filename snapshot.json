@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.332:docs:4301b54bda19d878a3f5702da3799f3ef8e856366b1aa7c464885abcb03e9ce2:runtime:3643ad24bf36d23b0b447cd027874de3291f0938010f91fa7924e973cb3f3763",
+  "candidate_id": "claude@2.1.332:docs:42b8e8e49db8f2562800c5a3ed753edd64829093c47870fbc628c696b4382fd4:runtime:ded35c82e8d744e81e30ac01c017d9a4336c72f4e45df80793f248f858a0f512",
   "package_version": "2.1.332",
   "npm_integrity": "sha512-tvSh6bLvEbd97APD31AnojOrRC3AmcRj5R8sF8QIQitu3x2ucOb1kKmTkGDw41kjva+CGJfpkt+wYouk6yv56Q==",
   "npm_published_at": "2026-11-24T22:06:38.097Z",
@@ -15,8 +15,8 @@
   "docs": {
     "index_url": "https://code.claude.com/docs/llms.txt",
     "index_hash": "1c87ddefe48af186c0cdc53c00897e8a41a2f0a464762f40ecfc47a673c230d9",
-    "full_scan": false,
-    "scanned_at": "2026-11-25T02:24:14.580Z",
+    "full_scan": true,
+    "scanned_at": "2026-11-26T04:21:36.091Z",
     "pages": {
       "https://code.claude.com/docs/en/accessibility.md": {
         "url": "https://code.claude.com/docs/en/accessibility.md",
@@ -434,7 +434,7 @@
       },
       "https://code.claude.com/docs/en/claude-security.md": {
         "url": "https://code.claude.com/docs/en/claude-security.md",
-        "hash": "5b7324657a5045492c3be3097a95f55262051e1e53356c1cc09882258e1e8757",
+        "hash": "8cc2ed048d551f7f3e3e12e8b13e0c17562ff43b6e20da6d8d8c92023d03cbce",
         "watched": false,
         "source_path": null
       },
@@ -446,7 +446,7 @@
       },
       "https://code.claude.com/docs/en/claude-tag.md": {
         "url": "https://code.claude.com/docs/en/claude-tag.md",
-        "hash": "c1c2e2b11fb3b24bef45b035e8dd7b53d4df5b07ad382d3db421104d89cc2098",
+        "hash": "2d1bd84052b7600e93b79cd39a4e6dc85c835ac0e2dc78969632e9895d6d5de9",
         "watched": false,
         "source_path": null
       },
@@ -548,7 +548,7 @@
       },
       "https://code.claude.com/docs/en/costs.md": {
         "url": "https://code.claude.com/docs/en/costs.md",
-        "hash": "944ba153970b73ef824aff8d8498da154e354778e65a3d86871f7962b32ac543",
+        "hash": "a77557a9985a8e59d982e7b97a592a61fdc30a37957e9f7af091c37c731b3dd2",
         "watched": false,
         "source_path": null
       },
@@ -566,7 +566,7 @@
       },
       "https://code.claude.com/docs/en/debug-your-config.md": {
         "url": "https://code.claude.com/docs/en/debug-your-config.md",
-        "hash": "39eccc7f88f52f10d32b66f05d49076f08d6302ab290c10431e902953d2748ae",
+        "hash": "f23dd2450f7d010818c0ab74078e5a054c9b1c79cbd7ba06cf2144f9b49aec4e",
         "watched": false,
         "source_path": null
       },
@@ -626,7 +626,7 @@
       },
       "https://code.claude.com/docs/en/errors.md": {
         "url": "https://code.claude.com/docs/en/errors.md",
-        "hash": "cd6056e16575e8b26c1e2df026dae91f410578146c70f6a4764c6f8387626882",
+        "hash": "e4d74f5e0dc5453ab6b522faabb541e3062722a6ff93912a2fb1cf3944a7a83c",
         "watched": false,
         "source_path": null
       },
@@ -836,7 +836,7 @@
       },
       "https://code.claude.com/docs/en/monitoring-usage.md": {
         "url": "https://code.claude.com/docs/en/monitoring-usage.md",
-        "hash": "92d730e29fa952ac7cb8f72c522cc0f69a5f7d64d260b68dbcb1ed170bb55212",
+        "hash": "3d2acf52a057c903a308047771f1bec4e10b3ff9340c46e8acb643c5dca61a4b",
         "watched": false,
         "source_path": null
       },
@@ -998,7 +998,7 @@
       },
       "https://code.claude.com/docs/en/plugins/mods/interface.md": {
         "url": "https://code.claude.com/docs/en/plugins/mods/interface.md",
-        "hash": "ac01f38c2b825eb1d5efe4f931a66702227b85cb3ed8412c2c252d80bc2f6dbb",
+        "hash": "99215e525ffd0089756c73058f4e22ed5a70f0033e0093693a24e31ad061e0cc",
         "watched": false,
         "source_path": null
       },
@@ -1010,7 +1010,7 @@
       },
       "https://code.claude.com/docs/en/plugins/mods/reference.md": {
         "url": "https://code.claude.com/docs/en/plugins/mods/reference.md",
-        "hash": "400413caf3273fadddc946ea657904952e8d541f066126bb16feb8354d8239ed",
+        "hash": "0e053e7b33af029f1ec67d540527521531a79ff8815b2da02268149796f89d6f",
         "watched": false,
         "source_path": null
       },
@@ -1250,7 +1250,7 @@
       },
       "https://code.claude.com/docs/en/skills.md": {
         "url": "https://code.claude.com/docs/en/skills.md",
-        "hash": "a4e18f19af703a60dbab8e03a23ffb51cb997a6faaab79c8fc856a9d3f498c07",
+        "hash": "3de6c6acc4b9a446307c112a90fe40a8739b1d28796595952cd146f37483509d",
         "watched": false,
         "source_path": null
       },
@@ -1310,7 +1310,7 @@
       },
       "https://code.claude.com/docs/en/voice-dictation.md": {
         "url": "https://code.claude.com/docs/en/voice-dictation.md",
-        "hash": "44356543ccc5cc86661883c39e3309633da2ebf535126abe3e5cad1f64067d4e",
+        "hash": "87a15cabf43071927fe9b3d6988ce695761b733a3e3799ecc1b3973eed11bbff",
         "watched": false,
         "source_path": null
       },
@@ -1351,7 +1351,7 @@
         "source_path": "sources/raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
       }
     },
-    "digest": "4301b54bda19d878a3f5702da3799f3ef8e856366b1aa7c464885abcb03e9ce2"
+    "digest": "42b8e8e49db8f2562800c5a3ed753edd64829093c47870fbc628c696b4382fd4"
   },
   "runtime": {
     "probe_contract_version": 2,
@@ -1361,7 +1361,7 @@
     "help_hash": "e8ff5fd4f4a523bf34f63e2fc8541a38ff290f47caa1729e623b5af7e6b0b197",
     "doctor": {
       "exit_code": 0,
-      "summary": "Claude Code doctor\nRunning: npm-global (<version>)\nCommit: <commit>\nPlatform: linux-x64\nPath: /watch/install/node_modules/@anthropic-ai/claude-code/bin/claude.exe\nConfig install method: not set\nSearch: OK (bundled)\nAuto-updates: disabled (set by env: DISABLE_UPDATES)\nAuto-update channel: latest\nLast update attempt: none recorded\nManaged settings (remote): not fetched — no usable credentials for the settings fetch\nOrganization policy: not fetched: no API key or claude.ai sign-in for the policy lookup (apiKeyHelper keys are not used for it)\nAPI connectivity\n- API (api.anthropic.com): answered HTTP 200 in 26 ms\n- Sign-in (platform.claude.com): answered HTTP 200 in 48 ms\n- ANTHROPIC_BASE_URL: not set · NODE_EXTRA_CA_CERTS: not set · CLAUDE_CODE_CLIENT_CERT: not set\nRemote Control\nRemote Control requires a claude.ai subscription. Run claude auth login to sign in with your claude.ai account.\n- Not signed in to claude.ai\n- claude.ai subscription auth not active\n- Sign-in is missing the user:profile scope\n- Organization not found\n- Remote Control availability could not be verified (no server response this session)\nNo installation issues found.\nFor a full setup checkup that can also fix issues, run /doctor in a Claude Code session."
+      "summary": "Claude Code doctor\nRunning: npm-global (<version>)\nCommit: <commit>\nPlatform: linux-x64\nPath: /watch/install/node_modules/@anthropic-ai/claude-code/bin/claude.exe\nConfig install method: not set\nSearch: OK (bundled)\nAuto-updates: disabled (set by env: DISABLE_UPDATES)\nAuto-update channel: latest\nLast update attempt: none recorded\nManaged settings (remote): not fetched — no usable credentials for the settings fetch\nOrganization policy: not fetched: no API key or claude.ai sign-in for the policy lookup (apiKeyHelper keys are not used for it)\nAPI connectivity\n- API (api.anthropic.com): answered HTTP 200 in 85 ms\n- Sign-in (platform.claude.com): answered HTTP 200 in 108 ms\n- ANTHROPIC_BASE_URL: not set · NODE_EXTRA_CA_CERTS: not set · CLAUDE_CODE_CLIENT_CERT: not set\nRemote Control\nRemote Control requires a claude.ai subscription. Run claude auth login to sign in with your claude.ai account.\n- Not signed in to claude.ai\n- claude.ai subscription auth not active\n- Sign-in is missing the user:profile scope\n- Organization not found\n- Remote Control availability could not be verified (no server response this session)\nNo installation issues found.\nFor a full setup checkup that can also fix issues, run /doctor in a Claude Code session."
     },
     "auto_mode_defaults": {
       "allow": [
@@ -1550,57 +1550,56 @@
     ],
     "probes": [
       {
-        "assertions": {
-          "exact_line_10": true,
-          "exact_line_9": true,
-          "no_arrow_separator": true,
-          "no_line_9_padding": true,
-          "result_not_error": true
-        },
-        "attempts": 1,
-        "error": null,
-        "filesystem_changes": [],
         "name": "read-lines-9-10-tab-prefix",
         "status": "passed",
+        "attempts": 1,
+        "assertions": {
+          "exact_line_9": true,
+          "exact_line_10": true,
+          "no_line_9_padding": true,
+          "no_arrow_separator": true,
+          "result_not_error": true
+        },
         "tool_calls": [
           {
+            "name": "Read",
             "input": {
               "file_path": "/watch/repo/read-fixture.txt",
               "limit": 2,
               "offset": 9
-            },
-            "name": "Read"
+            }
           }
         ],
         "tool_results": [
           "9\tline9\n10\tline10"
-        ]
+        ],
+        "filesystem_changes": [],
+        "error": null
       },
       {
-        "assertions": {
-          "deleted_task_absent": true,
-          "deleted_task_get_errors": true,
-          "metadata_arbitrary_values_accepted": true,
-          "metadata_null_update_accepted": true
-        },
-        "attempts": 1,
-        "error": null,
-        "filesystem_changes": [],
         "name": "task-metadata-delete-contract",
         "status": "passed",
+        "attempts": 1,
+        "assertions": {
+          "metadata_arbitrary_values_accepted": true,
+          "metadata_null_update_accepted": true,
+          "deleted_task_get_errors": true,
+          "deleted_task_absent": true
+        },
         "tool_calls": [
           {
+            "name": "TaskCreate",
             "input": {
-              "description": "Probe task for exercising task tools",
+              "description": "Probe task for exercising task tools.",
               "metadata": {
                 "keep": "yes",
                 "probe": "remove"
               },
               "subject": "probe-task"
-            },
-            "name": "TaskCreate"
+            }
           },
           {
+            "name": "TaskUpdate",
             "input": {
               "metadata": {
                 "count": 3,
@@ -1613,47 +1612,48 @@
                 "probe": null
               },
               "taskId": "1"
-            },
-            "name": "TaskUpdate"
+            }
           },
           {
+            "name": "TaskGet",
             "input": {
               "taskId": "1"
-            },
-            "name": "TaskGet"
+            }
           },
           {
+            "name": "TaskUpdate",
             "input": {
               "status": "deleted",
               "taskId": "1"
-            },
-            "name": "TaskUpdate"
+            }
           },
           {
+            "name": "TaskGet",
             "input": {
               "taskId": "1"
-            },
-            "name": "TaskGet"
+            }
           },
           {
-            "input": {},
-            "name": "TaskList"
+            "name": "TaskList",
+            "input": {}
           }
         ],
         "tool_results": [
           "Task #1 created successfully: probe-task",
           "Updated task #1 metadata",
-          "Task #1: probe-task\nStatus: pending\nDescription: Probe task for exercising task tools",
+          "Task #1: probe-task\nStatus: pending\nDescription: Probe task for exercising task tools.",
           "Updated task #1 deleted",
           "Task not found",
           "No tasks found"
-        ]
+        ],
+        "filesystem_changes": [],
+        "error": null
       }
     ],
-    "digest": "3643ad24bf36d23b0b447cd027874de3291f0938010f91fa7924e973cb3f3763"
+    "digest": "ded35c82e8d744e81e30ac01c017d9a4336c72f4e45df80793f248f858a0f512"
   },
-  "fetched_at": "2026-11-26T02:23:43.635Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/45742020968",
-  "state_commit_parent": "5bc8aabfd9c732ee35e253d29f0fff79b0a9613d",
-  "analysis_parent_sha": "5bc8aabfd9c732ee35e253d29f0fff79b0a9613d"
+  "fetched_at": "2026-11-26T04:22:14.418Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/45754598438",
+  "state_commit_parent": "84e8ad964874eb3bd5dbbf00203ccc2ecc2e5432",
+  "analysis_parent_sha": "84e8ad964874eb3bd5dbbf00203ccc2ecc2e5432"
 }
