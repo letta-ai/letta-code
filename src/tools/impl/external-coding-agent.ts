@@ -31,6 +31,7 @@ import type { SubagentStartupErrorCode } from "@/types/subagent-protocol";
 import { debugLog } from "@/utils/debug";
 import { withNativeCliPath } from "@/utils/native-cli-env";
 import { SUBAGENT_DEPTH_ENV } from "@/utils/subagent-depth-env";
+import { runAntigravityTurn } from "./antigravity-session";
 import { runClaudeTurn } from "./claude-stream-session";
 import { CODEX_NOT_SIGNED_IN_ERROR, runCodexTurn } from "./codex-app-server";
 import { runCursorTurn } from "./cursor-session";
@@ -45,6 +46,7 @@ import {
 import { runOpenCodeTurn } from "./opencode-session";
 
 export const EXTERNAL_CODING_AGENT_TYPES = [
+  "antigravity",
   "claude-code",
   "codex",
   "opencode",
@@ -66,6 +68,8 @@ export interface ExternalCodingAgentMcpEntry {
 export interface ExternalCodingAgentRunOptions extends ExternalWorkerListeners {
   type: ExternalCodingAgentType;
   prompt: string;
+  /** Agent task description: the native session name and owner record. */
+  description?: string;
   model?: string;
   parentAgentId: string;
   parentConversationId?: string;
@@ -134,6 +138,7 @@ export function isExternalCodingAgentType(
 }
 
 const EXTERNAL_AGENT_ID_PREFIXES: Record<ExternalCodingAgentType, string> = {
+  antigravity: "antigravity_",
   "claude-code": "claude_",
   codex: "codex_",
   opencode: "opencode_",
@@ -374,7 +379,8 @@ export function classifyExternalCodingAgentStartupError(
   if (
     error.startsWith(CLAUDE_NOT_SIGNED_IN_PREFIX) ||
     error.startsWith(CODEX_NOT_SIGNED_IN_ERROR) ||
-    error.startsWith("Cursor is not signed in:")
+    error.startsWith("Cursor is not signed in:") ||
+    error.startsWith("Antigravity is not signed in:")
   )
     return "not_signed_in";
   return undefined;
@@ -583,12 +589,16 @@ export async function runExternalCodingAgent(
     options,
     deps,
   );
+  if (options.type === "antigravity" && env.GEMINI_API_KEY)
+    secretEnv.GEMINI_API_KEY = env.GEMINI_API_KEY;
   options = {
     ...options,
     ...scrubWorkerListeners(options, secretEnv),
     mcpReminder,
   };
   const cwd = options.cwd ?? getCurrentWorkingDirectory();
+  if (options.type === "antigravity")
+    return runAntigravityTurn({ ...options, cwd }, env, secretEnv);
   const captureActingUserId =
     options.actingUserId !== undefined
       ? options.actingUserId
@@ -599,6 +609,7 @@ export async function runExternalCodingAgent(
         conversationId: options.parentConversationId,
         actingUserId: captureActingUserId,
         cloudSkillRepositories: options.cloudSkillRepositories,
+        ...(options.description ? { description: options.description } : {}),
       }
     : undefined;
   const source = options.type === "claude-code" ? "claude_code" : "codex";
@@ -652,6 +663,7 @@ export async function runExternalCodingAgent(
       {
         ...options,
         cwd,
+        sessionName: options.description,
         onStarted: (sessionId) =>
           options.onStarted?.(
             formatExternalCodingAgentId("opencode", sessionId),
@@ -665,6 +677,7 @@ export async function runExternalCodingAgent(
       {
         ...options,
         cwd,
+        sessionName: options.description,
         onStarted: (sessionId) =>
           options.onStarted?.(formatExternalCodingAgentId("cursor", sessionId)),
       },
@@ -694,6 +707,7 @@ export async function runExternalCodingAgent(
                   parent_agent_id: scope.agentId,
                   parent_conversation_id: scope.conversationId,
                   task_id: options.taskId ?? randomUUID(),
+                  task_description: options.description,
                 }
               : undefined,
             prompt: options.prompt,
@@ -704,14 +718,15 @@ export async function runExternalCodingAgent(
             mcpReminder: options.mcpReminder,
             signal: options.signal,
             resumeThreadId: options.resumeSessionId,
+            threadName: options.description,
             onToolCall: options.onToolCall,
             onText: options.onText,
             onToolResult: options.onToolResult,
             onReasoning: options.onReasoning,
-            beforeStart: async (threadId) => {
+            beforeStart: async (threadId, model) => {
               if (scope && !captureReservation) {
                 if (!options.resumeSessionId) {
-                  rememberNativeSession("codex", threadId, scope);
+                  rememberNativeSession("codex", threadId, { ...scope, model });
                 }
                 await reserveCapture(threadId);
               }
@@ -762,6 +777,7 @@ export async function runExternalCodingAgent(
                   parent_agent_id: scope.agentId,
                   parent_conversation_id: scope.conversationId,
                   task_id: options.taskId ?? randomUUID(),
+                  task_description: options.description,
                 }
               : undefined,
             prompt: options.prompt,
@@ -773,6 +789,7 @@ export async function runExternalCodingAgent(
             signal: options.signal,
             resumeSessionId: options.resumeSessionId,
             sessionId,
+            sessionName: options.description,
             onToolCall: options.onToolCall,
             onText: options.onText,
             onToolResult: options.onToolResult,

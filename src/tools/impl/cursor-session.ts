@@ -29,6 +29,7 @@ interface CursorTurnOptions {
   mcpReminder?: string;
   signal?: AbortSignal;
   resumeSessionId?: string;
+  sessionName?: string;
   onStarted?: (sessionId: string) => void;
   onToolCall?: ExternalToolCallListener;
 }
@@ -235,6 +236,7 @@ export async function runCursorTurn(
       model: options.model,
       reminder: options.mcpReminder,
       prompt: options.prompt,
+      name: options.sessionName,
     };
     running.process.stdin.write(`${JSON.stringify(command)}\n`);
     return await completion;

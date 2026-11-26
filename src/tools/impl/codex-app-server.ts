@@ -15,9 +15,11 @@ import {
   codexReasoningText,
   describeCodexToolItem,
   describeCodexToolResult,
+  errorMessage,
   isCapacityError,
   readString,
   TOOL_ITEM_TYPES,
+  textInput,
   turnFailureMessage,
   turnReport,
 } from "./codex-app-server-payloads";
@@ -37,6 +39,7 @@ import {
   type ExternalWorkerListeners,
   emitProgress,
 } from "./external-tool-call";
+import { readNativeSessionOwner } from "./native-session-owner";
 
 declare const LETTA_VERSION: string | undefined;
 
@@ -113,10 +116,11 @@ export interface CodexTurnOptions
   mcpReminder?: string;
   signal?: AbortSignal;
   resumeThreadId?: string;
+  threadName?: string;
   onStarted?: (threadId: string, turnId: string) => void;
   onToolCall?: ExternalToolCallListener;
   onText?: ExternalTextListener;
-  beforeStart?: (threadId: string) => Promise<void>;
+  beforeStart?: (threadId: string, model?: string) => Promise<void>;
 }
 
 export interface CodexTurnHandle {
@@ -215,13 +219,6 @@ export async function listCodexModels(
   }
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function textInput(text: string): Array<{ type: "text"; text: string }> {
-  return [{ type: "text", text }];
-}
 function spawnTransport(options: {
   configArgs?: string[];
   cwd: string;
@@ -581,6 +578,15 @@ async function createSession(
   options: CodexTurnOptions,
   deps: CodexAppServerDependencies,
 ): Promise<CodexSession> {
+  const owner =
+    options.resumeThreadId && !options.model
+      ? readNativeSessionOwner("codex", options.resumeThreadId)
+      : undefined;
+  const model =
+    options.model ??
+    (owner?.agentId === options.parentAgentId
+      ? readString(owner, "model")
+      : undefined);
   const env = withNativeCliPath({
     ...(deps.env ?? process.env),
     AGENT_ID: options.parentAgentId,
@@ -641,13 +647,14 @@ async function createSession(
     const params = options.resumeThreadId
       ? {
           threadId: options.resumeThreadId,
+          model,
           ...(options.mcpReminder
             ? { developerInstructions: options.mcpReminder }
             : {}),
         }
       : {
           cwd: options.cwd,
-          model: options.model,
+          model,
           approvalPolicy: "never",
           sandbox: "danger-full-access",
           developerInstructions: options.mcpReminder,
@@ -665,12 +672,16 @@ async function createSession(
     throw new Error("Codex app-server returned no native thread ID");
   }
   trace?.setSessionId(threadId);
+  if (options.threadName && !options.resumeThreadId)
+    await client
+      .request("thread/name/set", { threadId, name: options.threadName })
+      .catch(() => undefined);
   session = {
     threadId,
     client,
     cwd: readString(thread, "cwd") ?? options.cwd,
     parentAgentId: options.parentAgentId,
-    model: options.model,
+    model: readString(response, "model") ?? model,
     startLock: Promise.resolve(),
     pendingNotifications,
     idleTimeoutMs: deps.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS,
@@ -822,7 +833,7 @@ function startTurn(
   >,
 ): Promise<CodexTurnHandle> {
   return withSessionLock(session, async () => {
-    await options.beforeStart?.(session.threadId);
+    await options.beforeStart?.(session.threadId, session.model);
     return startTurnUnlocked(
       session,
       options.prompt,
@@ -906,7 +917,7 @@ export async function sendCodexMessage(
         }
         options.signal?.throwIfAborted();
         updateExternalTraceTask(session.threadId, options.traceContext);
-        await options.beforeStart?.(session.threadId);
+        await options.beforeStart?.(session.threadId, session.model);
         const handle = await startTurnUnlocked(
           session,
           options.prompt,

@@ -193,6 +193,15 @@ utils/         ← bottom: no domain deps
 
 ---
 
+### Unit test design
+
+**Rule:** Isolated unit tests must guard a security boundary, money math, untrusted-input parsing, concurrency or ordering, or a lint rule's specification.
+Skip prompt, string, or constant equality checks, snapshots, flag truth tables that repeat branches, mock-call plumbing, UI render checks, and trivial helper tests.
+
+**Why:** Tests should catch regressions in behavior rather than pin implementation details.
+
+---
+
 ### Test mock isolation
 
 **Rule:** `mock.module()` calls must follow isolation patterns checked by `scripts/check-test-mock-isolation.js`.
@@ -294,7 +303,7 @@ also rejects staged parent-relative imports (`../`); use the `@/` alias.
 | `LETTA_LOCAL_BACKEND_DIR` | Local-backend storage root (defaults to `<product-config>/lc-local-backend`) |
 | `LETTA_CONFIG_DIR` | Absolute global config directory (defaults to `~/.letta`); product hosts use this to isolate settings, credentials, device identity, schedules, channel accounts/sessions, remote-session state, durable listener control state, global skills, and listener locks without replacing `HOME` |
 | `LETTA_SECRETS_SERVICE_NAME` | OS-keychain service namespace for hosts that isolate credentials (defaults to `letta-code`) |
-| `LETTA_DEFAULT_SUBAGENT_COMPUTER` | `computer` used by Agent launches that omit one (e.g. `cloud`). Explicit `computer` wins; `local`/`self` force the current machine. Ignored by forks and memory-profile subagents. Unset = no change |
+| `LETTA_DEFAULT_SUBAGENT_COMPUTER` | `computer` used by Agent launches that omit one (e.g. `cloud`). Explicit `computer` wins; `local`/`self` force the current machine. Ignored by `memory`, `recall`, and memory-profile subagents. Unset = no change |
 
 When manually smoke-testing the local backend (`letta --backend local` or
 `bun run dev --backend local`), set `LETTA_LOCAL_BACKEND_DIR` to a temporary

@@ -11,6 +11,7 @@ import {
   getExactSuperRun,
   listEnqueuedRunMessages,
 } from "@/backend/api/conversation-enqueue";
+import type { resumeSubagentWriter } from "@/backend/api/subagents";
 import { buildAgentReference } from "@/cli/helpers/app-urls";
 import {
   readConversationRuntimeStatus,
@@ -56,6 +57,7 @@ export async function resolveChildSubagent(
 export interface TrackChildSendInput {
   receipt: EnqueueReceipt;
   child: ChildSubagentIdentity;
+  persistRun?: (change: { status: "completed" | "failed" }) => void;
   prompt: string;
   parentScope: { agentId: string; conversationId: string };
   signal?: AbortSignal;
@@ -78,6 +80,25 @@ function waitForChildRun(
     messages: listEnqueuedRunMessages,
     runtimeStatus: readConversationRuntimeStatus,
     onIdle,
+  });
+}
+
+export function trackPersistedChildSend(
+  receipt: EnqueueReceipt,
+  writer: NonNullable<ReturnType<typeof resumeSubagentWriter>>,
+): void {
+  void writer.found.then(async (found) => {
+    if (!found) return;
+    try {
+      await waitForChildRun(
+        receipt,
+        new AbortController().signal,
+        () => undefined,
+      );
+      writer.update({ status: "completed" });
+    } catch {
+      writer.update({ status: "failed" });
+    }
   });
 }
 
@@ -113,12 +134,17 @@ export function trackChildSend(input: TrackChildSendInput): string {
     input.waitForRun ??
     ((receipt, signal) => waitForChildRun(receipt, signal, onIdle))
   )(receipt, input.signal ?? new AbortController().signal).then(
-    () => completeSubagent(subagentId, { success: true }),
-    (error) =>
+    () => {
+      input.persistRun?.({ status: "completed" });
+      completeSubagent(subagentId, { success: true });
+    },
+    (error) => {
+      input.persistRun?.({ status: "failed" });
       completeSubagent(subagentId, {
         success: false,
         error: getErrorMessage(error),
-      }),
+      });
+    },
   );
 
   return subagentId;
