@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import Letta from "@letta-ai/letta-client";
+import { deleteCloudFixture } from "@/test-utils/teleport-fixture-retry";
 import { createAuthenticatedCliTestEnv } from "@/test-utils/test-process-env";
 
 type Sandbox = { sandboxId: string; conversationId?: string | null };
@@ -28,7 +29,10 @@ test.skipIf(!process.env.LETTA_API_KEY)(
         signal: AbortSignal.timeout(30000),
       });
       if (!response.ok)
-        throw new Error(`Sandbox ${method} failed: ${response.status}`);
+        throw Object.assign(
+          new Error(`Sandbox ${method} failed: ${response.status}`),
+          { status: response.status },
+        );
       return response;
     }
     async function listSandboxes(): Promise<Sandbox[]> {
@@ -198,9 +202,11 @@ test.skipIf(!process.env.LETTA_API_KEY)(
         if (agentId) {
           const results = await Promise.allSettled(
             (await listSandboxes()).map((s) =>
-              sandboxRequest(
-                `/${encodeURIComponent(s.sandboxId)}/terminate`,
-                "POST",
+              deleteCloudFixture(() =>
+                sandboxRequest(
+                  `/${encodeURIComponent(s.sandboxId)}/terminate`,
+                  "POST",
+                ),
               ),
             ),
           );
@@ -210,10 +216,14 @@ test.skipIf(!process.env.LETTA_API_KEY)(
         }
       } finally {
         try {
-          if (conversationId) await sdk.conversations.delete(conversationId);
+          if (conversationId)
+            await deleteCloudFixture(() =>
+              sdk.conversations.delete(conversationId!),
+            );
         } finally {
           try {
-            if (agentId) await sdk.agents.delete(agentId);
+            if (agentId)
+              await deleteCloudFixture(() => sdk.agents.delete(agentId!));
           } finally {
             await rm(home, { recursive: true, force: true });
           }
