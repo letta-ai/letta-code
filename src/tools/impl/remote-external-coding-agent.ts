@@ -18,8 +18,9 @@ import {
   isEnvironmentOnline,
   resolveAgentSandboxConnectionId,
   resolveEnvironmentConnectionId,
+  WorkerSandboxExpiredError,
 } from "@/backend/api/environments";
-import { getApiRequestConfig } from "@/backend/api/request";
+import { ApiRequestError, getApiRequestConfig } from "@/backend/api/request";
 import { isCloudEnvironmentSelector } from "@/headless-environment-response";
 import { listenerControlUrl } from "@/headless-listener-launch";
 import {
@@ -150,34 +151,51 @@ async function defaultConnect(connectionId: string, scope: ParentScope) {
   }
 }
 
-async function resolveQualifiedComputer(deviceId: string, scope: ParentScope) {
-  let environment: EnvironmentConnection;
+async function resolveQualifiedComputer(
+  deviceId: string,
+  scope: ParentScope,
+  resumeOnly = false,
+) {
+  const prefix = `sandbox-${scope.agentId}-`;
+  const suffix = deviceId.startsWith(prefix)
+    ? deviceId
+        .slice(prefix.length)
+        .match(
+          /^(conv-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-linux-vm$/i,
+        )
+    : null;
+  let environment: EnvironmentConnection | undefined;
   try {
     environment = await getEnvironmentConnection(deviceId);
-  } catch {
-    return resolveEnvironmentConnectionId(deviceId);
+  } catch (error) {
+    if (
+      !(
+        resumeOnly &&
+        suffix &&
+        error instanceof ApiRequestError &&
+        error.status === 404
+      )
+    )
+      return resolveEnvironmentConnectionId(deviceId);
   }
 
-  if (!isEnvironmentOnline(environment) || !environment.connectionId) {
-    const prefix = `sandbox-${scope.agentId}-`;
-    const suffix = deviceId.startsWith(prefix)
-      ? deviceId
-          .slice(prefix.length)
-          .match(
-            /^(conv-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-linux-vm$/i,
-          )
-      : null;
-    if (environment.deviceId === deviceId && suffix) {
-      const resolved = await resolveAgentSandboxConnectionId(scope.agentId, {
-        conversationId: suffix[1],
-      });
-      if (resolved.environment.deviceId !== deviceId)
-        throw new Error("Cloud sandbox device changed while waking worker");
-      return resolved;
-    }
-    throw new Error(`Computer "${deviceId}" is offline`);
+  if (
+    environment &&
+    isEnvironmentOnline(environment) &&
+    environment.connectionId
+  )
+    return { connectionId: environment.connectionId, environment };
+
+  if (suffix && (!environment || environment.deviceId === deviceId)) {
+    const resolved = await resolveAgentSandboxConnectionId(scope.agentId, {
+      conversationId: suffix[1],
+      resumeOnly,
+    });
+    if (resolved.environment.deviceId !== deviceId)
+      throw new Error("Cloud sandbox device changed while waking worker");
+    return resolved;
   }
-  return { connectionId: environment.connectionId, environment };
+  throw new Error(`Computer "${deviceId}" is offline`);
 }
 
 function errorMessage(error: unknown): string {
@@ -190,6 +208,7 @@ class OutdatedRemoteWorkerError extends Error {}
 export function classifyRemoteExternalWorkerControlError(
   error: unknown,
 ): string {
+  if (error instanceof WorkerSandboxExpiredError) return "sandbox_expired";
   if (error instanceof ComputerResolutionError) {
     return error.code === "computer_offline" ||
       error.code === "computer_not_found"
@@ -704,6 +723,7 @@ async function connectQualifiedTarget(
   agentId: string,
   parentScope: ParentScope,
   deps: RemoteExternalCodingAgentControlDeps,
+  resumeOnly = false,
 ): Promise<{
   target: NonNullable<ReturnType<typeof parseExternalCodingAgentId>>;
   client: AppServerClient;
@@ -715,6 +735,7 @@ async function connectQualifiedTarget(
   const resolved = await (deps.resolveComputer ?? resolveQualifiedComputer)(
     target.computer,
     parentScope,
+    resumeOnly,
   );
   if (resolved.environment.metadata?.subagent_message !== true)
     throw new Error(formatOutdatedSteeringError(target.computer));
@@ -771,6 +792,7 @@ export async function sendRemoteExternalCodingAgentMessage(
   try {
     return await deliverRemoteExternalCodingAgentMessage(params, deps);
   } catch (error) {
+    if (error instanceof WorkerSandboxExpiredError) throw error;
     const target = parseExternalCodingAgentId(params.agentId);
     reportExternalWorkerLaunchFailure({
       stage:
@@ -802,12 +824,14 @@ async function deliverRemoteExternalCodingAgentMessage(
     params.agentId,
     params.parentScope,
     deps,
+    true,
   );
   const toolCallId = params.toolCallId ?? `remote-followup-${randomUUID()}`;
   const connect = async () => {
     const resolved = await (deps.resolveComputer ?? resolveQualifiedComputer)(
       target.computer as string,
       params.parentScope,
+      true,
     );
     return (deps.connect ?? defaultConnect)(
       resolved.connectionId,
