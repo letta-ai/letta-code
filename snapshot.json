@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.332:docs:42b8e8e49db8f2562800c5a3ed753edd64829093c47870fbc628c696b4382fd4:runtime:f9870fa12e2cc8e2406df6ffa11af14b63f157090342fba7099f710cfc046d45",
+  "candidate_id": "claude@2.1.332:docs:42b8e8e49db8f2562800c5a3ed753edd64829093c47870fbc628c696b4382fd4:runtime:d7968eaeb36a170969d22d523712712d2db35d2b17eaa4bc91a9a9cd37212051",
   "package_version": "2.1.332",
   "npm_integrity": "sha512-tvSh6bLvEbd97APD31AnojOrRC3AmcRj5R8sF8QIQitu3x2ucOb1kKmTkGDw41kjva+CGJfpkt+wYouk6yv56Q==",
   "npm_published_at": "2026-11-24T22:06:38.097Z",
@@ -1361,7 +1361,7 @@
     "help_hash": "e8ff5fd4f4a523bf34f63e2fc8541a38ff290f47caa1729e623b5af7e6b0b197",
     "doctor": {
       "exit_code": 0,
-      "summary": "Claude Code doctor\nRunning: npm-global (<version>)\nCommit: <commit>\nPlatform: linux-x64\nPath: /watch/install/node_modules/@anthropic-ai/claude-code/bin/claude.exe\nConfig install method: not set\nSearch: OK (bundled)\nAuto-updates: disabled (set by env: DISABLE_UPDATES)\nAuto-update channel: latest\nLast update attempt: none recorded\nManaged settings (remote): not fetched — no usable credentials for the settings fetch\nOrganization policy: not fetched: no API key or claude.ai sign-in for the policy lookup (apiKeyHelper keys are not used for it)\nAPI connectivity\n- API (api.anthropic.com): answered HTTP 200 in 90 ms\n- Sign-in (platform.claude.com): answered HTTP 200 in 120 ms\n- ANTHROPIC_BASE_URL: not set · NODE_EXTRA_CA_CERTS: not set · CLAUDE_CODE_CLIENT_CERT: not set\nRemote Control\nRemote Control requires a claude.ai subscription. Run claude auth login to sign in with your claude.ai account.\n- Not signed in to claude.ai\n- claude.ai subscription auth not active\n- Sign-in is missing the user:profile scope\n- Organization not found\n- Remote Control availability could not be verified (no server response this session)\nNo installation issues found.\nFor a full setup checkup that can also fix issues, run /doctor in a Claude Code session."
+      "summary": "Claude Code doctor\nRunning: npm-global (<version>)\nCommit: <commit>\nPlatform: linux-x64\nPath: /watch/install/node_modules/@anthropic-ai/claude-code/bin/claude.exe\nConfig install method: not set\nSearch: OK (bundled)\nAuto-updates: disabled (set by env: DISABLE_UPDATES)\nAuto-update channel: latest\nLast update attempt: none recorded\nManaged settings (remote): not fetched — no usable credentials for the settings fetch\nOrganization policy: not fetched: no API key or claude.ai sign-in for the policy lookup (apiKeyHelper keys are not used for it)\nAPI connectivity\n- API (api.anthropic.com): answered HTTP 200 in 84 ms\n- Sign-in (platform.claude.com): answered HTTP 200 in 98 ms\n- ANTHROPIC_BASE_URL: not set · NODE_EXTRA_CA_CERTS: not set · CLAUDE_CODE_CLIENT_CERT: not set\nRemote Control\nRemote Control requires a claude.ai subscription. Run claude auth login to sign in with your claude.ai account.\n- Not signed in to claude.ai\n- claude.ai subscription auth not active\n- Sign-in is missing the user:profile scope\n- Organization not found\n- Remote Control availability could not be verified (no server response this session)\nNo installation issues found.\nFor a full setup checkup that can also fix issues, run /doctor in a Claude Code session."
     },
     "auto_mode_defaults": {
       "allow": [
@@ -1650,10 +1650,10 @@
         ]
       }
     ],
-    "digest": "f9870fa12e2cc8e2406df6ffa11af14b63f157090342fba7099f710cfc046d45"
+    "digest": "d7968eaeb36a170969d22d523712712d2db35d2b17eaa4bc91a9a9cd37212051"
   },
-  "fetched_at": "2026-11-26T12:25:00.144Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/45819291964",
-  "state_commit_parent": "c0bf0308d0389685c1896b11bb0cdb499168626a",
-  "analysis_parent_sha": "c0bf0308d0389685c1896b11bb0cdb499168626a"
+  "fetched_at": "2026-11-26T14:20:37.622Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/45837870399",
+  "state_commit_parent": "99ef690b7a6acb42768e524b2fc3a6933ea7dd8b",
+  "analysis_parent_sha": "99ef690b7a6acb42768e524b2fc3a6933ea7dd8b"
 }
