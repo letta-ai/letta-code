@@ -92,6 +92,7 @@ export function isLaunchSubagentCommand(
 }
 
 const LEGACY_EXTERNAL_SUBAGENT_TYPES = new Set([
+  "antigravity",
   "claude-code",
   "codex",
   "cursor",

@@ -361,6 +361,7 @@ describe("external coding agent output and preflight", () => {
 
   test("a failed new Codex start settles its thread capture admission", async () => {
     let starts = 0;
+    let taskDescription: string | undefined;
     const run = () =>
       runExternalCodingAgent(
         {
@@ -368,6 +369,7 @@ describe("external coding agent output and preflight", () => {
           prompt: "test",
           parentAgentId: "parent",
           parentConversationId: "conversation-parent",
+          description: "Fix reconnect hang",
         },
         {
           env: { ...process.env, LETTA_BASE_URL: "https://api.letta.com" },
@@ -379,11 +381,13 @@ describe("external coding agent output and preflight", () => {
           runCodexTurn: async (options) => {
             starts += 1;
             await options.beforeStart?.(SESSION_ID);
+            taskDescription = options.traceContext?.task_description;
             throw new Error("turn/start rejected");
           },
         },
       );
     expect((await run()).error).toContain("turn/start rejected");
+    expect(taskDescription).toBe("Fix reconnect hang");
     const second = await Promise.race([
       run(),
       Bun.sleep(500).then(() => {

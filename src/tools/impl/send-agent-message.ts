@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import {
   resolveChildSubagent,
   trackChildSend,
+  trackPersistedChildSend,
 } from "@/agent/subagents/child-send-tracking";
 import { resolveSubagentLauncher } from "@/agent/subagents/subagent-launcher";
 import { type Backend, getBackend } from "@/backend";
@@ -19,6 +20,7 @@ import {
   isProvenCloudApiShutdownRejection,
 } from "@/backend/api/conversation-enqueue";
 import { ApiRequestError } from "@/backend/api/request";
+import { resumeSubagentWriter } from "@/backend/api/subagents";
 import {
   getCurrentWorkingDirectory,
   getRuntimeActingUserAttribution,
@@ -30,6 +32,7 @@ import {
 } from "@/runtime-execution-settings";
 import { debugLog } from "@/utils/debug";
 import { readSubagentDepth } from "@/utils/subagent-depth-env";
+import { sendAntigravityMessage } from "./antigravity-session";
 import { sendClaudeMessage } from "./claude-stream-session";
 import { sendCodexMessage } from "./codex-app-server";
 import { sendCursorMessage } from "./cursor-session";
@@ -211,6 +214,13 @@ export async function send_agent_message(
       }
       args.signal?.throwIfAborted();
       const parentScope = sender;
+      const steerActingUserId = getRuntimeActingUserAttribution();
+      const recordSteer = () =>
+        resumeSubagentWriter(
+          parentScope.conversationId,
+          { worker_session_id: args.agent_id },
+          steerActingUserId,
+        );
       if (externalTarget.computer) {
         const receipt = await (
           deps.sendRemoteExternalMessage ?? sendRemoteExternalCodingAgentMessage
@@ -228,6 +238,7 @@ export async function send_agent_message(
               deps.trackExternalFollowup ?? trackExternalFollowupCompletion,
           },
         );
+        if (receipt.delivery !== "resumed") recordSteer();
         return {
           content: JSON.stringify({
             status: "accepted",
@@ -246,6 +257,7 @@ export async function send_agent_message(
         };
       }
       if (
+        externalTarget.type === "antigravity" ||
         externalTarget.type === "opencode" ||
         externalTarget.type === "cursor"
       ) {
@@ -260,8 +272,27 @@ export async function send_agent_message(
           externalTarget.type === "cursor"
             ? await resolveExternalCodingAgentSecretEnv(parentScope.agentId)
             : {};
-        const receipt =
-          externalTarget.type === "cursor"
+        const worker =
+          externalTarget.type === "antigravity"
+            ? await buildExternalWorkerResumeEnv(
+                {
+                  parentAgentId: parentScope.agentId,
+                  actingUserId: getRuntimeActingUserAttribution(),
+                },
+                deps.workerEnv,
+              )
+            : undefined;
+        const receipt = worker
+          ? sendAntigravityMessage(
+              {
+                ...messageOptions,
+                resumeSessionId: externalTarget.sessionId,
+                mcpReminder: worker.mcpReminder,
+              },
+              worker.env,
+              worker.secretEnv,
+            )
+          : externalTarget.type === "cursor"
             ? await sendCursorMessage(
                 messageOptions,
                 { ...process.env, ...secrets },
@@ -269,14 +300,17 @@ export async function send_agent_message(
               )
             : await sendOpenCodeMessage(messageOptions);
         if (receipt.mode === "steered") {
+          recordSteer();
           return {
             content: JSON.stringify({
               status: "accepted",
               agent_id: args.agent_id,
               delivery:
-                externalTarget.type === "cursor"
-                  ? "run/steer"
-                  : "session/abort+prompt",
+                externalTarget.type === "antigravity"
+                  ? "queued"
+                  : externalTarget.type === "cursor"
+                    ? "run/steer"
+                    : "session/abort+prompt",
             }),
             status: "success",
           };
@@ -363,6 +397,7 @@ export async function send_agent_message(
           throw error;
         }
         if (receipt.mode === "steered") {
+          recordSteer();
           return {
             content: JSON.stringify({
               status: "accepted",
@@ -454,6 +489,7 @@ export async function send_agent_message(
         throw error;
       }
       if (receipt.mode === "steered") {
+        recordSteer();
         return {
           content: JSON.stringify({
             status: "accepted",
@@ -574,16 +610,24 @@ export async function send_agent_message(
     const child = receipt.agent_id
       ? await resolveChildSubagent(backend, receipt.agent_id, sender.agentId)
       : null;
+    const persistRun = resumeSubagentWriter(
+      sender.conversationId,
+      { conversation_id: receipt.conversation_id },
+      actingUserId,
+    );
     if (child) {
       (deps.trackChildSend ?? trackChildSend)({
         receipt,
         child,
+        ...(persistRun && { persistRun: persistRun.update }),
         prompt: args.message,
         parentScope: {
           agentId: sender.agentId,
           conversationId: sender.conversationId,
         },
       });
+    } else if (persistRun) {
+      trackPersistedChildSend(receipt, persistRun);
     }
     return {
       content: JSON.stringify({

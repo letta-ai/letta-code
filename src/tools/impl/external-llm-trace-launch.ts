@@ -48,6 +48,7 @@ export async function traceCodexLaunch(
   context: ExternalTraceContext | undefined,
   env: NodeJS.ProcessEnv,
   client: ConfigClient,
+  resumeThreadId?: string,
   createTrace: typeof createTraceSession = createTraceSession,
 ) {
   if (
@@ -61,9 +62,23 @@ export async function traceCodexLaunch(
     const configuration = record(
       (await client.request("config/read", { includeLayers: false })).config,
     );
+    const resumed = resumeThreadId
+      ? await client
+          .request("thread/read", {
+            threadId: resumeThreadId,
+            includeTurns: false,
+          })
+          .catch(() => undefined)
+      : undefined;
+    const persistedProvider = record(resumed?.thread).modelProvider;
+    const configuredProvider = configuration.model_provider;
+    const sourceProvider =
+      typeof persistedProvider === "string" && persistedProvider
+        ? persistedProvider
+        : configuredProvider;
     const providerId =
-      typeof configuration.model_provider === "string"
-        ? configuration.model_provider
+      typeof sourceProvider === "string" && sourceProvider !== "letta_trace"
+        ? sourceProvider
         : "openai";
     const provider = record(record(configuration.model_providers)[providerId]);
     const account = record(
@@ -93,6 +108,7 @@ export async function traceCodexLaunch(
       [`model_providers.${selected}.supports_websockets`]: false,
     };
     if (providerId === "openai") {
+      if (resumeThreadId) overrides.openai_base_url = trace.url;
       overrides[`model_providers.${selected}.name`] = "OpenAI trace";
       overrides[`model_providers.${selected}.requires_openai_auth`] = true;
       overrides[`model_providers.${selected}.wire_api`] = "responses";
@@ -103,7 +119,6 @@ export async function traceCodexLaunch(
         "-c",
         `${key}=${JSON.stringify(value)}`,
       ]),
-      params: { modelProvider: selected },
     };
   } catch {
     return undefined;
