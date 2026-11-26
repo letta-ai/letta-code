@@ -6,7 +6,10 @@ import { PROJECT_SKILLS_DIR } from "@/agent/skills";
 import type { SubagentResult } from "@/agent/subagents";
 import { spawnManagedWorkloadProcess } from "@/agent/subagents/subagent-process";
 import { cloudRepositoryRoots } from "@/utils/cloud-repository-roots";
-import { confirmProcessExit } from "@/utils/confirm-process-exit";
+import {
+  confirmProcessExit,
+  STDOUT_EXIT_GRACE_MS,
+} from "@/utils/confirm-process-exit";
 import { withNativeCliPath } from "@/utils/native-cli-env";
 import {
   asRecord,
@@ -252,6 +255,7 @@ class CodexAppServerClient {
   private readonly pending = new Map<number, PendingRequest>();
   private nextRequestId = 1;
   private stderr = "";
+  private stdoutCloseTimer?: ReturnType<typeof setTimeout>;
   closeError?: Error;
 
   constructor(
@@ -260,8 +264,9 @@ class CodexAppServerClient {
     private readonly onClose: (error: Error) => void,
   ) {
     const stdout = createInterface({ input: transport.stdout });
-    stdout.once("close", () => this.close());
-    stdout.once("error", () => this.close());
+    const stdoutClosed = () => this.onStdoutClosed();
+    stdout.once("close", stdoutClosed);
+    stdout.once("error", stdoutClosed);
     stdout.on("line", (line) => {
       if (!line.trim()) return;
       let message: JsonRpcMessage;
@@ -289,7 +294,7 @@ class CodexAppServerClient {
     transport.stderr?.on("data", (chunk: string) => {
       this.stderr += chunk;
     });
-    transport.stdout.once("close", () => this.close());
+    transport.stdout.once("close", stdoutClosed);
     void transport.childExit?.then((exit) => this.close(exit));
     void transport.exited?.then((exit) => this.close(exit));
   }
@@ -342,8 +347,22 @@ class CodexAppServerClient {
     this.close();
   }
 
+  private onStdoutClosed(): void {
+    if (this.closeError || this.stdoutCloseTimer !== undefined) return;
+    if (!this.transport.childExit && !this.transport.exited) {
+      this.close();
+      return;
+    }
+    this.stdoutCloseTimer = setTimeout(
+      () => this.close(),
+      STDOUT_EXIT_GRACE_MS,
+    );
+  }
+
   private close(exit?: CodexExit): void {
     if (this.closeError) return;
+    clearTimeout(this.stdoutCloseTimer);
+    this.stdoutCloseTimer = undefined;
     const detail = this.stderr.trim().slice(-300);
     const exitDetail = exit?.signal
       ? ` (signal ${exit.signal}${exit.signal === "SIGKILL" || exit.signal === "SIGTERM" ? "; possibly out of memory" : ""})`

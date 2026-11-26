@@ -7,7 +7,10 @@ import {
   spawnManagedWorkloadProcess,
 } from "@/agent/subagents/subagent-process";
 import { cloudRepositoryRoots } from "@/utils/cloud-repository-roots";
-import { confirmProcessExit } from "@/utils/confirm-process-exit";
+import {
+  confirmProcessExit,
+  STDOUT_EXIT_GRACE_MS,
+} from "@/utils/confirm-process-exit";
 import { withNativeCliPath } from "@/utils/native-cli-env";
 import { stageClaudeRepositorySkills } from "./claude-repository-skills";
 import {
@@ -156,6 +159,8 @@ function waitForTurnStart(
 function settle(session: ClaudeSession, result: SubagentResult): void {
   if (session.settled) return;
   session.settled = true;
+  clearTimeout(session.stdoutCloseTimer);
+  session.stdoutCloseTimer = undefined;
   session.idleOnBackgroundTasks = false;
   clearBackgroundCap(session);
   const completedError = new Error("Claude Code session completed");
@@ -569,11 +574,27 @@ async function launchSession(
       `exited before a final result with ${exitCode ?? exitSignal ?? "unknown status"}`,
       exitCode === 143 || exitSignal === "SIGTERM" || exitSignal === "SIGKILL",
     );
-  const stdoutClosed = () => {
-    if (session.settled) return;
+  const finishStdoutClose = () => {
     finishTransport("stdout closed before a final result");
     if (!session.provisionalResult) abortController.abort();
   };
+  const stdoutClosed = () => {
+    if (session.settled || session.stdoutCloseTimer !== undefined) return;
+    if (session.provisionalResult || abortController.signal.aborted) {
+      finishStdoutClose();
+      return;
+    }
+    session.stdoutCloseTimer = setTimeout(
+      finishStdoutClose,
+      STDOUT_EXIT_GRACE_MS,
+    );
+  };
+  const abortDuringStdoutClose = () => {
+    if (session.stdoutCloseTimer !== undefined) finishStdoutClose();
+  };
+  abortController.signal.addEventListener("abort", abortDuringStdoutClose, {
+    once: true,
+  });
   stdout.once("close", stdoutClosed);
   stdout.once("error", stdoutClosed);
   transport.process.stdout.once("close", stdoutClosed);
@@ -586,6 +607,10 @@ async function launchSession(
     })
     .finally(() => {
       session.exited = true;
+      abortController.signal.removeEventListener(
+        "abort",
+        abortDuringStdoutClose,
+      );
       removeUpstreamAbort();
       if (sessions.get(sessionId) === session) sessions.delete(sessionId);
       resolveExit();

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { once } from "node:events";
 import { PassThrough } from "node:stream";
 import {
   __resetCodexSessionsForTests,
@@ -111,6 +112,57 @@ describe("Codex app-server settlement", () => {
       });
     },
   );
+
+  test.each(["childExit", "exited"] as const)(
+    "preserves the exit signal when stdout ends before %s",
+    async (exitSource) => {
+      const fake = new FakeCodexTransport();
+      const exit = Promise.withResolvers<{
+        code: number | null;
+        signal: NodeJS.Signals | null;
+      }>();
+      const handle = await startCodexTurn(
+        { prompt: "Initial", parentAgentId: "parent", cwd: "/repo" },
+        {
+          createTransport: () => ({
+            ...fake.transport(),
+            childExit: new Promise(() => {}),
+            exited: new Promise(() => {}),
+            [exitSource]: exit.promise,
+          }),
+        },
+      );
+      const eof = once(fake.stdout, "end");
+      fake.stdout.end();
+      await eof;
+      exit.resolve({ code: null, signal: "SIGKILL" });
+      expect(await handle.completion).toMatchObject({
+        success: false,
+        error:
+          "Codex app-server closed (signal SIGKILL; possibly out of memory)",
+      });
+    },
+  );
+
+  test("settles and kills the child when stdout ends without an exit", async () => {
+    const fake = new FakeCodexTransport();
+    const handle = await startCodexTurn(
+      { prompt: "Initial", parentAgentId: "parent", cwd: "/repo" },
+      {
+        createTransport: () => ({
+          ...fake.transport(),
+          childExit: new Promise(() => {}),
+          exited: new Promise(() => {}),
+        }),
+      },
+    );
+    fake.stdout.end();
+    expect(await handle.completion).toMatchObject({
+      success: false,
+      error: "Codex app-server closed",
+    });
+    expect(fake.killed).toBe(true);
+  }, 1_000);
 
   test("rejects pending requests when stdout errors and the child does not exit", async () => {
     const stdout = new PassThrough();

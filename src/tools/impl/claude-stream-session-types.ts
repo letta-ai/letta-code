@@ -60,6 +60,7 @@ export interface ClaudeSession {
   backgroundCapMs: number;
   controlResponseTimeoutMs: number;
   backgroundCapTimer?: ReturnType<typeof setTimeout>;
+  stdoutCloseTimer?: ReturnType<typeof setTimeout>;
   turnWaiters: Set<TurnWaiter>;
   writeLock: Promise<void>;
   completion: Promise<SubagentResult>;

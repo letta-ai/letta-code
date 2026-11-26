@@ -1,3 +1,5 @@
+export const STDOUT_EXIT_GRACE_MS = 100;
+
 export async function confirmProcessExit(
   exit: Promise<unknown>,
   name: string,
