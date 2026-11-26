@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.332:docs:42b8e8e49db8f2562800c5a3ed753edd64829093c47870fbc628c696b4382fd4:runtime:ded35c82e8d744e81e30ac01c017d9a4336c72f4e45df80793f248f858a0f512",
+  "candidate_id": "claude@2.1.332:docs:42b8e8e49db8f2562800c5a3ed753edd64829093c47870fbc628c696b4382fd4:runtime:71fe228c4bf34ba2d9334df463c13f993c028d5d3e2eec7884b48e44249db59d",
   "package_version": "2.1.332",
   "npm_integrity": "sha512-tvSh6bLvEbd97APD31AnojOrRC3AmcRj5R8sF8QIQitu3x2ucOb1kKmTkGDw41kjva+CGJfpkt+wYouk6yv56Q==",
   "npm_published_at": "2026-11-24T22:06:38.097Z",
@@ -15,7 +15,7 @@
   "docs": {
     "index_url": "https://code.claude.com/docs/llms.txt",
     "index_hash": "1c87ddefe48af186c0cdc53c00897e8a41a2f0a464762f40ecfc47a673c230d9",
-    "full_scan": true,
+    "full_scan": false,
     "scanned_at": "2026-11-26T04:21:36.091Z",
     "pages": {
       "https://code.claude.com/docs/en/accessibility.md": {
@@ -1361,7 +1361,7 @@
     "help_hash": "e8ff5fd4f4a523bf34f63e2fc8541a38ff290f47caa1729e623b5af7e6b0b197",
     "doctor": {
       "exit_code": 0,
-      "summary": "Claude Code doctor\nRunning: npm-global (<version>)\nCommit: <commit>\nPlatform: linux-x64\nPath: /watch/install/node_modules/@anthropic-ai/claude-code/bin/claude.exe\nConfig install method: not set\nSearch: OK (bundled)\nAuto-updates: disabled (set by env: DISABLE_UPDATES)\nAuto-update channel: latest\nLast update attempt: none recorded\nManaged settings (remote): not fetched — no usable credentials for the settings fetch\nOrganization policy: not fetched: no API key or claude.ai sign-in for the policy lookup (apiKeyHelper keys are not used for it)\nAPI connectivity\n- API (api.anthropic.com): answered HTTP 200 in 85 ms\n- Sign-in (platform.claude.com): answered HTTP 200 in 108 ms\n- ANTHROPIC_BASE_URL: not set · NODE_EXTRA_CA_CERTS: not set · CLAUDE_CODE_CLIENT_CERT: not set\nRemote Control\nRemote Control requires a claude.ai subscription. Run claude auth login to sign in with your claude.ai account.\n- Not signed in to claude.ai\n- claude.ai subscription auth not active\n- Sign-in is missing the user:profile scope\n- Organization not found\n- Remote Control availability could not be verified (no server response this session)\nNo installation issues found.\nFor a full setup checkup that can also fix issues, run /doctor in a Claude Code session."
+      "summary": "Claude Code doctor\nRunning: npm-global (<version>)\nCommit: <commit>\nPlatform: linux-x64\nPath: /watch/install/node_modules/@anthropic-ai/claude-code/bin/claude.exe\nConfig install method: not set\nSearch: OK (bundled)\nAuto-updates: disabled (set by env: DISABLE_UPDATES)\nAuto-update channel: latest\nLast update attempt: none recorded\nManaged settings (remote): not fetched — no usable credentials for the settings fetch\nOrganization policy: not fetched: no API key or claude.ai sign-in for the policy lookup (apiKeyHelper keys are not used for it)\nAPI connectivity\n- API (api.anthropic.com): answered HTTP 200 in 89 ms\n- Sign-in (platform.claude.com): answered HTTP 200 in 129 ms\n- ANTHROPIC_BASE_URL: not set · NODE_EXTRA_CA_CERTS: not set · CLAUDE_CODE_CLIENT_CERT: not set\nRemote Control\nRemote Control requires a claude.ai subscription. Run claude auth login to sign in with your claude.ai account.\n- Not signed in to claude.ai\n- claude.ai subscription auth not active\n- Sign-in is missing the user:profile scope\n- Organization not found\n- Remote Control availability could not be verified (no server response this session)\nNo installation issues found.\nFor a full setup checkup that can also fix issues, run /doctor in a Claude Code session."
     },
     "auto_mode_defaults": {
       "allow": [
@@ -1550,45 +1550,46 @@
     ],
     "probes": [
       {
-        "name": "read-lines-9-10-tab-prefix",
-        "status": "passed",
-        "attempts": 1,
         "assertions": {
-          "exact_line_9": true,
           "exact_line_10": true,
-          "no_line_9_padding": true,
+          "exact_line_9": true,
           "no_arrow_separator": true,
+          "no_line_9_padding": true,
           "result_not_error": true
         },
+        "attempts": 1,
+        "error": null,
+        "filesystem_changes": [],
+        "name": "read-lines-9-10-tab-prefix",
+        "status": "passed",
         "tool_calls": [
           {
-            "name": "Read",
             "input": {
               "file_path": "/watch/repo/read-fixture.txt",
               "limit": 2,
               "offset": 9
-            }
+            },
+            "name": "Read"
           }
         ],
         "tool_results": [
           "9\tline9\n10\tline10"
-        ],
-        "filesystem_changes": [],
-        "error": null
+        ]
       },
       {
+        "assertions": {
+          "deleted_task_absent": true,
+          "deleted_task_get_errors": true,
+          "metadata_arbitrary_values_accepted": true,
+          "metadata_null_update_accepted": true
+        },
+        "attempts": 1,
+        "error": null,
+        "filesystem_changes": [],
         "name": "task-metadata-delete-contract",
         "status": "passed",
-        "attempts": 1,
-        "assertions": {
-          "metadata_arbitrary_values_accepted": true,
-          "metadata_null_update_accepted": true,
-          "deleted_task_get_errors": true,
-          "deleted_task_absent": true
-        },
         "tool_calls": [
           {
-            "name": "TaskCreate",
             "input": {
               "description": "Probe task for exercising task tools.",
               "metadata": {
@@ -1596,10 +1597,10 @@
                 "probe": "remove"
               },
               "subject": "probe-task"
-            }
+            },
+            "name": "TaskCreate"
           },
           {
-            "name": "TaskUpdate",
             "input": {
               "metadata": {
                 "count": 3,
@@ -1612,30 +1613,31 @@
                 "probe": null
               },
               "taskId": "1"
-            }
+            },
+            "name": "TaskUpdate"
           },
           {
-            "name": "TaskGet",
             "input": {
               "taskId": "1"
-            }
+            },
+            "name": "TaskGet"
           },
           {
-            "name": "TaskUpdate",
             "input": {
               "status": "deleted",
               "taskId": "1"
-            }
+            },
+            "name": "TaskUpdate"
           },
           {
-            "name": "TaskGet",
             "input": {
               "taskId": "1"
-            }
+            },
+            "name": "TaskGet"
           },
           {
-            "name": "TaskList",
-            "input": {}
+            "input": {},
+            "name": "TaskList"
           }
         ],
         "tool_results": [
@@ -1645,15 +1647,13 @@
           "Updated task #1 deleted",
           "Task not found",
           "No tasks found"
-        ],
-        "filesystem_changes": [],
-        "error": null
+        ]
       }
     ],
-    "digest": "ded35c82e8d744e81e30ac01c017d9a4336c72f4e45df80793f248f858a0f512"
+    "digest": "71fe228c4bf34ba2d9334df463c13f993c028d5d3e2eec7884b48e44249db59d"
   },
-  "fetched_at": "2026-11-26T04:22:14.418Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/45754598438",
-  "state_commit_parent": "84e8ad964874eb3bd5dbbf00203ccc2ecc2e5432",
-  "analysis_parent_sha": "84e8ad964874eb3bd5dbbf00203ccc2ecc2e5432"
+  "fetched_at": "2026-11-26T06:29:15.788Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/45768376690",
+  "state_commit_parent": "6588be4e542dfdc8e85c803b1bb63f6255f8ed6a",
+  "analysis_parent_sha": "6588be4e542dfdc8e85c803b1bb63f6255f8ed6a"
 }
