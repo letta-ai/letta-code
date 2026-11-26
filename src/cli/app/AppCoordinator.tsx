@@ -490,15 +490,18 @@ export function App({
     }
   }, [streaming]);
 
-  const processingConversationRef = useRef(0);
-
+  // Guard ref for preventing concurrent processConversation calls
+  const processingConversationRef = useRef(0),
+    staleTurnUnwindingRef = useRef(false),
+    releasedGenerationRef = useRef<number | null>(null);
+  // Generation counter - incremented on each ESC interrupt.
   const conversationGenerationRef = useRef(0);
-
   const [interruptRequested, setInterruptRequested] = useState(false);
-
+  // Whether a command is running (disables input but no streaming UI)
+  // Uses synced state to keep ref in sync for reliable async checks
   const [commandRunning, setCommandRunning, commandRunningRef] =
     useSyncedState(false);
-
+  // Profile load confirmation - when loading a profile and current agent is unsaved
   const [profileConfirmPending, setProfileConfirmPending] = useState<{
     name: string;
     agentId: string;
@@ -3412,6 +3415,8 @@ export function App({
     precomputedDiffsRef,
     prepareScopedToolExecutionContext,
     processingConversationRef,
+    releasedGenerationRef,
+    staleTurnUnwindingRef,
     queuedApprovalResultsRef,
     queueApprovalResults,
     queueSnapshotRef,
@@ -3623,6 +3628,8 @@ export function App({
     pendingApprovals,
     pendingInterruptRecoveryConversationIdRef,
     processingConversationRef,
+    releasedGenerationRef,
+    staleTurnUnwindingRef,
     queueApprovalResults,
     refreshDerived,
     resetTrajectoryBases,
@@ -4662,7 +4669,9 @@ export function App({
         inputEnabled={inputEnabled}
         inputVisible={inputVisible}
         interruptRequested={
-          interruptRequested || !!abortControllerRef.current?.signal.aborted
+          interruptRequested ||
+          !!abortControllerRef.current?.signal.aborted ||
+          staleTurnUnwindingRef.current
         }
         hasStopFailedTasks={hasStopFailedTasks}
         isAgentBusy={isAgentBusy}

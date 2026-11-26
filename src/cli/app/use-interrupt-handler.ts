@@ -51,6 +51,8 @@ type InterruptHandlerContext = {
   pendingApprovals: ApprovalRequest[];
   pendingInterruptRecoveryConversationIdRef: MutableRefObject<string | null>;
   processingConversationRef: MutableRefObject<number>;
+  releasedGenerationRef: MutableRefObject<number | null>;
+  staleTurnUnwindingRef: MutableRefObject<boolean>;
   queueApprovalResults: QueueApprovalResults;
   refreshDerived: () => void;
   resetTrajectoryBases: () => void;
@@ -124,6 +126,8 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
     pendingApprovals,
     pendingInterruptRecoveryConversationIdRef,
     processingConversationRef,
+    releasedGenerationRef,
+    staleTurnUnwindingRef,
     queueApprovalResults,
     refreshDerived,
     resetTrajectoryBases,
@@ -147,6 +151,9 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
 
   const settleIfNoTurnInFlight = () => {
     if (processingConversationRef.current > 0) return;
+    if (!abortControllerRef.current) {
+      staleTurnUnwindingRef.current = false;
+    }
     settleTuiInterrupt({
       userCancelledRef,
       setInterruptRequested,
@@ -165,7 +172,9 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       .then(() => {
         const latched = interruptEscalationRef.current;
         const cancelConversationId =
-          latched && latched.controller === abortControllerRef.current
+          latched &&
+          (latched.controller === abortControllerRef.current ||
+            staleTurnUnwindingRef.current)
             ? latched.target
             : conversationIdRef.current === "default"
               ? agentIdRef.current
@@ -203,6 +212,9 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       hasTrackedTools &&
       !toolResultsInFlightRef.current
     ) {
+      staleTurnUnwindingRef.current =
+        processingConversationRef.current > 0 ||
+        abortControllerRef.current !== null;
       latchInterruptTarget();
       toolAbortControllerRef.current.abort();
 
@@ -271,9 +283,32 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
 
     const abortedControllerWitness =
       abortControllerRef.current?.signal.aborted ?? false;
-    if (!streaming || interruptRequested || abortedControllerWitness) {
-      if (interruptRequested || abortedControllerWitness) {
-        abortControllerRef.current?.abort();
+    if (
+      !streaming ||
+      interruptRequested ||
+      abortedControllerWitness ||
+      staleTurnUnwindingRef.current
+    ) {
+      // Second+ Esc while the first interrupt is still unwinding: escalate.
+      // Re-fire the backend cancel (the first attempt may have failed) and
+      // settle the interrupt immediately so the UI is never wedged waiting
+      // for a turn that is not observing the abort. The first Esc aborts the
+      // controller synchronously, so signal.aborted witnesses an in-flight
+      // interrupt at the outer gate too: a rapid second Esc before React
+      // commits (stale closure still reads streaming) must reach this branch,
+      // as must a post-force-settle Esc while a stuck turn owns its controller.
+      if (
+        interruptRequested ||
+        abortedControllerWitness ||
+        staleTurnUnwindingRef.current
+      ) {
+        const ownsLatchedTurn =
+          interruptEscalationRef.current?.controller !== null &&
+          interruptEscalationRef.current?.controller ===
+            abortControllerRef.current;
+        if (interruptRequested || abortedControllerWitness) {
+          abortControllerRef.current?.abort();
+        }
         sendBackendCancel();
         appendError(
           "Interrupt forced; the turn will stop as soon as it observes the abort.",
@@ -284,6 +319,16 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
           setInterruptRequested,
           queueLength: tuiQueueRef.current?.length ?? 0,
           bumpDequeueEpoch: () => setDequeueEpoch((e) => e + 1),
+          ...(ownsLatchedTurn
+            ? {
+                forceRelease: {
+                  abortControllerRef,
+                  processingConversationRef,
+                  conversationGenerationRef,
+                  releasedGenerationRef,
+                },
+              }
+            : {}),
         });
       }
       const retried = interruptStopFailedSubagents(INTERRUPTED_BY_USER, {
@@ -312,6 +357,10 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
 
     if (EAGER_CANCEL) {
       latchInterruptTarget();
+      staleTurnUnwindingRef.current =
+        processingConversationRef.current > 0 ||
+        abortControllerRef.current !== null;
+      // Prevent multiple handleInterrupt calls while state updates are pending
       setInterruptRequested(true);
 
       buffersRef.current.abortGeneration =

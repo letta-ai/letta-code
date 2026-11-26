@@ -236,6 +236,9 @@ type ConversationLoopContext = {
     overrideModel?: string | null,
   ) => Promise<PreparedScopeToolContext>;
   processingConversationRef: MutableRefObject<number>;
+  releasedGenerationRef: MutableRefObject<number | null>;
+  staleTurnUnwindingRef: MutableRefObject<boolean>;
+  /** Read side of the approval-results queue, for abort partial-result overlays. */
   queuedApprovalResultsRef: MutableRefObject<ApprovalResult[] | null>;
   queueApprovalResults: QueueApprovalResults;
   queueSnapshotRef: MutableRefObject<QueuedMessage[]>;
@@ -332,6 +335,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     precomputedDiffsRef,
     prepareScopedToolExecutionContext,
     processingConversationRef,
+    releasedGenerationRef,
+    staleTurnUnwindingRef,
     queuedApprovalResultsRef,
     queueApprovalResults,
     queueSnapshotRef,
@@ -618,12 +623,12 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           userCancelledRef.current = false;
           return;
         }
-
+        // Check if user hit escape before we started
         if (userCancelledRef.current) {
           userCancelledRef.current = false;
           return;
         }
-
+        // Double-check we haven't become stale between entry and try block
         if (myGeneration !== conversationGenerationRef.current) {
           return;
         }
@@ -634,7 +639,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         setExecutionPhase("requesting");
         turnAbortController = new AbortController();
         abortControllerRef.current = turnAbortController;
-
+        staleTurnUnwindingRef.current = false;
         if (
           await maybeStreamSyntheticNoModelResponse(
             currentInput,
@@ -644,7 +649,9 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         ) {
           return;
         }
-
+        // Recover interrupted message only after explicit user interrupt: if
+        // cache holds ONLY user messages, prepend them (type="message" is a
+        // local discriminator, not in SDK types).
         const originalInput = currentInput;
         const cacheIsAllUserMsgs = lastSentInputRef.current?.every(
           (m: MessageCreate | ApprovalCreate) =>
@@ -2498,12 +2505,16 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         if (!preserveTranscriptStartForApproval) {
           pendingTranscriptStartLineIndexRef.current = null;
         }
-
+        // Wakes dequeue on a normal completion; when superseded by an ESC
+        // interrupt, settles the interrupt (cancelling -> idle) instead.
         finishTuiTurn({
           isStale: myGeneration !== conversationGenerationRef.current,
           turnAbortController,
+          turnGeneration: myGeneration,
+          releasedGenerationRef,
           abortControllerRef,
           processingConversationRef,
+          staleTurnUnwindingRef,
           userCancelledRef,
           setInterruptRequested,
           queueLength: () => tuiQueueRef.current?.length ?? 0,
