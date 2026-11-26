@@ -1,5 +1,5 @@
 {
-  "src/agent/memory-git.ts": 1819,
+  "src/agent/memory-git.ts": 1795,
   "src/backend/local/local-store.ts": 3179,
   "src/cli/app/AppCoordinator.tsx": 4744,
   "src/cli/app/AppView.tsx": 1661,
