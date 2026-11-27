@@ -3,6 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import { getChannelDir } from "@/channels/config";
 import type { ChannelMessageAttachment } from "@/channels/types";
+import { sleep } from "@/utils/sleep";
 import type { TelegramLikeMessage } from "./message-shapes";
 
 export {
@@ -419,15 +420,136 @@ async function saveTelegramAttachment(params: {
   return filePath;
 }
 
-async function fetchTelegramFile(
-  url: string,
-  timeoutMs: number,
-): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+const TELEGRAM_DOWNLOAD_BACKOFF_MS = [250, 500];
+const SAFE_DOWNLOAD_ERROR_CODES = new Set([
+  "EAI_AGAIN",
+  "MISSING_FILE_PATH",
+  "ECONNABORTED",
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ENOTFOUND",
+  "EPIPE",
+  "ETIMEDOUT",
+  "UND_ERR_BODY_TIMEOUT",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_SOCKET",
+]);
 
+function telegramDownloadFailure(error: unknown): {
+  status?: number;
+  cause?: string;
+} {
+  let status: number | undefined;
+  let cause: string | undefined;
+  for (
+    let depth = 0;
+    depth < 5 && error && typeof error === "object";
+    depth++
+  ) {
+    const code =
+      "error_code" in error
+        ? error.error_code
+        : "status" in error
+          ? error.status
+          : undefined;
+    if (
+      typeof code === "number" &&
+      Number.isInteger(code) &&
+      code >= 400 &&
+      code <= 599
+    ) {
+      status ??= code;
+    }
+    if (
+      "code" in error &&
+      typeof error.code === "string" &&
+      SAFE_DOWNLOAD_ERROR_CODES.has(error.code)
+    ) {
+      cause ??= error.code;
+    }
+    if (
+      "name" in error &&
+      (error.name === "AbortError" || error.name === "TimeoutError")
+    ) {
+      cause ??= error.name;
+    }
+    error =
+      "error" in error && "name" in error && error.name === "HttpError"
+        ? error.error
+        : "cause" in error
+          ? error.cause
+          : undefined;
+  }
+  return { status, cause };
+}
+
+async function fetchTelegramAttachment(params: {
+  token: string;
+  bot: TelegramFileLookup;
+  candidate: TelegramAttachmentCandidate;
+}): Promise<{
+  remotePath: string;
+  buffer: Buffer;
+  responseMimeType?: string;
+} | null> {
+  const { candidate } = params;
+  const { file_path: remotePath } = await params.bot.api.getFile(
+    candidate.fileId,
+  );
+  if (!remotePath) {
+    throw Object.assign(new Error("getFile returned no file_path"), {
+      code: "MISSING_FILE_PATH",
+    });
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    TELEGRAM_DOWNLOAD_TIMEOUT_MS,
+  );
   try {
-    return await fetch(url, { signal: controller.signal });
+    const response = await fetch(
+      buildTelegramFileUrl(params.token, remotePath),
+      {
+        signal: controller.signal,
+      },
+    );
+    if (!response.ok) {
+      void response.body?.cancel().catch(() => {});
+      throw Object.assign(new Error("Telegram file request failed"), {
+        status: response.status,
+      });
+    }
+
+    const contentLength = Number(response.headers.get("content-length"));
+    if (
+      contentLength > MAX_TELEGRAM_DOWNLOAD_BYTES &&
+      Number.isFinite(contentLength)
+    ) {
+      void response.body?.cancel().catch(() => {});
+      console.warn(
+        `[Telegram] Refusing attachment ${candidate.name ?? candidate.fileId}: content-length ${contentLength} exceeds limit ${MAX_TELEGRAM_DOWNLOAD_BYTES}.`,
+      );
+      return null;
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.byteLength > MAX_TELEGRAM_DOWNLOAD_BYTES) {
+      console.warn(
+        `[Telegram] Refusing attachment ${candidate.name ?? candidate.fileId}: downloaded size ${buffer.byteLength} exceeds limit ${MAX_TELEGRAM_DOWNLOAD_BYTES}.`,
+      );
+      return null;
+    }
+    return {
+      remotePath,
+      buffer,
+      responseMimeType: normalizeTelegramMimeType(
+        response.headers.get("content-type") ?? undefined,
+      ),
+    };
   } finally {
     clearTimeout(timeout);
   }
@@ -452,51 +574,59 @@ async function downloadTelegramAttachment(params: {
     return null;
   }
 
-  const file = await params.bot.api.getFile(candidate.fileId);
-  const remotePath = file.file_path;
-  if (!remotePath) {
-    console.warn(
-      `[Telegram] getFile returned no file_path for attachment ${candidate.name ?? candidate.fileId}.`,
-    );
-    return null;
-  }
+  let downloaded: Awaited<ReturnType<typeof fetchTelegramAttachment>>;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      downloaded = await fetchTelegramAttachment(params);
+      break;
+    } catch (error) {
+      const { status, cause } = telegramDownloadFailure(error);
+      if (
+        status === 400 &&
+        error &&
+        typeof error === "object" &&
+        "description" in error &&
+        error.description === "Bad Request: file is too big"
+      ) {
+        console.warn(
+          "[Telegram] Skipping attachment: Telegram reports that the file is too big.",
+        );
+        return null;
+      }
+      const delay = TELEGRAM_DOWNLOAD_BACKOFF_MS[attempt];
+      if (
+        delay !== undefined &&
+        (status === undefined ||
+          status === 408 ||
+          status === 429 ||
+          status >= 500)
+      ) {
+        await sleep(delay);
+        continue;
+      }
 
-  const response = await fetchTelegramFile(
-    buildTelegramFileUrl(params.token, remotePath),
-    TELEGRAM_DOWNLOAD_TIMEOUT_MS,
-  );
-  if (!response.ok) {
-    console.warn(
-      `[Telegram] Failed to download attachment ${candidate.name ?? candidate.fileId} from ${remotePath}: ${response.status} ${response.statusText}`,
-    );
-    return null;
-  }
-
-  const contentLength = response.headers.get("content-length");
-  if (contentLength) {
-    const parsedLength = Number(contentLength);
-    if (
-      Number.isFinite(parsedLength) &&
-      parsedLength > MAX_TELEGRAM_DOWNLOAD_BYTES
-    ) {
+      const detail = [
+        status === undefined ? undefined : `HTTP ${status}`,
+        cause,
+      ]
+        .filter(Boolean)
+        .join(", ");
       console.warn(
-        `[Telegram] Refusing attachment ${candidate.name ?? candidate.fileId}: content-length ${parsedLength} exceeds limit ${MAX_TELEGRAM_DOWNLOAD_BYTES}.`,
+        `[Telegram] Attachment download failed after ${attempt + 1} attempt${attempt === 0 ? "" : "s"}${detail ? `: ${detail}` : ""}.`,
       );
-      return null;
+      return {
+        id: candidate.fileId,
+        name: candidate.name,
+        mimeType: candidate.mimeType,
+        kind: candidate.kind,
+        downloadReason: "download_failed",
+      };
     }
   }
-
-  const buffer = Buffer.from(await response.arrayBuffer());
-  if (buffer.byteLength > MAX_TELEGRAM_DOWNLOAD_BYTES) {
-    console.warn(
-      `[Telegram] Refusing attachment ${candidate.name ?? candidate.fileId}: downloaded size ${buffer.byteLength} exceeds limit ${MAX_TELEGRAM_DOWNLOAD_BYTES}.`,
-    );
+  if (!downloaded) {
     return null;
   }
-
-  const responseMimeType = normalizeTelegramMimeType(
-    response.headers.get("content-type") ?? undefined,
-  );
+  const { remotePath, buffer, responseMimeType } = downloaded;
   const fileName = inferAttachmentFileName({
     candidate,
     remotePath,
@@ -583,11 +713,8 @@ export async function resolveTelegramInboundAttachments(params: {
         bot: params.bot,
         candidate,
         transcribeVoice: params.transcribeVoice,
-      }).catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
-        console.warn(
-          `[Telegram] Attachment download failed for ${candidate.name ?? candidate.fileId}: ${message}`,
-        );
+      }).catch(() => {
+        console.warn("[Telegram] Failed to process downloaded attachment.");
         return null;
       }),
     ),
