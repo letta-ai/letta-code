@@ -305,6 +305,9 @@ export async function prepareToolExecutionContextForScope(params: {
   workspaceSandbox?: RuntimeContextSnapshot["workspaceSandbox"];
   executionSettings?: RuntimeContextSnapshot["executionSettings"];
   foregroundYieldMs?: number;
+  cachedConversation?: Awaited<
+    ReturnType<ReturnType<typeof getBackend>["retrieveConversation"]>
+  >;
   cachedAgent?: AgentState | null;
   readScopeState?: <T>(read: () => Promise<T>) => Promise<T>;
   modContext?: ModContext;
@@ -360,9 +363,10 @@ export async function prepareToolExecutionContextForScope(params: {
   const conversationTarget =
     conversationId && conversationId !== "default"
       ? modelTargetFromCarrier(
-          (await readScopeState(() =>
-            backend.retrieveConversation(conversationId),
-          )) as ScopeModelCarrier,
+          (params.cachedConversation ??
+            (await readScopeState(() =>
+              backend.retrieveConversation(conversationId),
+            ))) as ScopeModelCarrier,
         )
       : { model: null, providerType: null, openAICompatibleProxy: false };
 
