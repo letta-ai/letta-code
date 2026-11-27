@@ -246,6 +246,23 @@ function armCompletedSubagentCleanup(id: string): void {
 
 let subagentCounter = 0;
 
+function putAgent(id: string, agent: SubagentState): void {
+  if (agent.conversationId && agent.conversationId !== "default") {
+    for (const [otherId, other] of store.agents) {
+      if (
+        otherId !== id &&
+        other.conversationId === agent.conversationId &&
+        other.parentAgentId === agent.parentAgentId &&
+        other.parentConversationId === agent.parentConversationId
+      ) {
+        clearCompletedSubagentCleanup(otherId);
+        store.agents.delete(otherId);
+      }
+    }
+  }
+  store.agents.set(id, agent);
+}
+
 export function generateSubagentId(): string {
   return `subagent-${Date.now()}-${++subagentCounter}`;
 }
@@ -302,7 +319,7 @@ export function registerSubagent(
   };
 
   clearCompletedSubagentCleanup(id);
-  store.agents.set(id, agent);
+  putAgent(id, agent);
   notifyListeners();
 }
 
@@ -336,7 +353,7 @@ export function updateSubagent(
     maxToolCallsSeen: nextMax,
     updatedAt: Date.now(),
   };
-  store.agents.set(id, updatedAgent);
+  putAgent(id, updatedAgent);
   observeStateChange(agent, updatedAgent);
   if (updatedAgent.status === "completed" || updatedAgent.status === "error") {
     scheduleCompletedSubagentCleanup(id);
@@ -368,7 +385,7 @@ export function addToolCall(
       agent.toolCalls.length + 1,
     ),
   };
-  store.agents.set(subagentId, updatedAgent);
+  putAgent(subagentId, updatedAgent);
   observeStateChange(agent, updatedAgent);
   notifyListeners();
 }
@@ -392,7 +409,7 @@ export function addProgressText(
     ].slice(-MAX_PROGRESS_TEXTS),
     progressTextCount: count,
   };
-  store.agents.set(subagentId, updatedAgent);
+  putAgent(subagentId, updatedAgent);
   observeStateChange(agent, updatedAgent);
   notifyListeners();
 }
@@ -423,7 +440,7 @@ export function completeSubagent(
     totalTokens: result.totalTokens ?? agent.totalTokens,
     maxToolCallsSeen: Math.max(agent.maxToolCallsSeen, agent.toolCalls.length),
   } as SubagentState;
-  store.agents.set(id, updatedAgent);
+  putAgent(id, updatedAgent);
   observeStateChange(agent, updatedAgent, resultIdentity);
   scheduleCompletedSubagentCleanup(id);
   notifyListeners();
@@ -604,7 +621,7 @@ export function interruptActiveSubagents(
           : {}),
         stopFailed: undefined,
       };
-      store.agents.set(id, updatedAgent);
+      putAgent(id, updatedAgent);
       observeStateChange(agent, updatedAgent);
       scheduleCompletedSubagentCleanup(id);
       anyInterrupted = true;
@@ -637,7 +654,7 @@ export function interruptStopFailedSubagents(
         : {}),
       stopFailed: undefined,
     };
-    store.agents.set(id, updatedAgent);
+    putAgent(id, updatedAgent);
     observeStateChange(agent, updatedAgent);
     scheduleCompletedSubagentCleanup(id);
     interrupted.push(id);

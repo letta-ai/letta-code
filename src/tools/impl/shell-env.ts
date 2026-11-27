@@ -372,6 +372,8 @@ export function getShellEnv(): NodeJS.ProcessEnv {
     }
   } catch {}
 
+  if (!agentId) agentId = getRuntimeContext()?.detachedParentAddress?.agentId;
+
   if (!agentId) {
     const fallbackAgentId = env.AGENT_ID || env.LETTA_AGENT_ID;
     if (typeof fallbackAgentId === "string" && fallbackAgentId.trim()) {
