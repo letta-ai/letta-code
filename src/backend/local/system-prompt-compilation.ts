@@ -378,7 +378,7 @@ function injectCoreMemory(rawSystemPrompt: string, coreMemory: string): string {
   const prompt = rawSystemPrompt.includes(CORE_MEMORY_VARIABLE)
     ? rawSystemPrompt
     : `${rawSystemPrompt.trimEnd()}\n\n${CORE_MEMORY_VARIABLE}`;
-  return prompt.replaceAll(CORE_MEMORY_VARIABLE, coreMemory);
+  return prompt.replaceAll(CORE_MEMORY_VARIABLE, () => coreMemory);
 }
 
 function stringField(value: unknown): string | undefined {
