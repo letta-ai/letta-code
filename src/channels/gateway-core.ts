@@ -17,6 +17,7 @@ import type {
   StreamDeltaMessage,
   WsProtocolMessage,
 } from "@/types/app-server-protocol";
+import { readGitAttribution } from "@/types/git-attribution";
 import {
   sourceLifecycleKey,
   sourceRouteKey,
@@ -242,10 +243,20 @@ export class ChannelGateway {
         ]);
         await this.performRuntimeRegistration(state, delivery);
       });
+      let gitAttribution: ReturnType<typeof readGitAttribution>;
+      for (const source of delivery.sources) {
+        gitAttribution = readGitAttribution({
+          requester: source.senderName,
+          conversation:
+            source.conversationPermalink ?? delivery.runtime.conversation_id,
+        });
+        if (gitAttribution) break;
+      }
       const response = await this.client.submitInput({
         runtime: delivery.runtime,
         payload: {
           kind: "create_message",
+          ...(gitAttribution ? { git_attribution: gitAttribution } : {}),
           messages: [
             {
               role: "user",

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,12 +13,14 @@ import {
 } from "@/agent/context";
 import { sendMessageStreamWithBackend } from "@/agent/message";
 import { APIBackend } from "@/backend";
+import { getShellEnv } from "@/tools/impl/shell-env";
 import {
   prepareToolExecutionContextForSpecificTools,
   releaseToolExecutionContext,
 } from "@/tools/manager";
 import { openListenerConnection } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
+import { createIncomingMessage } from "./inbound-dispatch";
 import { enqueueInboundUserMessage } from "./inbound-queue";
 import {
   createInterruptedTurnStore,
@@ -32,6 +35,7 @@ import type { ListenerTransport } from "./transport";
 import { handleApprovalStop } from "./turn-approval";
 import { releaseListenerTurnContext } from "./turn-context";
 import type { TurnLease } from "./turn-lifecycle";
+import { runObservedTurn } from "./turn-observers";
 import { finishListenerTurn } from "./turn-terminal";
 
 function createOpenTransport(sentPayloads: string[] = []): ListenerTransport {
@@ -946,4 +950,38 @@ describe("listener turn lifecycle integration", () => {
     expect(getCurrentAgentId()).toBe("agent-1");
     expect(getConversationId()).toBe("conv-1");
   });
+});
+
+test("shell children inherit attribution only from their own turn", async () => {
+  const runtime = { agent_id: "agent-1", conversation_id: "conv-1" };
+  const payload = {
+    kind: "create_message" as const,
+    messages: [{ role: "user" as const, content: "hello" }],
+  };
+  const gitAttribution = { requester: "Alice", conversation: "conv-1" };
+  const readChildAttribution = () =>
+    JSON.parse(
+      execFileSync(
+        process.execPath,
+        [
+          "-e",
+          "console.log(JSON.stringify({requester: process.env.LETTA_GIT_REQUESTER, conversation: process.env.LETTA_GIT_CONVERSATION}))",
+        ],
+        { env: getShellEnv(), encoding: "utf8" },
+      ),
+    );
+
+  const attributed = createIncomingMessage(runtime, {
+    ...payload,
+    git_attribution: gitAttribution,
+  });
+  const unattributed = createIncomingMessage(runtime, payload);
+  await runObservedTurn(attributed, async () => {
+    expect(readChildAttribution()).toEqual(gitAttribution);
+    await runObservedTurn(unattributed, async () => {
+      expect(readChildAttribution()).toEqual({});
+    });
+    expect(readChildAttribution()).toEqual(gitAttribution);
+  });
+  expect(readChildAttribution()).toEqual({});
 });

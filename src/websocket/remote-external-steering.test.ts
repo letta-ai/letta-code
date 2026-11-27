@@ -11,6 +11,7 @@ import {
 import { __testSetBackend, type AgentCreateBody } from "@/backend";
 import { createAssistantMessageStream } from "@/backend/dev/headless-turn-executor";
 import { LocalBackend } from "@/backend/local";
+import { runWithRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { removeTestDir } from "@/test-utils/test-fs";
 import { backgroundTasks } from "@/tools/impl/process_manager";
@@ -73,7 +74,7 @@ if (process.argv.includes("auth")) {
   process.exit(0);
 }
 const resumeIndex = process.argv.indexOf("--resume");
-log({ event: "started", args: process.argv.slice(2), resume: resumeIndex >= 0 ? process.argv[resumeIndex + 1] : null });
+log({ event: "started", args: process.argv.slice(2), resume: resumeIndex >= 0 ? process.argv[resumeIndex + 1] : null, requester: process.env.LETTA_GIT_REQUESTER, conversation: process.env.LETTA_GIT_CONVERSATION });
 const output = (value) => process.stdout.write(JSON.stringify(value) + "\n");
 output({ type: "system", subtype: "init", session_id: resumeIndex >= 0 ? process.argv[resumeIndex + 1] : null });
 const start = () => {
@@ -188,38 +189,44 @@ test.skipIf(process.platform === "win32")(
       agentId: runtime.agent_id,
       conversationId: runtime.conversation_id,
     };
-    const launched = await launchRemoteExternalCodingAgent(
-      {
-        type: "claude-code",
-        computer: "test computer",
-        prompt: "initial assignment",
-        description: "remote fake Claude",
-        toolCallId: "launch-call",
-        parentScope,
-      },
-      {
-        spawn: spawnBackgroundSubagentTask,
-        resolveComputer: async () => ({
-          connectionId: "local-test",
-          environment: {
-            id: "environment-e2e",
+    const gitAttribution = {
+      requester: "Alice",
+      conversation: parentScope.conversationId,
+    };
+    const launched = await runWithRuntimeContext({ gitAttribution }, () =>
+      launchRemoteExternalCodingAgent(
+        {
+          type: "claude-code",
+          computer: "test computer",
+          prompt: "initial assignment",
+          description: "remote fake Claude",
+          toolCallId: "launch-call",
+          parentScope,
+        },
+        {
+          spawn: spawnBackgroundSubagentTask,
+          resolveComputer: async () => ({
             connectionId: "local-test",
-            deviceId: "device-e2e",
-            connectionName: "test computer",
-            organizationId: "organization-e2e",
-            podId: null,
-            connectedAt: Date.now(),
-            lastHeartbeat: Date.now(),
-            lastSeenAt: Date.now(),
-            firstSeenAt: Date.now(),
-            metadata: {
-              launch_subagent_notify_caller: true,
-              subagent_message: true,
+            environment: {
+              id: "environment-e2e",
+              connectionId: "local-test",
+              deviceId: "device-e2e",
+              connectionName: "test computer",
+              organizationId: "organization-e2e",
+              podId: null,
+              connectedAt: Date.now(),
+              lastHeartbeat: Date.now(),
+              lastSeenAt: Date.now(),
+              firstSeenAt: Date.now(),
+              metadata: {
+                launch_subagent_notify_caller: true,
+                subagent_message: true,
+              },
             },
-          },
-        }),
-        connect: async () => connect(),
-      },
+          }),
+          connect: async () => connect(),
+        },
+      ),
     );
     expect(launched.success).toBe(true);
     if (!launched.success) throw new Error(launched.error);
@@ -267,7 +274,9 @@ test.skipIf(process.platform === "win32")(
         ? records
         : undefined;
     }, "fake Claude steering input");
-    expect(steeredLog).toBeDefined();
+    expect(
+      steeredLog?.find((entry) => entry.event === "started"),
+    ).toMatchObject(gitAttribution);
 
     const handoffRuntime = {
       ...runtime,

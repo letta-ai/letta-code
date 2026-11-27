@@ -120,6 +120,8 @@ export interface ChannelTurnSource {
   chatId: string;
   chatType?: ChannelChatType;
   senderId?: string;
+  senderName?: string;
+  conversationPermalink?: string;
   senderTeamId?: string;
   showStartupStatus?: boolean;
   messageId?: string;

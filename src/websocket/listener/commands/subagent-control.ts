@@ -34,6 +34,7 @@ import {
 import { readNativeSessionOwner } from "@/tools/impl/native-session-owner";
 import { backgroundTasks, getNextTaskId } from "@/tools/impl/process_manager";
 import { task_stop } from "@/tools/impl/task-stop";
+import { readGitAttribution } from "@/types/git-attribution";
 import type {
   SubagentMessageCommand,
   SubagentMessageResponse,
@@ -123,6 +124,7 @@ function runtimeContext(
     agentId: parent.agentId,
     conversationId: parent.conversationId,
     actingUserId: command.runtime.acting_user_id,
+    gitAttribution: readGitAttribution(command.git_attribution),
     workingDirectory: getConversationWorkingDirectory(
       parent.listener,
       parent.agentId,
