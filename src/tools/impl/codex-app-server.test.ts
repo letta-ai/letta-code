@@ -18,6 +18,95 @@ import { CAPACITY_MESSAGE, FakeCodexTransport } from "./codex-test-transport";
 beforeAll(() => settingsManager.initialize());
 afterEach(() => __resetCodexSessionsForTests());
 
+describe("Codex app-server requests", () => {
+  test.each([
+    ["item/commandExecution/requestApproval", { decision: "decline" }],
+    ["item/fileChange/requestApproval", { decision: "decline" }],
+    ["item/permissions/requestApproval", { permissions: {}, scope: "turn" }],
+    ["item/tool/requestUserInput", { answers: {} }],
+    [
+      "mcpServer/elicitation/request",
+      { action: "decline", content: null, _meta: null },
+    ],
+    [
+      "applyPatchApproval",
+      { decision: { denied: { rejection: "Approvals are disabled" } } },
+    ],
+    [
+      "execCommandApproval",
+      { decision: { denied: { rejection: "Approvals are disabled" } } },
+    ],
+    ["item/tool/call", { success: false, contentItems: [] }],
+  ])("answers %s with the protocol result", async (method, result) => {
+    const fake = new FakeCodexTransport();
+    fake.onInitialize = () => fake.send({ id: "server-1", method, params: {} });
+    await startCodexTurn(
+      { prompt: "work", parentAgentId: "parent", cwd: "/repo" },
+      { createTransport: () => fake.transport() },
+    );
+    expect(fake.requests).toContainEqual({ id: "server-1", result });
+  });
+
+  test.each(["account/chatgptAuthTokens/refresh", "attestation/generate"])(
+    "returns a protocol error for unsupported %s",
+    async (method) => {
+      const fake = new FakeCodexTransport();
+      fake.onInitialize = () => fake.send({ id: "server-2", method });
+      await startCodexTurn(
+        { prompt: "work", parentAgentId: "parent", cwd: "/repo" },
+        { createTransport: () => fake.transport() },
+      );
+      expect(fake.requests).toContainEqual({
+        id: "server-2",
+        error: {
+          code: -32601,
+          message: `Unsupported Codex request: ${method}`,
+        },
+      });
+    },
+  );
+
+  test("answers currentTime/read in whole Unix seconds", async () => {
+    const fake = new FakeCodexTransport();
+    fake.onInitialize = () =>
+      fake.send({ id: "clock", method: "currentTime/read" });
+    const before = Math.floor(Date.now() / 1_000);
+    await startCodexTurn(
+      { prompt: "work", parentAgentId: "parent", cwd: "/repo" },
+      { createTransport: () => fake.transport() },
+    );
+    const result = fake.requests.find(({ id }) => id === "clock")?.result;
+    const time = (result as { currentTimeAt: number } | undefined)
+      ?.currentTimeAt;
+    expect(Number.isInteger(time)).toBe(true);
+    expect(time).toBeGreaterThanOrEqual(before);
+    expect(time).toBeLessThanOrEqual(Math.floor(Date.now() / 1_000));
+  });
+
+  test("answers an unknown request without settling a client request with the same ID", async () => {
+    const fake = new FakeCodexTransport();
+    fake.initializeError = true;
+    fake.onInitialize = (id) =>
+      fake.send({ id, method: "future/request", params: {} });
+    await expect(
+      startCodexTurn(
+        { prompt: "work", parentAgentId: "parent", cwd: "/repo" },
+        { createTransport: () => fake.transport() },
+      ),
+    ).rejects.toThrow("initialize failed");
+    expect(fake.requests).toContainEqual({
+      id: 1,
+      error: {
+        code: -32601,
+        message: "Unsupported Codex request: future/request",
+      },
+    });
+    expect(fake.requests.some(({ method }) => method === "initialized")).toBe(
+      false,
+    );
+  });
+});
+
 test("registers Codex repository skills before thread startup", async () => {
   const fake = new FakeCodexTransport();
   const options = {
