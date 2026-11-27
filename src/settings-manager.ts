@@ -34,6 +34,7 @@ import type { ToolsetPreference } from "./tools/toolset-types";
 import type { ClientPreferences } from "./types/client-preferences";
 import { debugWarn } from "./utils/debug.js";
 import { exists, mkdir, readFile, writeFile } from "./utils/fs.js";
+import { recordProcessSession } from "./utils/process-session.js";
 import {
   deleteSecureTokens,
   getSecureTokens,
@@ -1216,6 +1217,7 @@ class SettingsManager {
     if (!shouldIsolateHomeProjectConfig(workingDirectory))
       this.setLocalLastSession(session, workingDirectory);
     this.setGlobalLastSession(session);
+    recordProcessSession(agentId, conversationId);
   }
 
   getPinnedAgents(): string[] {
