@@ -4,6 +4,7 @@ import type {
   ApprovalCreate,
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
+import type { RunErrorInfo } from "@/agent/approval-recovery";
 import type { sendMessageStream } from "@/agent/message";
 import {
   getRetryDelayMs,
@@ -23,6 +24,7 @@ import {
   finalizeHandledRecoveryTurn,
   isRetriablePostStopError,
 } from "./recovery";
+import { getApprovalToolCallDesyncErrorText } from "./recovery-error-policy";
 import {
   type ApprovalContinuationSendResult,
   isApprovalOnlyInput,
@@ -108,6 +110,29 @@ export async function startTurnInput(
     input: updateTurnInputMessagesPreservingOtids(input, withSkills),
     stream: sender.accept(result),
   };
+}
+
+export function getPostStopErrorDetails(
+  latestErrorInfo: Pick<RunErrorInfo, "detail" | "message"> | null | undefined,
+  runErrorInfo: RunErrorInfo | null,
+  fallbackError: string | null,
+) {
+  const errorDetail =
+    getApprovalToolCallDesyncErrorText(latestErrorInfo ?? {}) ||
+    latestErrorInfo?.detail ||
+    latestErrorInfo?.message ||
+    runErrorInfo?.detail ||
+    runErrorInfo?.message ||
+    fallbackError ||
+    null;
+  const retryErrorDetail =
+    [
+      latestErrorInfo?.detail,
+      latestErrorInfo?.message,
+      runErrorInfo?.detail,
+      runErrorInfo?.message,
+    ].find(isProviderStreamTimeoutDetail) ?? errorDetail;
+  return { errorDetail, retryErrorDetail };
 }
 
 function getProviderRetryLimit(errorDetail: string | null): number {

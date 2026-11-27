@@ -14,7 +14,6 @@ import {
   getRetryDelayMs,
   isApprovalPendingError,
   isEmptyResponseRetryable,
-  isProviderStreamTimeoutDetail,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
 } from "@/agent/turn-recovery-policy";
 import {
@@ -41,13 +40,13 @@ import {
 } from "./recoverable-notices";
 import {
   finalizeHandledRecoveryTurn,
-  getApprovalToolCallDesyncErrorText,
   shouldAttemptPostStopApprovalRecovery,
 } from "./recovery";
 import type {
   RecoveryAuthorityStore,
   RecoveryEvidenceWriter,
 } from "./recovery-evidence";
+import { getRecoveryEligibility } from "./recovery-ownership";
 import {
   clearRecoveredApprovalStateUnlessRetained,
   evictConversationRuntimeIfIdle,
@@ -80,6 +79,7 @@ import type { TurnLease } from "./turn-lifecycle";
 import { finishTurnIfMaxTurnsReached } from "./turn-max-turns";
 import { notifyTurnFinished, notifyTurnStarted } from "./turn-observers";
 import {
+  getPostStopErrorDetails,
   sendPostStopRetry,
   shouldRetryPostStopTurn,
   startTurnInput,
@@ -427,26 +427,16 @@ async function handleIncomingMessageInner(
           break;
         }
         const latestErrorInfo = result.errorInfo;
-        const errorDetail =
-          getApprovalToolCallDesyncErrorText(latestErrorInfo ?? {}) ||
-          latestErrorInfo?.detail ||
-          latestErrorInfo?.message ||
-          runErrorInfo?.detail ||
-          runErrorInfo?.message ||
-          fallbackError ||
-          null;
-        const retryErrorDetail =
-          [
-            latestErrorInfo?.detail,
-            latestErrorInfo?.message,
-            runErrorInfo?.detail,
-            runErrorInfo?.message,
-          ].find(isProviderStreamTimeoutDetail) ?? errorDetail;
+        const { errorDetail, retryErrorDetail } = getPostStopErrorDetails(
+          latestErrorInfo,
+          runErrorInfo,
+          fallbackError,
+        );
         const quotaError = latestErrorInfo ?? runErrorInfo ?? errorDetail;
         const deploymentInterrupted =
           isCloudApiDeploymentInterrupted(latestErrorInfo) ||
           isCloudApiDeploymentInterrupted(runErrorInfo);
-        if (
+        const shouldRecoverApproval =
           !deploymentInterrupted &&
           shouldAttemptPostStopApprovalRecovery({
             stopReason,
@@ -456,8 +446,17 @@ async function handleIncomingMessageInner(
             latestErrorText:
               latestErrorInfo?.detail ?? latestErrorInfo?.message ?? null,
             fallbackError,
-          })
+          });
+        const ownsApprovalRecovery =
+          shouldRecoverApproval &&
+          (await getRecoveryEligibility(runtime)) === "owned";
+        if (
+          shouldRecoverApproval &&
+          finishIfInterrupted(lastRunId || runtime.activeRunId)
         ) {
+          break;
+        }
+        if (ownsApprovalRecovery) {
           postStopApprovalRecoveryRetries += 1;
           emitRecoverableStatusNotice(socket, runtime, {
             kind: "stale_approval_conflict_recovery",
@@ -468,7 +467,6 @@ async function handleIncomingMessageInner(
             agentId,
             conversationId,
           });
-
           try {
             const agent = await retrieveResumeState(agentId, conversationId);
             const { pendingApprovals: existingApprovals } =
@@ -525,7 +523,6 @@ async function handleIncomingMessageInner(
           );
           continue;
         }
-
         if (
           !deploymentInterrupted &&
           isEmptyResponseRetryable(

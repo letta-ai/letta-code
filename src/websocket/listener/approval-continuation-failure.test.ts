@@ -6,7 +6,9 @@ import { APIError } from "@letta-ai/letta-client/core/error";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import * as repositorySync from "@/agent/attached-repository-git-sync";
+import * as approvalRead from "@/agent/check-approval";
 import { __testSetBackend } from "@/backend";
+import * as agentApi from "@/backend/api/agents";
 import { LocalBackend } from "@/backend/local/local-backend";
 import { settingsManager } from "@/settings-manager";
 import {
@@ -34,7 +36,9 @@ function chunkStream(
 }
 
 async function runFailedContinuationThenNextInput(
-  failContinuation: (runtime: ConversationRuntime) => never,
+  failContinuation: (
+    runtime: ConversationRuntime,
+  ) => Stream<LettaStreamingResponse>,
 ) {
   const storageDir = await mkdtemp(join(tmpdir(), "listener-cont-fail-"));
   const sync = spyOn(
@@ -71,7 +75,7 @@ async function runFailedContinuationThenNextInput(
       ]);
     }
     if (bodies.length === 2 && runtime) {
-      failContinuation(runtime);
+      return failContinuation(runtime);
     }
     return chunkStream("run-next", [
       { message_type: "stop_reason", stop_reason: "end_turn" },
@@ -200,4 +204,63 @@ test("a continuation aborted mid-send still carries tool results into the next i
   expect(result.requestCount).toBe(3);
   expectApprovalResultsBeforeUserInput(result.nextInput);
   expect(result.finalLifecycle).toBe("idle");
+}, 30_000);
+
+test("a rejected approval continuation cannot deny another listener's active batch", async () => {
+  const pendingApproval = {
+    toolCallId: "call-other",
+    toolName: "publish_file",
+    toolArgs: "{}",
+  };
+  const resume = spyOn(
+    approvalRead,
+    "getResumeDataFromBackend",
+  ).mockResolvedValue({
+    pendingApproval,
+    pendingApprovals: [pendingApproval],
+    messageHistory: [],
+  });
+  const readStatus = spyOn(
+    agentApi,
+    "getAgentRuntimeStatus",
+  ).mockImplementation(async (agentId, [conversationId]) => ({
+    agent_id: agentId,
+    snapshot_at: Date.now(),
+    statuses: [
+      {
+        conversation_id: conversationId ?? "",
+        active_harness: { connection_id: "conn-owner" },
+        has_conflicting_listeners: true,
+        state: "ACTIVE",
+        loop_state: { status: "EXECUTING_CLIENT_SIDE_TOOL" },
+        active_run_ids: ["run-other"],
+        last_activity_at: Date.now(),
+      },
+    ],
+  }));
+
+  try {
+    const result = await runFailedContinuationThenNextInput((runtime) => {
+      runtime.listener.connectionId = "conn-contender";
+      return chunkStream("run-conflict", [
+        {
+          message_type: "error_message",
+          error_type: "invalid_argument",
+          detail:
+            "Invalid tool call IDs. Expected 'call-other', but received 'call-read'.",
+        },
+        { message_type: "stop_reason", stop_reason: "error" },
+      ]);
+    });
+    expect(result.requestCount).toBe(3);
+    expect(result.nextInput.at(-1)).toMatchObject({
+      role: "user",
+      content: "what did it say?",
+    });
+    expect(JSON.stringify(result.nextInput)).not.toContain("call-other");
+    expect(readStatus).toHaveBeenCalled();
+  } finally {
+    resume.mockRestore();
+    readStatus.mockRestore();
+  }
 }, 30_000);

@@ -322,40 +322,56 @@ describe("recoverApprovalStateForSync restart recovery", () => {
     expect(runtime.pendingInterruptedResults).toBeNull();
   });
 
-  test("owner sync distinguishes started calls without results from unknown calls", async () => {
-    const runtime = createScopedRuntime();
-    await recoverApprovalStateForSync(
-      runtime,
-      scope,
-      {
-        ...createDeps([bashApproval, askUserQuestionApproval]),
-        readInterruptedTurn: () => ({
-          agentId: "agent-1",
-          conversationId: "conv-1",
-          runId: "run-started",
-          toolCallIds: [bashApproval.toolCallId],
-          unstartedToolCallIds: [],
-          results: [],
-          requestOtid: "request-started",
-          workingDirectory: "/project",
-        }),
-      },
-      { resumeInterruptedTurn: true },
-    );
+  test.each([true, false])(
+    "sync distinguishes started calls from unknown calls (owner=%s)",
+    async (resumeInterruptedTurn) => {
+      const runtime = createScopedRuntime();
+      await recoverApprovalStateForSync(
+        runtime,
+        scope,
+        {
+          ...createDeps([bashApproval, askUserQuestionApproval]),
+          readInterruptedTurn: () => ({
+            agentId: "agent-1",
+            conversationId: "conv-1",
+            runId: "run-started",
+            toolCallIds: [bashApproval.toolCallId],
+            unstartedToolCallIds: [],
+            results: [],
+            requestOtid: "request-started",
+            workingDirectory: "/project",
+          }),
+        },
+        { resumeInterruptedTurn },
+      );
 
-    expect(runtime.recoveredApprovalState?.autoDecisions).toEqual([
-      {
-        type: "deny",
-        approval: bashApproval,
-        reason: STARTED_TOOL_CALL_RECOVERY_DENIAL_REASON,
-      },
-      {
-        type: "deny",
-        approval: askUserQuestionApproval,
-        reason: STALE_APPROVAL_RECOVERY_DENIAL_REASON,
-      },
-    ]);
-  });
+      if (!resumeInterruptedTurn) {
+        expect(runtime.pendingInterruptedResults).toMatchObject([
+          {
+            tool_call_id: bashApproval.toolCallId,
+            reason: STARTED_TOOL_CALL_RECOVERY_DENIAL_REASON,
+          },
+          {
+            tool_call_id: askUserQuestionApproval.toolCallId,
+            reason: STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+          },
+        ]);
+        return;
+      }
+      expect(runtime.recoveredApprovalState?.autoDecisions).toEqual([
+        {
+          type: "deny",
+          approval: bashApproval,
+          reason: STARTED_TOOL_CALL_RECOVERY_DENIAL_REASON,
+        },
+        {
+          type: "deny",
+          approval: askUserQuestionApproval,
+          reason: STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+        },
+      ]);
+    },
+  );
 
   test("observer sync leaves explicitly unstarted work for the owner", async () => {
     const runtime = createScopedRuntime();
