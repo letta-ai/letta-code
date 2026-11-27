@@ -1,4 +1,4 @@
-export type ToolsetName = "codex" | "default" | "letta" | "none";
+export type ToolsetName = "codemode" | "codex" | "default" | "letta" | "none";
 
 export type ToolsetPreference = ToolsetName | "auto";
 

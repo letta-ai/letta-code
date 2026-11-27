@@ -9,9 +9,11 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createLocalEphemeralConversation } from "@/agent/ephemeral-conversation";
 import { clearAllSubagents } from "@/agent/subagent-state";
 import { configureBackendMode, getBackend } from "@/backend";
 import { resolveBackendMode } from "@/backend/backend-mode";
+import { prepareHeadlessToolExecutionContext } from "@/headless-tool-context";
 import {
   clearModPermissions,
   registerModPermission,
@@ -24,6 +26,7 @@ import {
   clearExternalTools,
   executeTool,
   registerExternalTools,
+  releaseToolExecutionContext,
   setExternalToolExecutor,
 } from "@/tools/manager";
 import { createScriptToolScope } from "@/tools/script-tool-scope";
@@ -130,6 +133,61 @@ async function run(
       ),
   );
 }
+
+test.each([
+  ["anthropic/claude-sonnet-4-6", "Bash", { command: "printf codemode-ok" }],
+  ["openai/gpt-5.3-codex", "exec_command", { cmd: "printf codemode-ok" }],
+] as const)(
+  "%s exposes only CodeMode and can run its shell tool inside a script",
+  async (modelIdentifier, shell, input) => {
+    const { preparedToolContext } =
+      await prepareToolExecutionContextForResolvedTarget({
+        modelIdentifier,
+        toolsetPreference: "codemode",
+        workingDirectory: home,
+        permissionModeState: { mode: "unrestricted" },
+        runtimeContext: { agentId, conversationId: "default" },
+      });
+    expect(preparedToolContext.clientTools.map(({ name }) => name)).toEqual([
+      "CodeMode",
+    ]);
+
+    const result = await runWithRuntimeContext(
+      { toolContextId: preparedToolContext.contextId },
+      () =>
+        executeTool(
+          "CodeMode",
+          { code: `return await tools.${shell}(${JSON.stringify(input)});` },
+          { toolContextId: preparedToolContext.contextId },
+        ),
+    );
+    expect(result.status).toBe("success");
+    expect(result.toolReturn).toContain("codemode-ok");
+  },
+);
+
+test("honors the requested toolset when preparing an agent turn", async () => {
+  const model = "openai/gpt-5.3-codex";
+  const { agent, conversationId } = await createLocalEphemeralConversation({
+    model,
+    systemPromptCustom: "headless toolset override test",
+  });
+  const prepared = await prepareHeadlessToolExecutionContext({
+    agentId: agent.id,
+    conversationId,
+    cachedAgent: agent,
+    toolsetPreference: "codemode",
+  });
+
+  try {
+    expect(prepared.availableTools).toEqual(["CodeMode"]);
+    expect(prepared.preparedToolContext.toolset).toBe("codemode");
+  } finally {
+    releaseToolExecutionContext(
+      prepared.preparedToolContext.preparedToolContext.contextId,
+    );
+  }
+});
 
 test("combines a real file read and MCP calls without Workflow metadata or model setup", async () => {
   writeFileSync(join(home, "input.txt"), "hello from a file");

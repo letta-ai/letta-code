@@ -83,6 +83,13 @@ export const TOOLSET_CATALOG: Readonly<Record<ToolsetName, ToolsetDefinition>> =
         "Write",
       ],
     },
+    codemode: {
+      display_name: "Code Mode",
+      label: "Code Mode only (experimental)",
+      description: "Expose CodeMode and call other tools from scripts",
+      is_featured: false,
+      tools: ["CodeMode"],
+    },
     codex: {
       display_name: "Codex",
       label: "Codex toolset",

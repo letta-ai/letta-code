@@ -346,6 +346,7 @@ function getSwitchLock(): SwitchLockState {
 }
 
 const toolRegistry = getRegistry();
+let startupCodeModeOnly = false;
 let toolExecutionContextCounter = 0;
 
 type ToolExecutionContextSnapshot = {
@@ -604,25 +605,14 @@ export async function executeExternalTool(
 }
 
 export function getClientToolsFromRegistry(): ClientTool[] {
-  return buildClientToolsFromSnapshot(
+  return serializeClientTools(
     filterMemoryToolByMemoryFormat(toolRegistry, undefined),
     selectModelFacingExternalTools(
       filterExternalToolsByRuntimeContext(getExternalToolsRegistry(), {}),
     ),
     getAvailableModToolsRegistry(),
-  );
-}
-
-function buildClientToolsFromSnapshot(
-  registry: ToolRegistry,
-  externalTools: Map<string, ExternalToolDefinition>,
-  modTools: Map<string, ModToolDefinition>,
-): ClientTool[] {
-  return serializeClientTools(
-    registry,
-    externalTools,
-    modTools,
     getServerToolName,
+    startupCodeModeOnly,
   );
 }
 
@@ -644,6 +634,7 @@ function capturePreparedToolExecutionContext(
     modContext?: ModContext;
     modEvents?: ModEvents;
     runtimeContext?: Partial<RuntimeContextSnapshot>;
+    codeModeOnly?: boolean;
   },
 ): PreparedToolExecutionContext {
   const runtimeContext = buildExecutionRuntimeContextSnapshot(options);
@@ -688,10 +679,12 @@ function capturePreparedToolExecutionContext(
       options?.permissionModeState,
     ),
   };
-  const clientTools = buildClientToolsFromSnapshot(
+  const clientTools = serializeClientTools(
     executionSnapshot.toolRegistry,
     executionSnapshot.externalTools,
     executionSnapshot.modTools,
+    getServerToolName,
+    options?.codeModeOnly,
   );
   executionSnapshot.runtimeContext.clientToolNames = clientTools.map(
     (tool) => tool.name,
@@ -703,10 +696,12 @@ function capturePreparedToolExecutionContext(
   return {
     contextId,
     clientTools,
-    loadedToolNames: buildClientToolsFromSnapshot(
+    loadedToolNames: serializeClientTools(
       executionSnapshot.toolRegistry,
       new Map(),
       executionSnapshot.modTools,
+      getServerToolName,
+      options?.codeModeOnly,
     ).map((tool) => tool.name),
   };
 }
@@ -729,6 +724,7 @@ export function captureToolExecutionContext(
       workingDirectory,
       permissionModeState,
       modContext,
+      codeModeOnly: startupCodeModeOnly,
     },
   );
 }
@@ -761,7 +757,7 @@ export async function prepareCurrentToolExecutionContext(options?: {
       modTools:
         options?.modTools ?? getAvailableModToolsRegistry(options?.modContext),
     },
-    options,
+    { ...options, codeModeOnly: startupCodeModeOnly },
   );
 }
 
@@ -837,7 +833,7 @@ export async function prepareToolExecutionContextForModel(
       modTools:
         options?.modTools ?? getAvailableModToolsRegistry(options?.modContext),
     },
-    options,
+    { ...options, codeModeOnly: options?.resolvedToolset === "codemode" },
   );
 }
 
@@ -1076,9 +1072,10 @@ function resolveBaseToolNamesForModel(
   modelIdentifier?: string,
   options?: ModelToolsetOptions,
 ): ToolName[] {
-  const toolset =
-    options?.resolvedToolset ??
-    (modelIdentifier && isOpenAIModel(modelIdentifier) ? "codex" : "default");
+  const modelToolset =
+    modelIdentifier && isOpenAIModel(modelIdentifier) ? "codex" : "default";
+  const toolset = options?.resolvedToolset ?? modelToolset;
+  const registryToolset = toolset === "codemode" ? modelToolset : toolset;
   const allowlist =
     options?.clientToolAllowlist ?? toolFilter.getEnabledTools();
   const allowlistedTools = (allowlist ?? [])
@@ -1086,7 +1083,7 @@ function resolveBaseToolNamesForModel(
     .filter((name): name is ToolName => Object.hasOwn(TOOL_DEFINITIONS, name));
   let toolNames = resolveArtifactToolNames([
     ...new Set([
-      ...TOOLSET_CATALOG[toolset].tools,
+      ...TOOLSET_CATALOG[registryToolset].tools,
       ...(options?.include ?? []),
       ...allowlistedTools,
     ]),
@@ -1117,6 +1114,7 @@ export async function loadSpecificTools(toolNames: string[]): Promise<void> {
   try {
     const newRegistry = await buildToolRegistry(toolNames);
     replaceRegistry(newRegistry);
+    startupCodeModeOnly = false;
   } finally {
     releaseSwitchLock();
   }
@@ -1131,6 +1129,7 @@ export async function loadTools(
   try {
     const newRegistry = await buildRegistryForModel(modelIdentifier, options);
     replaceRegistry(newRegistry);
+    startupCodeModeOnly = options?.resolvedToolset === "codemode";
   } finally {
     releaseSwitchLock();
   }
