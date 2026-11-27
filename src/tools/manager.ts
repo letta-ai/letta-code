@@ -125,7 +125,7 @@ const STREAMING_SHELL_TOOLS = new Set([
   "Monitor",
   "Workflow",
 ]);
-const SCOPED_BACKGROUND_TOOLS = new Set(["Monitor", "Workflow", "CodeMode"]);
+const SCOPED_BG_TOOLS = new Set(["Monitor", "Workflow", "CodeMode", "Repl"]);
 const TOOL_CALL_ID_TOOLS = new Set(["Task", "Skill", "Monitor", "WatchPR"]);
 const FILE_MUTATING_TOOLS = new Set(["Edit", "Write"]);
 
@@ -2050,7 +2050,7 @@ async function executeToolInner(
       }
       const parentScope =
         options?.parentScope ??
-        (SCOPED_BACKGROUND_TOOLS.has(internalName) && scopedAgentId
+        (SCOPED_BG_TOOLS.has(internalName) && scopedAgentId
           ? {
               agentId: scopedAgentId,
               conversationId: executionScope.conversationId ?? "default",
@@ -2059,7 +2059,7 @@ async function executeToolInner(
       if (
         parentScope &&
         (STREAMING_SHELL_TOOLS.has(internalName) ||
-          ["Task", "Skill", "CodeMode"].includes(internalName))
+          ["Task", "Skill", "CodeMode", "Repl"].includes(internalName))
       ) {
         enhancedArgs = { ...enhancedArgs, parentScope };
       }

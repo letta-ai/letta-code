@@ -30,6 +30,7 @@ const SCRIPT_EXCLUDED_TOOLS = new Set([
   "AskUserQuestion",
   "Workflow",
   "CodeMode",
+  "Repl",
   "Monitor",
 ]);
 

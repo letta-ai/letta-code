@@ -59,6 +59,7 @@ async function retrieveWorkerConversation(
 }
 
 export const DEFAULT_SUBAGENT_TIMEOUT_MS = 10 * 60 * 1000;
+const STOP_SETTLE_TIMEOUT_MS = 15_000;
 export const DEFAULT_MAX_SUBAGENT_TOOL_CALLS = 1000;
 export const STOP_DRAIN_MS = 5_000;
 export const MAX_IDENTICAL_TOOL_CALLS = 3;
@@ -389,6 +390,22 @@ export function createSdkSpawner(
 ): SubagentSpawner {
   const activeResumeIds = new Set<string>();
   const locallyCompletedIds = new Set<string>();
+  const settlingStops = new Map<string, Promise<void>>();
+  const trackStop = (id: string, interrupted: Promise<boolean>) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<boolean>((resolve) => {
+      timer = setTimeout(() => resolve(false), STOP_SETTLE_TIMEOUT_MS);
+      timer.unref?.();
+    });
+    const settled: Promise<void> = Promise.race([interrupted, timedOut]).then(
+      (acknowledged) => {
+        clearTimeout(timer);
+        if (acknowledged) locallyCompletedIds.add(id);
+        if (settlingStops.get(id) === settled) settlingStops.delete(id);
+      },
+    );
+    settlingStops.set(id, settled);
+  };
   return async (
     request: SubagentRequest,
     signal: AbortSignal,
@@ -404,6 +421,7 @@ export function createSdkSpawner(
         "agent() conversationId must be a conv-... or local-conv-... ID.",
       );
     }
+    if (resumeId) await settlingStops.get(resumeId);
     if (resumeId && !config.supportsAgentFreeResume) {
       throw new Error(
         "Workflow worker continuation requires an Agent SDK release with agent-free query() resume support.",
@@ -541,7 +559,12 @@ export function createSdkSpawner(
       step.onStepEnd = undefined;
       if (interrupted) return;
       interrupted = true;
-      void query.interrupt().catch(() => undefined);
+      const acknowledged = query.interrupt().then(
+        () => true,
+        () => false,
+      );
+      const stoppedId = activeId ?? query.conversationId;
+      if (stoppedId) trackStop(stoppedId, acknowledged);
     };
     const stop = (reason: string) => {
       if (finished || stopReason !== undefined) return;
