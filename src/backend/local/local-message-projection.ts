@@ -24,6 +24,20 @@ export function sourceLocalMessageIdFromStoredMessageId(
     : messageId;
 }
 
+/** Source cursors span every projection; projected cursors select one row. */
+export function projectedMessageCursorIndex(
+  messages: readonly StoredMessage[],
+  cursor: string,
+  boundary: "before" | "after",
+): number {
+  const matches = (message: StoredMessage) =>
+    message.id === cursor ||
+    sourceLocalMessageIdFromStoredMessageId(message.id) === cursor;
+  return boundary === "before"
+    ? messages.findIndex(matches)
+    : messages.findLastIndex(matches);
+}
+
 export function isLocalToolCallContent(
   content: AssistantContent,
 ): content is ToolCall {
