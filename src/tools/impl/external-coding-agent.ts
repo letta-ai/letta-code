@@ -22,6 +22,7 @@ import {
   getRuntimeActingUserAttribution,
   getRuntimeContext,
 } from "@/runtime-context";
+import { reportExternalWorkerTurnFailure } from "@/telemetry/sandbox-failure-reporting";
 import {
   captureSecretRedactions,
   scrubSecretsDeep,
@@ -629,6 +630,15 @@ export async function runExternalCodingAgent(
     rawResult: SubagentResult,
   ): Promise<SubagentResult> => {
     const result = scrubExternalWorkerResult(rawResult, secretEnv);
+    if (!result.success && !options.signal?.aborted) {
+      reportExternalWorkerTurnFailure({
+        harness: options.type,
+        error: result.error ?? "",
+        agentId: options.parentAgentId,
+        conversationId: options.parentConversationId,
+        taskId: options.taskId,
+      });
+    }
     const sessionId = result.runtimeSessionId ?? captureSessionId;
     if (scope && sessionId) {
       try {
