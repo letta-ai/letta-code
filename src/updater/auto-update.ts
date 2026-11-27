@@ -647,6 +647,7 @@ export interface AutoUpdateResult {
   enotemptyFailed?: boolean;
   latestVersion?: string;
   updateApplied?: boolean;
+  manualUpdateCommand?: string;
 }
 
 function isSignificantUpdate(current: string, latest: string): boolean {
@@ -749,5 +750,27 @@ export async function manualUpdate(options?: {
   return {
     success: false,
     message: `Update failed: ${updateResult.error}\n\nTo update manually: ${installCmd}`,
+  };
+}
+
+export async function startupAutoUpdate(
+  platform: NodeJS.Platform = process.platform,
+  fetchImpl: FetchImpl = fetch,
+  autoUpdate: typeof checkAndAutoUpdate = checkAndAutoUpdate,
+): Promise<AutoUpdateResult | undefined> {
+  if (platform !== "win32") return autoUpdate();
+  if (
+    isPythonDistribution() ||
+    !isAutoUpdateEnabled() ||
+    process.env.LETTA_CODE_AGENT_ROLE === "subagent" ||
+    isRunningLocally()
+  ) {
+    return undefined;
+  }
+  const result = await checkForUpdate(fetchImpl);
+  if (!result.updateAvailable || !result.latestVersion) return undefined;
+  return {
+    latestVersion: result.latestVersion,
+    manualUpdateCommand: buildInstallCommand(detectPackageManager()),
   };
 }

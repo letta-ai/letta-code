@@ -610,8 +610,8 @@ async function main(): Promise<void> {
     }
   }
 
-  const { checkAndAutoUpdate } = await import("@/updater/auto-update");
-  const autoUpdatePromise = startStartupAutoUpdateCheck(checkAndAutoUpdate);
+  const { startupAutoUpdate } = await import("@/updater/auto-update");
+  const autoUpdatePromise = startStartupAutoUpdateCheck(startupAutoUpdate);
 
   const processedArgs = preprocessCliArgs([
     process.argv[0] ?? "node",

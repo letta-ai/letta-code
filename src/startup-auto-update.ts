@@ -10,6 +10,7 @@ export function startStartupAutoUpdateCheck(
         enotemptyFailed?: boolean;
         latestVersion?: string;
         updateApplied?: boolean;
+        manualUpdateCommand?: string;
       }
     | undefined
   >,
@@ -25,6 +26,12 @@ export function startStartupAutoUpdateCheck(
         logError(
           "Fix: rm -rf $(npm prefix -g)/lib/node_modules/@letta-ai/letta-code && npm i -g @letta-ai/letta-code\n",
         );
+      }
+      if (result?.manualUpdateCommand && result.latestVersion) {
+        logError(
+          `\nLetta Code ${result.latestVersion} is available. Close Letta Code and run: ${result.manualUpdateCommand}\n`,
+        );
+        return undefined;
       }
       if (result?.updateApplied && result.latestVersion) {
         return { latestVersion: result.latestVersion };
