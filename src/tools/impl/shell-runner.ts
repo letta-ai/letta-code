@@ -31,6 +31,7 @@ export type ShellSpawnOptions = {
   cwd: string;
   env: NodeJS.ProcessEnv;
   timeoutMs: number;
+  trackExpectedWorktree?: boolean;
   sourceCommand?: ShellSourceCommand;
   signal?: AbortSignal;
   waitForProcessGroupOnClose?: boolean;
@@ -447,7 +448,9 @@ export function startShellProcess(
     );
   }
 
-  noteExpectedWorktreeForLauncher(launcher, launchOptions.cwd);
+  if (options.trackExpectedWorktree !== false) {
+    noteExpectedWorktreeForLauncher(launcher, launchOptions.cwd);
+  }
 
   const pullRequestTracker = createGitHubPullRequestOutputTracker(
     launchOptions.sourceCommand ?? launcher,
