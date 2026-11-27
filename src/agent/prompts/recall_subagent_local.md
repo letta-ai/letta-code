@@ -40,10 +40,13 @@ letta messages list [options]
 
 | Option | Description |
 |--------|-------------|
+| `--conversation <id>` | Conversation the message belongs to (default: `default`) |
 | `--after <message-id>` | Get messages after this ID (cursor) |
 | `--before <message-id>` | Get messages before this ID (cursor) |
 | `--order <asc\|desc>` | Sort order (default: desc = newest first) |
 | `--limit <n>` | Max results (default: 20) |
+
+Always pass `--conversation` with the `conversation_id` of the search result. Without it, `messages list` reads the agent's `default` conversation, so expanding a hit from another chat returns the wrong context or nothing at all.
 
 ### Search Strategies
 
@@ -54,16 +57,16 @@ letta messages list [options]
    letta messages search --query "topic keywords" --limit 5
    ```
 
-2. Note the `message_id` of the most relevant result
+2. Note the `message_id` and the `conversation_id` of the most relevant result
 
 3. Expand before to get leading context:
    ```bash
-   letta messages list --before "message-xyz" --limit 10
+   letta messages list --conversation "conversation-xyz" --before "message-xyz" --limit 10
    ```
 
 4. Expand after for following context:
    ```bash
-   letta messages list --after "message-xyz" --order asc --limit 10
+   letta messages list --conversation "conversation-xyz" --after "message-xyz" --order asc --limit 10
    ```
 
 **Strategy 2: Date-Bounded Search**
@@ -95,6 +98,7 @@ grep -R -n --include='messages.jsonl' "needle" "$ROOT/conversations"
 
 Results include:
 - `message_id` - Use for cursor-based expansion
+- `conversation_id` - The conversation the message belongs to; pass it to `messages list --conversation` so the expansion reads the same conversation
 - `message_type` - `user_message`, `assistant_message`, `reasoning_message`
 - `content` or `reasoning` - The message text
 - `created_at` - Timestamp (ISO format)
