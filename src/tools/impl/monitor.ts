@@ -32,6 +32,7 @@ import {
   createMonitorEventStream,
   MONITOR_EVENT_BUFFER_CHARS,
 } from "./monitor-event-stream.js";
+import { monitorPullRequestHint } from "./monitor-pr-hint";
 import { buildMonitorResult } from "./monitor-result";
 import { readResumableMonitor, savedMonitorArgs } from "./monitor-resume";
 import { startScriptMonitor } from "./monitor-script.js";
@@ -913,18 +914,27 @@ export async function monitor(args: MonitorArgs): Promise<MonitorResult> {
           : startWebSocketMonitor(sourceArgs);
     },
   );
-  if (normalized.backup_after_seconds === undefined) return result;
-  const note = await armMonitorBackup({
-    taskId: result.taskId,
-    description: normalized.description,
-    afterSeconds: normalized.backup_after_seconds,
-    prompt: normalized.backup_prompt,
-    scope: backupScopeFor(result.taskId),
-    isRunning: () =>
-      backgroundProcesses.get(result.taskId)?.status === "running",
-  });
+  const notes: string[] = [];
+  if (normalized.backup_after_seconds !== undefined) {
+    notes.push(
+      await armMonitorBackup({
+        taskId: result.taskId,
+        description: normalized.description,
+        afterSeconds: normalized.backup_after_seconds,
+        prompt: normalized.backup_prompt,
+        scope: backupScopeFor(result.taskId),
+        isRunning: () =>
+          backgroundProcesses.get(result.taskId)?.status === "running",
+      }),
+    );
+  }
+  // Advisory only: the monitor still runs.
+  const prHint = monitorPullRequestHint(
+    normalized.command ?? normalized.script ?? "",
+  );
+  if (prHint) notes.push(prHint);
   const first = result.content[0];
-  if (first) first.text = `${first.text}\n${note}`;
+  if (first && notes.length > 0) first.text = [first.text, ...notes].join("\n");
   return result;
 }
 

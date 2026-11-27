@@ -406,6 +406,24 @@ describe("Monitor", () => {
     );
   });
 
+  test("points PR polling commands at WatchPR without refusing them", async () => {
+    const result = await monitor({
+      description: "pr poll",
+      timeout_ms: 5000,
+      persistent: false,
+      command: "echo gh pr view 42 -R octo-org/octo-repo --json state",
+    });
+
+    const text = result.content[0]?.text ?? "";
+    expect(text).toContain(`Monitor started (task ${result.taskId}`);
+    expect(text.trimEnd().split("\n").at(-1)).toBe(
+      "This command polls a GitHub pull request. WatchPR also reports reviews, comments, conflicts and pushes; stop this monitor with TaskStop and call WatchPR on https://github.com/octo-org/octo-repo/pull/42 instead.",
+    );
+    await waitFor(
+      () => backgroundProcesses.get(result.taskId)?.status === "completed",
+    );
+  });
+
   test("streams command stdout as scoped notifications and records stderr", async () => {
     const result = await monitor({
       description: "build output",
