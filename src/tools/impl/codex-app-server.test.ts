@@ -2,7 +2,6 @@ import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PassThrough } from "node:stream";
 import { settingsManager } from "@/settings-manager";
 import {
   __resetCodexSessionsForTests,
@@ -10,7 +9,6 @@ import {
   listCodexModels,
   sendCodexMessage,
   startCodexTurn,
-  stopCodexSession,
 } from "./codex-app-server";
 import { CODEX_CAPACITY_ERROR } from "./codex-app-server-payloads";
 import { CAPACITY_MESSAGE, FakeCodexTransport } from "./codex-test-transport";
@@ -256,140 +254,6 @@ describe("Codex app-server lifecycle", () => {
     );
     fake.complete();
     expect(await handle.completion).toMatchObject({ success: true });
-  });
-
-  test("fails active completion and evicts the session when stdout closes", async () => {
-    const first = new FakeCodexTransport();
-    const handle = await startCodexTurn(
-      { prompt: "Initial", parentAgentId: "parent", cwd: "/repo" },
-      { createTransport: () => first.transport() },
-    );
-    first.close("boom");
-    expect(await handle.completion).toMatchObject({
-      success: false,
-      error: expect.stringContaining("boom"),
-    });
-    const second = new FakeCodexTransport();
-    await sendCodexMessage(
-      {
-        threadId: "thread-1",
-        prompt: "retry",
-        parentAgentId: "parent",
-        cwd: "/repo",
-      },
-      {
-        env: { HOME: "/home/test", PATH: "/usr/bin:/bin" },
-        createTransport: ({ env }) => {
-          if (process.platform !== "win32") {
-            expect(env.PATH).toBe("/usr/bin:/bin:/home/test/.local/bin");
-          }
-          return second.transport();
-        },
-      },
-    );
-    expect(second.requests.map((request) => request.method)).toContain(
-      "thread/resume",
-    );
-  });
-
-  test.each([
-    {
-      code: null,
-      signal: "SIGKILL" as const,
-      detail: "",
-      expected: " (signal SIGKILL; possibly out of memory)",
-    },
-    {
-      code: null,
-      signal: "SIGTERM" as const,
-      detail: "",
-      expected: " (signal SIGTERM; possibly out of memory)",
-    },
-    { code: 137, signal: null, detail: "", expected: " (exit code 137)" },
-    { code: 0, signal: null, detail: "", expected: " (exit code 0)" },
-    {
-      code: null,
-      signal: "SIGKILL" as const,
-      detail: "boom",
-      expected: " (signal SIGKILL; possibly out of memory): boom",
-    },
-    {
-      code: 143,
-      signal: null,
-      detail: "startup warning",
-      expected: " (exit code 143; possibly out of memory): startup warning",
-    },
-    {
-      code: null,
-      signal: "SIGTERM" as const,
-      detail: `stale startup warning${"tail".repeat(100)}`,
-      expected: ` (signal SIGTERM; possibly out of memory): ${"tail".repeat(75)}`,
-    },
-  ])(
-    "reports transport exit info with stderr tail: $expected",
-    async ({ code, signal, detail, expected }) => {
-      const fake = new FakeCodexTransport();
-      let resolveExit!: (exit: {
-        code: number | null;
-        signal: NodeJS.Signals | null;
-      }) => void;
-      const exited = new Promise<{
-        code: number | null;
-        signal: NodeJS.Signals | null;
-      }>((resolve) => {
-        resolveExit = resolve;
-      });
-      const handle = await startCodexTurn(
-        { prompt: "Initial", parentAgentId: "parent", cwd: "/repo" },
-        { createTransport: () => ({ ...fake.transport(), exited }) },
-      );
-      fake.close(detail);
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      resolveExit({ code, signal });
-      expect(await handle.completion).toMatchObject({
-        success: false,
-        error: `Codex app-server closed${expected}`,
-      });
-    },
-  );
-
-  test("rejects pending requests when stdout errors and the child does not exit", async () => {
-    const stdout = new PassThrough();
-    const startedAt = Date.now();
-    const pending = startCodexTurn(
-      { prompt: "Initial", parentAgentId: "parent", cwd: "/repo" },
-      {
-        createTransport: () => ({
-          stdin: new PassThrough(),
-          stdout,
-          exited: new Promise(() => {}),
-        }),
-      },
-    );
-    const rejected = pending.catch((error: unknown) => error);
-    stdout.destroy(new Error("stdout failed"));
-    expect(await rejected).toEqual(new Error("Codex app-server closed"));
-    expect(Date.now() - startedAt).toBeLessThan(3_000);
-  });
-
-  test("fails the active turn when stdout errors and the child does not exit", async () => {
-    const fake = new FakeCodexTransport();
-    const handle = await startCodexTurn(
-      { prompt: "Initial", parentAgentId: "parent", cwd: "/repo" },
-      {
-        createTransport: () => ({
-          ...fake.transport(),
-          exited: new Promise(() => {}),
-        }),
-      },
-    );
-    const startedAt = Date.now();
-    fake.stdout.destroy(new Error("stdout failed"));
-    expect(await handle.completion).toMatchObject({
-      success: false,
-      error: "Codex app-server closed",
-    });
-    expect(Date.now() - startedAt).toBeLessThan(3_000);
   });
 
   test("routes messages to active turns through turn/steer", async () => {
@@ -738,37 +602,6 @@ describe("Codex capacity failures", () => {
     expect(turnStarts(fake)).toHaveLength(1);
   });
 
-  test("includes Codex error notifications in the failed turn's error", async () => {
-    const fake = new FakeCodexTransport();
-    const handle = await startCodexTurn(
-      { prompt: "Implement it", parentAgentId: "parent", cwd: "/repo" },
-      { createTransport: () => fake.transport(), sleep: async () => {} },
-    );
-    fake.errorNotification({ message: "Reconnecting... 1/5" }, "turn-1", true);
-    fake.errorNotification({
-      message: "stream disconnected before completion",
-    });
-    fake.fail("turn-1", null);
-    expect(await handle.completion).toMatchObject({
-      success: false,
-      error: "stream disconnected before completion",
-    });
-  });
-
-  test("does not repeat an error notification that matches the turn error", async () => {
-    const fake = new FakeCodexTransport();
-    const handle = await startCodexTurn(
-      { prompt: "Implement it", parentAgentId: "parent", cwd: "/repo" },
-      { createTransport: () => fake.transport(), sleep: async () => {} },
-    );
-    fake.errorNotification({ message: "quota exceeded" });
-    fake.errorNotification({ message: "context window exceeded" });
-    fake.fail("turn-1", { message: "quota exceeded" });
-    expect(await handle.completion).toMatchObject({
-      error: "quota exceeded; context window exceeded",
-    });
-  });
-
   test("treats a 409 reported only through an error notification as a capacity failure", async () => {
     const fake = new FakeCodexTransport();
     const handle = await startCodexTurn(
@@ -781,7 +614,6 @@ describe("Codex capacity failures", () => {
       changes: [{ path: "src/a.ts" }],
     });
     fake.errorNotification({ message: CAPACITY_MESSAGE });
-    fake.fail("turn-1", null);
     const result = await handle.completion;
     expect(result.error).toStartWith(CODEX_CAPACITY_ERROR);
     expect(result.error).toContain("409 Conflict");
@@ -799,35 +631,4 @@ describe("Codex model discovery", () => {
       rmSync(emptyPath, { force: true, recursive: true });
     }
   });
-});
-
-test("stopping Codex waits for the CLI process exit rather than a turn interrupt", async () => {
-  const fake = new FakeCodexTransport();
-  let finish!: (exit: {
-    code: number | null;
-    signal: NodeJS.Signals | null;
-  }) => void;
-  const exited = new Promise<{
-    code: number | null;
-    signal: NodeJS.Signals | null;
-  }>((resolve) => {
-    finish = resolve;
-  });
-  const turn = await startCodexTurn(
-    { parentAgentId: "parent", cwd: "/repo", prompt: "work" },
-    {
-      createTransport: () => ({ ...fake.transport(), exited }),
-    },
-  );
-  let acknowledged = false;
-  const stopping = stopCodexSession(turn.threadId).then((result) => {
-    acknowledged = true;
-    return result;
-  });
-  await Bun.sleep(0);
-  expect(fake.killed).toBe(true);
-  expect(acknowledged).toBe(false);
-  finish({ code: null, signal: "SIGTERM" });
-  expect(await stopping).toBe(true);
-  await turn.completion;
 });

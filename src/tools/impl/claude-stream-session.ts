@@ -7,7 +7,10 @@ import {
   spawnManagedWorkloadProcess,
 } from "@/agent/subagents/subagent-process";
 import { cloudRepositoryRoots } from "@/utils/cloud-repository-roots";
-import { confirmProcessExit } from "@/utils/confirm-process-exit";
+import {
+  confirmProcessExit,
+  STDOUT_EXIT_GRACE_MS,
+} from "@/utils/confirm-process-exit";
 import { withNativeCliPath } from "@/utils/native-cli-env";
 import { stageClaudeRepositorySkills } from "./claude-repository-skills";
 import {
@@ -16,6 +19,7 @@ import {
   CLAUDE_TURN_START_TIMEOUT_ERROR,
   CLAUDE_TURN_START_TIMEOUT_MS,
 } from "./claude-steer-timeouts";
+import { buildClaudeStreamArgs } from "./claude-stream-args";
 import type {
   ClaudeMessageReceipt,
   ClaudeSession,
@@ -44,38 +48,6 @@ export const SETTLED_EXIT_GRACE_MS = 10_000;
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-export function buildClaudeStreamArgs(options: {
-  model?: string;
-  mcpReminder?: string;
-  resumeSessionId?: string;
-  sessionId?: string;
-  sessionName?: string;
-  skillDirectories?: string[];
-}): string[] {
-  const args = [
-    "--print",
-    "--verbose",
-    "--input-format",
-    "stream-json",
-    "--output-format",
-    "stream-json",
-    "--include-partial-messages",
-    "--replay-user-messages",
-    "--permission-mode",
-    "bypassPermissions",
-  ];
-  if (options.model) args.push("--model", options.model);
-  if (options.resumeSessionId) args.push("--resume", options.resumeSessionId);
-  else if (options.sessionId) args.push("--session-id", options.sessionId);
-  if (options.sessionName && !options.resumeSessionId)
-    args.push("--name", options.sessionName);
-  if (options.mcpReminder)
-    args.push("--append-system-prompt", options.mcpReminder);
-  if (options.skillDirectories?.length)
-    args.push("--add-dir", ...options.skillDirectories);
-  return args;
 }
 
 function createTransport(options: {
@@ -187,6 +159,8 @@ function waitForTurnStart(
 function settle(session: ClaudeSession, result: SubagentResult): void {
   if (session.settled) return;
   session.settled = true;
+  clearTimeout(session.stdoutCloseTimer);
+  session.stdoutCloseTimer = undefined;
   session.idleOnBackgroundTasks = false;
   clearBackgroundCap(session);
   const completedError = new Error("Claude Code session completed");
@@ -208,6 +182,7 @@ function writeRaw(stdin: Writable, data: string): Promise<void> {
 
 function writeInput(session: ClaudeSession, prompt: string): Promise<void> {
   const uuid = randomUUID();
+  session.provisionalResult = undefined;
   session.latestInputUuid = uuid;
   session.latestInputStarted = false;
   return writeRaw(
@@ -398,8 +373,9 @@ function finishResult(
   session: ClaudeSession,
   value: Record<string, unknown>,
 ): void {
-  if (session.backgroundTasks.length > 0) holdResult(session, value);
-  else settleResult(session, value);
+  if (value.is_error === true || session.backgroundTasks.length === 0)
+    settleResult(session, value);
+  else holdResult(session, value);
 }
 
 function handleResult(
@@ -573,37 +549,68 @@ async function launchSession(
   void transport.completion
     .finally(() => Promise.allSettled([trace?.close(), skills?.cleanup()]))
     .catch(() => undefined);
+  const finishTransport = (status: string, oom = false) => {
+    if (session.settled) return;
+    if (session.provisionalResult && !transport.wasAborted()) {
+      settleResult(session, session.provisionalResult);
+      return;
+    }
+    const detail = session.stderr.trim();
+    const protocolDetail = session.protocolError
+      ? `; protocol error: ${session.protocolError}`
+      : "";
+    const oomDetail = oom ? "; possibly out of memory" : "";
+    const error = transport.wasAborted()
+      ? (abortController.signal.reason ?? "Claude Code turn cancelled")
+      : `Claude Code ${status}${oomDetail}${detail ? `: ${detail}` : ""}${protocolDetail}`;
+    rejectControls(session, new Error(errorMessage(error)));
+    settle(session, failResult(session, error));
+  };
+  const processExited = (
+    exitCode: number | null,
+    exitSignal: NodeJS.Signals | null,
+  ) =>
+    finishTransport(
+      `exited before a final result with ${exitCode ?? exitSignal ?? "unknown status"}`,
+      exitCode === 143 || exitSignal === "SIGTERM" || exitSignal === "SIGKILL",
+    );
+  const finishStdoutClose = () => {
+    finishTransport("stdout closed before a final result");
+    if (!session.provisionalResult) abortController.abort();
+  };
+  const stdoutClosed = () => {
+    if (session.settled || session.stdoutCloseTimer !== undefined) return;
+    if (session.provisionalResult || abortController.signal.aborted) {
+      finishStdoutClose();
+      return;
+    }
+    session.stdoutCloseTimer = setTimeout(
+      finishStdoutClose,
+      STDOUT_EXIT_GRACE_MS,
+    );
+  };
+  const abortDuringStdoutClose = () => {
+    if (session.stdoutCloseTimer !== undefined) finishStdoutClose();
+  };
+  abortController.signal.addEventListener("abort", abortDuringStdoutClose, {
+    once: true,
+  });
+  stdout.once("close", stdoutClosed);
+  stdout.once("error", stdoutClosed);
+  transport.process.stdout.once("close", stdoutClosed);
+  transport.process.once("exit", processExited);
   transport.completion
-    .then(({ exitCode, exitSignal }) => {
-      if (session.settled) return;
-      if (
-        session.provisionalResult &&
-        exitCode === 0 &&
-        !transport.wasAborted()
-      ) {
-        settleResult(session, session.provisionalResult);
-        return;
-      }
-      const detail = session.stderr.trim();
-      const protocolDetail = session.protocolError
-        ? `; protocol error: ${session.protocolError}`
-        : "";
-      const oomDetail =
-        exitCode === 143 || exitSignal === "SIGTERM" || exitSignal === "SIGKILL"
-          ? "; possibly out of memory"
-          : "";
-      const error = transport.wasAborted()
-        ? (abortController.signal.reason ?? "Claude Code turn cancelled")
-        : `Claude Code exited before a final result with ${exitCode ?? exitSignal ?? "unknown status"}${oomDetail}${detail ? `: ${detail}` : ""}${protocolDetail}`;
-      rejectControls(session, new Error(errorMessage(error)));
-      settle(session, failResult(session, error));
-    })
+    .then(({ exitCode, exitSignal }) => processExited(exitCode, exitSignal))
     .catch((error) => {
       rejectControls(session, new Error(errorMessage(error)));
       settle(session, failResult(session, error));
     })
     .finally(() => {
       session.exited = true;
+      abortController.signal.removeEventListener(
+        "abort",
+        abortDuringStdoutClose,
+      );
       removeUpstreamAbort();
       if (sessions.get(sessionId) === session) sessions.delete(sessionId);
       resolveExit();

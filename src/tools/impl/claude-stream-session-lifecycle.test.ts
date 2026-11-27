@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { once } from "node:events";
 import {
   __resetClaudeSessionsForTests,
   hasActiveClaudeTurn,
@@ -21,6 +22,70 @@ afterEach(() => {
 });
 
 describe("Claude stream session lifecycle", () => {
+  test.each(["EOF", "error", "final frame"])(
+    "settles when stdout closes: %s",
+    async (mode) => {
+      const fixture = trackedFixture({ exitOnStdinEnd: false });
+      let aborted = false;
+      const running = runClaudeTurn(
+        { ...base, prompt: "work", sessionId: SESSION_ID },
+        {
+          createTransport: ({ signal }) => {
+            signal?.addEventListener("abort", () => {
+              aborted = true;
+            });
+            return fixture.transport;
+          },
+        },
+      );
+      await Bun.sleep(0);
+      if (mode === "error") fixture.stdout.destroy(new Error("broken stream"));
+      else if (mode === "final frame") {
+        fixture.stdout.end(
+          JSON.stringify({
+            type: "result",
+            is_error: false,
+            result: "finished",
+          }),
+        );
+      } else fixture.stdout.end();
+      expect(await running).toMatchObject(
+        mode === "final frame"
+          ? { success: true, report: "finished" }
+          : {
+              success: false,
+              error: "Claude Code stdout closed before a final result",
+            },
+      );
+      expect(aborted).toBe(mode !== "final frame");
+    },
+    1_000,
+  );
+
+  test("preserves the exit signal when stdout ends before the process exits", async () => {
+    const fixture = trackedFixture({ exitOnStdinEnd: false });
+    const started = Promise.withResolvers<void>();
+    const running = runClaudeTurn(
+      {
+        ...base,
+        prompt: "work",
+        sessionId: SESSION_ID,
+        onStarted: () => started.resolve(),
+      },
+      { createTransport: () => fixture.transport },
+    );
+    await started.promise;
+    const eof = once(fixture.stdout, "end");
+    fixture.stdout.end();
+    await eof;
+    fixture.process.emit("exit", null, "SIGKILL");
+    expect(await running).toMatchObject({
+      success: false,
+      error:
+        "Claude Code exited before a final result with SIGKILL; possibly out of memory",
+    });
+  });
+
   test(
     "cancellation still reaches a settled session whose process is alive",
     async () => {

@@ -37,16 +37,6 @@ export function isCapacityError(error: Record<string, unknown>): boolean {
   return /\b409 Conflict\b/i.test(readString(error, "message") ?? "");
 }
 
-export function turnFailureMessage(
-  turnError: Record<string, unknown> | undefined,
-  notifications: Array<Record<string, unknown>>,
-): string | undefined {
-  const messages = [turnError, ...notifications]
-    .map((error) => readString(error, "message")?.trim())
-    .filter((message): message is string => Boolean(message));
-  return messages.length ? [...new Set(messages)].join("; ") : undefined;
-}
-
 export function turnReport(params: Record<string, unknown>): string {
   const turn = asRecord(params.turn);
   const items = Array.isArray(turn?.items) ? turn.items : [];

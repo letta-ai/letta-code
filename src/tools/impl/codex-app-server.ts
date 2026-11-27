@@ -6,7 +6,10 @@ import { PROJECT_SKILLS_DIR } from "@/agent/skills";
 import type { SubagentResult } from "@/agent/subagents";
 import { spawnManagedWorkloadProcess } from "@/agent/subagents/subagent-process";
 import { cloudRepositoryRoots } from "@/utils/cloud-repository-roots";
-import { confirmProcessExit } from "@/utils/confirm-process-exit";
+import {
+  confirmProcessExit,
+  STDOUT_EXIT_GRACE_MS,
+} from "@/utils/confirm-process-exit";
 import { withNativeCliPath } from "@/utils/native-cli-env";
 import {
   asRecord,
@@ -20,7 +23,6 @@ import {
   readString,
   TOOL_ITEM_TYPES,
   textInput,
-  turnFailureMessage,
   turnReport,
 } from "./codex-app-server-payloads";
 import {
@@ -49,12 +51,15 @@ interface JsonRpcMessage {
   result?: Record<string, unknown>;
   error?: { code?: number; message?: string; data?: unknown };
 }
+type CodexExit = { code: number | null; signal: NodeJS.Signals | null };
+
 export interface CodexAppServerTransport {
   stdout: Readable;
   stderr?: Readable;
   stdin: Writable;
   kill?: () => void;
-  exited?: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
+  childExit?: Promise<CodexExit>;
+  exited?: Promise<CodexExit>;
 }
 interface PendingRequest {
   resolve: (value: Record<string, unknown>) => void;
@@ -81,7 +86,6 @@ interface TurnWaiter {
   textFromEarlierAttempts: ReadonlySet<string>;
   ranTool: boolean;
   steered: boolean;
-  errors: Array<Record<string, unknown>>;
 }
 
 interface ReportedText {
@@ -237,9 +241,12 @@ function spawnTransport(options: {
     stdout: child.stdout,
     stderr: child.stderr,
     kill: () => controller.abort(),
-    exited: completion.then((exit) => ({
-      code: exit.exitCode,
-      signal: exit.exitSignal,
+    childExit: new Promise((resolve) => {
+      child.once("exit", (code, signal) => resolve({ code, signal }));
+    }),
+    exited: completion.then(({ exitCode, exitSignal }) => ({
+      code: exitCode,
+      signal: exitSignal,
     })),
   };
 }
@@ -247,7 +254,8 @@ class CodexAppServerClient {
   private readonly pending = new Map<number, PendingRequest>();
   private nextRequestId = 1;
   private stderr = "";
-  private closed = false;
+  private stdoutCloseTimer?: ReturnType<typeof setTimeout>;
+  closeError?: Error;
 
   constructor(
     private readonly transport: CodexAppServerTransport,
@@ -255,7 +263,9 @@ class CodexAppServerClient {
     private readonly onClose: (error: Error) => void,
   ) {
     const stdout = createInterface({ input: transport.stdout });
-    stdout.once("error", () => void this.close());
+    const stdoutClosed = () => this.onStdoutClosed();
+    stdout.once("close", stdoutClosed);
+    stdout.once("error", stdoutClosed);
     stdout.on("line", (line) => {
       if (!line.trim()) return;
       let message: JsonRpcMessage;
@@ -283,9 +293,9 @@ class CodexAppServerClient {
     transport.stderr?.on("data", (chunk: string) => {
       this.stderr += chunk;
     });
-    const close = () => void this.close();
-    transport.stdout.once("close", close);
-    transport.stdout.once("error", close);
+    transport.stdout.once("close", stdoutClosed);
+    void transport.childExit?.then((exit) => this.close(exit));
+    void transport.exited?.then((exit) => this.close(exit));
   }
 
   async initialize(): Promise<void> {
@@ -303,8 +313,7 @@ class CodexAppServerClient {
     method: string,
     params: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
-    if (this.closed)
-      return Promise.reject(new Error("Codex app-server closed"));
+    if (this.closeError) return Promise.reject(this.closeError);
     const id = this.nextRequestId++;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
@@ -320,7 +329,7 @@ class CodexAppServerClient {
   }
 
   notify(method: string, params: Record<string, unknown>): void {
-    if (!this.closed) {
+    if (!this.closeError) {
       this.transport.stdin.write(`${JSON.stringify({ method, params })}\n`);
     }
   }
@@ -330,26 +339,29 @@ class CodexAppServerClient {
       throw new Error("Codex process exit cannot be confirmed");
     this.transport.kill?.();
     await confirmProcessExit(this.transport.exited, "Codex");
-    await this.close();
+    this.close();
   }
 
   dispose(): void {
-    this.transport.kill?.();
-    void this.close();
+    this.close();
   }
 
-  private async close(): Promise<void> {
-    if (this.closed) return;
-    this.closed = true;
-    let exitTimeout: ReturnType<typeof setTimeout> | undefined;
-    const exit = this.transport.exited
-      ? await Promise.race([
-          this.transport.exited,
-          new Promise<undefined>((resolve) => {
-            exitTimeout = setTimeout(() => resolve(undefined), 2_000);
-          }),
-        ]).finally(() => clearTimeout(exitTimeout))
-      : undefined;
+  private onStdoutClosed(): void {
+    if (this.closeError || this.stdoutCloseTimer !== undefined) return;
+    if (!this.transport.childExit && !this.transport.exited) {
+      this.close();
+      return;
+    }
+    this.stdoutCloseTimer = setTimeout(
+      () => this.close(),
+      STDOUT_EXIT_GRACE_MS,
+    );
+  }
+
+  private close(exit?: CodexExit): void {
+    if (this.closeError) return;
+    clearTimeout(this.stdoutCloseTimer);
+    this.stdoutCloseTimer = undefined;
     const detail = this.stderr.trim().slice(-300);
     const exitDetail = exit?.signal
       ? ` (signal ${exit.signal}${exit.signal === "SIGKILL" || exit.signal === "SIGTERM" ? "; possibly out of memory" : ""})`
@@ -359,6 +371,8 @@ class CodexAppServerClient {
     const error = new Error(
       `Codex app-server closed${exitDetail}${detail ? `: ${detail}` : ""}`,
     );
+    this.closeError = error;
+    this.transport.kill?.();
     for (const pending of this.pending.values()) pending.reject(error);
     this.pending.clear();
     this.onClose(error);
@@ -462,7 +476,7 @@ function settleTurn(
   const status = readString(turn, "status");
   const completed = status === "completed";
   const turnError = asRecord(turn?.error);
-  const failure = turnFailureMessage(turnError, waiter.errors);
+  const failure = readString(turnError, "message")?.trim();
   waiter.resolve({
     result: {
       agentId: `codex_${session.threadId}`,
@@ -472,31 +486,14 @@ function settleTurn(
       success: completed,
       ...(completed
         ? {}
-        : { error: failure ?? `Codex turn ${status ?? "failed"}` }),
+        : { error: failure || `Codex turn ${status ?? "failed"}` }),
       durationMs: Date.now() - waiter.startedAt,
     },
-    capacityFailure:
-      !completed &&
-      [turnError, ...waiter.errors].some(
-        (error) => error !== undefined && isCapacityError(error),
-      ),
+    capacityFailure: !completed && !!turnError && isCapacityError(turnError),
     ranTool: waiter.ranTool,
     steered: waiter.steered,
   });
   scheduleIdleSessionCleanup(session);
-  return true;
-}
-
-function recordError(
-  session: CodexSession,
-  params: Record<string, unknown>,
-): boolean {
-  const turnId = readString(params, "turnId");
-  if (turnId !== session.activeTurnId || !session.activeWaiter) return false;
-  const error = asRecord(params.error);
-  if (error && params.willRetry !== true) {
-    session.activeWaiter.errors.push(error);
-  }
   return true;
 }
 
@@ -505,6 +502,8 @@ function handleNotification(
   message: JsonRpcMessage,
 ): boolean {
   if (!message.params) return true;
+  const threadId = readString(message.params, "threadId");
+  if (threadId && threadId !== session.threadId) return true;
   if (message.method === "item/started") {
     return recordItem(session, message.params, false);
   }
@@ -514,8 +513,14 @@ function handleNotification(
   if (message.method === "turn/completed") {
     return settleTurn(session, message.params);
   }
-  if (message.method === "error") {
-    return recordError(session, message.params);
+  if (message.method === "error" && message.params.willRetry === false) {
+    return settleTurn(session, {
+      turn: {
+        id: message.params.turnId,
+        status: "failed",
+        error: message.params.error,
+      },
+    });
   }
   return true;
 }
@@ -528,6 +533,8 @@ function replayPendingNotifications(session: CodexSession): void {
       session.pendingNotifications.push(message);
     }
   }
+  if (session.client.closeError)
+    failSession(session, session.client.closeError);
 }
 
 function clearIdleSessionCleanup(session: CodexSession): void {
@@ -736,7 +743,6 @@ async function startTurnAttempt(
       textFromEarlierAttempts: new Set(listeners.reportedText.texts),
       ranTool: false,
       steered: false,
-      errors: [],
     };
   });
   return { turnId, outcome };

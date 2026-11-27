@@ -8,7 +8,15 @@ import type {
 } from "./external-tool-call";
 
 export interface ClaudeSessionTransport {
-  process: Pick<ChildProcessWithoutNullStreams, "stdout" | "stderr" | "stdin">;
+  process: Pick<
+    ChildProcessWithoutNullStreams,
+    "stdout" | "stderr" | "stdin"
+  > & {
+    once(
+      event: "exit",
+      listener: (code: number | null, signal: NodeJS.Signals | null) => void,
+    ): void;
+  };
   completion: Promise<{
     exitCode: number | null;
     exitSignal: NodeJS.Signals | null;
@@ -52,6 +60,7 @@ export interface ClaudeSession {
   backgroundCapMs: number;
   controlResponseTimeoutMs: number;
   backgroundCapTimer?: ReturnType<typeof setTimeout>;
+  stdoutCloseTimer?: ReturnType<typeof setTimeout>;
   turnWaiters: Set<TurnWaiter>;
   writeLock: Promise<void>;
   completion: Promise<SubagentResult>;
