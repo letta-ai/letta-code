@@ -1,4 +1,4 @@
-#!/usr/bin/env -S npx tsx
+#!/usr/bin/env node
 
 import {
   existsSync,
@@ -11,7 +11,7 @@ import {
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deflateRawSync } from "node:zlib";
-import { validateSkill } from "./validate-skill";
+import { validateSkill } from "./validate-skill.ts";
 
 interface ZipEntry {
   path: string;
@@ -234,11 +234,11 @@ if (isMainModule()) {
 
   if (args.length < 1) {
     console.log(
-      "Usage: npx tsx package-skill.ts <path/to/skill-folder> [output-directory]",
+      "Usage: node package-skill.ts <path/to/skill-folder> [output-directory]",
     );
     console.log("\nExample:");
-    console.log("  npx tsx package-skill.ts .skills/my-skill");
-    console.log("  npx tsx package-skill.ts .skills/my-skill ./dist");
+    console.log("  node package-skill.ts .skills/my-skill");
+    console.log("  node package-skill.ts .skills/my-skill ./dist");
     process.exit(1);
   }
 

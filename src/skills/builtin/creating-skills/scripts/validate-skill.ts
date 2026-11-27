@@ -1,4 +1,4 @@
-#!/usr/bin/env -S npx tsx
+#!/usr/bin/env node
 
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
@@ -268,7 +268,7 @@ function isMainModule(): boolean {
 if (isMainModule()) {
   const args = process.argv.slice(2);
   if (args.length !== 1) {
-    console.log("Usage: npx tsx validate-skill.ts <skill-directory>");
+    console.log("Usage: node validate-skill.ts <skill-directory>");
     process.exit(1);
   }
 
