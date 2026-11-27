@@ -1,8 +1,8 @@
 diff --git a/dist/api/openai-completions.js b/dist/api/openai-completions.js
-index c1b6038c2220633a8caf710288a8f6e6301f7a28..470cd9f08b0dfd6a13f075afe562b45c081160a1 100644
+index 7ba85d53d8dffaef8bc761eca0ad3000037704fa..e99105102627c6cddd434401721fb1bbb976b2a1 100644
 --- a/dist/api/openai-completions.js
 +++ b/dist/api/openai-completions.js
-@@ -855,6 +855,16 @@ function addCacheControlToTextContent(message, cacheControl) {
+@@ -855,6 +855,16 @@
      }
      return false;
  }
@@ -19,7 +19,7 @@ index c1b6038c2220633a8caf710288a8f6e6301f7a28..470cd9f08b0dfd6a13f075afe562b45c
  export function convertMessages(model, context, compat, options) {
      const normalizedContext = resolveTranscript(context, compat.supportsMidConvoSystemMessages);
      const params = [];
-@@ -879,7 +889,7 @@ export function convertMessages(model, context, compat, options) {
+@@ -879,7 +889,7 @@
              const prefix = callId.slice(0, Math.max(1, 40 - hash.length - 1));
              return `${prefix}_${hash}`;
          }
