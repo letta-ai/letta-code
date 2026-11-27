@@ -92,6 +92,7 @@ export interface McpEventWatchOptions {
   maxAgeMs?: number;
   minPollMs?: number;
   agentId?: string;
+  conversationId?: string;
 }
 
 export async function connectMcpEvents(
@@ -300,7 +301,14 @@ export async function connectMcpEvents(
       let termination: number | undefined;
       let progress: ReturnType<typeof openMcpEventState>;
       const identity = options.agentId
-        ? [options.agentId, config, name, args, webhook?.url.href]
+        ? {
+            agentId: options.agentId,
+            conversationId: options.conversationId,
+            config,
+            event: name,
+            args,
+            webhookUrl: webhook?.url.href,
+          }
         : undefined;
       async function run() {
         const event = (catalog ?? (await list(watchSignal))).find(

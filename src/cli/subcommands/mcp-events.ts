@@ -13,7 +13,7 @@ export async function runMcpEvents(
   servers: readonly McpServerConfig[],
   deps: Parameters<typeof loadMcpToolArgs>[2],
   stdout: McpOutput,
-  agentId: string,
+  scope: { agentId: string; conversationId?: string },
   oauthForConfig: (
     config: McpServerConfig,
   ) => Promise<McpOAuthConnection | undefined>,
@@ -134,7 +134,7 @@ export async function runMcpEvents(
           },
           controller.signal,
           url ? { url, port } : undefined,
-          { agentId, delivery, maxAgeMs, minPollMs },
+          { ...scope, delivery, maxAgeMs, minPollMs },
         );
       } else {
         await stdout(JSON.stringify(await connection.list()));

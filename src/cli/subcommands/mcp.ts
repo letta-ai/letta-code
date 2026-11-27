@@ -900,10 +900,11 @@ export async function runMcpSubcommand(
     return 0;
   }
 
+  const env = deps.env ?? process.env;
   let agentId = resolveMcpAgentId(
     stringValue(parsed.values.agent),
     stringValue(parsed.values["agent-id"]),
-    deps.env ?? process.env,
+    env,
   );
   if (!agentId) {
     await printMcpError(
@@ -920,11 +921,7 @@ export async function runMcpSubcommand(
   try {
     await (deps.initializeSettings ?? (() => settingsManager.initialize()))();
     if (!parsed.values.agent && !parsed.values["agent-id"]) {
-      agentId = await getMcpScopeAgentId(
-        agentId,
-        deps.env ?? process.env,
-        deps.lookupParentAgent,
-      );
+      agentId = await getMcpScopeAgentId(agentId, env, deps.lookupParentAgent);
     }
     switch (parsed.action) {
       case "events":
@@ -934,7 +931,13 @@ export async function runMcpSubcommand(
           getLocalServers(deps, agentId),
           deps,
           stdout,
-          agentId,
+          {
+            agentId,
+            conversationId:
+              env.LETTA_CONVERSATION_ID?.trim() ||
+              env.CONVERSATION_ID?.trim() ||
+              undefined,
+          },
           (config) => oauthForConfig(deps, agentId, config, false),
         );
       case "list":

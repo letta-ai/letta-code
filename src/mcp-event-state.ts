@@ -8,6 +8,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+import type { McpServerConfig } from "@/mcp-client";
 import { resolveGlobalConfigDir } from "@/utils/settings-path";
 import { isRecord } from "@/utils/type-guards";
 
@@ -26,7 +27,27 @@ function canonical(value: unknown): unknown {
   );
 }
 
-export function openMcpEventState(identity?: unknown[], configDir?: string) {
+interface McpEventStateIdentity {
+  agentId: string;
+  conversationId?: string;
+  config: McpServerConfig;
+  event: string;
+  args: Record<string, unknown>;
+  webhookUrl?: string;
+}
+
+export function openMcpEventState(
+  identity?: McpEventStateIdentity,
+  configDir?: string,
+) {
+  const key = identity && [
+    identity.agentId,
+    identity.config,
+    identity.event,
+    identity.args,
+    identity.webhookUrl,
+  ];
+  if (identity?.conversationId) key?.push(identity.conversationId);
   const directory =
     identity && join(configDir ?? resolveGlobalConfigDir(), "mcp-event-state");
   const path =
@@ -34,7 +55,7 @@ export function openMcpEventState(identity?: unknown[], configDir?: string) {
     join(
       directory,
       `${createHash("sha256")
-        .update(JSON.stringify(canonical(identity)))
+        .update(JSON.stringify(canonical(key)))
         .digest("hex")}.json`,
     );
   let cursor: string | undefined;
