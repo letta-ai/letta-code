@@ -5,8 +5,10 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/messages";
 import { createBuffers } from "@/cli/helpers/accumulator";
 import { backfillBuffers } from "@/cli/helpers/backfill";
+import { formatScheduledTaskPrompt } from "@/cron/scheduled-task-prompt";
 import { formatMultimodalTaskNotification } from "@/utils/task-notifications";
 import { extractUserMessagePreview } from "./ConversationSelector";
+import { splitSystemReminderBlocks } from "./UserMessageRich";
 
 test("recognizes a split notification in conversation previews and clipped history", () => {
   const content = formatMultimodalTaskNotification(
@@ -63,4 +65,45 @@ test("hides the payload of a legacy notification in conversation previews", () =
     ],
   };
   expect(extractUserMessagePreview(message)).toBe("Check the screenshot");
+});
+
+test("shows a scheduled fire in previews and history with ordinary reminders hidden", () => {
+  const time = new Date("2026-01-01T00:00:00Z");
+  const scheduled = formatScheduledTaskPrompt({
+    name: "Daily status",
+    timezone: "UTC",
+    scheduledFor: time,
+    currentTime: time,
+    recurrence: { type: "one-off" },
+    prompt: "Summarize open items.",
+  });
+  const message: UserMessage = {
+    id: "schedule-1",
+    date: time.toISOString(),
+    message_type: "user_message",
+    content: [
+      {
+        type: "text",
+        text: "<system-reminder>Private context</system-reminder>",
+      },
+      { type: "text", text: scheduled },
+    ],
+  };
+
+  expect(extractUserMessagePreview(message)).toStartWith(
+    'Scheduled task "Daily status" is firing.',
+  );
+  const buffers = createBuffers();
+  backfillBuffers(buffers, [message]);
+  const line = buffers.byId.get(message.id);
+  expect(line).toMatchObject({ kind: "user" });
+  if (line?.kind !== "user") throw new Error("Expected scheduled user line");
+  expect(line.text).toContain("Summarize open items.");
+  expect(line.text).not.toContain("Private context");
+
+  const live = splitSystemReminderBlocks(
+    `<system-reminder>Private context</system-reminder>\n${scheduled}`,
+  );
+  expect(live[0]?.isSystemReminder).toBe(true);
+  expect(live[1]).toEqual({ text: line.text, isSystemReminder: false });
 });
