@@ -18,6 +18,7 @@ export interface ExternalTraceScope {
   task_id: string;
   task_description?: string;
   worker_session_id: string;
+  worker_computer?: string;
 }
 export interface ExternalTraceRow extends ExternalTraceScope {
   id: string;

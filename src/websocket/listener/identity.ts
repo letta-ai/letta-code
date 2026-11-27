@@ -8,6 +8,18 @@ export function isValidListenerInstanceId(value: string): boolean {
   return INSTANCE_ID_PATTERN.test(value);
 }
 
+let activeListener: { connectionName: string | null } | null = null;
+
+export function setActiveListenerIdentity(
+  listener: { connectionName: string | null } | null,
+): void {
+  activeListener = listener;
+}
+
+export function getActiveListenerConnectionName(): string | null {
+  return activeListener?.connectionName ?? null;
+}
+
 let cachedSpawnerListenerInstanceId: string | null | undefined;
 let cachedSpawnerDeviceId: string | null | undefined;
 
