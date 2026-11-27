@@ -22,6 +22,7 @@ import {
   onChunk,
   toLines,
 } from "@/cli/helpers/accumulator";
+import { getRuntimeActingUserId } from "@/runtime-context";
 import { telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type { StopReasonType } from "@/types/protocol_v2";
@@ -158,7 +159,8 @@ async function handleIncomingMessageInner(
     } = durabilityOwnership.record(progress));
   };
   const interruptedRevisionRef = { current: initialInterruptedRevision };
-  durabilityOwnership.recordInput(msg);
+  const actingUserId = msg.suppressActingUserFallback ? null : msg.actingUserId;
+  durabilityOwnership.recordInput(msg, getRuntimeActingUserId());
   const turnLease =
     existingTurnLease ??
     runtime.turnLifecycle.begin({
@@ -267,7 +269,7 @@ async function handleIncomingMessageInner(
       preparedToolContext: setup.preparedToolContext.preparedToolContext,
       overrideModel,
       responseFormat: msg.responseFormat,
-      actingUserId: msg.suppressActingUserFallback ? null : msg.actingUserId,
+      actingUserId,
       getInput: () => turnInput,
       getInterruptedToolCallIds: () =>
         pendingNormalizationInterruptedToolCallIds,
@@ -388,9 +390,7 @@ async function handleIncomingMessageInner(
           conversationId,
           workingDirectory: turnWorkingDirectory,
           permissionMode: turnPermissionModeState.mode,
-          actingUserId: msg.suppressActingUserFallback
-            ? null
-            : msg.actingUserId,
+          actingUserId,
           assistantMessage: findLastAssistantText(transcriptLines),
           transcriptLines,
           getCachedAgent: setup.getCachedAgent,
