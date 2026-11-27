@@ -71,3 +71,12 @@ test("cleanup exposes exhausted and permanent failures to the caller", async () 
     expect(attempts).toBe(status >= 500 ? 3 : 1);
   }
 });
+
+test("cleanup accepts a plain error carrying a missing fixture status", async () => {
+  let attempts = 0;
+  await deleteCloudFixture(async () => {
+    attempts++;
+    throw Object.assign(new Error("Sandbox POST failed: 404"), { status: 404 });
+  }, noWait);
+  expect(attempts).toBe(1);
+});

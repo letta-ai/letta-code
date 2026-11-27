@@ -14,6 +14,7 @@ import {
   getRetryDelayMs,
   isApprovalPendingError,
   isEmptyResponseRetryable,
+  isProviderStreamTimeoutDetail,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
 } from "@/agent/turn-recovery-policy";
 import {
@@ -71,7 +72,6 @@ import {
   createTurnFinalizer,
 } from "./turn-finalizer";
 import {
-  createDeploymentRecoveryTurnInput,
   rebuildTurnInputWithFreshDenials,
   refreshTurnInputOtidsForNewRequest,
   updateTurnInputMessagesPreservingOtids,
@@ -80,7 +80,7 @@ import type { TurnLease } from "./turn-lifecycle";
 import { finishTurnIfMaxTurnsReached } from "./turn-max-turns";
 import { notifyTurnFinished, notifyTurnStarted } from "./turn-observers";
 import {
-  prepareProviderRetryInput,
+  sendPostStopRetry,
   shouldRetryPostStopTurn,
   startTurnInput,
 } from "./turn-send";
@@ -229,25 +229,20 @@ async function handleIncomingMessageInner(
       connectionId,
       resolveClientMessageIds: () => turnCorrelation.clientMessageIds,
     });
-    if (setup.kind === "interrupted") {
-      finishTurn({
-        stopReason: "cancelled",
-        socket,
-        agentId,
-        conversationId,
-      });
-      return;
-    }
-    if (setup.kind === "cancelled") {
+    if (setup.kind === "interrupted" || setup.kind === "cancelled") {
       finishTurn({
         stopReason: "cancelled",
         agentId: agentId || null,
         conversationId,
-        errorNotice: {
-          message: setup.reason,
-          cancelRequested: turnAbortSignal.aborted,
-          abortSignal: turnAbortSignal,
-        },
+        ...(setup.kind === "interrupted"
+          ? { socket }
+          : {
+              errorNotice: {
+                message: setup.reason,
+                cancelRequested: turnAbortSignal.aborted,
+                abortSignal: turnAbortSignal,
+              },
+            }),
       });
       return;
     }
@@ -256,6 +251,7 @@ async function handleIncomingMessageInner(
     const overrideModel = setup.overrideModel;
     let pendingNormalizationInterruptedToolCallIds =
       setup.pendingNormalizationInterruptedToolCallIds;
+    let actingUserId = msg.suppressActingUserFallback ? null : msg.actingUserId;
     const initial = await startTurnInput({
       conversationId,
       agentId,
@@ -267,7 +263,7 @@ async function handleIncomingMessageInner(
       preparedToolContext: setup.preparedToolContext.preparedToolContext,
       overrideModel,
       responseFormat: msg.responseFormat,
-      actingUserId: msg.suppressActingUserFallback ? null : msg.actingUserId,
+      getActingUserId: () => actingUserId,
       getInput: () => turnInput,
       getInterruptedToolCallIds: () =>
         pendingNormalizationInterruptedToolCallIds,
@@ -439,6 +435,13 @@ async function handleIncomingMessageInner(
           runErrorInfo?.message ||
           fallbackError ||
           null;
+        const retryErrorDetail =
+          [
+            latestErrorInfo?.detail,
+            latestErrorInfo?.message,
+            runErrorInfo?.detail,
+            runErrorInfo?.message,
+          ].find(isProviderStreamTimeoutDetail) ?? errorDetail;
         const quotaError = latestErrorInfo ?? runErrorInfo ?? errorDetail;
         const deploymentInterrupted =
           isCloudApiDeploymentInterrupted(latestErrorInfo) ||
@@ -675,49 +678,48 @@ async function handleIncomingMessageInner(
           providerAttempts: llmApiErrorRetries,
           stopReason: (stopReason as StopReasonType) || "error",
           runId: lastRunId,
-          errorDetail,
+          errorDetail: retryErrorDetail,
         });
         if (finishIfInterrupted(lastRunId || runtime.activeRunId)) {
           break;
         }
         if (shouldRetry) {
-          if (deploymentInterrupted) {
-            deploymentRecoveryAttempts += 1;
-            turnInput = createDeploymentRecoveryTurnInput();
-          } else {
-            llmApiErrorRetries += 1;
-            turnInput = await prepareProviderRetryInput({
-              input: turnInput,
-              errorDetail,
-              attempt: llmApiErrorRetries,
-              socket,
+          if (deploymentInterrupted) deploymentRecoveryAttempts += 1;
+          else llmApiErrorRetries += 1;
+          const retry = await sendPostStopRetry({
+            deploymentInterrupted,
+            input: turnInput,
+            errorDetail: retryErrorDetail,
+            attempt: llmApiErrorRetries,
+            socket,
+            runtime,
+            turnLease,
+            agentId,
+            conversationId,
+            runId: lastRunId,
+            sender: turnInputSender,
+            setInput: (input) => {
+              turnInput = input;
+            },
+            finishIfInterrupted,
+            turnCorrelation,
+            noCoalesce: msg.noCoalesce,
+            onConsumeQueuedTurn: createQueuedTurnConsumer({
+              parkedInput: msg,
+              turnToolContextId,
               runtime,
-              turnLease,
-              agentId,
-              conversationId,
-              runId: lastRunId,
-            });
-          }
-          setTurnLoopStatus(runtime, turnLease, "SENDING_API_REQUEST", {
-            agent_id: agentId,
-            conversation_id: conversationId,
+              ownership: durabilityOwnership,
+              interruptedRevisionRef,
+              recoveryLineageId,
+              recoveryEvidenceWriter,
+            }).onConsumeQueuedTurn,
+            onDequeued: (batchId, queuedActingUserId) => {
+              activeDequeuedBatchId = batchId;
+              actingUserId = queuedActingUserId;
+            },
           });
-          const retryInputWithSkillContent = deploymentInterrupted
-            ? turnInput.messages
-            : injectQueuedSkillContent(turnInput.messages, {
-                socket,
-                runtime,
-                agentId,
-                conversationId,
-              });
-          const retrySendResult = await turnInputSender.send(
-            retryInputWithSkillContent,
-          );
-          turnInput = updateTurnInputMessagesPreservingOtids(
-            turnInput,
-            retryInputWithSkillContent,
-          );
-          const retryStream = turnInputSender.accept(retrySendResult);
+          if (retry.kind === "interrupted") break;
+          const retryStream = turnInputSender.accept(retry.result);
           if (!retryStream) {
             return;
           }
