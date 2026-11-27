@@ -147,7 +147,16 @@ export function splitShellSegments(input: string): string[] | null {
       continue;
     }
 
-    if (ch === ";") {
+    if (ch === "&" && /<$/.test(current)) {
+      const fd = input.slice(i + 1).match(/^(?:\d+|-)/);
+      if (fd) {
+        current += ch + fd[0];
+        i += 1 + fd[0].length;
+        continue;
+      }
+    }
+
+    if (ch === ";" || ch === "&") {
       segments.push(current);
       current = "";
       i += 1;
@@ -321,7 +330,16 @@ export function splitShellSegmentsAllowCommandSubstitution(
       continue;
     }
 
-    if (ch === ";") {
+    if (ch === "&" && /<$/.test(current)) {
+      const fd = input.slice(i + 1).match(/^(?:\d+|-)/);
+      if (fd) {
+        current += ch + fd[0];
+        i += 1 + fd[0].length;
+        continue;
+      }
+    }
+
+    if (ch === ";" || ch === "&") {
       segments.push(current);
       current = "";
       i += 1;

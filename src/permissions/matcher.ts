@@ -2,6 +2,7 @@ import { resolve, win32 } from "node:path";
 import { minimatch } from "minimatch";
 import { canonicalToolName } from "./canonical";
 import {
+  extractAllShellCommands,
   extractPrimaryShellCommand,
   normalizeBashRulePayload,
   unwrapShellLauncherCommand,
@@ -10,6 +11,7 @@ import {
 export interface MatcherOptions {
   canonicalizeToolNames?: boolean;
   allowBareToolFallback?: boolean;
+  checkAllSegments?: boolean;
 }
 
 function toolForMatch(toolName: string, options?: MatcherOptions): string {
@@ -226,6 +228,15 @@ export function matchesBashPattern(
     legacyCommand,
     legacyRawCommand,
   ];
+
+  if (options?.checkAllSegments) {
+    for (const segment of extractAllShellCommands(rawCommand)) {
+      const normalizedSegment = normalizeBashRulePayload(segment);
+      if (!commandCandidates.includes(normalizedSegment)) {
+        commandCandidates.push(normalizedSegment);
+      }
+    }
+  }
 
   if (commandPattern.endsWith(":*")) {
     const prefix = commandPattern.slice(0, -2);
