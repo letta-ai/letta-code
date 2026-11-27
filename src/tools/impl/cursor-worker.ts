@@ -11,6 +11,8 @@ import {
   type RunResult,
 } from "@cursor/sdk";
 
+import { getMcpRelayEnv } from "@/utils/mcp-relay-env";
+
 import { isCursorModelRejection, retryCursorStart } from "./cursor-start-retry";
 
 export interface CursorWorkerStart {
@@ -21,6 +23,7 @@ export interface CursorWorkerStart {
   cwd: string;
   model?: string;
   reminder?: string;
+  mcpServers?: AgentOptions["mcpServers"];
   prompt: string;
   /** Display name for a new agent (the Agent task description). */
   name?: string;
@@ -67,6 +70,12 @@ async function start(command: CursorWorkerStart): Promise<void> {
     });
   }
   const options: AgentOptions = {
+    mcpServers: Object.fromEntries(
+      Object.entries(command.mcpServers ?? {}).map(([name, config]) => [
+        name,
+        { ...config, env: getMcpRelayEnv(process.env) },
+      ]),
+    ),
     apiKey: process.env.CURSOR_API_KEY,
     model: { id: command.model ?? config.model },
     tools: [
