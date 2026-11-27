@@ -17,7 +17,7 @@ import {
   unlinkSync,
   writeSync,
 } from "node:fs";
-import { readdir, rm } from "node:fs/promises";
+import { readdir, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -381,18 +381,66 @@ async function getNpmGlobalPath(
   }
 }
 
-async function cleanupOrphanedDirs(globalPath: string): Promise<void> {
-  const lettaAiDir = join(globalPath, "lib/node_modules/@letta-ai");
+export async function cleanupOrphanedDirs(
+  globalPath: string,
+  platform: NodeJS.Platform = process.platform,
+): Promise<void> {
+  const lettaAiDir = join(
+    globalPath,
+    ...(platform === "win32" ? [] : ["lib"]),
+    "node_modules",
+    "@letta-ai",
+  );
   try {
     const entries = await readdir(lettaAiDir);
     for (const entry of entries) {
       if (entry.startsWith(".letta-code-")) {
         const orphanPath = join(lettaAiDir, entry);
+        const livePath = join(lettaAiDir, "letta-code");
+        if (!(await hasReplacementFiles(orphanPath, livePath))) {
+          debugLog(
+            "Keeping orphaned install; live install is incomplete:",
+            orphanPath,
+          );
+          continue;
+        }
         debugLog("Cleaning orphaned temp directory:", orphanPath);
         await rm(orphanPath, { recursive: true, force: true });
       }
     }
   } catch {}
+}
+
+async function hasReplacementFiles(
+  backup: string,
+  live: string,
+  root = true,
+): Promise<boolean> {
+  try {
+    if (root) {
+      for (const file of ["package.json", "letta.js"]) {
+        const info = await stat(join(live, file));
+        if (!info.isFile() || info.size === 0) return false;
+      }
+    }
+    const entries = await readdir(backup, { withFileTypes: true });
+    for (const entry of entries) {
+      const source = join(backup, entry.name);
+      const replacement = join(live, entry.name);
+      if (entry.isDirectory()) {
+        if (!(await hasReplacementFiles(source, replacement, false)))
+          return false;
+      } else {
+        const original = await stat(source);
+        const current = await stat(replacement);
+        if (!current.isFile() || (original.size > 0 && current.size === 0))
+          return false;
+      }
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function getUpdateLockPath(): string {

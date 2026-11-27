@@ -9,6 +9,7 @@ import {
   buildUpdateExecOptions,
   checkAndAutoUpdate,
   checkForUpdate,
+  cleanupOrphanedDirs,
   detectPackageManager,
   getSelfUpdateStatus,
   manualUpdate,
@@ -57,61 +58,86 @@ describe("auto-update ENOTEMPTY handling", () => {
     }
   });
 
-  describe("cleanupOrphanedDirs logic", () => {
-    test("removes directories starting with .letta-code-", async () => {
-      const lettaAiDir = path.join(testDir, "lib/node_modules/@letta-ai");
-      fs.mkdirSync(lettaAiDir, { recursive: true });
-
-      const orphan1 = path.join(lettaAiDir, ".letta-code-abc123");
-      const orphan2 = path.join(lettaAiDir, ".letta-code-xyz789");
-      fs.mkdirSync(orphan1);
-      fs.mkdirSync(orphan2);
-
-      const legitimate = path.join(lettaAiDir, "letta-code");
-      const otherPackage = path.join(lettaAiDir, "other-package");
-      fs.mkdirSync(legitimate);
-      fs.mkdirSync(otherPackage);
-
-      const { readdir, rm } = await import("node:fs/promises");
-      const entries = await readdir(lettaAiDir);
-      for (const entry of entries) {
-        if (entry.startsWith(".letta-code-")) {
-          await rm(path.join(lettaAiDir, entry), {
+  describe("cleanupOrphanedDirs", () => {
+    for (const platform of ["win32", "linux"] as const) {
+      test(`${platform}: cleans the npm root only when a complete replacement exists`, async () => {
+        const scope = path.join(
+          testDir,
+          ...(platform === "win32" ? [] : ["lib"]),
+          "node_modules",
+          "@letta-ai",
+        );
+        const backup = path.join(scope, ".letta-code-abc123");
+        const live = path.join(scope, "letta-code");
+        const other = path.join(scope, "other-package");
+        fs.mkdirSync(other, { recursive: true });
+        for (const dir of [backup, live]) {
+          fs.mkdirSync(path.join(dir, "node_modules", "dependency"), {
             recursive: true,
-            force: true,
           });
+          fs.writeFileSync(
+            path.join(dir, "package.json"),
+            '{"name":"@letta-ai/letta-code"}',
+          );
+          fs.writeFileSync(path.join(dir, "letta.js"), "// intact CLI");
+          fs.writeFileSync(
+            path.join(dir, "node_modules", "dependency", "index.js"),
+            "// dependency",
+          );
         }
+        await cleanupOrphanedDirs(testDir, platform);
+        expect(fs.existsSync(backup)).toBe(false);
+        expect(fs.existsSync(path.join(live, "letta.js"))).toBe(true);
+        expect(fs.existsSync(other)).toBe(true);
+      });
+
+      for (const missing of [
+        "entire install",
+        "package.json",
+        "letta.js",
+        "node_modules/dependency/index.js",
+        "empty entry",
+      ]) {
+        test(`${platform}: retains the only intact backup with ${missing} missing/incomplete`, async () => {
+          const scope = path.join(
+            testDir,
+            ...(platform === "win32" ? [] : ["lib"]),
+            "node_modules",
+            "@letta-ai",
+          );
+          const backup = path.join(scope, ".letta-code-abc123");
+          const live = path.join(scope, "letta-code");
+          for (const dir of [backup, live]) {
+            fs.mkdirSync(path.join(dir, "node_modules", "dependency"), {
+              recursive: true,
+            });
+            fs.writeFileSync(
+              path.join(dir, "package.json"),
+              '{"name":"@letta-ai/letta-code"}',
+            );
+            fs.writeFileSync(path.join(dir, "letta.js"), "// intact CLI");
+            fs.writeFileSync(
+              path.join(dir, "node_modules", "dependency", "index.js"),
+              "// dependency",
+            );
+          }
+          if (missing === "empty entry")
+            fs.writeFileSync(path.join(live, "letta.js"), "");
+          else
+            fs.rmSync(
+              missing === "entire install" ? live : path.join(live, missing),
+              { recursive: true },
+            );
+          await cleanupOrphanedDirs(testDir, platform);
+          expect(fs.readFileSync(path.join(backup, "letta.js"), "utf8")).toBe(
+            "// intact CLI",
+          );
+        });
       }
+    }
 
-      expect(fs.existsSync(orphan1)).toBe(false);
-      expect(fs.existsSync(orphan2)).toBe(false);
-      expect(fs.existsSync(legitimate)).toBe(true);
-      expect(fs.existsSync(otherPackage)).toBe(true);
-    });
-
-    test("handles non-existent directory gracefully", async () => {
-      const nonExistent = path.join(testDir, "does/not/exist");
-      const { readdir } = await import("node:fs/promises");
-
-      let error: NodeJS.ErrnoException | null = null;
-      try {
-        await readdir(nonExistent);
-      } catch (e) {
-        error = e as NodeJS.ErrnoException;
-      }
-
-      expect(error).not.toBeNull();
-      expect(error?.code).toBe("ENOENT");
-    });
-
-    test("handles empty directory", async () => {
-      const emptyDir = path.join(testDir, "empty");
-      fs.mkdirSync(emptyDir, { recursive: true });
-
-      const { readdir } = await import("node:fs/promises");
-      const entries = await readdir(emptyDir);
-
-      expect(entries).toEqual([]);
+    test("ignores a missing npm scope", async () => {
+      await cleanupOrphanedDirs(testDir);
     });
   });
 
@@ -141,26 +167,6 @@ npm error ENOTEMPTY: directory not empty`;
 
       expect(networkError.includes("ENOTEMPTY")).toBe(false);
       expect(permissionError.includes("ENOTEMPTY")).toBe(false);
-    });
-  });
-
-  describe("npm global path detection", () => {
-    test("path structure for cleanup is correct", () => {
-      const globalPrefix = "/Users/test/.npm-global";
-      const lettaAiDir = path.join(globalPrefix, "lib/node_modules/@letta-ai");
-
-      expect(lettaAiDir).toContain("lib");
-      expect(lettaAiDir).toContain("node_modules");
-      expect(lettaAiDir).toContain("@letta-ai");
-    });
-
-    test("path structure works on Windows-style paths", () => {
-      const globalPrefix = "C:\\Users\\test\\AppData\\Roaming\\npm";
-      const lettaAiDir = path.join(globalPrefix, "lib/node_modules/@letta-ai");
-
-      expect(lettaAiDir).toContain("lib");
-      expect(lettaAiDir).toContain("node_modules");
-      expect(lettaAiDir).toContain("@letta-ai");
     });
   });
 });
