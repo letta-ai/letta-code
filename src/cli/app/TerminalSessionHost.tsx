@@ -1,0 +1,67 @@
+import { Box, Text, useApp, useInput } from "ink";
+import { useEffect, useState } from "react";
+import { openEmbeddedTerminal } from "./embedded-terminal";
+import { TerminalApp } from "./TerminalApp";
+
+export function TerminalSessionHost({
+  agentId,
+  conversationId,
+  cloud,
+  name,
+  updateNotification,
+}: {
+  agentId: string;
+  conversationId: string;
+  cloud: boolean;
+  name: string;
+  updateNotification: string | null;
+}) {
+  const { exit } = useApp();
+  useInput((input, key) => {
+    if (key.ctrl && input === "c") exit();
+  });
+  const [session, setSession] =
+    useState<Awaited<ReturnType<typeof openEmbeddedTerminal>>>();
+  const [cloudError, setCloudError] = useState<string>();
+  const [error, setError] = useState<string>();
+  useEffect(() => {
+    const controller = new AbortController();
+    let current: typeof session;
+    void openEmbeddedTerminal(
+      agentId,
+      conversationId,
+      cloud,
+      controller.signal,
+      (error) => {
+        if (!controller.signal.aborted) setCloudError(error);
+      },
+    )
+      .then(async (result) => {
+        if (controller.signal.aborted) {
+          await result.close();
+          return;
+        }
+        current = result;
+        setSession(result);
+        void result.store.connect();
+      })
+      .catch((reason) => {
+        if (!controller.signal.aborted) setError(String(reason));
+      });
+    return () => {
+      controller.abort();
+      void current?.close();
+    };
+  }, [agentId, conversationId, cloud]);
+  if (!session) return <Text>{error ?? "Connecting to app server…"}</Text>;
+  return (
+    <Box flexDirection="column">
+      <Text bold>{name}</Text>
+      {updateNotification && (
+        <Text>Update available: {updateNotification}</Text>
+      )}
+      {cloudError && <Text>Cloud registration unavailable: {cloudError}</Text>}
+      <TerminalApp store={session.store} />
+    </Box>
+  );
+}

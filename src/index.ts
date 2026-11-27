@@ -3,20 +3,13 @@ import "@/utils/startup-log-boundary";
 import { hostname } from "node:os";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
-import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import { isStatelessSubagentTags } from "@/agent/agent-tags";
 import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import {
-  getResumeDataFromBackend,
-  isResumedConversation,
-  type ResumeData,
-} from "./agent/check-approval";
-import {
   setAgentContext,
   setConversationId as setContextConversationId,
 } from "./agent/context";
-import type { AgentProvenance } from "./agent/create";
 import {
   getModelUpdateArgs,
   type ModelReasoningSelection,
@@ -56,9 +49,7 @@ import {
 } from "./cli/flag-utils";
 import { LETTA_CHAT_API_KEYS_URL } from "./cli/helpers/app-urls";
 import { formatErrorDetails } from "./cli/helpers/error-formatter";
-import { ensureFdPath, resolveFdPath } from "./cli/helpers/file-autocomplete";
 import { listPinnedAgentsForCurrentUser } from "./cli/helpers/pinned-agent-listing";
-import type { ApprovalRequest } from "./cli/helpers/stream";
 import { initTerminalTheme } from "./cli/helpers/terminal-theme";
 import { ProfileSelectionInline } from "./cli/profile-selection";
 import {
@@ -96,8 +87,6 @@ import { debugLog, debugWarn, isDebugEnabled } from "./utils/debug";
 import { startOrphanDetection } from "./utils/orphan-detection";
 import { markMilestone } from "./utils/timing";
 
-const EMPTY_APPROVAL_ARRAY: ApprovalRequest[] = [];
-const EMPTY_MESSAGE_ARRAY: Message[] = [];
 function normalizeUpdateCommandAliases(args: string[]): string[] {
   const [command, ...rest] = args;
 
@@ -1217,17 +1206,17 @@ async function main(): Promise<void> {
   markMilestone("TUI_MODE_START");
 
   markMilestone("REACT_IMPORT_START");
-  const [React, { render }, AppModule, { TerminalApp }] = await Promise.all([
-    import("react"),
-    import("ink"),
-    import("@/cli/App"),
-    import("@/cli/app/TerminalApp"),
-  ]);
+  const [React, { render }, { WelcomeScreen }, { TerminalSessionHost }] =
+    await Promise.all([
+      import("react"),
+      import("ink"),
+      import("@/cli/components/WelcomeScreen"),
+      import("@/cli/app/TerminalSessionHost"),
+    ]);
   markMilestone("REACT_IMPORT_DONE");
   await terminalPreflightPromise;
   markMilestone("TERMINAL_PREFLIGHT_DONE");
   const { useState, useEffect, useRef } = React;
-  const App = AppModule.App;
 
   function LoadingApp({
     forceNew,
@@ -1263,21 +1252,13 @@ async function main(): Promise<void> {
     const [agentId, setAgentId] = useState<string | null>(null);
     const [agentState, setAgentState] = useState<AgentState | null>(null);
     const [conversationId, setConversationId] = useState<string | null>(null);
-    const [resumeData, setResumeData] = useState<ResumeData | null>(null);
     const [isResumingSession, setIsResumingSession] = useState(false);
-    const [resumedExistingConversation, setResumedExistingConversation] =
-      useState(false);
-    const [agentProvenance, setAgentProvenance] =
-      useState<AgentProvenance | null>(null);
     const [selectedGlobalAgentId, setSelectedGlobalAgentId] = useState<
       string | null
     >(null);
     const startupCreatedAgentRef = useRef<AgentState | null>(null);
     const [startupHasCloudCredentials, setStartupHasCloudCredentials] =
       useState(Boolean(settings.refreshToken || apiKey));
-    const [fileAutocompleteFdPath, setFileAutocompleteFdPath] = useState<
-      string | null
-    >(() => resolveFdPath());
     const [startupHasAvailableLocalModels, setStartupHasAvailableLocalModels] =
       useState(true);
     const [validatedAgent, setValidatedAgent] = useState<AgentState | null>(
@@ -1308,8 +1289,6 @@ async function main(): Promise<void> {
     const [customApiBaseUrl, setCustomApiBaseUrl] = useState<string | null>(
       null,
     );
-
-    const [releaseNotes, setReleaseNotes] = useState<string | null>(null);
 
     const [updateNotification, setUpdateNotification] = useState<string | null>(
       null,
@@ -1390,15 +1369,6 @@ async function main(): Promise<void> {
 
       autoInstallKeybinding();
       autoInstallWezTermFix();
-    }, []);
-
-    useEffect(() => {
-      async function checkNotes() {
-        const { checkReleaseNotes } = await import("@/release-notes");
-        const notes = await checkReleaseNotes();
-        setReleaseNotes(notes);
-      }
-      checkNotes();
     }, []);
 
     useEffect(() => {
@@ -1654,7 +1624,6 @@ async function main(): Promise<void> {
               });
               if (defaultAgent) {
                 startupCreatedAgentRef.current = defaultAgent;
-                setAgentProvenance({ isNew: true, blocks: [] });
                 setValidatedAgent(defaultAgent);
                 setSelectedGlobalAgentId(defaultAgent.id);
                 setLoadingState("assembling");
@@ -1839,7 +1808,6 @@ async function main(): Promise<void> {
             baseTools,
           });
           agent = result.agent;
-          setAgentProvenance(result.provenance);
           autoEnableMemfsForFreshAgent = willAutoEnableMemfs;
         }
 
@@ -2034,12 +2002,8 @@ async function main(): Promise<void> {
           conversationIdToUse = specifiedConversationId;
           try {
             setLoadingState("checking");
-            const data = await getResumeDataFromBackend(
-              agent,
-              specifiedConversationId,
-            );
-            setResumeData(data);
-            setResumedExistingConversation(true);
+            if (specifiedConversationId !== "default")
+              await backend.retrieveConversation(specifiedConversationId);
           } catch (error) {
             if (isBackendNotFoundError(error)) {
               console.error(
@@ -2052,13 +2016,9 @@ async function main(): Promise<void> {
         } else if (selectedConversationId) {
           try {
             setLoadingState("checking");
-            const data = await getResumeDataFromBackend(
-              agent,
-              selectedConversationId,
-            );
+            if (selectedConversationId !== "default")
+              await backend.retrieveConversation(selectedConversationId);
             conversationIdToUse = selectedConversationId;
-            setResumedExistingConversation(true);
-            setResumeData(data);
           } catch (error) {
             if (isBackendNotFoundError(error)) {
               console.warn(
@@ -2066,9 +2026,6 @@ async function main(): Promise<void> {
               );
               conversationIdToUse = "default";
               setLoadingState("checking");
-              const data = await getResumeDataFromBackend(agent, "default");
-              setResumeData(data);
-              setResumedExistingConversation(data.messageHistory.length > 0);
             } else {
               throw error;
             }
@@ -2082,9 +2039,6 @@ async function main(): Promise<void> {
           conversationIdToUse = "default";
 
           setLoadingState("checking");
-          const data = await getResumeDataFromBackend(agent, "default");
-          setResumeData(data);
-          setResumedExistingConversation(data.messageHistory.length > 0);
         }
 
         if (shouldBlockOnMemfsStartup) {
@@ -2097,9 +2051,6 @@ async function main(): Promise<void> {
             process.exit(1);
           }
         }
-
-        const fdPath = await ensureFdPath();
-        setFileAutocompleteFdPath(fdPath);
 
         await secretsInitPromise;
 
@@ -2236,39 +2187,17 @@ async function main(): Promise<void> {
       });
     }
 
-    const appLoadingState = loadingState as Exclude<
-      typeof loadingState,
-      "selecting" | "selecting_global" | "selecting_conversation"
-    >;
-    const startupConversationTitleEligible = !isResumedConversation(
-      resumeData?.conversation,
-    );
-
     if (!agentId || !conversationId) {
-      return React.createElement(App, {
-        agentId: "loading",
-        conversationId: "loading",
-        loadingState: appLoadingState,
+      return React.createElement(WelcomeScreen, {
+        loadingState:
+          loadingState === "selecting_conversation" ? "checking" : loadingState,
         continueSession: isResumingSession,
-        startupApproval: resumeData?.pendingApproval ?? null,
-        startupApprovals: resumeData?.pendingApprovals ?? EMPTY_APPROVAL_ARRAY,
-        messageHistory: resumeData?.messageHistory ?? EMPTY_MESSAGE_ARRAY,
-        resumedExistingConversation,
-        startupConversationTitleEligible,
-        tokenStreaming: settings.tokenStreaming,
-        reasoningTabCycleEnabled: settings.reasoningTabCycleEnabled === true,
-        showCompactions: settings.showCompactions,
-        agentProvenance,
-        startupHasCloudCredentials,
+        agentState,
         startupHasAvailableLocalModels,
-        releaseNotes,
-        systemInfoReminderEnabled: !noSystemInfoReminderFlag,
-        modsDisabled,
-        fileAutocompleteFdPath,
       });
     }
 
-    return React.createElement(TerminalApp, {
+    return React.createElement(TerminalSessionHost, {
       key: `${agentId}:${conversationId}`,
       agentId,
       conversationId,

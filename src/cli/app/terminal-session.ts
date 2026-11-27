@@ -17,21 +17,23 @@ type Approval = {
 
 type Snapshot = {
   rows: readonly TranscriptRow[];
-  echoes: ReadonlyMap<string, string>;
+
   queue: readonly SDKQueueItem[];
   approvals: readonly Approval[];
   status: "connecting" | "online" | "offline";
   error?: string;
   memory?: string;
+  activity?: string;
 };
 
 export class TerminalSession {
+  private echoes = new Map<string, { anchor?: string; text: string }>();
   private transcript = createTranscriptAccumulator();
   private listeners = new Set<() => void>();
   private session?: LettaCodeSession;
   private state: Snapshot = {
     rows: [],
-    echoes: new Map(),
+
     queue: [],
     approvals: [],
     status: "connecting",
@@ -55,10 +57,16 @@ export class TerminalSession {
   }
 
   private project(rows: readonly TranscriptRow[]) {
-    const echoes = new Map(this.state.echoes);
-    for (const row of rows)
-      if (row.kind === "user" && row.otid) echoes.delete(row.otid);
-    this.update({ rows, echoes });
+    for (const row of rows) {
+      if (row.kind === "user" && row.otid) this.echoes.delete(row.otid);
+    }
+    if (!this.echoes.size) return this.update({ rows });
+    const projected = [...rows];
+    for (const [otid, { anchor, text }] of this.echoes) {
+      const index = projected.findIndex((row) => row.key === anchor);
+      projected.splice(index + 1, 0, { key: otid, otid, kind: "user", text });
+    }
+    this.update({ rows: projected });
   }
 
   private fail(error: unknown) {
@@ -100,8 +108,26 @@ export class TerminalSession {
           received = true;
           if (message.type === "queue_update")
             this.update({ queue: message.queue });
+          else if (message.type === "loop_status")
+            this.update({
+              activity: message.activeRunIds.length
+                ? "Working · Esc to interrupt"
+                : undefined,
+            });
           else if (message.type === "error") this.fail(message.message);
-          else this.project(this.transcript.apply(message));
+          else if (message.type === "result") {
+            this.update({
+              activity:
+                message.stopReason === "cancelled" ? "Interrupted" : undefined,
+            });
+            try {
+              const page = await session.listMessages({ limit: 50 });
+              if (session !== this.session) return;
+              this.project(this.transcript.rebase(page));
+            } catch (error) {
+              if (session === this.session) this.fail(error);
+            }
+          } else this.project(this.transcript.apply(message));
         }
         if (!received) throw new Error("Connection closed");
       }
@@ -129,6 +155,45 @@ export class TerminalSession {
     if (!session || this.state.status !== "online") return;
     const otid = crypto.randomUUID();
     try {
+      if (text === "/help") {
+        this.update({
+          memory:
+            "/memory [path]   Browse memory files\n/queue resume    Resume queued input\nEsc              Interrupt the current turn\nCtrl+C           Exit",
+        });
+        return;
+      }
+      if (text === "/queue resume") {
+        const result = await session.sendCommand(
+          {
+            type: "resume_queue",
+            runtime: {
+              agent_id: session.agentId,
+              conversation_id: session.conversationId,
+            },
+          },
+          { responseType: "resume_queue_response" },
+        );
+        if (session !== this.session) return;
+        if (!result.success) throw new Error(String(result.error));
+        this.update({ activity: `Resumed ${result.resumed} queued` });
+        return;
+      }
+      if (text.startsWith("/memory ")) {
+        const path = text.slice(8).trim();
+        const result = await session.sendCommand(
+          {
+            type: "read_memory_file",
+            agent_id: session.agentId,
+            path,
+            encoding: "utf8",
+          },
+          { responseType: "read_memory_file_response" },
+        );
+        if (session !== this.session) return;
+        if (!result.success) throw new Error(String(result.error));
+        this.update({ memory: `${path}\n${result.content ?? ""}` });
+        return;
+      }
       if (text === "/memory") {
         const paths: string[] = [];
         const result = await session.sendCommand(
@@ -154,16 +219,24 @@ export class TerminalSession {
         });
         return;
       }
+      if (/^\/[a-z][\w-]*(?:\s|$)/i.test(text)) {
+        this.update({
+          error: "Unknown command. Type /help to list terminal commands.",
+        });
+        return;
+      }
+      this.echoes.set(otid, { text, anchor: this.state.rows.at(-1)?.key });
       this.update({
-        echoes: new Map(this.state.echoes).set(otid, text),
         memory: undefined,
+        error: undefined,
+        activity: "Working · Esc to interrupt",
       });
+      this.project(this.transcript.rows());
       await session.send(text, { otid });
     } catch (error) {
       if (session !== this.session) return;
-      const echoes = new Map(this.state.echoes);
-      echoes.delete(otid);
-      this.update({ echoes });
+      this.echoes.delete(otid);
+      this.project(this.transcript.rows());
       this.fail(error);
     }
   }
@@ -171,7 +244,11 @@ export class TerminalSession {
   async interrupt() {
     const session = this.session;
     try {
-      await session?.abort();
+      if (session) {
+        await session.abort();
+        if (this.session === session)
+          this.update({ activity: "Interrupt requested" });
+      }
     } catch (error) {
       if (this.session === session) this.fail(error);
     }
@@ -183,6 +260,11 @@ export class TerminalSession {
     for (const approval of this.state.approvals)
       approval.resolve({ behavior: "deny", message: "Disconnected" });
     session?.close();
-    this.update({ status: "offline", approvals: [], queue: [] });
+    this.update({
+      status: "offline",
+      approvals: [],
+      queue: [],
+      activity: undefined,
+    });
   }
 }

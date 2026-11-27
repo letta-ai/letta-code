@@ -2,15 +2,20 @@ import { createHash, randomBytes } from "node:crypto";
 import { hostname } from "node:os";
 import { LettaAgentClient } from "@letta-ai/letta-agent-sdk";
 import WebSocket from "ws";
+import { permissionMode } from "@/permissions/mode";
 import { settingsManager } from "@/settings-manager";
 import { startAppServer } from "@/websocket/app-server";
 import {
   startListenerClient,
   stopListenerClient,
 } from "@/websocket/listen-client";
-import { registerWithCloud } from "@/websocket/listen-register";
+import {
+  deriveListenerInstanceId,
+  registerWithCloud,
+} from "@/websocket/listen-register";
 import { resolveListenerRegistrationOptions } from "@/websocket/listener/auth";
 import { getActiveRuntime } from "@/websocket/listener/runtime";
+import type { ListenerClientReplacement } from "@/websocket/listener/types";
 import { TerminalSession } from "./terminal-session";
 
 export async function openEmbeddedTerminal(
@@ -18,9 +23,9 @@ export async function openEmbeddedTerminal(
   conversationId: string,
   cloud: boolean,
   signal: AbortSignal,
+  reportCloud: (error?: string) => void,
 ) {
-  const connectionName = hostname();
-  let cloudError: string | undefined;
+  const connectionName = `${hostname()} (terminal ${process.pid})`;
   let runtime = getActiveRuntime();
   let ownsListener = false;
   const stopListener = () => {
@@ -30,27 +35,45 @@ export async function openEmbeddedTerminal(
   if (cloud && !runtime) {
     try {
       const deviceId = settingsManager.getOrCreateDeviceId();
-      const options = await resolveListenerRegistrationOptions(
-        deviceId,
-        connectionName,
-        { allowInteractiveOAuth: false, surface: "listen" },
-      );
-      signal.throwIfAborted();
-      const registration = await registerWithCloud(options);
-      signal.throwIfAborted();
-      const starting = startListenerClient({
-        ...registration,
-        deviceId,
-        connectionName,
-        onConnected: () => {},
-        onDisconnected: () => {},
-        onError: () => {},
-      });
-      runtime = getActiveRuntime();
-      ownsListener = true;
+      const connectCloud = async (
+        replacement?: ListenerClientReplacement,
+      ): Promise<void> => {
+        const options = await resolveListenerRegistrationOptions(
+          deviceId,
+          connectionName,
+          { allowInteractiveOAuth: false, surface: "listen" },
+        );
+        signal.throwIfAborted();
+        const registration = await registerWithCloud({
+          ...options,
+          listenerInstanceId: deriveListenerInstanceId(
+            "listen",
+            connectionName,
+          ),
+        });
+        signal.throwIfAborted();
+        const starting = startListenerClient({
+          ...registration,
+          replacement,
+          deviceId,
+          connectionName,
+          onConnected: () => reportCloud(),
+          onDisconnected: () => reportCloud("Disconnected"),
+          onError: (error) => reportCloud(error.message),
+          onNeedsReregister: (next) => {
+            if (signal.aborted || !next) return;
+            void connectCloud(next).catch((error) => {
+              if (!signal.aborted) reportCloud(String(error));
+            });
+          },
+        });
+        runtime = getActiveRuntime();
+        ownsListener = true;
+        await starting;
+      };
       signal.addEventListener("abort", stopListener, { once: true });
       try {
-        await starting;
+        await connectCloud();
       } finally {
         signal.removeEventListener("abort", stopListener);
       }
@@ -58,7 +81,8 @@ export async function openEmbeddedTerminal(
       stopListener();
       runtime = null;
       ownsListener = false;
-      cloudError = error instanceof Error ? error.message : String(error);
+      if (!signal.aborted)
+        reportCloud(error instanceof Error ? error.message : String(error));
     }
   }
   signal.throwIfAborted();
@@ -89,12 +113,16 @@ export async function openEmbeddedTerminal(
   const store = new TerminalSession((canUseTool) =>
     client.resumeSession(
       conversationId === "default" ? agentId : conversationId,
-      { canUseTool },
+      {
+        canUseTool,
+        permissionMode: permissionMode.getMode(),
+        cwd: process.cwd(),
+      },
     ),
   );
   return {
     store,
-    cloudError,
+
     async close() {
       store.close();
       try {

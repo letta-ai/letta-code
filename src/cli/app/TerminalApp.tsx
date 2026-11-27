@@ -1,19 +1,23 @@
-import { Box, Text, useApp, useInput } from "ink";
+import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { AssistantMessage } from "@/cli/components/AssistantMessageRich";
+import { ReasoningMessage } from "@/cli/components/ReasoningMessageRich";
+import { SessionDiff } from "@/cli/components/SessionDiff";
+import { ToolCallHeader } from "@/cli/components/ToolCallHeader";
 import { UserMessage } from "@/cli/components/UserMessageRich";
-import { openEmbeddedTerminal } from "./embedded-terminal";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
+import type { DiffPreview } from "@/types/protocol_v2";
 import type { TerminalSession } from "./terminal-session";
 
-function TerminalConversation({ store }: { store: TerminalSession }) {
+export function TerminalApp({ store }: { store: TerminalSession }) {
   const state = useSyncExternalStore(store.subscribe, store.snapshot);
   const [draft, setDraft] = useState("");
-  const { exit } = useApp();
+
+  const columns = useTerminalWidth();
   const approval = state.approvals[0];
   useInput((input, key) => {
-    if (key.ctrl && input === "c") exit();
-    else if (key.escape) void store.interrupt();
+    if (key.escape) void store.interrupt();
     else if (state.status === "offline" && input === "r") void store.connect();
     else if (approval && (input === "y" || input === "n"))
       store.decide(input === "y");
@@ -36,19 +40,30 @@ function TerminalConversation({ store }: { store: TerminalSession }) {
             key={row.key}
             line={{ kind: "user", id: row.key, text: row.text }}
           />
+        ) : row.kind === "tool_call" ? (
+          <Box flexDirection="column" key={row.key}>
+            <ToolCallHeader
+              columns={columns}
+              name={row.toolName}
+              args={row.rawArguments ?? JSON.stringify(row.toolInput)}
+              phase={row.status === "complete" ? "finished" : row.status}
+              resultOk={!row.result?.isError}
+            />
+            {row.result && <Text dimColor>{row.result.content}</Text>}
+          </Box>
         ) : (
-          <Text key={row.key}>
-            {row.kind === "tool_call"
-              ? row.toolName +
-                " " +
-                (row.result?.content ?? row.rawArguments ?? "")
-              : row.text}
-          </Text>
+          <ReasoningMessage
+            key={row.key}
+            line={{
+              kind: "reasoning",
+              id: row.key,
+              text: row.text,
+              phase: state.activity ? "streaming" : "finished",
+            }}
+          />
         ),
       )}
-      {Array.from(state.echoes, ([id, text]) => (
-        <UserMessage key={id} line={{ kind: "user", id, text }} />
-      ))}
+      {state.activity && <Text dimColor>{state.activity}</Text>}
       {state.queue.length > 0 && <Text>Queued: {state.queue.length}</Text>}
       {state.memory && <Text>{state.memory}</Text>}
       {state.error && <Text color="red">{state.error}</Text>}
@@ -57,13 +72,21 @@ function TerminalConversation({ store }: { store: TerminalSession }) {
           <Text>
             {approval.name} {JSON.stringify(approval.input)}
           </Text>
-          <Text>{JSON.stringify(approval.context?.diffs)}</Text>
+          {(approval.context?.diffs as DiffPreview[] | undefined)?.map(
+            (preview, index) => (
+              <SessionDiff
+                key={`${preview.fileName}-${index}`}
+                preview={preview}
+              />
+            ),
+          )}
           <Text>Allow? [y/n]</Text>
         </Box>
       ) : state.status === "online" ? (
         <Box>
           <Text>❯ </Text>
           <TextInput
+            placeholder="Message · /help for commands"
             value={draft}
             onChange={setDraft}
             onSubmit={(value) => {
@@ -81,58 +104,6 @@ function TerminalConversation({ store }: { store: TerminalSession }) {
             : "Connecting…"}
         </Text>
       )}
-    </Box>
-  );
-}
-
-export function TerminalApp({
-  agentId,
-  conversationId,
-  cloud,
-  name,
-  updateNotification,
-}: {
-  agentId: string;
-  conversationId: string;
-  cloud: boolean;
-  name: string;
-  updateNotification: string | null;
-}) {
-  const [session, setSession] =
-    useState<Awaited<ReturnType<typeof openEmbeddedTerminal>>>();
-  const [error, setError] = useState<string>();
-  useEffect(() => {
-    const controller = new AbortController();
-    let current: typeof session;
-    void openEmbeddedTerminal(agentId, conversationId, cloud, controller.signal)
-      .then(async (result) => {
-        if (controller.signal.aborted) {
-          await result.close();
-          return;
-        }
-        current = result;
-        setSession(result);
-        void result.store.connect();
-      })
-      .catch((reason) => {
-        if (!controller.signal.aborted) setError(String(reason));
-      });
-    return () => {
-      controller.abort();
-      void current?.close();
-    };
-  }, [agentId, conversationId, cloud]);
-  if (!session) return <Text>{error ?? "Connecting to app server…"}</Text>;
-  return (
-    <Box flexDirection="column">
-      <Text bold>{name}</Text>
-      {updateNotification && (
-        <Text>Update available: {updateNotification}</Text>
-      )}
-      {session.cloudError && (
-        <Text>Cloud registration unavailable: {session.cloudError}</Text>
-      )}
-      <TerminalConversation store={session.store} />
     </Box>
   );
 }
