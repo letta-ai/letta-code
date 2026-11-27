@@ -79,6 +79,8 @@ describe("registerWithCloud", () => {
         },
         supportsPairedListenerGenerations: true,
         supportsComputerLinkCredentialBootstrap: true,
+        subagent_message: true,
+        subagent_message_retry_dedupe: true,
       },
     });
     expect(body).not.toHaveProperty("listenerInstanceId");

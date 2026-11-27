@@ -5,7 +5,10 @@ import {
   runWithRuntimeContext,
 } from "@/runtime-context";
 import { sendAntigravityMessage } from "@/tools/impl/antigravity-session";
-import { REMOTE_SUBAGENT_MESSAGE_DEDUPE_PENDING_TTL_MS } from "@/tools/impl/claude-steer-timeouts";
+import {
+  REMOTE_SUBAGENT_MESSAGE_DEDUPE_PENDING_TTL_MS,
+  REMOTE_SUBAGENT_MESSAGE_TIMEOUT_MS,
+} from "@/tools/impl/claude-steer-timeouts";
 import {
   sendClaudeMessage,
   stopClaudeSession,
@@ -43,7 +46,7 @@ import type {
 import { getConversationWorkingDirectory } from "@/websocket/listener/cwd";
 import type { ConversationRuntime } from "@/websocket/listener/types";
 
-const DEDUPE_TTL_MS = 30_000;
+const DEDUPE_TTL_MS = REMOTE_SUBAGENT_MESSAGE_TIMEOUT_MS + 30_000;
 const responses = new Map<
   string,
   { expiresAt: number; response: Promise<SubagentMessageResponse> }

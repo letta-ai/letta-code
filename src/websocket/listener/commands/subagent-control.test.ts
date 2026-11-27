@@ -285,6 +285,43 @@ describe("remote external subagent control", () => {
     expect(second).toEqual(first);
   });
 
+  test("caches completed follow-ups through the caller deadline and expires them after 150 seconds", async () => {
+    const { parent } = fixture();
+    let now = 0;
+    const command: SubagentMessageCommand = {
+      type: "subagent_message",
+      request_id: "completed-steer",
+      runtime,
+      agent_id: nativeId,
+      message: "Only once per retry window",
+    };
+    const sendClaude = jest.fn(async () => ({
+      mode: "steered" as const,
+      sessionId: nativeId,
+    }));
+    const deps = { workerEnv, now: () => now, sendClaude };
+    const first = await handleSubagentMessageCommand(command, parent, deps);
+    expect(first).toMatchObject({ success: true, delivery: "steered" });
+
+    now = 120_000;
+    expect(await handleSubagentMessageCommand(command, parent, deps)).toEqual(
+      first,
+    );
+    expect(sendClaude).toHaveBeenCalledTimes(1);
+
+    now = 149_999;
+    expect(await handleSubagentMessageCommand(command, parent, deps)).toEqual(
+      first,
+    );
+    expect(sendClaude).toHaveBeenCalledTimes(1);
+
+    now = 150_001;
+    expect(await handleSubagentMessageCommand(command, parent, deps)).toEqual(
+      first,
+    );
+    expect(sendClaude).toHaveBeenCalledTimes(2);
+  });
+
   test("reconnects a closed follow-up socket without steering twice, even during a slow steer", async () => {
     const { parent } = fixture();
     const started = Promise.withResolvers<void>();

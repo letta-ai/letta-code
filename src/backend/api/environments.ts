@@ -12,6 +12,7 @@ export interface EnvironmentMetadata {
   launch_subagent_notify_caller?: boolean;
   external_fork_context?: boolean;
   subagent_message?: boolean;
+  subagent_message_retry_dedupe?: boolean;
   [key: string]: unknown;
 }
 
