@@ -21,6 +21,7 @@ export interface AppServerInfoResponseMessage {
     launch_subagent?: boolean;
     launch_subagent_notify_caller?: boolean;
     subagent_message?: boolean;
+    subagent_message_retry_dedupe?: boolean;
     runtime_workspace_sandbox?: boolean;
     runtime_external_tools_update?: boolean;
     runtime_tool_policy?: boolean;
@@ -71,6 +72,8 @@ export function isAppServerInfoResponseMessage(
       typeof capabilityRecord.launch_subagent_notify_caller === "boolean") &&
     (capabilityRecord.subagent_message === undefined ||
       typeof capabilityRecord.subagent_message === "boolean") &&
+    (capabilityRecord.subagent_message_retry_dedupe === undefined ||
+      typeof capabilityRecord.subagent_message_retry_dedupe === "boolean") &&
     (capabilityRecord.runtime_workspace_sandbox === undefined ||
       typeof capabilityRecord.runtime_workspace_sandbox === "boolean") &&
     (capabilityRecord.runtime_external_tools_update === undefined ||

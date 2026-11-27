@@ -2,6 +2,7 @@ import { afterEach, expect, mock, spyOn, test } from "bun:test";
 import { createAppServerClient } from "@/app-server-client";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
+import { REMOTE_SUBAGENT_MESSAGE_TIMEOUT_MS } from "./claude-steer-timeouts";
 import { formatExternalCodingAgentId } from "./external-coding-agent";
 import {
   classifyRemoteExternalWorkerControlError,
@@ -20,6 +21,18 @@ const conversationId = "conv-00000000-0000-4000-8000-000000000001";
 const deviceId = `sandbox-agent-parent-${conversationId}-linux-vm`;
 const sessionId = "00000000-0000-4000-8000-000000000002";
 const sandbox = { deviceId, connectionName: "worker" };
+
+function createWorkerClient() {
+  return createAppServerClient({
+    url: "ws://worker.example.test",
+    WebSocket: class {
+      readyState = 1;
+      on() {}
+      send() {}
+      close() {}
+    },
+  });
+}
 
 const wakeResponses = [
   { status: 410, body: {}, lookupStatus: 200, expires: true },
@@ -85,15 +98,7 @@ test.each(wakeResponses)("cloud worker follow-up wake (%j)", async (wake) => {
     throw new Error(`Unexpected request: ${request.method} ${path}`);
   }) as typeof globalThis.fetch;
   spyOn(globalThis, "fetch").mockImplementation(fetch);
-  const client = createAppServerClient({
-    url: "ws://worker.example.test",
-    WebSocket: class {
-      readyState = 1;
-      on() {}
-      send() {}
-      close() {}
-    },
-  });
+  const client = createWorkerClient();
   const send = spyOn(client, "sendSubagentMessage").mockImplementation(
     async ({ request_id }) => ({
       type: "subagent_message_response",
@@ -136,3 +141,72 @@ test.each(wakeResponses)("cloud worker follow-up wake (%j)", async (wake) => {
   expect(wakeRequests).toEqual([{ conversationId, resumeOnly: true }]);
   expect(trackError).not.toHaveBeenCalled();
 });
+
+test.each([true, false, undefined])(
+  "remote follow-up timeout with retry dedupe capability %s",
+  async (retryDedupe) => {
+    await settingsManager.initialize();
+    spyOn(telemetry, "trackError").mockImplementation(() => {});
+    spyOn(telemetry, "flush").mockResolvedValue(undefined);
+    const client = createWorkerClient();
+    const send = spyOn(client, "sendSubagentMessage")
+      .mockImplementationOnce(async ({ request_id }) => {
+        throw new Error(`Timed out waiting for ${request_id}`);
+      })
+      .mockImplementation(async ({ request_id }) => ({
+        type: "subagent_message_response",
+        request_id: request_id ?? "test-request",
+        success: true,
+        delivery: "steered",
+      }));
+    const result = sendRemoteExternalCodingAgentMessage(
+      {
+        agentId: formatExternalCodingAgentId(
+          "claude-code",
+          sessionId,
+          "worker",
+        ),
+        parentScope: { agentId: "agent-parent", conversationId: "conv-parent" },
+        message: "Continue the task",
+      },
+      {
+        resolveComputer: async () => ({
+          connectionId: "conn-worker",
+          environment: {
+            id: "env-worker",
+            connectionId: "conn-worker",
+            deviceId,
+            connectionName: "worker",
+            organizationId: "org-1",
+            podId: null,
+            connectedAt: 1,
+            lastHeartbeat: 1,
+            lastSeenAt: 1,
+            firstSeenAt: 1,
+            metadata: {
+              subagent_message: true,
+              lettaCodeVersion: retryDedupe ? "0.34.70" : "0.34.71",
+              ...(retryDedupe === undefined
+                ? {}
+                : { subagent_message_retry_dedupe: retryDedupe }),
+            },
+          },
+        }),
+        connect: async () => client,
+      },
+    );
+
+    if (retryDedupe) {
+      expect(await result).toEqual({ delivery: "steered" });
+      expect(send).toHaveBeenCalledTimes(2);
+      expect(send.mock.calls[0]?.[1]).toEqual({ timeoutMs: 30_000 });
+      expect(send.mock.calls[1]?.[0]).toEqual(send.mock.calls[0]?.[0]);
+    } else {
+      await expect(result).rejects.toThrow("didn't confirm the follow-up");
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(send.mock.calls[0]?.[1]).toEqual({
+        timeoutMs: REMOTE_SUBAGENT_MESSAGE_TIMEOUT_MS,
+      });
+    }
+  },
+);

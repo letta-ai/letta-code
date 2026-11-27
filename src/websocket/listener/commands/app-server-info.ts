@@ -37,6 +37,7 @@ export function buildAppServerInfoResponse(
       launch_subagent: true,
       launch_subagent_notify_caller: true,
       subagent_message: true,
+      subagent_message_retry_dedupe: true,
       runtime_workspace_sandbox: true,
       runtime_external_tools_update: true,
       runtime_tool_policy: true,

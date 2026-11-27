@@ -728,6 +728,7 @@ async function connectQualifiedTarget(
   target: NonNullable<ReturnType<typeof parseExternalCodingAgentId>>;
   client: AppServerClient;
   lettaCodeVersion?: string;
+  canResendOnTimeout: boolean;
 }> {
   const target = parseExternalCodingAgentId(agentId);
   if (!target?.computer || target.type === "opencode")
@@ -742,6 +743,8 @@ async function connectQualifiedTarget(
   return {
     target,
     lettaCodeVersion: resolved.environment.metadata?.lettaCodeVersion,
+    canResendOnTimeout:
+      resolved.environment.metadata?.subagent_message_retry_dedupe === true,
     client: await connectRemoteWorkerWithRetry(() =>
       (deps.connect ?? defaultConnect)(resolved.connectionId, parentScope),
     ),
@@ -820,12 +823,13 @@ async function deliverRemoteExternalCodingAgentMessage(
   outputFile?: string;
 }> {
   const requestId = `subagent-message-${randomUUID()}`;
-  const { target, client, lettaCodeVersion } = await connectQualifiedTarget(
-    params.agentId,
-    params.parentScope,
-    deps,
-    true,
-  );
+  const { target, client, lettaCodeVersion, canResendOnTimeout } =
+    await connectQualifiedTarget(
+      params.agentId,
+      params.parentScope,
+      deps,
+      true,
+    );
   const toolCallId = params.toolCallId ?? `remote-followup-${randomUUID()}`;
   const connect = async () => {
     const resolved = await (deps.resolveComputer ?? resolveQualifiedComputer)(
@@ -869,10 +873,7 @@ async function deliverRemoteExternalCodingAgentMessage(
       connect,
       (reconnected) => follower.attach(reconnected),
       target.computer as string,
-      {
-        canResendOnTimeout:
-          (compareSemver(lettaCodeVersion ?? "", "0.34.70") ?? -1) > 0,
-      },
+      { canResendOnTimeout },
     );
   } catch (error) {
     follower.close();

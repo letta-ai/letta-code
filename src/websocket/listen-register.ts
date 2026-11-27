@@ -108,6 +108,7 @@ export async function registerWithCloud(
         supported_commands: SUPPORTED_REMOTE_COMMANDS,
         launch_subagent_notify_caller: true,
         subagent_message: true,
+        subagent_message_retry_dedupe: true,
         external_fork_context: true,
         supportsComputerLinkCredentialBootstrap: opts.onCredentialBootstrap
           ? true

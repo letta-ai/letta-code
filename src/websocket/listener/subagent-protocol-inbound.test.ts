@@ -135,6 +135,17 @@ describe("launch_subagent protocol", () => {
       { backend: "local", version: "test" },
     );
     expect(isAppServerInfoResponseMessage(info)).toBe(true);
+    expect(info.capabilities.subagent_message_retry_dedupe).toBe(true);
+    expect(
+      isAppServerInfoResponseMessage({
+        ...info,
+        capabilities: {
+          ...info.capabilities,
+          subagent_message_retry_dedupe: "yes",
+        },
+      }),
+    ).toBe(false);
+    delete info.capabilities.subagent_message_retry_dedupe;
     delete info.capabilities.launch_subagent;
     expect(isAppServerInfoResponseMessage(info)).toBe(true);
     expect(info.capabilities.launch_subagent === true).toBe(false);
