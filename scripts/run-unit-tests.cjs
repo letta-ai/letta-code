@@ -11,6 +11,7 @@ const {
 } = require("./unit-test-impact.cjs");
 
 const dirs = [
+  "hooks",
   "src/agent",
   "src/auth",
   "src/backend",
