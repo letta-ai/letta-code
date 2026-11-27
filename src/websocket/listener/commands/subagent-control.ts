@@ -4,6 +4,7 @@ import {
   runOutsideRuntimeContext,
   runWithRuntimeContext,
 } from "@/runtime-context";
+import { telemetry } from "@/telemetry";
 import { sendAntigravityMessage } from "@/tools/impl/antigravity-session";
 import { REMOTE_SUBAGENT_MESSAGE_DEDUPE_PENDING_TTL_MS } from "@/tools/impl/claude-steer-timeouts";
 import {
@@ -33,6 +34,7 @@ import {
 } from "@/tools/impl/native-session-capture";
 import { readNativeSessionOwner } from "@/tools/impl/native-session-owner";
 import { backgroundTasks, getNextTaskId } from "@/tools/impl/process_manager";
+import { withQueuedDelivery } from "@/tools/impl/queued-delivery";
 import { task_stop } from "@/tools/impl/task-stop";
 import type {
   SubagentMessageCommand,
@@ -155,199 +157,222 @@ export async function handleSubagentMessageCommand(
   const cached = responses.get(key);
   if (cached) return cached.response;
 
-  const response = (async (): Promise<SubagentMessageResponse> => {
-    const base = {
-      type: "subagent_message_response" as const,
-      request_id: command.request_id,
-      runtime: command.runtime,
+  const base = {
+    type: "subagent_message_response" as const,
+    request_id: command.request_id,
+    runtime: command.runtime,
+  };
+  const ownedTask = findOwnedTask(parent, command.agent_id)?.[1];
+  let steering = ownedTask?.status === "running";
+  const deliver = async (
+    queuedReply?: () => boolean,
+  ): Promise<SubagentMessageResponse> => {
+    if (
+      parent.agentId !== command.runtime.agent_id ||
+      parent.conversationId !== command.runtime.conversation_id
+    )
+      throw new Error("Parent runtime does not match the message request");
+    if (!ownedTask && !ownsNativeSession(parent, command.agent_id))
+      throw new Error(subagentAccessError(command.agent_id));
+    const target = parseExternalCodingAgentId(command.agent_id);
+    if (!target || target.computer || !isExternalCodingAgentType(target.type))
+      throw new Error("Invalid external coding agent ID");
+    if (!target.sessionId)
+      throw new Error("External coding agent ID has no session ID");
+    const sessionId = target.sessionId;
+    const cloudSkillRepositories = nativeSessionOwner(
+      command.agent_id,
+    )?.cloudSkillRepositories;
+    const traceContext = {
+      parent_agent_id: parent.agentId,
+      parent_conversation_id: parent.conversationId,
+      task_id: getNextTaskId(),
+      actingUserId: command.runtime.acting_user_id,
     };
-    try {
-      if (
-        parent.agentId !== command.runtime.agent_id ||
-        parent.conversationId !== command.runtime.conversation_id
-      )
-        throw new Error("Parent runtime does not match the message request");
-      if (
-        !findOwnedTask(parent, command.agent_id) &&
-        !ownsNativeSession(parent, command.agent_id)
-      )
-        throw new Error(subagentAccessError(command.agent_id));
-      const target = parseExternalCodingAgentId(command.agent_id);
-      if (!target || target.computer || !isExternalCodingAgentType(target.type))
-        throw new Error("Invalid external coding agent ID");
-      if (!target.sessionId)
-        throw new Error("External coding agent ID has no session ID");
-      const sessionId = target.sessionId;
-      const cloudSkillRepositories = nativeSessionOwner(
-        command.agent_id,
-      )?.cloudSkillRepositories;
-      const traceContext = {
-        parent_agent_id: parent.agentId,
-        parent_conversation_id: parent.conversationId,
-        task_id: getNextTaskId(),
-        actingUserId: command.runtime.acting_user_id,
-      };
-      if (target.type === "opencode")
-        throw new Error("Remote OpenCode steering is not supported");
+    if (target.type === "opencode")
+      throw new Error("Remote OpenCode steering is not supported");
 
-      let captureReservation: NativeSessionCaptureReservation | undefined;
-      const source = target.type === "claude-code" ? "claude_code" : "codex";
-      const secrets =
-        target.type === "cursor"
-          ? await resolveExternalCodingAgentSecretEnv(parent.agentId)
-          : {};
-      let worker: ExternalWorkerLaunchEnv | undefined;
-      const receipt = await runOutsideRuntimeContext(() =>
-        runWithRuntimeContext(runtimeContext(parent, command), async () => {
-          if (target.type !== "cursor")
-            worker = await buildExternalWorkerResumeEnv(
+    let captureReservation: NativeSessionCaptureReservation | undefined;
+    const source = target.type === "claude-code" ? "claude_code" : "codex";
+    const beforeResume = () => {
+      if (queuedReply?.())
+        throw new Error(
+          "Worker turn ended before the queued steer was delivered",
+        );
+      steering = false;
+    };
+    const beforeStart = async () => {
+      beforeResume();
+      captureReservation = await (
+        deps.reserveCapture ?? reserveNativeSessionCapture
+      )(source, sessionId, {
+        agentId: command.runtime.agent_id,
+        conversationId: command.runtime.conversation_id,
+        actingUserId: command.runtime.acting_user_id,
+      });
+    };
+    const secrets =
+      target.type === "cursor"
+        ? await resolveExternalCodingAgentSecretEnv(parent.agentId)
+        : {};
+    let worker: ExternalWorkerLaunchEnv | undefined;
+    const receipt = await runOutsideRuntimeContext(() =>
+      runWithRuntimeContext(runtimeContext(parent, command), async () => {
+        if (target.type !== "cursor")
+          worker = await buildExternalWorkerResumeEnv(
+            {
+              parentAgentId: command.runtime.agent_id,
+              actingUserId: command.runtime.acting_user_id,
+            },
+            deps.workerEnv,
+          );
+        if (target.type === "antigravity" && worker)
+          return sendAntigravityMessage(
+            {
+              resumeSessionId: sessionId,
+              prompt: command.message,
+              parentAgentId: command.runtime.agent_id,
+              cwd: getCurrentWorkingDirectory(),
+              mcpReminder: worker.mcpReminder,
+              beforeResume,
+            },
+            worker.env,
+            worker.secretEnv,
+          );
+        return target.type === "cursor"
+          ? sendCursorMessage(
               {
-                parentAgentId: command.runtime.agent_id,
-                actingUserId: command.runtime.acting_user_id,
-              },
-              deps.workerEnv,
-            );
-          if (target.type === "antigravity" && worker)
-            return sendAntigravityMessage(
-              {
-                resumeSessionId: sessionId,
+                sessionId,
                 prompt: command.message,
                 parentAgentId: command.runtime.agent_id,
                 cwd: getCurrentWorkingDirectory(),
-                mcpReminder: worker.mcpReminder,
+                beforeResume,
               },
-              worker.env,
-              worker.secretEnv,
-            );
-          return target.type === "cursor"
-            ? sendCursorMessage(
+              { ...process.env, ...secrets },
+              secrets,
+            )
+          : target.type === "claude-code"
+            ? (deps.sendClaude ?? sendClaudeMessage)(
                 {
-                  sessionId,
+                  traceContext: {
+                    ...traceContext,
+                    secretValues: Object.values(worker?.secretEnv ?? {}),
+                  },
+                  sessionId: target.sessionId,
                   prompt: command.message,
                   parentAgentId: command.runtime.agent_id,
                   cwd: getCurrentWorkingDirectory(),
+                  mcpReminder: worker?.mcpReminder,
+                  cloudSkillRepositories,
+                  queuedReply,
+                  beforeStart,
                 },
-                { ...process.env, ...secrets },
-                secrets,
+                { env: worker?.env },
               )
-            : target.type === "claude-code"
-              ? (deps.sendClaude ?? sendClaudeMessage)(
-                  {
-                    traceContext: {
-                      ...traceContext,
-                      secretValues: Object.values(worker?.secretEnv ?? {}),
-                    },
-                    sessionId: target.sessionId,
-                    prompt: command.message,
-                    parentAgentId: command.runtime.agent_id,
-                    cwd: getCurrentWorkingDirectory(),
-                    mcpReminder: worker?.mcpReminder,
-                    cloudSkillRepositories,
-                    beforeStart: async () => {
-                      captureReservation = await (
-                        deps.reserveCapture ?? reserveNativeSessionCapture
-                      )(source, sessionId, {
-                        agentId: command.runtime.agent_id,
-                        conversationId: command.runtime.conversation_id,
-                        actingUserId: command.runtime.acting_user_id,
-                      });
-                    },
+            : (deps.sendCodex ?? sendCodexMessage)(
+                {
+                  traceContext: {
+                    ...traceContext,
+                    secretValues: Object.values(worker?.secretEnv ?? {}),
                   },
-                  { env: worker?.env },
-                )
-              : (deps.sendCodex ?? sendCodexMessage)(
-                  {
-                    traceContext: {
-                      ...traceContext,
-                      secretValues: Object.values(worker?.secretEnv ?? {}),
-                    },
-                    threadId: target.sessionId,
-                    prompt: command.message,
-                    parentAgentId: command.runtime.agent_id,
-                    cwd: getCurrentWorkingDirectory(),
-                    mcpReminder: worker?.mcpReminder,
-                    cloudSkillRepositories,
-                    beforeStart: async () => {
-                      captureReservation = await (
-                        deps.reserveCapture ?? reserveNativeSessionCapture
-                      )(source, sessionId, {
-                        agentId: command.runtime.agent_id,
-                        conversationId: command.runtime.conversation_id,
-                        actingUserId: command.runtime.acting_user_id,
-                      });
-                    },
-                  },
-                  { env: worker?.env },
-                );
-        }),
-      );
-      if (receipt.mode === "steered")
-        return {
-          ...base,
-          success: true,
-          delivery:
-            "queued" in receipt && receipt.queued ? "queued" : "steered",
-        };
-      if (!receipt.completion || !receipt.interrupt)
-        throw new Error("External coding agent returned an incomplete receipt");
-      const secretEnv = worker?.secretEnv;
-      const completion = secretEnv
-        ? receipt.completion.then((result) =>
-            scrubExternalWorkerResult(result, secretEnv),
-          )
-        : receipt.completion;
-      try {
-        (deps.track ?? trackExternalFollowupCompletion)({
-          taskId: traceContext.task_id,
-          type: target.type,
-          agentId: command.agent_id,
-          message: command.message,
-          parentScope: {
-            agentId: parent.agentId,
-            conversationId: parent.conversationId,
-            actingUserId: command.runtime.acting_user_id,
-          },
-          completion,
-          interrupt: receipt.interrupt,
-          captureReservation,
-          toolCallId: command.tool_call_id,
-          publishResult: true,
-          emitCompletionNotification: false,
-          claimsParentRuntime: false,
-        });
-      } catch (error) {
-        await receipt.interrupt().catch(() => undefined);
-        finishUntrackedNativeCapture(
-          completion,
-          captureReservation,
-          source,
-          sessionId,
-        );
-        throw error;
-      }
-      return { ...base, success: true, delivery: "resumed" };
-    } catch (error) {
+                  threadId: target.sessionId,
+                  prompt: command.message,
+                  parentAgentId: command.runtime.agent_id,
+                  cwd: getCurrentWorkingDirectory(),
+                  mcpReminder: worker?.mcpReminder,
+                  cloudSkillRepositories,
+                  queuedReply,
+                  beforeStart,
+                },
+                { env: worker?.env },
+              );
+      }),
+    );
+    if (receipt.mode === "steered")
       return {
         ...base,
-        success: false,
-        error: error instanceof Error ? error.message : String(error),
+        success: true,
+        delivery: "queued" in receipt && receipt.queued ? "queued" : "steered",
       };
+    if (!receipt.completion || !receipt.interrupt)
+      throw new Error("External coding agent returned an incomplete receipt");
+    const secretEnv = worker?.secretEnv;
+    const completion = secretEnv
+      ? receipt.completion.then((result) =>
+          scrubExternalWorkerResult(result, secretEnv),
+        )
+      : receipt.completion;
+    try {
+      (deps.track ?? trackExternalFollowupCompletion)({
+        taskId: traceContext.task_id,
+        type: target.type,
+        agentId: command.agent_id,
+        message: command.message,
+        parentScope: {
+          agentId: parent.agentId,
+          conversationId: parent.conversationId,
+          actingUserId: command.runtime.acting_user_id,
+        },
+        completion,
+        interrupt: receipt.interrupt,
+        captureReservation,
+        toolCallId: command.tool_call_id,
+        publishResult: true,
+        emitCompletionNotification: false,
+        claimsParentRuntime: false,
+      });
+    } catch (error) {
+      await receipt.interrupt().catch(() => undefined);
+      finishUntrackedNativeCapture(
+        completion,
+        captureReservation,
+        source,
+        sessionId,
+      );
+      throw error;
     }
-  })();
+    return { ...base, success: true, delivery: "resumed" };
+  };
+  const response = withQueuedDelivery<SubagentMessageResponse>(
+    (delivery) => {
+      const canReplyEarly = steering || command.accepts_pending_resume === true;
+      const pending = deliver(
+        canReplyEarly ? () => steering && delivery.queued : undefined,
+      ).finally(() => {
+        const entry = responses.get(key);
+        if (entry?.response === response) {
+          entry.expiresAt = (deps.now ?? Date.now)() + DEDUPE_TTL_MS;
+        }
+      });
+      if (!canReplyEarly) return pending;
+      return delivery.wait(pending, () =>
+        steering || command.accepts_pending_resume === true
+          ? {
+              ...base,
+              success: true,
+              delivery: steering ? "queued" : "resuming",
+            }
+          : undefined,
+      );
+    },
+    () =>
+      telemetry.trackError(
+        "remote_queued_followup_failed",
+        "Queued remote follow-up delivery failed",
+      ),
+  ).catch((error: unknown): SubagentMessageResponse => {
+    if (responses.get(key)?.response === response) responses.delete(key);
+    return {
+      ...base,
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  });
   responses.set(key, {
     expiresAt: now + REMOTE_SUBAGENT_MESSAGE_DEDUPE_PENDING_TTL_MS,
     response,
   });
-  const result = await response;
-  if (responses.get(key)?.response === response) {
-    if (!result.success) responses.delete(key);
-    else
-      responses.set(key, {
-        expiresAt: (deps.now ?? Date.now)() + DEDUPE_TTL_MS,
-        response,
-      });
-  }
-  return result;
+  return response;
 }
 
 export async function handleSubagentStopCommand(

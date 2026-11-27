@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, jest, test } from "bun:test";
 import {
   __resetClaudeSessionsForTests,
   buildClaudeStreamArgs,
@@ -564,6 +564,19 @@ describe("Claude stream sessions", () => {
       success: false,
       error: expect.stringContaining("boom"),
     });
+    const createTransport = jest.fn(() => transportFixture().transport);
+    await expect(
+      sendClaudeMessage(
+        {
+          ...base,
+          prompt: "two",
+          sessionId: SESSION_ID,
+          queuedReply: () => true,
+        },
+        { createTransport },
+      ),
+    ).rejects.toThrow("session ended before the queued steer was delivered");
+    expect(createTransport).not.toHaveBeenCalled();
     const resumed = transportFixture();
     const next = await sendClaudeMessage(
       { ...base, prompt: "three", sessionId: SESSION_ID },

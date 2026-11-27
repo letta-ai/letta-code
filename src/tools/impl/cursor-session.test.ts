@@ -128,3 +128,19 @@ test("Cursor model discovery fails closed on missing keys, API errors, and bad c
     },
   );
 }, 60_000);
+
+test("Cursor rejects a queued steer before scheduling a replacement turn", async () => {
+  const rejected = new Error("Queued steer could not be delivered");
+  await expect(
+    sendCursorMessage(
+      {
+        ...options,
+        sessionId: randomUUID(),
+        beforeResume: () => {
+          throw rejected;
+        },
+      },
+      {},
+    ),
+  ).rejects.toThrow(rejected);
+});

@@ -1,42 +1,25 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { telemetry } from "@/telemetry";
-
-const CODEX_STEER_GRACE_MS = 10_000;
-
-interface SteerDelivery<T> {
-  queued: boolean;
-  wait: (request: Promise<unknown>, receipt: T) => Promise<unknown>;
-}
+import { type QueuedDelivery, withQueuedDelivery } from "./queued-delivery";
 
 export function withCodexSteerReceipt<T>(
-  operation: (delivery: SteerDelivery<T>) => Promise<T>,
+  queuedReply: (() => boolean) | undefined,
+  operation: (delivery: QueuedDelivery<T>) => Promise<T>,
 ): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const delivery: SteerDelivery<T> = {
-      queued: false,
-      async wait(request, receipt) {
-        const timer = setTimeout(() => {
-          delivery.queued = true;
-          resolve(receipt);
-        }, CODEX_STEER_GRACE_MS);
-        try {
-          return await request;
-        } finally {
-          clearTimeout(timer);
-        }
+  if (queuedReply) {
+    return operation({
+      get queued() {
+        return queuedReply();
       },
-    };
-    operation(delivery).then(resolve, (error: unknown) => {
-      if (delivery.queued) {
-        telemetry.trackError(
-          "codex_queued_steer_failed",
-          error instanceof Error ? error.message : String(error),
-        );
-      } else {
-        reject(error);
-      }
+      wait: (request) => request,
     });
-  });
+  }
+  return withQueuedDelivery(operation, (error) =>
+    telemetry.trackError(
+      "codex_queued_steer_failed",
+      error instanceof Error ? error.message : String(error),
+    ),
+  );
 }
 
 export async function withSessionLock<T>(
@@ -56,11 +39,13 @@ export async function withSessionLock<T>(
   }
 }
 
-export async function waitForRejectedCodexSteer(
+export async function recoverRejectedSteer(
   session: { activeTurnId?: string },
   turnId: string,
   error: unknown,
+  delivery: Pick<QueuedDelivery<unknown>, "queued">,
 ): Promise<void> {
+  if (delivery.queued) throw error;
   const message = error instanceof Error ? error.message : String(error);
   if (
     /no active turn to steer|expected[ _-]?turn[ _-]?id.*(?:does not match|mismatch)|turn[ _-]?id mismatch/i.test(
@@ -68,9 +53,13 @@ export async function waitForRejectedCodexSteer(
     )
   ) {
     const deadline = Date.now() + 3_000;
-    while (session.activeTurnId === turnId && Date.now() < deadline) {
+    while (
+      !delivery.queued &&
+      session.activeTurnId === turnId &&
+      Date.now() < deadline
+    ) {
       await sleep(25);
     }
   }
-  if (session.activeTurnId === turnId) throw error;
+  if (delivery.queued || session.activeTurnId === turnId) throw error;
 }

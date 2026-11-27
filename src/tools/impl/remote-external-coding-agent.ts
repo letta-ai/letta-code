@@ -47,6 +47,7 @@ import {
 import { connectRemoteWorkerWithRetry } from "./remote-connect-retry";
 import { resolveExternalWorkerComputer } from "./remote-external-worker-computer";
 import {
+  followRemoteFollowUp,
   RemoteFollowUpSocketClosedError,
   RemoteFollowUpTimeoutError,
   sendRemoteFollowUpWithReconnect,
@@ -865,6 +866,7 @@ async function deliverRemoteExternalCodingAgentMessage(
         agent_id: bareAgentId,
         message: params.message,
         tool_call_id: toolCallId,
+        accepts_pending_resume: true,
       },
       connect,
       (reconnected) => follower.attach(reconnected),
@@ -890,23 +892,13 @@ async function deliverRemoteExternalCodingAgentMessage(
     follower.close();
     return { delivery: response.delivery };
   }
-  follower.markLaunched();
-  const completion = follower
-    .waitForTerminal(undefined, () => undefined)
-    .then(
-      (final): SubagentResult => ({
-        agentId: bareAgentId,
-        model: final.model,
-        report: final.result ?? "",
-        success: final.status === "completed",
-        ...(final.status === "error"
-          ? { error: final.error ?? "Remote follow-up failed" }
-          : {}),
-        totalTokens: final.total_tokens,
-        durationMs: final.duration_ms,
-      }),
-    )
-    .finally(() => follower.close());
+  const resuming = response.delivery === "resuming";
+  if (!resuming) follower.markLaunched();
+  const completion = followRemoteFollowUp(
+    follower,
+    bareAgentId,
+    resuming,
+  ).finally(() => follower.close());
   const interrupt = async () => {
     const resolved = await (deps.resolveComputer ?? resolveQualifiedComputer)(
       target.computer as string,

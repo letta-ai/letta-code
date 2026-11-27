@@ -255,7 +255,10 @@ export async function runCursorTurn(
 }
 
 export async function sendCursorMessage(
-  options: Omit<CursorTurnOptions, "resumeSessionId"> & { sessionId: string },
+  options: Omit<CursorTurnOptions, "resumeSessionId"> & {
+    sessionId: string;
+    beforeResume?: () => void;
+  },
   env: NodeJS.ProcessEnv = process.env,
   secrets: Record<string, string> = {},
 ): Promise<{
@@ -277,6 +280,7 @@ export async function sendCursorMessage(
         (await active.steer(options.prompt))
       )
         return { mode: "steered" as const };
+      options.beforeResume?.();
       const controller = new AbortController();
       followupControllers.add(controller);
       const waitingFor =
