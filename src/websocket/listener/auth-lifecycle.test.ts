@@ -188,6 +188,7 @@ describe("listener auth lifecycle", () => {
         connectionId?: string,
       ) => void;
       onConnectionReady?: () => Promise<void>;
+      keepRuntimeOnDisconnect?: boolean;
       supportsSplitStatusChannels?: boolean;
     } = {},
   ) {
@@ -196,6 +197,7 @@ describe("listener auth lifecycle", () => {
       wsUrl,
       deviceId: "device-id",
       connectionName: "listener-name",
+      keepRuntimeOnDisconnect: overrides.keepRuntimeOnDisconnect,
       supportsSplitStatusChannels: overrides.supportsSplitStatusChannels,
       onConnected: overrides.onConnected ?? mock(() => {}),
       onDisconnected: overrides.onDisconnected ?? mock(() => {}),
@@ -651,6 +653,20 @@ describe("listener auth lifecycle", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(countConnectionsForChannel("control")).toBe(1);
     expect(countConnectionsForChannel("stream")).toBe(1);
+  });
+
+  test("a terminal relay close preserves the embedded runtime", async () => {
+    const onDisconnected = mock(() => {});
+    await startClient({ onDisconnected, keepRuntimeOnDisconnect: true });
+    await waitFor(isClientInitialized, "socket did not open");
+    const runtime = getActiveRuntime();
+    connections[0]?.close(1000, "Replaced by new connection");
+    await waitFor(
+      () => onDisconnected.mock.calls.length === 1,
+      "socket did not disconnect",
+    );
+    expect(getActiveRuntime()).toBe(runtime);
+    expect(runtime?.intentionallyClosed).toBe(false);
   });
 
   test("explicit relay supersession tears down old runtime without reconnecting", async () => {

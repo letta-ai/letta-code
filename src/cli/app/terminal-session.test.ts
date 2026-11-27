@@ -16,7 +16,9 @@ function connection() {
   const send = mock(async (_text: string, _options: { otid: string }) => {});
   const abort = mock(async () => {});
   const session = {
-    bootstrapState: async () => ({ messages: [] }),
+    ready: async () => ({}),
+    recoverPendingApprovals: async () => ({}),
+    listMessages: async () => ({ messages: [] }),
     stream: () => messages.values(),
     send,
     abort,
@@ -106,7 +108,7 @@ test("reconciles input by otid, ignores replay, and delegates queue, approval an
 test("reconnect replaces the session, denies stale approvals and rebases history", async () => {
   const first = connection();
   const second = connection();
-  second.session.bootstrapState = async () => ({
+  second.session.listMessages = async () => ({
     agentId: "agent",
     conversationId: "conv",
     model: undefined,
@@ -134,4 +136,34 @@ test("reconnect replaces the session, denies stale approvals and rebases history
   expect(store.snapshot().rows[0]).toMatchObject({ text: "restored" });
   store.close();
   await Promise.all([reading, reopened]);
+});
+
+test("default history includes its owning agent on the wire", async () => {
+  const transport = connection();
+  const requests: unknown[] = [];
+  const session = Object.assign(transport.session, {
+    conversationId: "default",
+    agentId: "agent-example",
+    sendCommand: async (command: unknown) => {
+      requests.push(command);
+      return {
+        type: "conversation_messages_list_response",
+        success: true,
+        messages: [],
+      };
+    },
+  });
+  const store = new TerminalSession(() => session);
+  const reading = store.connect();
+  await Bun.sleep(0);
+  expect(store.snapshot().status).toBe("online");
+  expect(requests).toEqual([
+    {
+      type: "conversation_messages_list",
+      conversation_id: "default",
+      query: { agent_id: "agent-example", limit: 50, order: "desc" },
+    },
+  ]);
+  store.close();
+  await reading;
 });

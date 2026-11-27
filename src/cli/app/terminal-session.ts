@@ -4,6 +4,7 @@ import {
   type CanUseToolResponse,
   createTranscriptAccumulator,
   type LettaCodeSession,
+  type ListMessagesResult,
   type SDKQueueItem,
   type TranscriptRow,
 } from "@letta-ai/letta-agent-sdk";
@@ -17,12 +18,11 @@ type Approval = {
 
 type Snapshot = {
   rows: readonly TranscriptRow[];
-
   queue: readonly SDKQueueItem[];
   approvals: readonly Approval[];
   status: "connecting" | "online" | "offline";
   error?: string;
-  memory?: string;
+  commandOutput?: string;
   activity?: string;
 };
 
@@ -33,7 +33,6 @@ export class TerminalSession {
   private session?: LettaCodeSession;
   private state: Snapshot = {
     rows: [],
-
     queue: [],
     approvals: [],
     status: "connecting",
@@ -63,7 +62,10 @@ export class TerminalSession {
     if (!this.echoes.size) return this.update({ rows });
     const projected = [...rows];
     for (const [otid, { anchor, text }] of this.echoes) {
-      const index = projected.findIndex((row) => row.key === anchor);
+      const index = projected.findIndex(
+        (row) =>
+          row.key === anchor || (anchor !== undefined && row.otid === anchor),
+      );
       projected.splice(index + 1, 0, { key: otid, otid, kind: "user", text });
     }
     this.update({ rows: projected });
@@ -73,6 +75,27 @@ export class TerminalSession {
     this.update({
       error: error instanceof Error ? error.message : String(error),
     });
+  }
+
+  private async history(session: LettaCodeSession) {
+    if (session.conversationId !== "default")
+      return session.listMessages({ limit: 50 });
+    const page = await session.sendCommand<{
+      type: "conversation_messages_list_response";
+      success: boolean;
+      error?: string;
+      messages: ListMessagesResult["messages"];
+    }>(
+      {
+        type: "conversation_messages_list",
+        conversation_id: "default",
+        query: { agent_id: session.agentId, limit: 50, order: "desc" },
+      },
+      { responseType: "conversation_messages_list_response" },
+    );
+    if (!page.success)
+      throw new Error(page.error ?? "Could not read conversation history");
+    return page;
   }
 
   async connect() {
@@ -93,14 +116,15 @@ export class TerminalSession {
     );
     this.session = session;
     try {
-      const page = await session.bootstrapState();
+      await session.ready();
+      if (this.session !== session) return;
+      const page = await this.history(session);
       if (this.session !== session) return;
       this.project(this.transcript.rebase(page));
       this.update({ status: "online" });
-      if (page.hasPendingApproval)
-        void session.recoverPendingApprovals().catch((error) => {
-          if (session === this.session) this.fail(error);
-        });
+      void session.recoverPendingApprovals().catch((error) => {
+        if (session === this.session) this.fail(error);
+      });
       while (session === this.session) {
         let received = false;
         for await (const message of session.stream()) {
@@ -121,7 +145,7 @@ export class TerminalSession {
                 message.stopReason === "cancelled" ? "Interrupted" : undefined,
             });
             try {
-              const page = await session.listMessages({ limit: 50 });
+              const page = await this.history(session);
               if (session !== this.session) return;
               this.project(this.transcript.rebase(page));
             } catch (error) {
@@ -157,7 +181,7 @@ export class TerminalSession {
     try {
       if (text === "/help") {
         this.update({
-          memory:
+          commandOutput:
             "/memory [path]   Browse memory files\n/queue resume    Resume queued input\nEsc              Interrupt the current turn\nCtrl+C           Exit",
         });
         return;
@@ -191,7 +215,7 @@ export class TerminalSession {
         );
         if (session !== this.session) return;
         if (!result.success) throw new Error(String(result.error));
-        this.update({ memory: `${path}\n${result.content ?? ""}` });
+        this.update({ commandOutput: `${path}\n${result.content ?? ""}` });
         return;
       }
       if (text === "/memory") {
@@ -215,19 +239,32 @@ export class TerminalSession {
         if (result.success === false) throw new Error(String(result.error));
 
         this.update({
-          memory: paths.join("\n") || "No memory files",
+          commandOutput: paths.join("\n") || "No memory files",
         });
         return;
       }
-      if (/^\/[a-z][\w-]*(?:\s|$)/i.test(text)) {
-        this.update({
-          error: "Unknown command. Type /help to list terminal commands.",
-        });
+      const command = /^\/([a-z][\w-]*)(?:\s+([\s\S]*))?$/i.exec(text);
+      if (command) {
+        const result = await session.sendCommand(
+          {
+            type: "execute_command",
+            command_id: command[1],
+            args: command[2],
+            runtime: {
+              agent_id: session.agentId,
+              conversation_id: session.conversationId,
+            },
+          },
+          { responseType: "execute_command_response" },
+        );
+        if (session !== this.session) return;
+        if (!result.success) throw new Error(String(result.output));
+        this.update({ commandOutput: String(result.output), error: undefined });
         return;
       }
       this.echoes.set(otid, { text, anchor: this.state.rows.at(-1)?.key });
       this.update({
-        memory: undefined,
+        commandOutput: undefined,
         error: undefined,
         activity: "Working · Esc to interrupt",
       });

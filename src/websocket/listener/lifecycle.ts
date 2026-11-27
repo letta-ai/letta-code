@@ -894,8 +894,17 @@ async function connectWithRetry(
       runtime.connectionGeneration = null;
       revokeRecoveryClaims(runtime, undefined, closingGeneration);
     }
-    suspendListenerConnection(runtime, opts.connectionId);
-    if (terminalClose) killAllTerminals();
+    const keepRuntime =
+      opts.keepRuntimeOnDisconnect &&
+      terminalClose &&
+      !runtime.intentionallyClosed;
+    if (keepRuntime) {
+      cleanupListenerConnection(runtime, opts.connectionId);
+      killListenerConnectionTerminals(opts.connectionId);
+    } else {
+      suspendListenerConnection(runtime, opts.connectionId);
+      if (terminalClose) killAllTerminals();
+    }
     clearListenerWarmState(runtime);
     if (streamSocket) {
       streamSocket.removeAllListeners("message");
@@ -920,6 +929,10 @@ async function connectWithRetry(
       killListenerConnectionTerminals(opts.connectionId);
       revokeRecoveryClaims(runtime, opts.connectionId);
       opts.onNeedsReregister(createListenerClientReplacement(runtime, opts));
+      return;
+    }
+    if (keepRuntime) {
+      opts.onDisconnected();
       return;
     }
     if (terminalClose || code === 1008) {

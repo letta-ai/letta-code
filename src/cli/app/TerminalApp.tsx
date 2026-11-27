@@ -65,7 +65,7 @@ export function TerminalApp({ store }: { store: TerminalSession }) {
       )}
       {state.activity && <Text dimColor>{state.activity}</Text>}
       {state.queue.length > 0 && <Text>Queued: {state.queue.length}</Text>}
-      {state.memory && <Text>{state.memory}</Text>}
+      {state.commandOutput && <Text>{state.commandOutput}</Text>}
       {state.error && <Text color="red">{state.error}</Text>}
       {approval ? (
         <Box flexDirection="column">

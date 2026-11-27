@@ -55,6 +55,7 @@ export async function openEmbeddedTerminal(
         const starting = startListenerClient({
           ...registration,
           replacement,
+          keepRuntimeOnDisconnect: true,
           deviceId,
           connectionName,
           onConnected: () => reportCloud(),
