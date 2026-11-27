@@ -17,6 +17,7 @@ import {
 import { LocalPiModelsRuntime } from "@/backend/dev/pi-models-runtime";
 import { resolvePiRequestHeaders } from "@/backend/dev/pi-request-headers";
 import { estimateLocalMessagesTokens } from "@/backend/local/local-context-estimate";
+import { isRecord } from "@/utils/type-guards";
 import { formatLocalMessagesForSummary } from "./compaction-transcript";
 import type {
   LocalCompactionStats,
@@ -433,7 +434,9 @@ async function runGenerateText(
     ...(reasoning ? { reasoning } : {}),
     ...(turnSampling
       ? samplingOptionsForSettings(input.agent.model_settings)
-      : {}),
+      : isRecord(localModel.modelSettings.sampling_params)
+        ? { samplingParams: localModel.modelSettings.sampling_params }
+        : {}),
     maxRetries: 0,
     sessionId: input.conversationId,
   };
