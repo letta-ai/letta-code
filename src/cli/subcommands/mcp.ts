@@ -1,4 +1,3 @@
-import { parseArgs } from "node:util";
 import { getMcpOriginatorToken } from "@/agent/mcp-originator-tokens";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
 import { getBackend } from "@/backend";
@@ -28,13 +27,18 @@ import { getRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { isRecord } from "@/utils/type-guards";
 import { type McpConnectDependencies, runMcpConnect } from "./mcp-connect";
+import { runMcpEvents } from "./mcp-events";
 import {
+  hasMcpAuthorizationHeader,
   loadMcpToolArgs,
   McpCliError,
   type McpOutput,
+  type ParsedMcpArgs,
+  parseMcpCommandLine,
   printMcpError,
   printMcpUsage,
   resolveMcpAgentId,
+  stringValue,
   writeMcpStderr,
   writeMcpStdout,
 } from "./mcp-io";
@@ -120,48 +124,6 @@ export interface McpSubcommandDependencies extends McpConnectDependencies {
   env?: NodeJS.ProcessEnv;
   stdout?: McpOutput;
   stderr?: McpOutput;
-}
-
-interface ParsedMcpArgs {
-  action?: string;
-  target?: string;
-  values: ReturnType<typeof parseMcpArgs>["values"];
-}
-
-function parseMcpArgs(argv: string[]) {
-  return parseArgs({
-    args: argv,
-    options: {
-      help: { type: "boolean", short: "h" },
-      agent: { type: "string" },
-      "agent-id": { type: "string" },
-      mode: { type: "string" },
-      limit: { type: "string" },
-      full: { type: "boolean" },
-      args: { type: "string" },
-      "args-file": { type: "string" },
-      "server-url": { type: "string" },
-      "client-name": { type: "string" },
-    },
-    strict: true,
-    allowPositionals: true,
-  });
-}
-
-function parseCommandLine(argv: string[]): ParsedMcpArgs {
-  const parsed = parseMcpArgs(argv);
-  const [action, target, ...extra] = parsed.positionals;
-  if (extra.length > 0) {
-    throw new McpCliError(
-      "invalid_arguments",
-      `Unexpected positional arguments: ${extra.join(" ")}`,
-    );
-  }
-  return { action, target, values: parsed.values };
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
 }
 
 function getLocalServers(
@@ -347,24 +309,16 @@ function resolveServer(
   return match;
 }
 
-function hasAuthorizationHeader(config: McpServerConfig): boolean {
-  return (
-    (config.transport === "http" || config.transport === "sse") &&
-    Object.keys(config.headers ?? {}).some(
-      (name) => name.toLowerCase() === "authorization",
-    )
-  );
-}
-
 async function oauthForConfig(
   deps: McpSubcommandDependencies,
   agentId: string,
   config: McpServerConfig,
   interactive: boolean,
 ): Promise<McpOAuthConnection | undefined> {
-  if (config.transport !== "http" && config.transport !== "sse")
+  if (config.transport !== "http" && config.transport !== "sse") {
     return undefined;
-  if (hasAuthorizationHeader(config)) return undefined;
+  }
+  if (hasMcpAuthorizationHeader(config.headers)) return undefined;
   const create = deps.createOAuthSession ?? createMcpOAuthSession;
   return create(agentId, config.name, config.url, {
     interactive,
@@ -935,7 +889,7 @@ export async function runMcpSubcommand(
   const stderr = deps.stderr ?? writeMcpStderr;
   let parsed: ParsedMcpArgs;
   try {
-    parsed = parseCommandLine(argv);
+    parsed = parseMcpCommandLine(argv);
   } catch (error) {
     await printMcpError(stderr, error);
     return 1;
@@ -946,10 +900,11 @@ export async function runMcpSubcommand(
     return 0;
   }
 
+  const env = deps.env ?? process.env;
   let agentId = resolveMcpAgentId(
     stringValue(parsed.values.agent),
     stringValue(parsed.values["agent-id"]),
-    deps.env ?? process.env,
+    env,
   );
   if (!agentId) {
     await printMcpError(
@@ -966,13 +921,25 @@ export async function runMcpSubcommand(
   try {
     await (deps.initializeSettings ?? (() => settingsManager.initialize()))();
     if (!parsed.values.agent && !parsed.values["agent-id"]) {
-      agentId = await getMcpScopeAgentId(
-        agentId,
-        deps.env ?? process.env,
-        deps.lookupParentAgent,
-      );
+      agentId = await getMcpScopeAgentId(agentId, env, deps.lookupParentAgent);
     }
     switch (parsed.action) {
+      case "events":
+      case "watch":
+        return await runMcpEvents(
+          parsed,
+          getLocalServers(deps, agentId),
+          deps,
+          stdout,
+          {
+            agentId,
+            conversationId:
+              env.LETTA_CONVERSATION_ID?.trim() ||
+              env.CONVERSATION_ID?.trim() ||
+              undefined,
+          },
+          (config) => oauthForConfig(deps, agentId, config, false),
+        );
       case "list":
         return await runList(deps, agentId, stdout);
       case "get":

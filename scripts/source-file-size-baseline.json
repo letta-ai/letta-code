@@ -14,7 +14,6 @@
   "src/cli/helpers/accumulator.ts": 1384,
   "src/cli/helpers/reflection-transcript.ts": 1905,
   "src/cli/reflection-transcript.test.ts": 1081,
-  "src/cli/subcommands/mcp.ts": 1018,
   "src/cli/subcommands/skills.ts": 1239,
   "src/headless.ts": 4448,
   "src/hooks/integration.test.ts": 1069,

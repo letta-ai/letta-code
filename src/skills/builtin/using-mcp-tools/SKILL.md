@@ -21,6 +21,30 @@ letta mcp call <tool-name> [--args | --args-file]  # run a tool, print a CallToo
 
 Every command accepts `--agent <id>`, defaulting to `LETTA_AGENT_ID`/`AGENT_ID` — do not pass it unless targeting another agent.
 
+## MCP Events
+
+Run `letta mcp events <server>` to discover event types and input schemas on a
+configured stdio or Streamable HTTP server. Start a persistent Monitor with a
+command such as `letta mcp watch example issue.created --args-file /path/to/args.json`.
+Omit the arguments flag if the event needs no arguments. The watch prefers a
+configured webhook when the event offers it, then push, then polling. Use
+`--delivery webhook|push|poll` to select an advertised mode explicitly.
+Letta Code validates arguments against the event schema before subscribing.
+
+For webhook delivery, pass `--webhook-url <https-url>` for an endpoint the caller
+controls that forwards the callback path and raw POST to this computer's
+loopback receiver. The receiver listens on port 8765 by default. Use
+`--webhook-port <port>` to match an existing HTTPS forwarder. The receiver
+validates the webhook signature before it acknowledges or forwards an event.
+
+Restart the same watch with the same arguments to resume from its saved cursor
+when the server supports replay. Use `--max-age-ms <n>` to bound replay and
+`--min-poll-ms <n>` to set the polling floor.
+
+Monitor delivers the JSON lines to this conversation. The notice marks event data as
+untrusted, like tool output. A `gap` notice means the server skipped events.
+Use the monitor's task ID with TaskStop to stop the watch.
+
 ## Durable events from managed connections
 
 For a named, Letta-managed MCP connection, Letta Cloud can keep a provider
@@ -29,11 +53,7 @@ stops. Provider events are delivered only to an existing public Cloud webhook
 owned by the same agent. The provider credential stays server-side; never ask
 the user for it or try to expose it to the sandbox.
 
-This is **not the MCP Events protocol**. MCP Events is still a draft MCP
-proposal for protocol-level event delivery between MCP clients and servers.
-The commands below manage Letta Cloud's provider-backed trigger subscriptions
-outside the MCP transport. Do not describe a successful subscription as MCP
-Events support or assume a draft MCP Events client/server contract.
+The commands below manage Letta Cloud provider triggers through Cloud webhooks.
 
 Use the bundled helper. It is restricted to `AGENT_ID` and does not accept an
 agent override:
