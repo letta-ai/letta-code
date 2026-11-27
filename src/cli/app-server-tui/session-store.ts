@@ -30,6 +30,9 @@ export type TuiSession = Pick<
   | "removeQueuedMessage"
   | "getDeviceStatus"
   | "onDeviceStatus"
+  | "sendCommand"
+  | "listModels"
+  | "updateModel"
   | "close"
 >;
 
@@ -50,7 +53,9 @@ export interface TuiApproval {
   toolCallId: string;
   toolName: string;
   toolArgs: string;
+  toolInput: Record<string, unknown>;
   permissionSuggestions: CanUseToolPermissionSuggestion[];
+  diffs: unknown[];
 }
 
 export interface TuiQueueItem {
@@ -81,10 +86,13 @@ export interface TuiSnapshot {
   queue: TuiQueueItem[];
   device: TuiDeviceState | null;
   session: TuiSessionInfo | null;
+  hasOlder: boolean;
+  backgroundProcessCount: number;
+  lastRunDurationMs: number;
 }
 
 export type TuiApprovalDecision =
-  | { kind: "allow" }
+  | { kind: "allow"; updatedInput?: Record<string, unknown> }
   | { kind: "allow_always" }
   | { kind: "deny"; reason?: string };
 
@@ -99,11 +107,29 @@ export interface TuiSessionStore {
   setPermissionMode(mode: PermissionMode): Promise<void>;
   reconnect(): Promise<void>;
   note(lines: string[]): void;
+  runServerCommand(commandId: string, args?: string): Promise<boolean>;
+  runLocalCommand(
+    input: string,
+    run: () => Promise<{ output: string; success?: boolean }>,
+  ): Promise<void>;
+  request<T>(
+    command: Record<string, unknown> & { type: string },
+    responseType: string,
+    options?: {
+      scoped?: boolean;
+      until?: (message: Record<string, unknown>) => boolean;
+    },
+  ): Promise<T>;
+  listModels(): ReturnType<TuiSession["listModels"]>;
+  updateModel(update: Parameters<TuiSession["updateModel"]>[0]): Promise<void>;
+  takeQueue(): Promise<string>;
+  loadOlder(): Promise<void>;
   close(): void;
 }
 
 export interface TuiSessionStoreOptions {
   openSession: (canUseTool: CanUseToolCallback) => TuiSession;
+  defaultConversation?: boolean;
   accumulator?: TranscriptAccumulator;
   historyLimit?: number;
   flushMs?: number;
@@ -124,6 +150,9 @@ const EMPTY_SNAPSHOT: TuiSnapshot = {
   queue: [],
   device: null,
   session: null,
+  hasOlder: false,
+  backgroundProcessCount: 0,
+  lastRunDurationMs: 0,
 };
 
 function errorText(error: unknown, fallback: string): string {
@@ -191,6 +220,7 @@ class SessionStore implements TuiSessionStore {
   private pendingDeltas: SDKMessage[] = [];
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private stopDeviceWatch: (() => void) | null = null;
+  private olderCursor: string | null = null;
   private closed = false;
   private counter = 0;
 
@@ -314,6 +344,9 @@ class SessionStore implements TuiSessionStore {
     }
     entry.resolve({
       behavior: "allow",
+      ...(decision.kind === "allow" && decision.updatedInput
+        ? { updatedInput: decision.updatedInput }
+        : {}),
       ...(decision.kind === "allow_always" && entry.suggestions.length > 0
         ? { updatedPermissions: entry.suggestions }
         : {}),
@@ -404,7 +437,9 @@ class SessionStore implements TuiSessionStore {
       toolCallId: context?.toolCallId ?? requestId,
       toolName,
       toolArgs: JSON.stringify(toolInput),
+      toolInput,
       permissionSuggestions: suggestions,
+      diffs: context?.diffs ?? [],
     };
     return new Promise<CanUseToolResponse>((resolve) => {
       this.resolvers.set(requestId, { resolve, suggestions });
@@ -432,12 +467,198 @@ class SessionStore implements TuiSessionStore {
   }
 
   private async hydrate(session: TuiSession): Promise<void> {
-    const page = await session.listMessages({
-      limit: this.options.historyLimit ?? DEFAULT_HISTORY_LIMIT,
-    });
+    const page = await this.listPage(session);
     if (this.closed) return;
     this.accumulator.rebase({ messages: page.messages }, { order: "desc" });
-    this.patch({});
+    this.olderCursor = this.nextCursor(page);
+    this.patch({ hasOlder: this.olderCursor !== null });
+  }
+
+  private async listPage(
+    session: TuiSession,
+    before?: string,
+  ): ReturnType<TuiSession["listMessages"]> {
+    const limit = this.options.historyLimit ?? DEFAULT_HISTORY_LIMIT;
+    const info = this.snapshot.session;
+    if (!this.options.defaultConversation || !info) {
+      return session.listMessages({ limit, ...(before ? { before } : {}) });
+    }
+    const response = await session.sendCommand<{
+      type: string;
+      success?: boolean;
+      error?: string;
+      messages?: Awaited<ReturnType<TuiSession["listMessages"]>>["messages"];
+      next_before?: string | null;
+      has_more?: boolean;
+    }>(
+      {
+        type: "conversation_messages_list",
+        conversation_id: "default",
+        query: {
+          agent_id: info.agentId,
+          limit,
+          order: "desc",
+          ...(before ? { before } : {}),
+        },
+      },
+      { responseType: "conversation_messages_list_response" },
+    );
+    if (response.success === false) {
+      throw new Error(response.error ?? "Unable to list messages");
+    }
+    return {
+      messages: response.messages ?? [],
+      ...(response.next_before !== undefined
+        ? { nextBefore: response.next_before }
+        : {}),
+      ...(response.has_more !== undefined
+        ? { hasMore: response.has_more }
+        : {}),
+    };
+  }
+
+  private nextCursor(page: {
+    messages: Array<{ id?: string }>;
+    nextBefore?: string | null;
+    hasMore?: boolean;
+  }): string | null {
+    if (page.hasMore === false) return null;
+    if (typeof page.nextBefore === "string") return page.nextBefore;
+    const limit = this.options.historyLimit ?? DEFAULT_HISTORY_LIMIT;
+    if (page.messages.length < limit) return null;
+    return page.messages.at(-1)?.id ?? null;
+  }
+
+  async loadOlder(): Promise<void> {
+    const session = this.session;
+    const before = this.olderCursor;
+    if (!session || !before || this.closed) return;
+    this.olderCursor = null;
+    try {
+      const page = await this.listPage(session, before);
+      if (this.closed) return;
+      this.accumulator.rebase({ messages: page.messages }, { order: "desc" });
+      this.olderCursor = this.nextCursor(page);
+      this.patch({ hasOlder: this.olderCursor !== null });
+    } catch (error) {
+      this.olderCursor = before;
+      this.appendError(errorText(error, "Unable to load older messages."));
+    }
+  }
+
+  private appendError(text: string): void {
+    this.appendLocal({ kind: "error", id: this.id("error"), text });
+  }
+
+  private scope(): { agent_id: string; conversation_id: string } {
+    const info = this.snapshot.session;
+    if (!info) throw new Error("Session is not ready");
+    return { agent_id: info.agentId, conversation_id: info.conversationId };
+  }
+
+  async request<T>(
+    command: Record<string, unknown> & { type: string },
+    responseType: string,
+    options: {
+      scoped?: boolean;
+      until?: (message: Record<string, unknown>) => boolean;
+    } = {},
+  ): Promise<T> {
+    const session = this.session;
+    if (!session) throw new Error("Session is not ready");
+    const until = options.until;
+    const response = await session.sendCommand(
+      options.scoped === false
+        ? command
+        : { runtime: this.scope(), ...command },
+      until
+        ? {
+            predicate: (message) =>
+              message.type === responseType &&
+              until(message as Record<string, unknown>),
+          }
+        : { responseType },
+    );
+    return response as T;
+  }
+
+  listModels(): ReturnType<TuiSession["listModels"]> {
+    if (!this.session) return Promise.reject(new Error("Session is not ready"));
+    return this.session.listModels();
+  }
+
+  async updateModel(
+    update: Parameters<TuiSession["updateModel"]>[0],
+  ): Promise<void> {
+    const session = this.session;
+    if (!session) throw new Error("Session is not ready");
+    const result = await session.updateModel(update);
+    const info = this.snapshot.session;
+    const handle =
+      typeof update === "string" ? update : (update.modelHandle ?? null);
+    const applied =
+      (result as { modelHandle?: string | null }).modelHandle ?? handle;
+    if (info && applied) this.patch({ session: { ...info, model: applied } });
+  }
+
+  async runLocalCommand(
+    input: string,
+    run: () => Promise<{ output: string; success?: boolean }>,
+  ): Promise<void> {
+    const id = this.id("command");
+    this.appendLocal({
+      kind: "command",
+      id,
+      input,
+      output: "",
+      phase: "running",
+    });
+    let output: string;
+    let success: boolean;
+    try {
+      const result = await run();
+      output = result.output;
+      success = result.success !== false;
+    } catch (error) {
+      output = errorText(error, "Command failed.");
+      success = false;
+    }
+    this.updateLocal(id, (item) =>
+      item.kind === "command"
+        ? { ...item, output, success, phase: "finished" }
+        : item,
+    );
+  }
+
+  async runServerCommand(commandId: string, args?: string): Promise<boolean> {
+    let succeeded = false;
+    const trimmed = args?.trim();
+    await this.runLocalCommand(
+      trimmed ? `/${commandId} ${trimmed}` : `/${commandId}`,
+      async () => {
+        const response = await this.request<{
+          success: boolean;
+          output: string;
+        }>(
+          {
+            type: "execute_command",
+            command_id: commandId,
+            ...(trimmed ? { args: trimmed } : {}),
+          },
+          "execute_command_response",
+        );
+        succeeded = response.success;
+        return { output: response.output, success: response.success };
+      },
+    );
+    return succeeded;
+  }
+
+  async takeQueue(): Promise<string> {
+    const items = this.snapshot.queue;
+    if (items.length === 0) return "";
+    await Promise.all(items.map((item) => this.removeQueued(item.id)));
+    return items.map((item) => item.text).join("\n");
   }
 
   private async syncDevice(session: TuiSession): Promise<void> {
@@ -464,7 +685,10 @@ class SessionStore implements TuiSessionStore {
           : status.isProcessing
             ? "running"
             : "idle";
+    const background = (status.raw as { background_processes?: unknown })
+      .background_processes;
     this.patch({
+      backgroundProcessCount: Array.isArray(background) ? background.length : 0,
       device: {
         permissionMode: status.permissionMode,
         cwd: status.workingDirectory,
@@ -593,7 +817,7 @@ class SessionStore implements TuiSessionStore {
             lines: ["Interrupted"],
           });
         }
-        this.patch({ run: "idle" });
+        this.patch({ run: "idle", lastRunDurationMs: message.durationMs });
         return;
       case "error":
         this.appendLocal({

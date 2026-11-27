@@ -23,7 +23,6 @@ import { runInstallSubcommand, runSkillsSubcommand } from "./skills";
 import { runStepsSubcommand } from "./steps";
 import { runTeleportSubcommand } from "./teleport";
 import { runTrajectoriesSubcommand } from "./trajectories";
-import { runTuiSubcommand } from "./tui";
 import { runUsageSubcommand } from "./usage";
 import { runVariableSubcommand } from "./variable";
 
@@ -71,7 +70,6 @@ export function subcommandNeedsEarlyBackendMode(
     case "shared-memory":
     case "skills":
     case "teleport":
-    case "tui":
     case "usage":
       return true;
     default:
@@ -129,8 +127,6 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runSecretSubcommand(rest);
     case "teleport":
       return runTeleportSubcommand(rest);
-    case "tui":
-      return runTuiSubcommand(rest);
     case "server":
       return runServerSubcommand(rest);
     case "feedback":

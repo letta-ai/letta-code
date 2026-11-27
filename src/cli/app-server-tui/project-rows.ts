@@ -33,6 +33,15 @@ export type TuiItem =
       resultOk?: boolean;
       phase: "streaming" | "ready" | "running" | "finished";
     }
+  | {
+      kind: "command";
+      id: string;
+      input: string;
+      output: string;
+      phase: "running" | "finished";
+      success?: boolean;
+      preformatted?: boolean;
+    }
   | { kind: "error"; id: string; text: string }
   | { kind: "status"; id: string; lines: string[] };
 
@@ -135,6 +144,7 @@ export function isFinalItem(item: TuiItem): boolean {
     case "reasoning":
       return item.phase === "finished";
     case "tool_call":
+    case "command":
       return item.phase === "finished";
     default:
       return true;

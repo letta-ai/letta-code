@@ -85,6 +85,23 @@ class FakeSession implements TuiSession {
 
   async changeDeviceState() {}
 
+  commands: Array<Record<string, unknown>> = [];
+  respond: (command: Record<string, unknown>) => Record<string, unknown> =
+    () => ({});
+
+  async sendCommand(command: Record<string, unknown>) {
+    this.commands.push(command);
+    return this.respond(command) as never;
+  }
+
+  async listModels() {
+    return { entries: [] };
+  }
+
+  async updateModel() {
+    return {};
+  }
+
   async removeQueuedMessage(itemId: string) {
     this.removed.push(itemId);
     return { itemId, removed: true };

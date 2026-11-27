@@ -29,6 +29,12 @@ interface MemfsTreeViewerProps {
   onClose: () => void;
   conversationId?: string;
   contextUsage?: ContextUsageSnapshot;
+  source?: MemfsViewerSource;
+}
+
+export interface MemfsViewerSource {
+  nodes: TreeNode[];
+  contents: Record<string, string>;
 }
 
 function renderTreePrefix(node: TreeNode): string {
@@ -46,6 +52,7 @@ export function MemfsTreeViewer({
   onClose,
   conversationId,
   contextUsage,
+  source,
 }: MemfsTreeViewerProps) {
   const terminalWidth = useTerminalWidth();
   const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
@@ -63,10 +70,10 @@ export function MemfsTreeViewer({
   const statusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const memoryRoot = getScopedMemoryFilesystemRoot(agentId);
-  const memoryExists = existsSync(memoryRoot);
+  const memoryExists = source ? true : existsSync(memoryRoot);
   const hasGitRepo = useMemo(
-    () => existsSync(join(memoryRoot, ".git")),
-    [memoryRoot],
+    () => !source && existsSync(join(memoryRoot, ".git")),
+    [memoryRoot, source],
   );
 
   function showStatus(msg: string, durationMs: number) {
@@ -83,15 +90,25 @@ export function MemfsTreeViewer({
   );
 
   const treeNodes = useMemo(
-    () => (memoryExists ? scanMemoryFilesystem(memoryRoot) : []),
-    [memoryRoot, memoryExists],
+    () =>
+      source
+        ? source.nodes
+        : memoryExists
+          ? scanMemoryFilesystem(memoryRoot)
+          : [],
+    [memoryRoot, memoryExists, source],
   );
   const fileNodes = useMemo(() => getFileNodes(treeNodes), [treeNodes]);
 
   const selectedFile = fileNodes[selectedIndex];
   const selectedContent = useMemo(
-    () => (selectedFile ? readFileContent(selectedFile.fullPath) : ""),
-    [selectedFile],
+    () =>
+      !selectedFile
+        ? ""
+        : source
+          ? (source.contents[selectedFile.fullPath] ?? "")
+          : readFileContent(selectedFile.fullPath),
+    [selectedFile, source],
   );
 
   const contentLines = selectedContent.split("\n");

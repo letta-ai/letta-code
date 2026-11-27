@@ -8,6 +8,7 @@ import WebSocket from "ws";
 import { __testSetBackend, type AgentCreateBody } from "@/backend";
 import { LocalBackend } from "@/backend/local";
 import { settingsManager } from "@/settings-manager";
+import { DeterministicScriptedExecutor } from "@/test-utils/scripted-turn-executor";
 import {
   type EmbeddedAppServer,
   startEmbeddedAppServer,
@@ -74,7 +75,7 @@ test("drives a streamed turn and a tool approval through the loopback app server
   try {
     const backend = new LocalBackend({
       storageDir,
-      executionMode: "deterministic-scripted",
+      executor: new DeterministicScriptedExecutor(),
       memfsEnabled: false,
     });
     __testSetBackend(backend);

@@ -745,15 +745,11 @@ export function getLocalBackendStorageDir(homeDir = homedir()): string {
 function localBackendExecutionMode():
   | "deterministic"
   | "deterministic-reflection"
-  | "deterministic-scripted"
   | "pi" {
   const configuredMode = process.env.LETTA_LOCAL_BACKEND_EXECUTOR;
   if (configuredMode === "deterministic") return "deterministic";
   if (configuredMode === "deterministic-reflection") {
     return "deterministic-reflection";
-  }
-  if (configuredMode === "deterministic-scripted") {
-    return "deterministic-scripted";
   }
   return "pi";
 }
