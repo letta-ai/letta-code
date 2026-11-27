@@ -44,6 +44,9 @@ export interface SubagentState {
   model?: string;
   startTime: number;
   updatedAt?: number;
+  taskId?: string;
+  computer?: string;
+  stoppedByCaller?: boolean;
   toolCallId?: string;
   isBackground?: boolean;
   claimsParentRuntime?: boolean;
@@ -246,6 +249,30 @@ function armCompletedSubagentCleanup(id: string): void {
 
 let subagentCounter = 0;
 
+export interface SubagentHistoryEntry {
+  agent: SubagentState;
+  lastActivityMs: number;
+}
+
+const MAX_SUBAGENT_HISTORY = 200;
+const subagentHistory = new Map<string, SubagentHistoryEntry>();
+
+function putAgent(id: string, agent: SubagentState): void {
+  store.agents.set(id, agent);
+  if (
+    !subagentHistory.has(id) &&
+    subagentHistory.size >= MAX_SUBAGENT_HISTORY
+  ) {
+    const oldest = subagentHistory.keys().next().value;
+    if (oldest !== undefined) subagentHistory.delete(oldest);
+  }
+  subagentHistory.set(id, { agent, lastActivityMs: Date.now() });
+}
+
+export function getSubagentHistory(): SubagentHistoryEntry[] {
+  return Array.from(subagentHistory.values());
+}
+
 export function generateSubagentId(): string {
   return `subagent-${Date.now()}-${++subagentCounter}`;
 }
@@ -302,7 +329,7 @@ export function registerSubagent(
   };
 
   clearCompletedSubagentCleanup(id);
-  store.agents.set(id, agent);
+  putAgent(id, agent);
   notifyListeners();
 }
 
@@ -336,7 +363,7 @@ export function updateSubagent(
     maxToolCallsSeen: nextMax,
     updatedAt: Date.now(),
   };
-  store.agents.set(id, updatedAgent);
+  putAgent(id, updatedAgent);
   observeStateChange(agent, updatedAgent);
   if (updatedAgent.status === "completed" || updatedAgent.status === "error") {
     scheduleCompletedSubagentCleanup(id);
@@ -368,7 +395,7 @@ export function addToolCall(
       agent.toolCalls.length + 1,
     ),
   };
-  store.agents.set(subagentId, updatedAgent);
+  putAgent(subagentId, updatedAgent);
   observeStateChange(agent, updatedAgent);
   notifyListeners();
 }
@@ -392,7 +419,7 @@ export function addProgressText(
     ].slice(-MAX_PROGRESS_TEXTS),
     progressTextCount: count,
   };
-  store.agents.set(subagentId, updatedAgent);
+  putAgent(subagentId, updatedAgent);
   observeStateChange(agent, updatedAgent);
   notifyListeners();
 }
@@ -423,7 +450,7 @@ export function completeSubagent(
     totalTokens: result.totalTokens ?? agent.totalTokens,
     maxToolCallsSeen: Math.max(agent.maxToolCallsSeen, agent.toolCalls.length),
   } as SubagentState;
-  store.agents.set(id, updatedAgent);
+  putAgent(id, updatedAgent);
   observeStateChange(agent, updatedAgent, resultIdentity);
   scheduleCompletedSubagentCleanup(id);
   notifyListeners();
@@ -560,6 +587,7 @@ export function clearAllSubagents(): void {
   }
   for (const id of store.agents.keys()) clearSubagentEvents(id);
   store.agents.clear();
+  subagentHistory.clear();
   notifyListeners();
 }
 
@@ -604,7 +632,7 @@ export function interruptActiveSubagents(
           : {}),
         stopFailed: undefined,
       };
-      store.agents.set(id, updatedAgent);
+      putAgent(id, updatedAgent);
       observeStateChange(agent, updatedAgent);
       scheduleCompletedSubagentCleanup(id);
       anyInterrupted = true;
@@ -637,7 +665,7 @@ export function interruptStopFailedSubagents(
         : {}),
       stopFailed: undefined,
     };
-    store.agents.set(id, updatedAgent);
+    putAgent(id, updatedAgent);
     observeStateChange(agent, updatedAgent);
     scheduleCompletedSubagentCleanup(id);
     interrupted.push(id);

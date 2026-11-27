@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
+  findLaunchedChild,
   resolveChildSubagent,
   trackChildSend,
   trackPersistedChildSend,
@@ -59,7 +60,8 @@ const QUEUED_NOTE =
 interface SendAgentMessageArgs {
   message: string;
   agent_id?: string;
-  conversation_id?: string;
+  /** null: a new conversation with agent_id, or a subagent's parent. */
+  conversation_id?: string | null;
   computer?: string | null;
   signal?: AbortSignal;
 }
@@ -174,9 +176,13 @@ function resolveParentAddress(
 }
 
 export async function send_agent_message(
-  args: SendAgentMessageArgs,
+  input: SendAgentMessageArgs,
   deps: SendAgentMessageDeps = {},
 ): Promise<{ content: string; status: "success" | "error" }> {
+  const args = {
+    ...input,
+    conversation_id: input.conversation_id ?? undefined,
+  };
   const clientMessageId = randomUUID();
   let submissionAttempted = false;
   let destination: { agentId?: string; conversationId: string } | undefined;
@@ -200,11 +206,16 @@ export async function send_agent_message(
       agentId: senderAgentId,
       conversationId: senderConversationId,
     };
-    const externalTarget = parseExternalCodingAgentId(args.agent_id);
+    // External workers are addressed by conversation_id. Fallback: accept
+    // their ID as agent_id for one more release.
+    const externalId = [args.conversation_id, args.agent_id].find(
+      (id) => parseExternalCodingAgentId(id) !== null,
+    );
+    const externalTarget = parseExternalCodingAgentId(externalId);
     if (externalTarget) {
-      if (args.conversation_id) {
+      if (args.agent_id && args.conversation_id) {
         throw new Error(
-          "External coding-agent IDs cannot be combined with conversation_id.",
+          "Pass an external worker's ID as conversation_id alone, without agent_id.",
         );
       }
       if (normalizeAgentMessageComputer(args.computer)) {
@@ -226,7 +237,7 @@ export async function send_agent_message(
           deps.sendRemoteExternalMessage ?? sendRemoteExternalCodingAgentMessage
         )(
           {
-            agentId: args.agent_id as string,
+            agentId: externalId as string,
             message: args.message,
             parentScope: {
               ...parentScope,
@@ -242,7 +253,7 @@ export async function send_agent_message(
         return {
           content: JSON.stringify({
             status: "accepted",
-            agent_id: args.agent_id,
+            conversation_id: externalId,
             delivery:
               receipt.delivery === "queued"
                 ? "remote/queued"
@@ -304,7 +315,7 @@ export async function send_agent_message(
           return {
             content: JSON.stringify({
               status: "accepted",
-              agent_id: args.agent_id,
+              conversation_id: externalId,
               delivery:
                 externalTarget.type === "antigravity"
                   ? "queued"
@@ -324,7 +335,7 @@ export async function send_agent_message(
             deps.trackExternalFollowup ?? trackExternalFollowupCompletion
           )({
             type: externalTarget.type,
-            agentId: args.agent_id as string,
+            agentId: externalId as string,
             message: args.message,
             parentScope: {
               ...parentScope,
@@ -336,7 +347,7 @@ export async function send_agent_message(
           return {
             content: JSON.stringify({
               status: "accepted",
-              agent_id: args.agent_id,
+              conversation_id: externalId,
               delivery: "session/prompt",
               task_id: tracked.taskId,
               output_file: tracked.outputFile,
@@ -401,7 +412,7 @@ export async function send_agent_message(
           return {
             content: JSON.stringify({
               status: "accepted",
-              agent_id: args.agent_id,
+              conversation_id: externalId,
               delivery: "turn/steer",
               turn_id: receipt.turnId,
             }),
@@ -423,7 +434,7 @@ export async function send_agent_message(
           )({
             taskId: traceContext.task_id,
             type: "codex",
-            agentId: args.agent_id as string,
+            agentId: externalId as string,
             message: args.message,
             parentScope: {
               ...parentScope,
@@ -446,7 +457,7 @@ export async function send_agent_message(
         return {
           content: JSON.stringify({
             status: "accepted",
-            agent_id: args.agent_id,
+            conversation_id: externalId,
             delivery: "turn/start",
             turn_id: receipt.turnId,
             task_id: taskReceipt.taskId,
@@ -493,7 +504,7 @@ export async function send_agent_message(
         return {
           content: JSON.stringify({
             status: "accepted",
-            agent_id: args.agent_id,
+            conversation_id: externalId,
             delivery: receipt.queued ? "stream/queued" : "stream/interrupt",
             ...(receipt.queued ? { note: QUEUED_NOTE } : {}),
           }),
@@ -515,7 +526,7 @@ export async function send_agent_message(
         )({
           taskId: traceContext.task_id,
           type: "claude-code",
-          agentId: args.agent_id as string,
+          agentId: externalId as string,
           message: args.message,
           parentScope: {
             ...parentScope,
@@ -538,7 +549,7 @@ export async function send_agent_message(
       return {
         content: JSON.stringify({
           status: "accepted",
-          agent_id: args.agent_id,
+          conversation_id: externalId,
           delivery: "resume/start",
           task_id: taskReceipt.taskId,
           output_file: taskReceipt.outputFile,
@@ -607,9 +618,11 @@ export async function send_agent_message(
       },
       signal,
     );
-    const child = receipt.agent_id
-      ? await resolveChildSubagent(backend, receipt.agent_id, sender.agentId)
-      : null;
+    const child =
+      findLaunchedChild(receipt.conversation_id, sender) ??
+      (receipt.agent_id
+        ? await resolveChildSubagent(backend, receipt.agent_id, sender.agentId)
+        : null);
     const persistRun = resumeSubagentWriter(
       sender.conversationId,
       { conversation_id: receipt.conversation_id },

@@ -24,6 +24,6 @@ export function resolveSubagentHarnessTools(
   const fullCapability =
     type === "general-purpose" || config.allowedTools === "all";
   return fullCapability && canLaunchSubagentsAtDepth(childDepth)
-    ? ["SendAgentMessage", "Agent"]
+    ? ["SendAgentMessage", "Agent", "ListSubagents"]
     : ["SendAgentMessage"];
 }
