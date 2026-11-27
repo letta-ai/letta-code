@@ -3,6 +3,7 @@ import {
   type CanUseToolContext,
   type CanUseToolResponse,
   createTranscriptAccumulator,
+  type LettaAgentClient,
   type LettaCodeSession,
   type ListMessagesResult,
   type SDKQueueItem,
@@ -23,12 +24,20 @@ type Approval = {
 
 type Snapshot = {
   rows: readonly TranscriptRow[];
+  committed: number;
+  epoch: number;
   queue: readonly SDKQueueItem[];
   approvals: readonly Approval[];
   status: "connecting" | "online" | "offline";
   error?: string;
   commandOutput?: string;
   device?: SessionDeviceStatus;
+  model?: string;
+  picker?: {
+    kind: "agents" | "resume" | "model";
+    items: { key: string; label: string; description?: string }[];
+    after?: string;
+  };
   memory?: { agentId: string; entries: MemoryFileEntry[] };
   activity?: string;
 };
@@ -42,16 +51,26 @@ export class TerminalSession {
   private transcript = createTranscriptAccumulator();
   private listeners = new Set<() => void>();
   private unsubscribeDevice?: () => void;
+  private target?: string;
   private session?: LettaCodeSession;
   private state: Snapshot = {
     rows: [],
+    committed: 0,
+    epoch: 0,
     queue: [],
     approvals: [],
     status: "connecting",
   };
 
   constructor(
-    private readonly open: (approve: CanUseToolCallback) => LettaCodeSession,
+    private readonly open: (
+      approve: CanUseToolCallback,
+      target?: string,
+    ) => LettaCodeSession,
+    private readonly management?: Pick<
+      LettaAgentClient,
+      "agents" | "conversations"
+    >,
   ) {}
 
   snapshot = () => this.state;
@@ -67,11 +86,11 @@ export class TerminalSession {
     for (const notify of this.listeners) notify();
   }
 
-  private project(rows: readonly TranscriptRow[]) {
+  private project(rows: readonly TranscriptRow[], settled = false) {
     for (const row of rows) {
       if (row.kind === "user" && row.otid) this.echoes.delete(row.otid);
     }
-    if (!this.echoes.size) return this.update({ rows });
+
     const projected = [...rows];
     for (const [otid, { anchor, text }] of this.echoes) {
       const index = projected.findIndex(
@@ -80,7 +99,24 @@ export class TerminalSession {
       );
       projected.splice(index + 1, 0, { key: otid, otid, kind: "user", text });
     }
-    this.update({ rows: projected });
+    const previous = this.state;
+    const reset = previous.rows
+      .slice(0, previous.committed)
+      .some(
+        (row, index) =>
+          row !== projected[index] &&
+          JSON.stringify(row) !== JSON.stringify(projected[index]),
+      );
+    this.update({
+      rows: projected,
+      committed:
+        settled && !this.echoes.size
+          ? projected.length
+          : reset
+            ? 0
+            : previous.committed,
+      epoch: previous.epoch + Number(reset),
+    });
   }
 
   private fail(error: unknown) {
@@ -89,7 +125,9 @@ export class TerminalSession {
     });
   }
 
-  private rebase(page: ListMessagesResult) {
+  private rebase(page: ListMessagesResult, prepend = false) {
+    const existing = prepend ? [...this.historyMessages] : [];
+    if (prepend) this.historyMessages.clear();
     for (const message of [...page.messages].reverse()) {
       const key = JSON.stringify([
         message.message_type,
@@ -99,15 +137,21 @@ export class TerminalSession {
       this.historyMessages.delete(key);
       this.historyMessages.set(key, message);
     }
+    for (const [key, message] of existing)
+      this.historyMessages.set(key, message);
     const rows = this.transcript.rebase([...this.historyMessages.values()], {
       order: "asc",
     });
-    this.project(rows);
+    this.project(rows, true);
   }
 
-  private async history(session: LettaCodeSession) {
+  private async history(session: LettaCodeSession, before?: string) {
     if (session.conversationId !== "default")
-      return session.listMessages({ limit: 50, order: "desc" });
+      return session.listMessages({
+        ...(before && { before }),
+        limit: 50,
+        order: "desc",
+      });
     const page = await session.sendCommand<{
       type: "conversation_messages_list_response";
       success: boolean;
@@ -117,7 +161,12 @@ export class TerminalSession {
       {
         type: "conversation_messages_list",
         conversation_id: "default",
-        query: { agent_id: session.agentId, limit: 50, order: "desc" },
+        query: {
+          agent_id: session.agentId,
+          ...(before && { before }),
+          limit: 50,
+          order: "desc",
+        },
       },
       { responseType: "conversation_messages_list_response" },
     );
@@ -141,10 +190,11 @@ export class TerminalSession {
             ],
           });
         }),
+      this.target,
     );
     this.session = session;
     try {
-      await session.ready();
+      const ready = await session.ready();
       if (this.session !== session) return;
       const receiveDevice = (device: SessionDeviceStatus) => {
         if (session === this.session) this.update({ device });
@@ -159,7 +209,7 @@ export class TerminalSession {
       const page = await this.history(session);
       if (this.session !== session) return;
       this.rebase(page);
-      this.update({ status: "online" });
+      this.update({ status: "online", model: ready.model ?? undefined });
       void session.recoverPendingApprovals().catch((error) => {
         if (session === this.session) this.fail(error);
       });
@@ -208,15 +258,200 @@ export class TerminalSession {
     first.resolve(response);
   }
 
+  private switchTarget(target: string) {
+    this.target = target;
+    this.echoes.clear();
+    this.historyMessages.clear();
+    this.transcript = createTranscriptAccumulator();
+    this.update({
+      rows: [],
+      committed: 0,
+      epoch: this.state.epoch + 1,
+      picker: undefined,
+      commandOutput: undefined,
+      model: undefined,
+    });
+    void this.connect();
+  }
+
+  closePicker() {
+    this.update({ picker: undefined });
+  }
+
+  async select(key: string) {
+    const picker = this.state.picker;
+    const session = this.session;
+    if (!session || !picker) return;
+    if (key === "@more" && picker.after) {
+      try {
+        await this.loadPicker(session, picker.kind, picker.after);
+      } catch (error) {
+        if (session === this.session) this.fail(error);
+      }
+      return;
+    }
+    if (picker.kind !== "model") return this.switchTarget(key);
+    try {
+      const model = await session.updateModel({ modelId: key });
+      if (session === this.session)
+        this.update({
+          model: model.modelHandle ?? model.modelId ?? key,
+          picker: undefined,
+        });
+    } catch (error) {
+      if (session === this.session) this.fail(error);
+    }
+  }
+
+  private async loadPicker(
+    session: LettaCodeSession,
+    kind: "agents" | "resume" | "model",
+    after?: string,
+  ) {
+    let items: { key: string; label: string; description?: string }[];
+    if (kind === "model") {
+      const catalog = await session.listModels();
+      const handles =
+        catalog.availableHandles && new Set(catalog.availableHandles);
+      items = catalog.entries
+        .filter((entry) => !handles || handles.has(entry.handle))
+        .map((entry) => ({
+          key: entry.id,
+          label: entry.label,
+          description: entry.id,
+        }));
+    } else {
+      if (!this.management) throw new Error("Session management unavailable");
+      items =
+        kind === "agents"
+          ? (
+              await this.management.agents.list({
+                limit: 30,
+                after,
+                order: "desc",
+              })
+            ).map((agent) => ({ key: agent.id, label: agent.name ?? agent.id }))
+          : (
+              await this.management.conversations.list({
+                agentId: session.agentId ?? undefined,
+                limit: 30,
+                after,
+                order: "desc",
+              })
+            ).map((conv) => ({ key: conv.id, label: conv.summary ?? conv.id }));
+    }
+    if (session !== this.session) return;
+    const next =
+      kind !== "model" && items.length === 30 ? items.at(-1)?.key : undefined;
+    if (kind === "resume" && session.agentId && !after)
+      items.unshift({ key: session.agentId, label: "Default conversation" });
+    this.update({
+      picker: {
+        kind,
+        items: [...(after ? (this.state.picker?.items ?? []) : []), ...items],
+        after: next,
+      },
+    });
+  }
+
+  async searchFiles(query: string) {
+    const session = this.session;
+    if (!session) return [];
+    const result = await session.sendCommand<{
+      type: "search_files_response";
+      files: { path: string }[];
+      success: boolean;
+    }>(
+      {
+        type: "search_files",
+        query,
+        max_results: 30,
+        cwd: this.state.device?.workingDirectory ?? undefined,
+      },
+      { responseType: "search_files_response" },
+    );
+    return session === this.session && result.success
+      ? result.files.map((file) => file.path)
+      : [];
+  }
+
   async send(text: string) {
     const session = this.session;
     if (!session || this.state.status !== "online") return;
     const otid = crypto.randomUUID();
     try {
+      if (text === "/skills") {
+        const status = await session.getDeviceStatus();
+        if (session !== this.session) return;
+        const skills = status.raw.current_available_skills;
+        this.update({
+          commandOutput:
+            Array.isArray(skills) && skills.length
+              ? skills
+                  .map((skill) => skill.name + " · " + skill.description)
+                  .join("\n")
+              : "No skills available",
+        });
+        return;
+      }
+      if (text.startsWith("/rename ")) {
+        const name = text.slice(8).trim();
+        if (!name || !this.management || !session.agentId)
+          throw new Error("Enter a name after /rename");
+        if (session.conversationId === "default" || !session.conversationId)
+          await this.management.agents.update(session.agentId, { name });
+        else
+          await this.management.conversations.update(session.conversationId, {
+            summary: name,
+          });
+        if (session === this.session)
+          this.update({ commandOutput: "Renamed to " + name });
+        return;
+      }
+      if (["/connect", "/mcp", "/login", "/logout"].includes(text)) {
+        const cli = text.slice(1);
+        this.update({
+          commandOutput:
+            "Run letta " + cli + " on the computer running the app server.",
+        });
+        return;
+      }
+      if (text === "/history") {
+        const oldest = this.historyMessages.values().next().value?.id;
+        const page = await this.history(session, oldest);
+        if (session !== this.session) return;
+        this.rebase(page, true);
+        this.update({
+          commandOutput: page.messages.length
+            ? undefined
+            : "Beginning of conversation",
+        });
+        return;
+      }
+      if (text === "/agents" || text === "/resume" || text === "/model") {
+        await this.loadPicker(
+          session,
+          text === "/agents"
+            ? "agents"
+            : text === "/resume"
+              ? "resume"
+              : "model",
+        );
+        return;
+      }
+      if (text === "/new" || text === "/clear") {
+        if (!session.agentId || !this.management)
+          throw new Error("Select an agent first");
+        const conversation = await this.management.conversations.create({
+          agentId: session.agentId,
+        });
+        if (this.session === session) this.switchTarget(conversation.id);
+        return;
+      }
       if (text === "/help") {
         this.update({
           commandOutput:
-            "/memory [path]   Browse memory files\n/queue resume    Resume queued input\nEsc              Interrupt the current turn\nCtrl+C           Exit",
+            "/agents   Switch agent\n/model    Select model and reasoning tier\n/new      Start a conversation\n/resume   Switch conversation\n/memory [path]   Browse memory files\n/queue resume    Resume queued input\nEsc              Interrupt the current turn\nCtrl+C           Exit",
         });
         return;
       }

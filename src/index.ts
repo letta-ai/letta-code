@@ -37,6 +37,7 @@ import { LOCAL_BACKEND_EXPERIMENTAL_ENV } from "./backend/local/paths";
 import { startBrowserDiscoveryServer } from "./browser-discovery-server";
 import {
   extractBackendFlag,
+  normalizeUpdateCommandAliases,
   type ParsedCliArgs,
   parseCliArgs,
   preprocessCliArgs,
@@ -86,20 +87,6 @@ import type { ToolsetPreference } from "./tools/toolset-types";
 import { debugLog, debugWarn, isDebugEnabled } from "./utils/debug";
 import { startOrphanDetection } from "./utils/orphan-detection";
 import { markMilestone } from "./utils/timing";
-
-function normalizeUpdateCommandAliases(args: string[]): string[] {
-  const [command, ...rest] = args;
-
-  if (
-    command === "upgrade" ||
-    command === "--update" ||
-    command === "--upgrade"
-  ) {
-    return ["update", ...rest];
-  }
-
-  return args;
-}
 
 function trackCliBoundaryError(
   errorType: string,
@@ -657,6 +644,15 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
+  if (values.connect) {
+    const { runAttachedTerminal } = await import("@/cli/app/AttachedTerminal");
+    return runAttachedTerminal(
+      values.connect,
+      values.conversation === "default"
+        ? values.agent
+        : (values.conversation ?? values.agent),
+    );
+  }
   const shouldResume = values.resume ?? false;
   let specifiedConversationId = values.conversation ?? null;
   const forceNew = values["new-agent"] ?? false;
@@ -765,6 +761,7 @@ async function main(): Promise<void> {
       })()
     : Promise.resolve(undefined);
   const ensureTerminalPreflightComplete = async () => {
+    markMilestone("REACT_IMPORT_DONE");
     await terminalPreflightPromise;
   };
 
@@ -1213,7 +1210,6 @@ async function main(): Promise<void> {
       import("@/cli/components/WelcomeScreen"),
       import("@/cli/app/TerminalSessionHost"),
     ]);
-  markMilestone("REACT_IMPORT_DONE");
   await terminalPreflightPromise;
   markMilestone("TERMINAL_PREFLIGHT_DONE");
   const { useState, useEffect, useRef } = React;

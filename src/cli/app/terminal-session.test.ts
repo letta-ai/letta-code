@@ -200,3 +200,32 @@ test("successive history windows keep older messages before the newest turn", as
   store.close();
   await reading;
 });
+
+test("a stale approval action cannot grant the next parallel request", async () => {
+  const transport = connection();
+  let approve!: CanUseToolCallback;
+  const store = new TerminalSession((callback) => {
+    approve = callback;
+    return transport.session;
+  });
+  const reading = store.connect();
+  await Bun.sleep(0);
+  const first = approve("Edit", { file_path: "a" });
+  const second = approve("Write", { file_path: "b" });
+  const [a, b] = store.snapshot().approvals;
+  if (!a || !b) throw new Error("Expected both requests");
+  store.decide(a, { behavior: "deny", message: "Keep the original" });
+  store.decide(a, { behavior: "allow", updatedPermissions: ["save-default"] });
+  expect(store.snapshot().approvals).toEqual([b]);
+  store.decide(b, { behavior: "allow", updatedPermissions: ["save-default"] });
+  expect(await first).toEqual({
+    behavior: "deny",
+    message: "Keep the original",
+  });
+  expect(await second).toEqual({
+    behavior: "allow",
+    updatedPermissions: ["save-default"],
+  });
+  store.close();
+  await reading;
+});

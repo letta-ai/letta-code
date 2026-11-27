@@ -111,15 +111,17 @@ export async function openEmbeddedTerminal(
     authToken: token,
     WebSocket,
   });
-  const store = new TerminalSession((canUseTool) =>
-    client.resumeSession(
-      conversationId === "default" ? agentId : conversationId,
-      {
-        canUseTool,
-        permissionMode: permissionMode.getMode(),
-        cwd: process.cwd(),
-      },
-    ),
+  const store = new TerminalSession(
+    (canUseTool, target) =>
+      client.resumeSession(
+        target ?? (conversationId === "default" ? agentId : conversationId),
+        {
+          canUseTool,
+          permissionMode: permissionMode.getMode(),
+          cwd: process.cwd(),
+        },
+      ),
+    client,
   );
   return {
     store,

@@ -1,75 +1,97 @@
-import { Box, Text, useInput } from "ink";
-import { useState, useSyncExternalStore } from "react";
+import type { TranscriptRow } from "@letta-ai/letta-agent-sdk";
+import { Box, Static, Text, useInput, useStdout } from "ink";
+import { useCallback, useSyncExternalStore } from "react";
 import { isAskUserQuestions } from "@/ask-user-question";
 import { ApprovalSwitch } from "@/cli/components/ApprovalSwitch";
 import { AssistantMessage } from "@/cli/components/AssistantMessageRich";
 import { InlineQuestionApproval } from "@/cli/components/InlineQuestionApproval";
 import { MemfsTreeViewer } from "@/cli/components/MemfsTreeViewer";
-import { PasteAwareTextInput } from "@/cli/components/PasteAwareTextInput";
 import { ReasoningMessage } from "@/cli/components/ReasoningMessageRich";
 import { SessionDiff } from "@/cli/components/SessionDiff";
 import { ToolCallMessage } from "@/cli/components/ToolCallMessageRich";
 import { UserMessage } from "@/cli/components/UserMessageRich";
 import type { DiffPreview } from "@/types/protocol_v2";
+import { CLEAR_SCREEN_AND_HOME } from "./constants";
+import { SessionPicker } from "./SessionPicker";
+import { TerminalComposer } from "./TerminalComposer";
 import type { TerminalSession } from "./terminal-session";
 
+function TerminalRow({ row, live }: { row: TranscriptRow; live: boolean }) {
+  return row.kind === "assistant" ? (
+    <AssistantMessage
+      key={row.key}
+      line={{
+        kind: "assistant",
+        id: row.key,
+        text: row.text,
+        phase: live ? "streaming" : "finished",
+      }}
+    />
+  ) : row.kind === "user" ? (
+    <UserMessage
+      key={row.key}
+      line={{ kind: "user", id: row.key, text: row.text }}
+    />
+  ) : row.kind === "tool_call" ? (
+    <ToolCallMessage
+      key={row.key}
+      remote
+      line={{
+        kind: "tool_call",
+        id: row.key,
+        toolCallId: row.toolCallId,
+        name: row.toolName,
+        argsText: row.rawArguments ?? JSON.stringify(row.toolInput),
+        phase: row.status === "complete" ? "finished" : row.status,
+        resultOk: row.result && !row.result.isError,
+        resultText: row.result?.content,
+      }}
+    />
+  ) : (
+    <ReasoningMessage
+      key={row.key}
+      line={{
+        kind: "reasoning",
+        id: row.key,
+        text: row.text,
+        phase: live ? "streaming" : "finished",
+      }}
+    />
+  );
+}
+
 export function TerminalApp({ store }: { store: TerminalSession }) {
-  const state = useSyncExternalStore(store.subscribe, store.snapshot);
-  const [draft, setDraft] = useState("");
+  const { stdout } = useStdout();
+  const subscribe = useCallback(
+    (notify: () => void) => {
+      let epoch = store.snapshot().epoch;
+      return store.subscribe(() => {
+        const next = store.snapshot().epoch;
+        if (epoch !== next) stdout.write(CLEAR_SCREEN_AND_HOME);
+        epoch = next;
+        notify();
+      });
+    },
+    [store, stdout],
+  );
+  const state = useSyncExternalStore(subscribe, store.snapshot);
 
   const approval = state.approvals[0];
   const suggestion = approval?.context?.permissionSuggestions?.[0];
   useInput((input, key) => {
-    if (approval || state.memory) return;
+    if (approval || state.memory || state.picker) return;
     if (key.shift && key.tab) void store.cyclePermissionMode();
     else if (key.escape) void store.interrupt();
     else if (state.status === "offline" && input === "r") void store.connect();
   });
   return (
     <Box flexDirection="column">
-      {state.rows.map((row) =>
-        row.kind === "assistant" ? (
-          <AssistantMessage
-            key={row.key}
-            line={{
-              kind: "assistant",
-              id: row.key,
-              text: row.text,
-              phase: "streaming",
-            }}
-          />
-        ) : row.kind === "user" ? (
-          <UserMessage
-            key={row.key}
-            line={{ kind: "user", id: row.key, text: row.text }}
-          />
-        ) : row.kind === "tool_call" ? (
-          <ToolCallMessage
-            key={row.key}
-            remote
-            line={{
-              kind: "tool_call",
-              id: row.key,
-              toolCallId: row.toolCallId,
-              name: row.toolName,
-              argsText: row.rawArguments ?? JSON.stringify(row.toolInput),
-              phase: row.status === "complete" ? "finished" : row.status,
-              resultOk: row.result && !row.result.isError,
-              resultText: row.result?.content,
-            }}
-          />
-        ) : (
-          <ReasoningMessage
-            key={row.key}
-            line={{
-              kind: "reasoning",
-              id: row.key,
-              text: row.text,
-              phase: state.activity ? "streaming" : "finished",
-            }}
-          />
-        ),
-      )}
+      <Static key={state.epoch} items={state.rows.slice(0, state.committed)}>
+        {(row) => <TerminalRow key={row.key} row={row} live={false} />}
+      </Static>
+      {state.rows.slice(state.committed).map((row) => (
+        <TerminalRow key={row.key} row={row} live />
+      ))}
       {state.activity && <Text dimColor>{state.activity}</Text>}
       {state.queue.map((item, index) => (
         <Text key={item.id} dimColor>
@@ -84,7 +106,7 @@ export function TerminalApp({ store }: { store: TerminalSession }) {
       )}
       {state.device && (
         <Text dimColor>
-          {state.status} · {state.device.permissionMode} ·{" "}
+          {state.status} · {state.model} · {state.device.permissionMode} ·{" "}
           {state.device.workingDirectory}
         </Text>
       )}
@@ -160,34 +182,34 @@ export function TerminalApp({ store }: { store: TerminalSession }) {
             />
           )}
         </Box>
+      ) : state.picker ? (
+        <SessionPicker
+          key={state.picker.kind}
+          picker={state.picker}
+          store={store}
+        />
       ) : state.memory ? (
         <MemfsTreeViewer
           agentId={state.memory.agentId}
           entries={state.memory.entries}
           onClose={() => store.closeMemory()}
         />
-      ) : state.status === "online" ? (
-        <Box>
-          <Text>❯ </Text>
-          <PasteAwareTextInput
-            placeholder="Message · /help for commands"
-            value={draft}
-            onChange={setDraft}
-            onSubmit={(value) => {
-              if (value.trim()) {
-                setDraft("");
-                void store.send(value);
-              }
-            }}
-          />
-        </Box>
-      ) : (
+      ) : state.status !== "online" ? (
         <Text>
           {state.status === "offline"
             ? "Disconnected · r to reconnect"
             : "Connecting…"}
         </Text>
-      )}
+      ) : null}
+      <TerminalComposer
+        store={store}
+        active={
+          state.status === "online" &&
+          !approval &&
+          !state.memory &&
+          !state.picker
+        }
+      />
     </Box>
   );
 }
