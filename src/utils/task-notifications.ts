@@ -1,5 +1,11 @@
+import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
-import { SYSTEM_REMINDER_OPEN } from "@/constants";
+import {
+  SYSTEM_REMINDER_CLOSE,
+  SYSTEM_REMINDER_OPEN,
+  TASK_NOTIFICATION_CLOSE,
+  TASK_NOTIFICATION_OPEN,
+} from "@/constants";
 import { getRuntimeContext } from "@/runtime-context";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
 import { subagentScopeMatches } from "@/utils/subagent-scope";
@@ -63,9 +69,10 @@ export function resolveNotificationScope(parentScope?: {
   }
 }
 
-export function formatTaskNotification(notification: TaskNotification): string {
+function taskNotificationEnvelope(
+  notification: Omit<TaskNotification, "result">,
+) {
   const escapedSummary = escapeXml(notification.summary);
-  const escapedResult = escapeXml(notification.result);
 
   const usageLines: string[] = [];
   if (notification.usage?.totalTokens !== undefined) {
@@ -85,18 +92,35 @@ export function formatTaskNotification(notification: TaskNotification): string {
     ? `\n<transcript>${escapeXml(notification.outputFile)}</transcript>`
     : "";
 
-  return `<task-notification>
-<task-id>${notification.taskId}</task-id>
-<status>${notification.status}</status>
-<summary>${escapedSummary}</summary>
-<result>${escapedResult}</result>${usageBlock}${transcriptBlock}
-</task-notification>`;
+  return {
+    open: `${TASK_NOTIFICATION_OPEN}\n<task-id>${escapeXml(notification.taskId)}</task-id>\n<status>${notification.status}</status>\n<summary>${escapedSummary}</summary>\n<result>`,
+    close: `</result>${usageBlock}${transcriptBlock}\n${TASK_NOTIFICATION_CLOSE}`,
+  };
+}
+
+export function formatTaskNotification(notification: TaskNotification): string {
+  const { open, close } = taskNotificationEnvelope(notification);
+  return `${open}${escapeXml(notification.result)}${close}`;
+}
+
+export function formatMultimodalTaskNotification(
+  notification: Omit<TaskNotification, "result" | "outputFile">,
+  result: Exclude<MessageCreate["content"], string>,
+): Exclude<MessageCreate["content"], string> {
+  const { open, close } = taskNotificationEnvelope(notification);
+  return [
+    { type: "text", text: open },
+    ...result.map((part) =>
+      part.type === "text" ? { ...part, text: escapeXml(part.text) } : part,
+    ),
+    { type: "text", text: close },
+  ];
 }
 
 export function subagentResultReminder(): string {
   const reminder = process.env.LETTA_SUBAGENT_RESULT_REMINDER;
   return reminder
-    ? `\n\n<system-reminder>\n${reminder}\n</system-reminder>`
+    ? `\n\n${SYSTEM_REMINDER_OPEN}\n${reminder}\n${SYSTEM_REMINDER_CLOSE}`
     : "";
 }
 
@@ -114,25 +138,25 @@ export function formatMonitorEventNotification(notification: {
   event: string;
   description?: string;
 }): string {
-  return `<task-notification>
+  return `${TASK_NOTIFICATION_OPEN}
 <task-id>${escapeXml(notification.taskId)}</task-id>
 <summary>${escapeXml(notification.description?.trim() ? `Monitor: ${notification.description}` : "Monitor event")}</summary>
 <result>
 <event>${escapeXml(notification.event)}</event>
 </result>
-</task-notification>`;
+${TASK_NOTIFICATION_CLOSE}`;
 }
 
 export function extractTaskNotificationsForDisplay(message: string): {
   notifications: string[];
   cleanedText: string;
 } {
-  if (!message.includes("<task-notification>")) {
+  if (!message.includes(TASK_NOTIFICATION_OPEN)) {
     return { notifications: [], cleanedText: message };
   }
 
   const notificationRegex =
-    /<task-notification>[\s\S]*?(?:<\/task-notification>|$)(?:\s*Full transcript available at:[^\n]*\n?)?/g;
+    /<task-notification>[\s\S]*?(?:<\/task-notification>|$)(?:\s*<external-tool-result>[\s\S]*?<\/external-tool-result>)?(?:\s*Full transcript available at:[^\n]*\n?)?/g;
   const notifications: string[] = [];
 
   let match: RegExpExecArray | null = notificationRegex.exec(message);

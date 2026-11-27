@@ -6,12 +6,14 @@ import type { Conversation } from "@letta-ai/letta-client/resources/conversation
 import { Box, useInput } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type Backend, getBackend } from "@/backend";
+import { stripSystemReminders } from "@/cli/app/system-reminders";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import {
   useTerminalRows,
   useTerminalWidth,
 } from "@/cli/hooks/use-terminal-width";
-import { SYSTEM_ALERT_OPEN, SYSTEM_REMINDER_OPEN } from "@/constants";
+import { TASK_NOTIFICATION_OPEN } from "@/constants";
+import { extractTaskNotificationsForDisplay } from "@/utils/task-notifications";
 import { colors } from "./colors";
 import { MarkdownDisplay } from "./MarkdownDisplay";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
@@ -120,7 +122,7 @@ function getMessageTimestamp(message: Message | undefined): string | null {
   );
 }
 
-function extractUserMessagePreview(message: Message): string | null {
+export function extractUserMessagePreview(message: Message): string | null {
   const content = (
     message as Message & {
       content?: string | Array<{ type?: string; text?: string }>;
@@ -129,29 +131,24 @@ function extractUserMessagePreview(message: Message): string | null {
 
   if (!content) return null;
 
-  let textToShow: string | null = null;
+  const textParts = (
+    typeof content === "string"
+      ? [content]
+      : content.flatMap((part) =>
+          part.type === "text" && part.text ? [part.text] : [],
+        )
+  )
+    .map(stripSystemReminders)
+    .filter(Boolean);
 
-  if (typeof content === "string") {
-    textToShow = content;
-  } else if (Array.isArray(content)) {
-    for (let i = content.length - 1; i >= 0; i--) {
-      const part = content[i];
-      if (part?.type === "text" && part.text) {
-        if (
-          part.text.startsWith(SYSTEM_REMINDER_OPEN) ||
-          part.text.startsWith(SYSTEM_ALERT_OPEN)
-        ) {
-          continue;
-        }
-        textToShow = part.text;
-        break;
-      }
-    }
-  }
-
+  const textToShow = (
+    textParts.some((part) => part.includes(TASK_NOTIFICATION_OPEN))
+      ? extractTaskNotificationsForDisplay(textParts.join("\n")).cleanedText
+      : (textParts.at(-1) ?? "")
+  )
+    .replace(/\s+/g, " ")
+    .trim();
   if (!textToShow) return null;
-
-  textToShow = textToShow.replace(/\s+/g, " ").trim();
 
   const maxLen = 60;
   if (textToShow.length > maxLen) {

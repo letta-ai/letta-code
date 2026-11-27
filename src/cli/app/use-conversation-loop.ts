@@ -107,6 +107,7 @@ import {
 } from "@/cli/helpers/tool-name-mapping";
 import { finishTuiTurn } from "@/cli/helpers/tui-turn-lifecycle";
 import type { LocalModAdapter } from "@/cli/mods/use-local-mod-adapter";
+import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { runStopHooks } from "@/hooks";
 import { getTurnStartCancel } from "@/mods/turn-start-cancel";
 import type { ApprovalContext } from "@/permissions/analyzer";
@@ -1353,8 +1354,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 .map((r) => r.stderr)
                 .filter(Boolean)
                 .join("\n");
-              const feedback = stderrOutput || "Stop hook blocked";
-              const hookMessage = `<stop-hook>\n${feedback}\n</stop-hook>`;
+              const hookMessage = `${SYSTEM_REMINDER_OPEN}\nStop hook blocked.${stderrOutput ? `\n${stderrOutput}` : ""}\n${SYSTEM_REMINDER_CLOSE}`;
 
               const statusId = uid("status");
               buffersRef.current.byId.set(statusId, {

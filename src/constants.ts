@@ -9,6 +9,11 @@ export const TURN_DID_NOT_COMPLETE = "Turn did not complete";
 export const SYSTEM_REMINDER_TAG = "system-reminder";
 export const SYSTEM_REMINDER_OPEN = `<${SYSTEM_REMINDER_TAG}>`;
 export const SYSTEM_REMINDER_CLOSE = `</${SYSTEM_REMINDER_TAG}>`;
+export const SKILL_CONTENT_TAG = "skill_content";
+export const TASK_NOTIFICATION_TAG = "task-notification";
+export const TASK_NOTIFICATION_OPEN = `<${TASK_NOTIFICATION_TAG}>`;
+export const TASK_NOTIFICATION_CLOSE = `</${TASK_NOTIFICATION_TAG}>`;
+
 export const SYSTEM_ALERT_TAG = "system-alert";
 export const SYSTEM_ALERT_OPEN = `<${SYSTEM_ALERT_TAG}>`;
 export const SYSTEM_ALERT_CLOSE = `</${SYSTEM_ALERT_TAG}>`;
