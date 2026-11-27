@@ -1,7 +1,10 @@
 import { type QueueItem, QueueRuntime } from "@/queue/queue-runtime";
 import type { QueueRemovalTransition } from "@/types/queue-update-protocol";
 import { debugWarn } from "@/utils/debug";
-import { enqueueInboundUserMessage } from "./inbound-queue";
+import {
+  enqueueInboundUserMessage,
+  getQueuedInputIdentities,
+} from "./inbound-queue";
 import {
   forgetQueuedInputDispositions,
   loadDurableQueuedInputEntries,
@@ -48,19 +51,6 @@ import type {
 const discardQueuedItem = (runtime: ConversationRuntime, item: QueueItem) => {
   runtime.queuedMessagesByItemId.delete(item.id);
 };
-function itemIdentities(
-  runtime: ConversationRuntime,
-  items: readonly QueueItem[],
-) {
-  return items.flatMap((item) => {
-    const identities = runtime.queuedMessagesByItemId.get(
-      item.id,
-    )?.durableInputIdentities;
-    if (identities?.length) return [...identities];
-    const fallback = ordinaryInputIdentity(item.clientMessageId);
-    return fallback ? [fallback] : [];
-  });
-}
 const DURABLE_QUEUE_RESTORE_RETRY_DELAY_MS = 10;
 const DURABLE_QUEUE_RESTORE_MAX_RETRY_DELAY_MS = 250;
 const preparedTerminalPromotionRetries = new WeakMap<
@@ -228,15 +218,24 @@ export function ensureConversationQueueRuntime(
       beforeDequeued: (items) =>
         markQueuedInputDispositionsStarted(
           runtime,
-          itemIdentities(runtime, items),
+          getQueuedInputIdentities(runtime, items),
         ),
       beforeDropped: (item) =>
-        forgetQueuedInputDispositions(runtime, itemIdentities(runtime, [item])),
+        forgetQueuedInputDispositions(
+          runtime,
+          getQueuedInputIdentities(runtime, [item]),
+        ),
       beforeRemoved: (item) =>
-        forgetQueuedInputDispositions(runtime, itemIdentities(runtime, [item])),
+        forgetQueuedInputDispositions(
+          runtime,
+          getQueuedInputIdentities(runtime, [item]),
+        ),
       beforeCleared: (reason, items) =>
         reason === "shutdown" ||
-        forgetQueuedInputDispositions(runtime, itemIdentities(runtime, items)),
+        forgetQueuedInputDispositions(
+          runtime,
+          getQueuedInputIdentities(runtime, items),
+        ),
       onEnqueued: (item, queueLen) => {
         runtime.pendingTurns = queueLen;
         scheduleQueueEmit(listener, getQueueItemScope(item));
