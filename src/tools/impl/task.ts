@@ -100,6 +100,7 @@ interface TaskArgs extends Partial<SubagentLaunchArgs> {
   parentScope?: { agentId: string; conversationId: string };
   notifyCaller?: boolean;
 }
+const BACKGROUND_SUBAGENT_STARTUP_TIMEOUT_MS = 60_000;
 
 export {
   waitForBackgroundSubagentAgentId,
@@ -592,6 +593,7 @@ export function spawnBackgroundSubagentTask(
 export async function launchSubagent(
   args: TaskArgs,
   cloudSkillRepositories?: string[],
+  timeoutMs = BACKGROUND_SUBAGENT_STARTUP_TIMEOUT_MS,
 ): Promise<SubagentLaunchResult> {
   const prepared =
     args.subagent_type === "custom" &&
@@ -820,7 +822,7 @@ export async function launchSubagent(
       if (signal?.aborted) abortStartup();
       agentId = await waitForBackgroundSubagentAgentId(
         subagentId,
-        null,
+        timeoutMs,
         signal,
       );
       signal?.throwIfAborted();
@@ -924,7 +926,7 @@ export async function launchSubagent(
     if (signal?.aborted) abortStartup();
     linkedConversationId = await waitForBackgroundSubagentLink(
       subagentId,
-      null,
+      timeoutMs,
       signal,
     );
     signal?.throwIfAborted();

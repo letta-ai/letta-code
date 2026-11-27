@@ -110,6 +110,11 @@
       "path": "src/websocket/listener/turn-durability.test.ts",
       "timeoutMs": 30000,
       "reason": "Performs hundreds of synchronous durable writes and lock operations; isolate it so shared-batch load does not make Windows lock-budget assertions hit the generic 15-second timeout."
+    },
+    {
+      "path": "src/tools/impl/task-startup-timeout.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Mocks subagent processes and metadata while mutating settings, backend, and background task state."
     }
   ]
 }
