@@ -1,7 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
-import { link, mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { uptime } from "node:os";
 import path from "node:path";
+import {
+  isWithinPartialPublishGrace,
+  publishExclusive,
+} from "@/utils/exclusive-publish";
 import {
   getOwnProcessStartTime,
   getProcessCommand,
@@ -144,29 +148,56 @@ export function getManualListenerScopeHash(
     .digest("hex");
 }
 
-function parseLockRecord(
+type ParsedLockRecord =
+  | { kind: "record"; record: ManualListenerLockRecord }
+  | { kind: "partial" }
+  | { kind: "incompatible" };
+
+function classifyLockRecord(
   raw: string,
   expectedScopeHash: string,
-): ManualListenerLockRecord | null {
+): ParsedLockRecord {
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(raw) as Partial<ManualListenerLockRecord>;
-    if (
-      parsed.version !== 1 ||
-      !Number.isSafeInteger(parsed.pid) ||
-      (parsed.pid ?? 0) <= 0 ||
-      typeof parsed.ownerToken !== "string" ||
-      parsed.ownerToken.length === 0 ||
-      typeof parsed.acquiredAt !== "string" ||
-      (parsed.started !== undefined &&
-        (typeof parsed.started !== "string" || parsed.started.length === 0)) ||
-      parsed.scopeHash !== expectedScopeHash
-    ) {
-      return null;
-    }
-    return parsed as ManualListenerLockRecord;
+    parsed = JSON.parse(raw);
   } catch {
+    return { kind: "partial" };
+  }
+  const record = validateLockRecord(parsed, expectedScopeHash);
+  return record ? { kind: "record", record } : { kind: "incompatible" };
+}
+
+async function isAbandonedPartialRecord(
+  filePath: string,
+): Promise<boolean | null> {
+  try {
+    return !isWithinPartialPublishGrace((await stat(filePath)).mtimeMs);
+  } catch (error) {
+    if (hasErrorCode(error, "ENOENT")) return null;
+    throw error;
+  }
+}
+
+function validateLockRecord(
+  parsed: unknown,
+  expectedScopeHash: string,
+): ManualListenerLockRecord | null {
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const record = parsed as Partial<ManualListenerLockRecord>;
+  if (
+    record.version !== 1 ||
+    !Number.isSafeInteger(record.pid) ||
+    (record.pid ?? 0) <= 0 ||
+    typeof record.ownerToken !== "string" ||
+    record.ownerToken.length === 0 ||
+    typeof record.acquiredAt !== "string" ||
+    (record.started !== undefined &&
+      (typeof record.started !== "string" || record.started.length === 0)) ||
+    record.scopeHash !== expectedScopeHash
+  ) {
     return null;
   }
+  return record as ManualListenerLockRecord;
 }
 
 async function publishInitializedFile(
@@ -180,7 +211,7 @@ async function publishInitializedFile(
   let publicationError: unknown;
   try {
     await writeFile(candidatePath, contents, { flag: "wx" });
-    await link(candidatePath, targetPath);
+    await publishExclusive(candidatePath, targetPath);
   } catch (error) {
     publicationError = error;
   }
@@ -215,6 +246,7 @@ async function recoverDeadOwner(
   recoveryOwnerContents: string,
   scopeHash: string,
   deps: ManualListenerLockDeps,
+  staleIsPartial = false,
 ): Promise<boolean> {
   let ownedClaimDepth = -1;
   try {
@@ -251,14 +283,21 @@ async function recoverDeadOwner(
           lockPath,
         );
       }
-      const claimOwner = parseLockRecord(claimContents, scopeHash);
-      if (!claimOwner) {
+      const claimOwner = classifyLockRecord(claimContents, scopeHash);
+      if (claimOwner.kind === "incompatible") {
         throw new ManualListenerLockUnavailableError(
           `Listener lock recovery record is invalid: ${claimPath}`,
           lockPath,
         );
       }
-      if (await isOwnerAlive(claimOwner, deps)) {
+      if (claimOwner.kind === "partial") {
+        const abandoned = await isAbandonedPartialRecord(claimPath).catch(
+          () => false,
+        );
+        if (abandoned === false) return false;
+        continue;
+      }
+      if (await isOwnerAlive(claimOwner.record, deps)) {
         return false;
       }
     }
@@ -277,6 +316,12 @@ async function recoverDeadOwner(
       return hasErrorCode(error, "ENOENT");
     }
     if (currentContents !== staleContents) {
+      return true;
+    }
+    if (
+      staleIsPartial &&
+      (await isAbandonedPartialRecord(lockPath).catch(() => false)) !== true
+    ) {
       return true;
     }
     await unlink(lockPath);
@@ -379,15 +424,35 @@ export async function acquireManualListenerLock(
         lockPath,
       );
     }
-    const incumbent = parseLockRecord(incumbentContents, scopeHash);
-    if (!incumbent) {
+    const incumbent = classifyLockRecord(incumbentContents, scopeHash);
+    if (incumbent.kind === "incompatible") {
       throw new ManualListenerLockUnavailableError(
         `Listener lock is corrupt or belongs to an incompatible version: ${lockPath}`,
         lockPath,
       );
     }
-    if (await isOwnerAlive(incumbent, deps)) {
-      throw new ManualListenerAlreadyRunningError(incumbent.pid, lockPath);
+    if (incumbent.kind === "partial") {
+      let abandoned: boolean | null;
+      try {
+        abandoned = await isAbandonedPartialRecord(lockPath);
+      } catch {
+        throw new ManualListenerLockUnavailableError(
+          "Could not inspect the existing listener lock.",
+          lockPath,
+        );
+      }
+      if (abandoned === null) continue;
+      if (!abandoned) {
+        throw new ManualListenerLockUnavailableError(
+          `Listener lock is being written by another process: ${lockPath}`,
+          lockPath,
+        );
+      }
+    } else if (await isOwnerAlive(incumbent.record, deps)) {
+      throw new ManualListenerAlreadyRunningError(
+        incumbent.record.pid,
+        lockPath,
+      );
     }
 
     const recovered = await recoverDeadOwner(
@@ -396,6 +461,7 @@ export async function acquireManualListenerLock(
       ownerContents,
       scopeHash,
       deps,
+      incumbent.kind === "partial",
     );
     if (!recovered) {
       throw new ManualListenerLockUnavailableError(

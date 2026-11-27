@@ -492,8 +492,9 @@ export function handleListenerSocketOpenFailure({
     error,
     "listener_socket_open",
   );
-  if (isDebugEnabled()) {
-    console.error("[Listen] WebSocket open handler failed:", error);
-  }
+  console.error(
+    "[Listen] WebSocket open handler failed:",
+    isDebugEnabled() ? error : error instanceof Error ? error.message : error,
+  );
   terminateCurrentSocketPair(runtime, controlSocket, streamSocket);
 }

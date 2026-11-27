@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { link, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { publishExclusive as publishFileExclusive } from "@/utils/exclusive-publish";
 import {
   getOwnProcessStartTime,
   isSameProcessRunning,
@@ -67,7 +68,6 @@ async function ownerRecord(): Promise<string> {
     token: randomUUID(),
   });
 }
-
 async function publishExclusive(
   path: string,
   payload: string,
@@ -75,7 +75,7 @@ async function publishExclusive(
   const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
   await writeFile(temporaryPath, payload, "utf-8");
   try {
-    await link(temporaryPath, path);
+    await publishFileExclusive(temporaryPath, path);
     return true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") throw error;
@@ -201,7 +201,14 @@ async function acquireReapMarker(
   let owner: { pid?: unknown; started?: unknown } = {};
   try {
     owner = JSON.parse(raw) as { pid?: unknown; started?: unknown };
-  } catch {}
+  } catch {
+    try {
+      if (Date.now() - (await stat(reapPath)).mtimeMs <= CORRUPT_LOCK_GRACE_MS)
+        return null;
+    } catch {
+      return null;
+    }
+  }
   const alive =
     typeof owner.pid === "number" &&
     (await isSameProcessRunning({
