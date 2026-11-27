@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { request } from "node:http";
 import { resetMcpOriginatorAuthority } from "@/agent/mcp-originator-authority";
 import {
   clearMcpOriginatorTokens,
@@ -143,6 +144,80 @@ describe("MCP originator token forwarding", () => {
       { path: runPath, body: { args: { title: "Bug" } }, headers: undefined },
     ]);
   });
+
+  test("keeps the Google Workspace direct path available without a held originator token", () => {
+    const broker = createMcpSubprocessBroker({
+      agentId: "agent-cloud",
+      getScope: () => ({ agentId: "agent-cloud" }),
+      getGoogleWorkspaceOriginatorToken: () => undefined,
+      getClient: async () => {
+        throw new Error("Unexpected upstream request");
+      },
+    });
+    try {
+      expect(broker.env.LETTA_GOOGLE_WORKSPACE_BROKER_URL).toBeUndefined();
+    } finally {
+      broker.close();
+    }
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "only brokers Google Workspace credentials for the shell's agent and active originator",
+    async () => {
+      const { deps, requests } = originatorHarness();
+      const upstream = await deps.getClient?.();
+      if (!upstream) throw new Error("Missing test client");
+      let token: string | undefined = "originator";
+      const broker = createMcpSubprocessBroker({
+        agentId: "agent-cloud",
+        getScope: () => ({ agentId: "agent-cloud" }),
+        getGoogleWorkspaceOriginatorToken: () => token,
+        getClient: async () => upstream,
+      });
+      const endpoint = new URL(
+        broker.env.LETTA_GOOGLE_WORKSPACE_BROKER_URL ?? "",
+      );
+      const send = (agentId: string) =>
+        new Promise<number | undefined>((resolve, reject) => {
+          const req = request(
+            {
+              socketPath: broker.env.LETTA_MCP_SUBPROCESS_BROKER_SOCKET,
+              method: "POST",
+              path: endpoint.pathname,
+              headers: {
+                authorization: `Bearer ${broker.env.LETTA_MCP_SUBPROCESS_BROKER_KEY}`,
+                "x-letta-mcp-originator-token": "caller-supplied",
+              },
+            },
+            (res) => {
+              res.resume();
+              res.once("end", () => resolve(res.statusCode));
+            },
+          );
+          req.once("error", reject);
+          req.end(JSON.stringify({ agent_id: agentId }));
+        });
+
+      try {
+        expect(await send("different-agent")).toBe(403);
+        expect(await send("agent-cloud")).toBe(200);
+        token = undefined;
+        expect(await send("agent-cloud")).toBe(403);
+        expect(requests).toEqual([
+          {
+            path: endpoint.pathname,
+            body: { agent_id: "agent-cloud" },
+            headers: {
+              "x-letta-mcp-originator-token": "originator",
+              "x-letta-mcp-originator-isolation": "1",
+            },
+          },
+        ]);
+      } finally {
+        broker.close();
+      }
+    },
+  );
 
   test("keeps originator authority in the inherited parent when a shell child calls MCP", async () => {
     const { deps, requests, runPath } = originatorHarness();
