@@ -243,7 +243,8 @@ class SessionStore implements TuiSessionStore {
     const session = this.session;
     if (!session || this.closed) return;
     const otid = this.id("tui-input");
-    const idle = this.snapshot.run === "idle";
+    const idle =
+      this.snapshot.run === "idle" && this.snapshot.queue.length === 0;
     if (idle) {
       this.appendLocal({
         kind: "user",

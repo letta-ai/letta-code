@@ -4,6 +4,7 @@ import { render } from "ink";
 import { createElement } from "react";
 import WebSocket from "ws";
 import { getBackend } from "@/backend";
+import { CLEAR_SCREEN_AND_HOME } from "@/cli/app/constants";
 import { startEmbeddedAppServer } from "@/cli/app-server-tui/embedded-app-server";
 import {
   createTuiSessionStore,
@@ -134,6 +135,7 @@ export async function runTuiSubcommand(argv: string[]): Promise<number> {
     });
     const activeStore = store;
     let exitApp: () => void = () => {};
+    process.stdout.write(CLEAR_SCREEN_AND_HOME);
     const app = render(
       createElement(TuiRoot, {
         store: activeStore,
