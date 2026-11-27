@@ -21,6 +21,7 @@ export interface ResolveCronRunnerParams {
   managedCloudSandbox: boolean;
   backendMode: "api" | "local";
   cloudSchedulesSupported?: boolean;
+  callerDeviceId?: string;
   listenerDeviceId?: string;
   localSchedulesAllowed?: boolean;
   cloudServer?: boolean;
@@ -68,7 +69,9 @@ export function resolveCronRunner(
     };
   }
   return {
-    error: "Register this computer with `letta server`, then retry.",
+    error: params.callerDeviceId
+      ? "Letta could not verify this runtime’s computer registration. Check the server connection and confirm the computer appears in `letta computers list` for the current account."
+      : "This caller has no runtime device ID. Create the schedule from a registered listener session or a managed Cloud sandbox. --computer selects the target only.",
   };
 }
 
@@ -146,6 +149,7 @@ export async function resolveCronRunnerForAgent(
     managedCloudSandbox,
     backendMode,
     cloudSchedulesSupported,
+    callerDeviceId: deviceId,
     listenerDeviceId,
     localSchedulesAllowed,
     cloudServer,

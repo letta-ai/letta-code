@@ -39,7 +39,7 @@ import {
   getIntendedCronOccurrence,
 } from "./prompt";
 import { safeAppendCronRunLogForTask } from "./run-log";
-import { getLocalCronExecutionError } from "./runner";
+import { getLocalCronExecutionError, isManagedCloudSandbox } from "./runner";
 import { SCHEDULE_ORIGIN_TAG } from "./scheduled-task-prompt";
 
 export {
@@ -632,7 +632,21 @@ export function startScheduler(
   processQueuedTurn: ProcessQueuedTurn,
   _retryCount = 0,
 ): void {
-  if (getLocalCronExecutionError()) {
+  const executionError = getLocalCronExecutionError();
+  if (executionError) {
+    const scope = resolveCronSchedulerScope();
+    if (
+      getActiveTasks().some((task) =>
+        taskMatchesCronSchedulerScope(task, scope),
+      )
+    ) {
+      const target = isManagedCloudSandbox()
+        ? ""
+        : " Pin the replacement Cloud schedule to your registered computer.";
+      console.warn(
+        `[Cron] Legacy local schedules are disabled. ${executionError}${target} Verify the replacement before deleting the old schedule.`,
+      );
+    }
     return;
   }
 
