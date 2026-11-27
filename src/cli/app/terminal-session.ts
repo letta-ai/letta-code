@@ -28,6 +28,10 @@ type Snapshot = {
 
 export class TerminalSession {
   private echoes = new Map<string, { anchor?: string; text: string }>();
+  private historyMessages = new Map<
+    string,
+    ListMessagesResult["messages"][number]
+  >();
   private transcript = createTranscriptAccumulator();
   private listeners = new Set<() => void>();
   private session?: LettaCodeSession;
@@ -77,9 +81,25 @@ export class TerminalSession {
     });
   }
 
+  private rebase(page: ListMessagesResult) {
+    for (const message of [...page.messages].reverse()) {
+      const key = JSON.stringify([
+        message.message_type,
+        message.id,
+        message.otid,
+      ]);
+      this.historyMessages.delete(key);
+      this.historyMessages.set(key, message);
+    }
+    const rows = this.transcript.rebase([...this.historyMessages.values()], {
+      order: "asc",
+    });
+    this.project(rows);
+  }
+
   private async history(session: LettaCodeSession) {
     if (session.conversationId !== "default")
-      return session.listMessages({ limit: 50 });
+      return session.listMessages({ limit: 50, order: "desc" });
     const page = await session.sendCommand<{
       type: "conversation_messages_list_response";
       success: boolean;
@@ -120,7 +140,7 @@ export class TerminalSession {
       if (this.session !== session) return;
       const page = await this.history(session);
       if (this.session !== session) return;
-      this.project(this.transcript.rebase(page));
+      this.rebase(page);
       this.update({ status: "online" });
       void session.recoverPendingApprovals().catch((error) => {
         if (session === this.session) this.fail(error);
@@ -147,7 +167,7 @@ export class TerminalSession {
             try {
               const page = await this.history(session);
               if (session !== this.session) return;
-              this.project(this.transcript.rebase(page));
+              this.rebase(page);
             } catch (error) {
               if (session === this.session) this.fail(error);
             }

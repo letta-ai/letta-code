@@ -167,3 +167,32 @@ test("default history includes its owning agent on the wire", async () => {
   store.close();
   await reading;
 });
+
+test("successive history windows keep older messages before the newest turn", async () => {
+  const transport = connection();
+  const messages = Array.from({ length: 53 }, (_, index) => ({
+    id: `a-${index}`,
+    message_type: "assistant_message",
+    content: `row ${index}`,
+  }));
+  let end = 50;
+  transport.session.listMessages = async () => ({
+    messages: messages.slice(end - 50, end).reverse() as never,
+  });
+  const store = new TerminalSession(() => transport.session);
+  const reading = store.connect();
+  await Bun.sleep(0);
+  end = 53;
+  transport.push({
+    type: "result",
+    success: true,
+    durationMs: 1,
+    conversationId: "conv",
+  });
+  await Bun.sleep(0);
+  expect(store.snapshot().rows.map((row) => row.uuid)).toEqual(
+    messages.map((message) => message.id),
+  );
+  store.close();
+  await reading;
+});
