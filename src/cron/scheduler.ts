@@ -32,7 +32,7 @@ import {
   releaseSchedulerLease,
   updateTask,
 } from "./cron-file";
-import { cronMatchesTime, isValidCron } from "./parse-interval";
+import { isValidCron } from "./parse-interval";
 import {
   type CronPromptTiming,
   formatCronPrompt,
@@ -64,8 +64,7 @@ interface SchedulerState {
   processQueuedTurn: ProcessQueuedTurn;
   lastMtime: number;
   cachedTasks: CronTask[];
-  firedThisMinute: Set<string>;
-  lastMinuteKey: string;
+  firedOccurrences: Map<string, number>;
   pendingTimers: Set<NodeJS.Timeout>;
   tombstoneToken: string | undefined;
   tombstoneInterval: NodeJS.Timeout | null;
@@ -152,10 +151,6 @@ function clearPendingFireTimers(state: SchedulerState): void {
     clearTimeout(handle);
   }
   state.pendingTimers.clear();
-}
-
-export function minuteKey(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}T${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
 export function wrapCronPrompt(
@@ -251,7 +246,13 @@ export function shouldFireTask(task: CronTask, now: Date): boolean {
     return scheduledMs <= now.getTime();
   }
 
-  return cronMatchesTime(task.cron, now, task.timezone);
+  const occurrence = getIntendedCronOccurrence(task, now).getTime();
+  const handled = Math.max(
+    ...[task.created_at, task.last_fired_at, task.last_missed_at].map(
+      (value) => (value ? new Date(value).getTime() : 0),
+    ),
+  );
+  return occurrence > handled;
 }
 
 function getInvalidCronError(cron: string): string {
@@ -448,9 +449,28 @@ export function handleMissedOneShot(task: CronTask, now: Date): boolean {
 }
 
 export function handleTaskPreflight(task: CronTask, now: Date): boolean {
-  return (
-    handleInvalidRecurringTask(task, now) || handleMissedOneShot(task, now)
-  );
+  if (handleInvalidRecurringTask(task, now) || handleMissedOneShot(task, now)) {
+    return true;
+  }
+  if (!task.recurring || !shouldFireTask(task, now)) return false;
+  const occurrence = getIntendedCronOccurrence(task, now);
+  if (now.getTime() - occurrence.getTime() <= 5 * 60_000) return false;
+  setLastRunOutcome(task.id, {
+    outcome: "missed",
+    reason: "scheduler_inactive",
+    runAt: now,
+    missedAt: occurrence,
+  });
+  safeAppendCronRunLogForTask(task, {
+    status: "skipped",
+    outcome: "missed",
+    reason: "scheduler_inactive",
+    summary: "missed",
+    runAtMs: now.getTime(),
+    scheduledFor: occurrence.toISOString(),
+    missedCount: 1,
+  });
+  return true;
 }
 
 export async function runCronTaskNow(taskId: string): Promise<{
@@ -531,13 +551,6 @@ function tick(
   }
 
   const matchedAt = new Date();
-  const currentMinuteKey = minuteKey(matchedAt);
-
-  if (currentMinuteKey !== state.lastMinuteKey) {
-    state.firedThisMinute.clear();
-    state.lastMinuteKey = currentMinuteKey;
-  }
-
   refreshTaskCache(state);
 
   for (const task of state.cachedTasks) {
@@ -553,11 +566,11 @@ function tick(
       continue;
     }
 
-    if (state.firedThisMinute.has(task.id)) continue;
-
     if (shouldFireTask(task, matchedAt)) {
-      state.firedThisMinute.add(task.id);
       const intendedOccurrence = getIntendedCronOccurrence(task, matchedAt);
+      const occurrenceMs = intendedOccurrence.getTime();
+      if (state.firedOccurrences.get(task.id) === occurrenceMs) continue;
+      state.firedOccurrences.set(task.id, occurrenceMs);
 
       const jitterMs = task.recurring ? task.jitter_offset_ms : 0;
       const taskId = task.id;
@@ -691,7 +704,6 @@ export function startScheduler(
     logScheduler(opts, "Claimed scheduler lease on slow retry.");
   }
 
-  const now = new Date();
   const state: SchedulerState = {
     token,
     scope,
@@ -702,8 +714,7 @@ export function startScheduler(
     processQueuedTurn,
     lastMtime: 0,
     cachedTasks: [],
-    firedThisMinute: new Set(),
-    lastMinuteKey: minuteKey(now),
+    firedOccurrences: new Map(),
     pendingTimers: new Set(),
     tombstoneToken: readCronFile().scheduler_owner?.token,
     tombstoneInterval: null,
