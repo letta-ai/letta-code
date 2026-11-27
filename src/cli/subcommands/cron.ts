@@ -42,9 +42,9 @@ function printUsage(): void {
   console.log(
     `
 Usage:
-  letta cron add --prompt <text> --every <interval> [options]
-  letta cron add --prompt <text> --at <time> [--once] [options]
-  letta cron add --prompt <text> --cron <expr> [options]
+  letta cron add --name <name> --description <text> --prompt <text> --every <interval> [options]
+  letta cron add --name <name> --description <text> --prompt <text> --at <time> [--once] [options]
+  letta cron add --name <name> --description <text> --prompt <text> --cron <expr> [options]
   letta cron list [options]
   letta cron get <id|name>
   letta cron runs --id <id> [--limit <n>]
@@ -52,6 +52,8 @@ Usage:
   letta cron delete --all [--agent <id>]
 
 Add options:
+  --name <name>          Schedule name (required)
+  --description <text>   Schedule description (required)
   --prompt <text>        Prompt to send to the agent (required)
   --every <interval>     Recurring interval (e.g. 5m, 2h, 1d)
   --at <time>            Scheduled time (e.g. "in 45m", "3:00pm", or an
