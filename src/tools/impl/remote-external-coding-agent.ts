@@ -32,6 +32,7 @@ import type {
   SubagentLaunchResult,
   SubagentStartupErrorCode,
 } from "@/types/subagent-protocol";
+import { getErrorMessage as errorMessage } from "@/utils/error";
 import { compareSemver } from "@/utils/version";
 import {
   CLAUDE_INTERRUPT_ACK_TIMEOUT_ERROR,
@@ -196,10 +197,6 @@ async function resolveQualifiedComputer(
     return resolved;
   }
   throw new Error(`Computer "${deviceId}" is offline`);
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 class RemoteWorkerLostError extends Error {}
@@ -415,16 +412,23 @@ class RemoteSubagentFollower {
               throw new Error("Stopped following the subagent");
             }
             this.attach(client);
-            await this.untilStopped(
-              client.sync({
-                runtime: {
-                  agent_id: this.scope.agentId,
-                  conversation_id: this.scope.conversationId,
-                },
-                recover_approvals: false,
-              }),
-              signal,
-            );
+            try {
+              await this.untilStopped(
+                client.sync({
+                  runtime: {
+                    agent_id: this.scope.agentId,
+                    conversation_id: this.scope.conversationId,
+                  },
+                  recover_approvals: false,
+                }),
+                signal,
+              );
+            } catch (error) {
+              this.detach?.();
+              client.close();
+              this.disconnected = true;
+              throw error;
+            }
             failedReconnects = 0;
             disconnectedSince = undefined;
           } catch (error) {
