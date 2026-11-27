@@ -205,6 +205,7 @@ export function hasRootMemoryMarker(dir: string): boolean {
     spawnSync("git", ["cat-file", "-e", "HEAD:MEMORY.md"], {
       cwd: dir,
       stdio: "ignore",
+      windowsHide: true,
     }).status === 0
   );
 }

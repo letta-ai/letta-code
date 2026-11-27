@@ -59,6 +59,7 @@ function gitOutput(memoryDir: string, args: string[]): string {
     cwd: memoryDir,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
+    windowsHide: true,
   });
 }
 

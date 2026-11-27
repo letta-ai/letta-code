@@ -477,7 +477,6 @@ export function handleMemoryProtocolCommand(
 
       const memoryRoot = getScopedMemoryFilesystemRoot(parsed.agent_id);
       const limit = parsed.limit ?? 50;
-
       const gitArgs = ["log", `--max-count=${limit}`, "--format=%H|%s|%aI|%an"];
       if (parsed.file_path) {
         gitArgs.push("--", parsed.file_path);
@@ -486,6 +485,7 @@ export function handleMemoryProtocolCommand(
       const { stdout } = await execFileAsync("git", gitArgs, {
         cwd: memoryRoot,
         timeout: 10000,
+        windowsHide: true,
       });
 
       const commits = stdout
@@ -533,7 +533,7 @@ export function handleMemoryProtocolCommand(
         const { stdout } = await execFileAsync(
           "git",
           ["show", `${parsed.ref}:${parsed.file_path}`],
-          { cwd: memoryRoot, timeout: 10000 },
+          { cwd: memoryRoot, timeout: 10000, windowsHide: true },
         );
 
         safeSocketSend(
@@ -585,7 +585,7 @@ export function handleMemoryProtocolCommand(
         const { stdout } = await execFileAsync(
           "git",
           ["show", parsed.sha, "--format=", "--no-color"],
-          { cwd: memoryRoot, timeout: 10000 },
+          { cwd: memoryRoot, timeout: 10000, windowsHide: true },
         );
 
         safeSocketSend(

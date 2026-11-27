@@ -38,6 +38,7 @@ async function runGit(cwd: string, args: string[]): Promise<GitResult> {
       encoding: "utf-8",
       timeout: GIT_TIMEOUT_MS,
       maxBuffer: 1024 * 1024 * 5,
+      windowsHide: true,
     });
     return {
       stdout: stdout?.toString() ?? "",
