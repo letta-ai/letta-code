@@ -242,17 +242,25 @@ disown 2>/dev/null || true
 exit 0
 `;
 
+export const MEMORY_REPOSITORY_PUSH_HOOKS = [
+  "post-commit",
+  "post-merge",
+  "post-rewrite",
+] as const;
+
 export function installPostCommitHook(dir: string): void {
   const hooksDir = join(dir, ".git", "hooks");
-  const hookPath = join(hooksDir, "post-commit");
 
   if (!existsSync(hooksDir)) {
     mkdirSync(hooksDir, { recursive: true });
   }
 
-  writeFileSync(hookPath, POST_COMMIT_HOOK_SCRIPT, "utf-8");
-  chmodSync(hookPath, 0o755);
-  debugLog("memfs-git", "Installed post-commit memory-repository hook");
+  for (const hook of MEMORY_REPOSITORY_PUSH_HOOKS) {
+    const hookPath = join(hooksDir, hook);
+    writeFileSync(hookPath, POST_COMMIT_HOOK_SCRIPT, "utf-8");
+    chmodSync(hookPath, 0o755);
+  }
+  debugLog("memfs-git", "Installed memory-repository push hooks");
 }
 
 export function installMemoryGitHooks(dir: string): void {
