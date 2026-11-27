@@ -12,6 +12,7 @@ import {
 } from "@/agent/memory-scanner";
 import { buildChatUrl, isLocalAgentId } from "@/cli/helpers/app-urls";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
+import type { MemoryFileEntry } from "@/types/protocol_v2";
 import type { ContextUsageSnapshot } from "@/web/context-usage";
 import { generateAndOpenMemoryViewer } from "@/web/generate-memory-viewer";
 import { colors } from "./colors";
@@ -26,9 +27,44 @@ const FULL_VIEW_VISIBLE_LINES = 16;
 interface MemfsTreeViewerProps {
   agentId: string;
   agentName?: string;
+  entries?: MemoryFileEntry[];
   onClose: () => void;
   conversationId?: string;
   contextUsage?: ContextUsageSnapshot;
+}
+
+function remoteTree(entries: MemoryFileEntry[]): TreeNode[] {
+  const children = new Map<string, Set<string>>();
+  for (const entry of entries) {
+    let parent = "";
+    for (const name of entry.relative_path.split("/").filter(Boolean)) {
+      const names = children.get(parent) ?? new Set();
+      names.add(name);
+      children.set(parent, names);
+      parent = parent ? parent + "/" + name : name;
+    }
+  }
+  const nodes: TreeNode[] = [];
+  function visit(parent: string, ancestors: boolean[]) {
+    const names = [...(children.get(parent) ?? [])].sort();
+    names.forEach((name, index) => {
+      const path = parent ? parent + "/" + name : name;
+      const isLast = index === names.length - 1;
+      const isDirectory = children.has(path);
+      nodes.push({
+        name: isDirectory ? name + "/" : name,
+        relativePath: path,
+        fullPath: path,
+        depth: ancestors.length,
+        parentIsLast: ancestors,
+        isLast,
+        isDirectory,
+      });
+      if (isDirectory) visit(path, [...ancestors, isLast]);
+    });
+  }
+  visit("", []);
+  return nodes;
 }
 
 function renderTreePrefix(node: TreeNode): string {
@@ -43,6 +79,7 @@ function renderTreePrefix(node: TreeNode): string {
 export function MemfsTreeViewer({
   agentId,
   agentName,
+  entries,
   onClose,
   conversationId,
   contextUsage,
@@ -62,10 +99,10 @@ export function MemfsTreeViewer({
   const [status, setStatus] = useState<string | null>(null);
   const statusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const memoryRoot = getScopedMemoryFilesystemRoot(agentId);
-  const memoryExists = existsSync(memoryRoot);
+  const memoryRoot = entries ? "" : getScopedMemoryFilesystemRoot(agentId);
+  const memoryExists = !!entries || existsSync(memoryRoot);
   const hasGitRepo = useMemo(
-    () => existsSync(join(memoryRoot, ".git")),
+    () => !!memoryRoot && existsSync(join(memoryRoot, ".git")),
     [memoryRoot],
   );
 
@@ -83,15 +120,27 @@ export function MemfsTreeViewer({
   );
 
   const treeNodes = useMemo(
-    () => (memoryExists ? scanMemoryFilesystem(memoryRoot) : []),
-    [memoryRoot, memoryExists],
+    () =>
+      entries
+        ? remoteTree(entries)
+        : memoryExists
+          ? scanMemoryFilesystem(memoryRoot)
+          : [],
+    [entries, memoryRoot, memoryExists],
   );
   const fileNodes = useMemo(() => getFileNodes(treeNodes), [treeNodes]);
 
   const selectedFile = fileNodes[selectedIndex];
   const selectedContent = useMemo(
-    () => (selectedFile ? readFileContent(selectedFile.fullPath) : ""),
-    [selectedFile],
+    () =>
+      entries
+        ? (entries.find(
+            (entry) => entry.relative_path === selectedFile?.relativePath,
+          )?.content ?? "")
+        : selectedFile
+          ? readFileContent(selectedFile.fullPath)
+          : "",
+    [selectedFile, entries],
   );
 
   const contentLines = selectedContent.split("\n");

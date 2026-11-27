@@ -6,8 +6,13 @@ import {
   type LettaCodeSession,
   type ListMessagesResult,
   type SDKQueueItem,
+  type SessionDeviceStatus,
   type TranscriptRow,
 } from "@letta-ai/letta-agent-sdk";
+
+import { VALID_PERMISSION_MODES } from "@/permissions/mode";
+
+import type { MemoryFileEntry } from "@/types/protocol_v2";
 
 type Approval = {
   name: string;
@@ -23,6 +28,8 @@ type Snapshot = {
   status: "connecting" | "online" | "offline";
   error?: string;
   commandOutput?: string;
+  device?: SessionDeviceStatus;
+  memory?: { agentId: string; entries: MemoryFileEntry[] };
   activity?: string;
 };
 
@@ -34,6 +41,7 @@ export class TerminalSession {
   >();
   private transcript = createTranscriptAccumulator();
   private listeners = new Set<() => void>();
+  private unsubscribeDevice?: () => void;
   private session?: LettaCodeSession;
   private state: Snapshot = {
     rows: [],
@@ -138,6 +146,16 @@ export class TerminalSession {
     try {
       await session.ready();
       if (this.session !== session) return;
+      const receiveDevice = (device: SessionDeviceStatus) => {
+        if (session === this.session) this.update({ device });
+      };
+      this.unsubscribeDevice = session.onDeviceStatus(receiveDevice);
+      void session
+        .getDeviceStatus()
+        .then(receiveDevice)
+        .catch((error) => {
+          if (session === this.session) this.fail(error);
+        });
       const page = await this.history(session);
       if (this.session !== session) return;
       this.rebase(page);
@@ -183,15 +201,11 @@ export class TerminalSession {
     }
   }
 
-  decide(allow: boolean) {
+  decide(request: Approval, response: CanUseToolResponse) {
     const [first, ...rest] = this.state.approvals;
-    if (!first) return;
+    if (first !== request) return;
     this.update({ approvals: rest });
-    first.resolve(
-      allow
-        ? { behavior: "allow" }
-        : { behavior: "deny", message: "Denied by user" },
-    );
+    first.resolve(response);
   }
 
   async send(text: string) {
@@ -204,6 +218,15 @@ export class TerminalSession {
           commandOutput:
             "/memory [path]   Browse memory files\n/queue resume    Resume queued input\nEsc              Interrupt the current turn\nCtrl+C           Exit",
         });
+        return;
+      }
+      if (text.startsWith("/queue remove ")) {
+        const index = Number(text.slice(14)) - 1;
+        const item = this.state.queue[index];
+        if (!item) throw new Error("Choose a displayed queue number");
+        const result = await session.removeQueuedMessage(item.id);
+        if (session === this.session && !result.removed)
+          this.update({ commandOutput: "Message already left the queue" });
         return;
       }
       if (text === "/queue resume") {
@@ -239,7 +262,8 @@ export class TerminalSession {
         return;
       }
       if (text === "/memory") {
-        const paths: string[] = [];
+        if (!session.agentId) throw new Error("Memory requires an agent");
+        const entries: MemoryFileEntry[] = [];
         const result = await session.sendCommand(
           {
             type: "list_memory",
@@ -249,8 +273,7 @@ export class TerminalSession {
             predicate: (message) => {
               if (message.type !== "list_memory_response") return false;
               if (Array.isArray(message.entries))
-                for (const entry of message.entries)
-                  paths.push(entry.relative_path);
+                for (const entry of message.entries) entries.push(entry);
               return message.done === true || message.success === false;
             },
           },
@@ -259,7 +282,8 @@ export class TerminalSession {
         if (result.success === false) throw new Error(String(result.error));
 
         this.update({
-          commandOutput: paths.join("\n") || "No memory files",
+          memory: { agentId: session.agentId, entries },
+          commandOutput: undefined,
         });
         return;
       }
@@ -298,6 +322,24 @@ export class TerminalSession {
     }
   }
 
+  closeMemory() {
+    this.update({ memory: undefined });
+  }
+
+  async cyclePermissionMode() {
+    const session = this.session;
+    const device = this.state.device;
+    if (!session || !device) return;
+    const index = VALID_PERMISSION_MODES.indexOf(device.permissionMode);
+    const permissionMode =
+      VALID_PERMISSION_MODES[(index + 1) % VALID_PERMISSION_MODES.length];
+    try {
+      await session.changeDeviceState({ permissionMode });
+    } catch (error) {
+      if (session === this.session) this.fail(error);
+    }
+  }
+
   async interrupt() {
     const session = this.session;
     try {
@@ -316,9 +358,13 @@ export class TerminalSession {
     this.session = undefined;
     for (const approval of this.state.approvals)
       approval.resolve({ behavior: "deny", message: "Disconnected" });
+    this.unsubscribeDevice?.();
+    this.unsubscribeDevice = undefined;
     session?.close();
     this.update({
       status: "offline",
+      device: undefined,
+      memory: undefined,
       approvals: [],
       queue: [],
       activity: undefined,

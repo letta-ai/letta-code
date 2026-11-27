@@ -16,6 +16,8 @@ function connection() {
   const send = mock(async (_text: string, _options: { otid: string }) => {});
   const abort = mock(async () => {});
   const session = {
+    onDeviceStatus: () => () => {},
+    getDeviceStatus: async () => ({}),
     ready: async () => ({}),
     recoverPendingApprovals: async () => ({}),
     listMessages: async () => ({ messages: [] }),
@@ -97,7 +99,9 @@ test("reconciles input by otid, ignores replay, and delegates queue, approval an
   expect(store.snapshot().queue[0]?.id).toBe("q");
   const decision = approve("Edit", { file: "demo" });
   expect(store.snapshot().approvals[0]?.name).toBe("Edit");
-  store.decide(true);
+  const pending = store.snapshot().approvals[0];
+  if (!pending) throw new Error("Missing approval");
+  store.decide(pending, { behavior: "allow" });
   expect(await decision).toEqual({ behavior: "allow" });
   await store.interrupt();
   expect(transport.abort).toHaveBeenCalledTimes(1);
