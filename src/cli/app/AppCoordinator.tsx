@@ -20,6 +20,10 @@ import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { setCurrentAgentId } from "@/agent/context";
 import { regenerateConversationDescription } from "@/agent/conversation-description";
 import { buildConversationModelCarryoverUpdate } from "@/agent/conversation-model-carryover";
+import {
+  generateAiConversationTitle,
+  normalizeConversationTitle,
+} from "@/agent/conversation-title";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { isActiveMemfsEnabled } from "@/agent/memory-runtime";
 import {
@@ -77,12 +81,6 @@ import {
   createContextTracker,
   resetContextHistory,
 } from "@/cli/helpers/context-tracker";
-import {
-  generateConversationTitleFromSummary,
-  getConversationTitleSettings,
-  listConversationTitleMessages,
-  normalizeConversationTitle,
-} from "@/cli/helpers/conversation-title";
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
 import { setErrorContext } from "@/cli/helpers/error-context";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
@@ -153,15 +151,11 @@ import {
   updateTask,
   wrapCronPrompt,
 } from "@/cron";
+import { getConversationTitleSettings } from "@/experiments/conversation-title-settings";
 import { experimentManager } from "@/experiments/manager";
 import { runSessionEndHooks, runSessionStartHooks } from "@/hooks";
 import type { ApprovalContext } from "@/permissions/analyzer";
 import { type PermissionMode, permissionMode } from "@/permissions/mode";
-import {
-  buildByokProviderAliases,
-  isByokHandleForSelector,
-  listProviders,
-} from "@/providers/byok-providers";
 import type {
   MessageQueueItem,
   QueueRuntime,
@@ -1167,36 +1161,10 @@ export function App({
     }
 
     try {
-      const messages = await listConversationTitleMessages(
+      const aiTitle = await generateAiConversationTitle(
         getBackend(),
         conversationId,
-      );
-
-      let summaryModel: string | undefined;
-      if (currentModelLabel) {
-        try {
-          const providers = await listProviders();
-          const byokProviderAliases = buildByokProviderAliases(providers);
-          summaryModel = isByokHandleForSelector(
-            currentModelLabel,
-            byokProviderAliases,
-          )
-            ? currentModelLabel
-            : undefined;
-        } catch {
-          const byokProviderAliases = buildByokProviderAliases([]);
-          summaryModel = isByokHandleForSelector(
-            currentModelLabel,
-            byokProviderAliases,
-          )
-            ? currentModelLabel
-            : undefined;
-        }
-      }
-      const aiTitle = await generateConversationTitleFromSummary(
-        conversationId,
-        messages,
-        summaryModel,
+        currentModelLabel,
       );
       return aiTitle ?? fallback;
     } catch (err) {

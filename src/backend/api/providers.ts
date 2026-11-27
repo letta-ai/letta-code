@@ -15,6 +15,7 @@ export interface ProviderResponse {
 }
 
 export interface ProviderListOptions {
+  actingUserId?: string | null;
   name?: string;
   providerType?: string;
 }
@@ -34,6 +35,7 @@ async function listProviderPages(
       "/v1/providers",
       undefined,
       {
+        actingUserId: options.actingUserId,
         query: {
           after,
           limit: PROVIDER_PAGE_LIMIT,

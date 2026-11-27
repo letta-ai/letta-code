@@ -1,9 +1,20 @@
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
-import type { Backend, ConversationMessageListBody } from "@/backend";
+import { ACTING_USER_ID_HEADER } from "@/agent/acting-user";
+import { getModelHandleFromAgent } from "@/agent/subagents/subagent-model";
+import {
+  type Backend,
+  type ConversationMessageListBody,
+  getBackend,
+} from "@/backend";
 import { summarizeConversation } from "@/backend/api/conversations";
+import { listProviders } from "@/backend/api/providers";
 import { DEFAULT_TITLE_SUMMARIZATION_MODEL } from "@/constants";
-import { settingsManager } from "@/settings-manager";
-import { isDebugEnabled } from "@/utils/debug";
+import { getConversationTitleSettings } from "@/experiments/conversation-title-settings";
+import {
+  buildByokProviderAliases,
+  isByokHandleForSelector,
+} from "@/providers/byok-providers";
+import { debugWarn, isDebugEnabled } from "@/utils/debug";
 
 export const CONVERSATION_TITLE_MAX_LENGTH = 100;
 
@@ -11,27 +22,6 @@ export type ConversationTitleMessage = {
   role: "user" | "assistant" | "system";
   content: string;
 };
-
-export interface ConversationTitleSettingsSnapshot {
-  enabled: boolean;
-}
-
-export function getConversationTitleSettings(): ConversationTitleSettingsSnapshot {
-  try {
-    return {
-      enabled: settingsManager.getSettings().autoConversationTitles === true,
-    };
-  } catch {
-    return { enabled: false };
-  }
-}
-
-export function setConversationTitleSettings(
-  enabled: boolean,
-): ConversationTitleSettingsSnapshot {
-  settingsManager.updateSettings({ autoConversationTitles: enabled });
-  return getConversationTitleSettings();
-}
 
 const CONVERSATION_TITLE_TIMEOUT_MS = 30_000;
 
@@ -148,12 +138,17 @@ const CONVERSATION_TITLE_MESSAGE_LIMIT = 10_000;
 export async function listConversationTitleMessages(
   backend: Pick<Backend, "listConversationMessages">,
   conversationId: string,
+  actingUserId?: string | null,
 ): Promise<ConversationTitleMessage[]> {
-  const page = await backend.listConversationMessages(conversationId, {
-    limit: CONVERSATION_TITLE_MESSAGE_LIMIT,
-    order: "desc",
-    include_return_message_types: ["user_message", "assistant_message"],
-  } as ConversationMessageListBody);
+  const page = await backend.listConversationMessages(
+    conversationId,
+    {
+      limit: CONVERSATION_TITLE_MESSAGE_LIMIT,
+      order: "desc",
+      include_return_message_types: ["user_message", "assistant_message"],
+    } as ConversationMessageListBody,
+    { headers: { [ACTING_USER_ID_HEADER]: actingUserId } },
+  );
 
   return buildConversationTitleMessages(
     paginatedItems(page as PaginatedItems<Message>).reverse(),
@@ -164,6 +159,7 @@ export async function generateConversationTitleFromSummary(
   conversationId: string,
   messages: ConversationTitleMessage[],
   model: string = DEFAULT_TITLE_SUMMARIZATION_MODEL,
+  actingUserId?: string | null,
 ): Promise<string | null> {
   if (messages.length === 0) {
     return null;
@@ -185,6 +181,7 @@ export async function generateConversationTitleFromSummary(
       },
       {
         signal: abortController.signal,
+        actingUserId,
       },
     );
     return normalizeConversationTitle(response.summary);
@@ -198,5 +195,99 @@ export async function generateConversationTitleFromSummary(
     return null;
   } finally {
     clearTimeout(timeoutId);
+  }
+}
+
+export async function generateAiConversationTitle(
+  backend: Backend,
+  conversationId: string,
+  modelHandle?: string | null,
+  actingUserId?: string | null,
+): Promise<string | null> {
+  const messages = await listConversationTitleMessages(
+    backend,
+    conversationId,
+    actingUserId,
+  );
+  let summaryModel: string | undefined;
+  if (modelHandle) {
+    const providers = await listProviders({ actingUserId });
+    if (
+      isByokHandleForSelector(modelHandle, buildByokProviderAliases(providers))
+    ) {
+      summaryModel = modelHandle;
+    }
+  }
+  return generateConversationTitleFromSummary(
+    conversationId,
+    messages,
+    summaryModel,
+    actingUserId,
+  );
+}
+
+const pendingConversationTitles = new Set<string>();
+
+export async function titleUntitledConversation(
+  conversationId: string,
+  agentId: string | null,
+  actingUserId: string | null,
+): Promise<void> {
+  if (
+    conversationId === "default" ||
+    !getConversationTitleSettings().enabled ||
+    pendingConversationTitles.has(conversationId)
+  )
+    return;
+
+  pendingConversationTitles.add(conversationId);
+  try {
+    const backend = getBackend();
+    if (backend.capabilities.localModelCatalog) return;
+
+    const requestOptions = {
+      headers: { [ACTING_USER_ID_HEADER]: actingUserId },
+    };
+    const options = {
+      ...requestOptions,
+      query: { include_context_message_ids: false },
+    };
+    const conversation = await backend.retrieveConversation(
+      conversationId,
+      options,
+    );
+    if (conversation.summary) return;
+
+    const model =
+      getModelHandleFromAgent(conversation) ??
+      (agentId
+        ? getModelHandleFromAgent(
+            await backend.retrieveAgent(agentId, undefined, requestOptions),
+          )
+        : null);
+    const title = await generateAiConversationTitle(
+      backend,
+      conversationId,
+      model,
+      actingUserId,
+    );
+    if (!title) return;
+
+    const latest = await backend.retrieveConversation(conversationId, options);
+    if (!latest.summary && getConversationTitleSettings().enabled) {
+      await backend.updateConversation(
+        conversationId,
+        { summary: title },
+        { ...requestOptions, maxRetries: 0 },
+      );
+    }
+  } catch (error) {
+    debugWarn(
+      "conversation-title",
+      `Failed to title conversation ${conversationId}`,
+      error,
+    );
+  } finally {
+    pendingConversationTitles.delete(conversationId);
   }
 }

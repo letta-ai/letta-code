@@ -1,8 +1,8 @@
+import { settingsManager } from "@/settings-manager";
 import {
   getConversationTitleSettings,
   setConversationTitleSettings,
-} from "@/cli/helpers/conversation-title";
-import { settingsManager } from "@/settings-manager";
+} from "./conversation-title-settings";
 import type {
   ExperimentDefinition,
   ExperimentId,

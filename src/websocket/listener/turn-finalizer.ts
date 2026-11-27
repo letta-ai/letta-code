@@ -1,3 +1,4 @@
+import { titleUntitledConversation } from "@/agent/conversation-title";
 import {
   retireMcpOriginatorTokenOnTerminal,
   retireMcpOriginatorTokensOnOriginSwap,
@@ -162,6 +163,18 @@ export function createTurnFinalizer(params: {
           : {}),
       }),
     );
+    if (
+      transition.finished &&
+      transition.previousKind === "active" &&
+      options.stopReason === "end_turn" &&
+      !options.teleportHandoff
+    ) {
+      void titleUntitledConversation(
+        params.conversationId,
+        params.agentId,
+        params.ownership.actingUserId,
+      );
+    }
     if (transition.finished && params.mcpOriginatorSuperRunId) {
       retireMcpOriginatorTokenOnTerminal(params.mcpOriginatorSuperRunId);
     }

@@ -57,7 +57,7 @@ export async function updateConversationDescription(
 export async function summarizeConversation(
   conversationId: string,
   body: SummarizeConversationBody,
-  options: { signal?: AbortSignal } = {},
+  options: { signal?: AbortSignal; actingUserId?: string | null } = {},
 ): Promise<{ summary: string }> {
   return apiRequest<{ summary: string }>(
     "POST",

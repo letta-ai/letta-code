@@ -51,6 +51,7 @@ export async function checkpointTurnInputOwnership(
 }
 
 export function createTurnDurabilityOwnership() {
+  let actingUserId: string | null = null;
   const resultsByToolCallId = new Map<string, ApprovalResult>();
   const executingToolCallIds = new Set<string>();
   const needsUserInputToolCallIds = new Set<string>();
@@ -61,9 +62,16 @@ export function createTurnDurabilityOwnership() {
     recordInput(
       input: Pick<
         IncomingMessage,
-        "durableInputIdentities" | "terminalConsumerIds"
+        | "durableInputIdentities"
+        | "terminalConsumerIds"
+        | "actingUserId"
+        | "suppressActingUserFallback"
       >,
+      fallbackActingUserId?: string,
     ): void {
+      actingUserId = input.suppressActingUserFallback
+        ? null
+        : (input.actingUserId ?? fallbackActingUserId ?? null);
       for (const identity of input.durableInputIdentities ?? []) {
         durableInputIdentities.set(
           `${identity.domain}\0${identity.id}`,
@@ -73,6 +81,9 @@ export function createTurnDurabilityOwnership() {
       for (const consumerId of input.terminalConsumerIds ?? []) {
         terminalConsumerIds.add(consumerId);
       }
+    },
+    get actingUserId() {
+      return actingUserId;
     },
     get durableInputIdentities(): InputIdentity[] {
       return [...durableInputIdentities.values()];
