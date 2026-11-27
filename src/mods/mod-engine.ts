@@ -121,6 +121,7 @@ export const MOD_CACHE_DIRECTORY = getModCacheDirectory();
 
 const requireFromRuntime = createRequire(import.meta.url);
 let resolveRuntimePackageDirectory = getRuntimePackageDirectory;
+const disposedRegistries = new WeakSet<LocalModRegistry>();
 
 export type LettaModDisposer = () => void;
 
@@ -323,7 +324,9 @@ function createModOwner(
 }
 
 function isOwnerLive(registry: LocalModRegistry, owner: ModOwner): boolean {
-  return registry.owners[owner.id]?.generation === owner.generation;
+  return (
+    registry.owners[owner.id] === owner && !disposedRegistries.has(registry)
+  );
 }
 
 function snapshotRegistryForReaders(
@@ -366,19 +369,17 @@ function removeOwnerCapabilities(
   owner: ModOwner,
 ): void {
   if (registry.registerCapabilitiesGlobally) {
-    unregisterPiProvidersForOwner(owner.id);
+    unregisterPiProvidersForOwner(owner);
     clearAvailableModelsCache();
   }
-
   for (const [id, command] of Object.entries(registry.commands)) {
-    if (command.owner?.id === owner.id) {
+    if (command.owner === owner) {
       delete registry.commands[id];
     }
   }
-
   for (const [name, registrations] of Object.entries(registry.events)) {
     const nextRegistrations = registrations?.filter(
-      (registration) => registration.owner?.id !== owner.id,
+      (registration) => registration.owner !== owner,
     );
     if (nextRegistrations && nextRegistrations.length > 0) {
       registry.events[name as ModEventName] = nextRegistrations;
@@ -386,31 +387,26 @@ function removeOwnerCapabilities(
       delete registry.events[name as ModEventName];
     }
   }
-
   for (const [id, panel] of Object.entries(registry.ui.panels)) {
-    if (panel.owner?.id === owner.id) {
+    if (panel.owner === owner) {
       delete registry.ui.panels[id];
     }
   }
-
   for (const [id, permission] of Object.entries(registry.permissions)) {
-    if (permission.owner?.id === owner.id) {
+    if (permission.owner === owner) {
       delete registry.permissions[id];
     }
   }
-
   for (const [name, tool] of Object.entries(registry.tools)) {
-    if (tool.owner?.id === owner.id) {
+    if (tool.owner === owner) {
       delete registry.tools[name];
     }
   }
-
   if (registry.registerCapabilitiesGlobally) {
     unregisterModPermissionsForOwner(owner);
     unregisterModToolsForOwner(owner);
   }
-
-  delete registry.owners[owner.id];
+  if (registry.owners[owner.id] === owner) delete registry.owners[owner.id];
 }
 
 function getRuntimePackageDirectory(packageName: string): string {
@@ -892,8 +888,12 @@ function createLettaModApi(
   signal: AbortSignal,
 ): LettaModApi {
   const isLive = () => isOwnerLive(registry, owner);
-  const guardLive = (capability: ModDiagnostic["capability"]): boolean => {
-    if (isLive()) return true;
+  const guardLive = (
+    capability: ModDiagnostic["capability"],
+    cleanup = false,
+  ): boolean => {
+    if (isLive() || (cleanup && registry.owners[owner.id] === owner))
+      return true;
     recordStaleHandleUse(registry, owner, capability, onDiagnostic);
     return false;
   };
@@ -921,7 +921,7 @@ function createLettaModApi(
   ) => {
     validateModEventName(name);
     if (!isModEventCapabilityEnabled(capabilities, name)) return;
-    if (!guardLive({ id: name, kind: "event" })) return;
+    if (!guardLive({ id: name, kind: "event" }, true)) return;
     const registrations = registry.events[name];
     if (!registrations) return;
     const nextRegistrations = registrations.filter(
@@ -940,7 +940,7 @@ function createLettaModApi(
   const unregisterCommand = (id: string) => {
     if (!capabilities.commands) return;
     validateModCommandId(id);
-    if (!guardLive({ id, kind: "command" })) return;
+    if (!guardLive({ id, kind: "command" }, true)) return;
     const existing = registry.commands[id];
     if (existing?.owner?.id === owner.id) {
       delete registry.commands[id];
@@ -951,7 +951,7 @@ function createLettaModApi(
   const unregisterPermission = (id: string) => {
     if (!capabilities.permissions) return;
     validateModPermissionId(id);
-    if (!guardLive({ id, kind: "permission" })) return;
+    if (!guardLive({ id, kind: "permission" }, true)) return;
     const existing = registry.permissions[id];
     if (existing?.owner?.id === owner.id) {
       delete registry.permissions[id];
@@ -965,7 +965,7 @@ function createLettaModApi(
   const closePanel = (id: string) => {
     if (!capabilities.ui.panels) return;
     validateModPanelId(id);
-    if (!guardLive({ id, kind: "panel" })) return;
+    if (!guardLive({ id, kind: "panel" }, true)) return;
     const panelKey = getModPanelKey(owner.id, id);
     const existing = registry.ui.panels[panelKey];
     if (existing?.owner?.id === owner.id) {
@@ -988,7 +988,7 @@ function createLettaModApi(
   const unregisterTool = (name: string) => {
     if (!capabilities.tools) return;
     validateModToolName(name);
-    if (!guardLive({ id: name, kind: "tool" })) return;
+    if (!guardLive({ id: name, kind: "tool" }, true)) return;
     const existing = registry.tools[name];
     if (existing?.owner?.id === owner.id) {
       delete registry.tools[name];
@@ -1001,8 +1001,8 @@ function createLettaModApi(
 
   const unregisterProvider = (name: string) => {
     if (!capabilities.providers) return;
-    if (!guardLive({ id: name, kind: "provider" })) return;
-    unregisterPiProvider(name, owner.id);
+    if (!guardLive({ id: name, kind: "provider" }, true)) return;
+    unregisterPiProvider(name, owner.id, owner);
     clearAvailableModelsCache();
     onChange();
   };
@@ -1017,10 +1017,7 @@ function createLettaModApi(
     if (!guardLive({ id: name, kind: "provider" })) {
       return () => undefined;
     }
-    registerPiProvider(name, config, {
-      id: owner.id,
-      path: owner.path,
-    });
+    registerPiProvider(name, config, owner);
     clearAvailableModelsCache();
     onChange();
     return () => unregisterProvider(name);
@@ -1395,8 +1392,8 @@ export async function loadLocalMods(
     options.registerCapabilitiesGlobally !== false,
   );
   options.onRegistryCreated?.(registry);
-
   for (const source of sources) {
+    if (disposedRegistries.has(registry)) break;
     for (const diagnostic of source.diagnostics ?? []) {
       const owner = createModOwner(diagnostic.path, source, generation);
       recordModDiagnostic(
@@ -1409,14 +1406,13 @@ export async function loadLocalMods(
         options.onDiagnostic,
       );
     }
-
     for (const modPath of source.files) {
+      if (disposedRegistries.has(registry)) break;
       const owner = createModOwner(modPath, source, generation);
       const abortController = new AbortController();
       let failurePhase: ModDiagnostic["phase"] = "import";
       registry.ownerAbortControllers[owner.id] = abortController;
       registry.owners[owner.id] = owner;
-
       if (source.scope === "legacy_global") {
         recordLegacyExtensionLoadedDiagnostic(
           registry,
@@ -1454,6 +1450,7 @@ export async function loadLocalMods(
         const module = (await import(
           `${pathToFileURL(importPath).href}?mod=${mtimeMs}`
         )) as LocalModModule;
+        if (disposedRegistries.has(registry)) break;
         const factory = getModFactory(module);
         failurePhase = "activate";
         if (typeof factory !== "function") {
@@ -1476,6 +1473,10 @@ export async function loadLocalMods(
         );
         const activate = factory as LettaModFactory;
         const dispose = await changes.run(() => activate(api));
+        if (disposedRegistries.has(registry)) {
+          if (typeof dispose === "function") dispose();
+          break;
+        }
         if (typeof dispose === "function") {
           registry.disposers.push({
             abortController,
@@ -1497,10 +1498,10 @@ export async function loadLocalMods(
           },
           options.onDiagnostic,
         );
+        if (disposedRegistries.has(registry)) break;
       }
     }
   }
-
   return registry;
 }
 
@@ -1671,13 +1672,13 @@ export async function emitLocalModEvent<TName extends ModEventName>(
 }
 
 export function disposeLocalMods(registry: LocalModRegistry): void {
+  if (disposedRegistries.has(registry)) return;
+  disposedRegistries.add(registry);
   for (const abortController of Object.values(registry.ownerAbortControllers)) {
     abortController.abort("mod disposed");
   }
-
   const disposers = [...registry.disposers].reverse();
   registry.disposers = [];
-
   for (const { dispose, owner } of disposers) {
     try {
       dispose();
@@ -1689,16 +1690,14 @@ export function disposeLocalMods(registry: LocalModRegistry): void {
       });
     }
   }
-
   if (registry.registerCapabilitiesGlobally) {
     for (const owner of Object.values(registry.owners)) {
-      unregisterPiProvidersForOwner(owner.id);
+      unregisterPiProvidersForOwner(owner);
       unregisterModPermissionsForOwner(owner);
       unregisterModToolsForOwner(owner);
     }
     clearAvailableModelsCache();
   }
-
   registry.commands = {};
   registry.events = {};
   registry.ownerAbortControllers = {};
@@ -1707,7 +1706,6 @@ export function disposeLocalMods(registry: LocalModRegistry): void {
   registry.tools = {};
   registry.ui.panels = {};
 }
-
 export function createModEngine(options: CreateModEngineOptions): ModEngine {
   const { getBackend, onDiagnostic, ...modOptions } = options;
   let generation = 0;
