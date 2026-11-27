@@ -4,7 +4,10 @@ import type { MessageCreateParams as ConversationMessageCreateParams } from "@le
 import { getRuntimeContext } from "@/runtime-context";
 import type { AvailableSkillSummary } from "@/types/protocol_v2";
 import { getCheckoutGeneration } from "@/utils/checkout-readiness";
-import { cloudRepositoryRoots } from "@/utils/cloud-repository-roots";
+import {
+  cloudRepositoryRoots,
+  cloudSkillDirectoryRevision,
+} from "@/utils/cloud-repository-roots";
 import type { AttachedAgentRepository } from "./attached-repositories";
 import { ClientSkillsWatcher } from "./client-skills-watcher";
 import {
@@ -43,6 +46,8 @@ interface CacheEntry {
   key: string;
   result: BuildClientSkillsPayloadResult;
   checkoutGeneration: number;
+  cloudRevisions: string;
+  discoveries: Map<string, Promise<SkillDiscoveryResult>>;
 }
 
 type ClientSkillsCache = Map<string, CacheEntry>;
@@ -51,9 +56,14 @@ type GlobalWithClientSkillsCache = typeof globalThis & {
   [key: symbol]: ClientSkillsCache | undefined;
 };
 
+const CLOUD_SKILLS_WATCHER_KEY = Symbol.for("@letta/cloudSkillsWatcher");
+const CLOUD_SKILLS_GENERATION_KEY = Symbol.for("@letta/cloudSkillsGeneration");
+
 type GlobalWithClientSkillsState = typeof globalThis & {
   [CLIENT_SKILLS_CACHE_GENERATION_KEY]?: number;
   [CLIENT_SKILLS_WATCHER_KEY]?: ClientSkillsWatcher;
+  [CLOUD_SKILLS_WATCHER_KEY]?: ClientSkillsWatcher;
+  [CLOUD_SKILLS_GENERATION_KEY]?: number;
 };
 
 function getCache(): ClientSkillsCache {
@@ -89,6 +99,21 @@ function getWatcher(): ClientSkillsWatcher {
     });
   }
   return global[CLIENT_SKILLS_WATCHER_KEY];
+}
+
+function getCloudSkillsGeneration(): number {
+  return (
+    (globalThis as GlobalWithClientSkillsState)[CLOUD_SKILLS_GENERATION_KEY] ??
+    0
+  );
+}
+
+function watchCloudSkillDirectories(paths: string[]): void {
+  const global = globalThis as GlobalWithClientSkillsState;
+  global[CLOUD_SKILLS_WATCHER_KEY] ??= new ClientSkillsWatcher(() => {
+    global[CLOUD_SKILLS_GENERATION_KEY] = getCloudSkillsGeneration() + 1;
+  });
+  global[CLOUD_SKILLS_WATCHER_KEY].ensureRoots(paths);
 }
 
 function computeCacheKey(components: {
@@ -130,7 +155,6 @@ function getSkillRoots(components: {
   configuredSkillsDirectory: string | null;
   legacySkillsDirectory: string;
   primaryProjectSkillsDirectory: string;
-  extraProjectSkillsDirectories: string[];
   memorySkillsDirs: string[];
   sharedMemorySkillsDirs: string[];
 }): string[] {
@@ -141,8 +165,6 @@ function getSkillRoots(components: {
     if (components.configuredSkillsDirectory) {
       roots.add(components.configuredSkillsDirectory);
     }
-    for (const root of components.extraProjectSkillsDirectories)
-      roots.add(root);
     roots.add(components.legacySkillsDirectory);
     roots.add(components.primaryProjectSkillsDirectory);
   }
@@ -420,18 +442,35 @@ interface CollectClientSideSkillsOptions
 
 async function collectClientSideSkills(
   options: CollectClientSideSkillsOptions,
+  memo?: {
+    previous?: ReadonlyMap<string, Promise<SkillDiscoveryResult>>;
+    current: Map<string, Promise<SkillDiscoveryResult>>;
+    cloudRevisions: ReadonlyMap<string, string>;
+  },
 ): Promise<SkillDiscoveryResult> {
   const discoverSkillsFn = options.discoverSkillsFn ?? discoverSkills;
+  const discover = (
+    key: string,
+    load: () => Promise<SkillDiscoveryResult>,
+  ): Promise<SkillDiscoveryResult> => {
+    const result = memo?.previous?.get(key) ?? load();
+    memo?.current.set(key, result);
+    return result;
+  };
   const skillsById = new Map<string, Skill>();
   const errors: SkillDiscoveryError[] = [...options.sharedMemoryErrors];
 
   if (options.bundledSkills?.length) {
     const allowed = new Set(options.bundledSkills);
     try {
-      const discovery = await discoverSkillsFn(
-        options.primaryProjectSkillsDirectory,
-        options.agentId,
-        { sources: ["bundled"] },
+      const discovery = await discover("bundled-allowlist", () =>
+        discoverSkillsFn(
+          options.primaryProjectSkillsDirectory,
+          options.agentId,
+          {
+            sources: ["bundled"],
+          },
+        ),
       );
       errors.push(...discovery.errors);
       for (const skill of discovery.skills) {
@@ -515,9 +554,14 @@ async function collectClientSideSkills(
 
   for (const run of discoveryRuns) {
     try {
-      const discovery = await discoverSkillsFn(run.path, options.agentId, {
-        sources: run.sources,
-      });
+      const key = JSON.stringify([
+        run.path,
+        run.sources,
+        memo?.cloudRevisions.get(run.path),
+      ]);
+      const discovery = await discover(key, () =>
+        discoverSkillsFn(run.path, options.agentId, { sources: run.sources }),
+      );
       errors.push(...discovery.errors);
       for (const skill of discovery.skills) {
         if (isSkillAvailableForAgent(skill, options.agentId)) {
@@ -534,7 +578,9 @@ async function collectClientSideSkills(
   }
 
   if ((options.skillSources?.length ?? 0) > 0) {
-    const memoryDiscovery = await discoverMemorySkills(options.agentId);
+    const memoryDiscovery = await discover("memory", () =>
+      discoverMemorySkills(options.agentId),
+    );
     errors.push(...memoryDiscovery.errors);
     for (const skill of memoryDiscovery.skills) {
       if (!isSkillAvailableForAgent(skill, options.agentId)) {
@@ -547,8 +593,8 @@ async function collectClientSideSkills(
       skillsById.set(skill.id, skill);
     }
 
-    const sharedMemoryDiscovery = await discoverSharedMemorySkills(
-      options.sharedMemorySkillsDirs,
+    const sharedMemoryDiscovery = await discover("shared-memory", () =>
+      discoverSharedMemorySkills(options.sharedMemorySkillsDirs),
     );
     errors.push(...sharedMemoryDiscovery.errors);
     for (const skill of sharedMemoryDiscovery.skills) {
@@ -620,18 +666,33 @@ export async function buildClientSkillsPayload(
     skillSources,
     attachedRepositories: options.attachedRepositories,
   });
-  const skillRoots = getSkillRoots({
-    agentId: options.agentId,
-    skillSources,
-    configuredSkillsDirectory,
-    legacySkillsDirectory,
-    primaryProjectSkillsDirectory,
-    extraProjectSkillsDirectories,
-    memorySkillsDirs,
-    sharedMemorySkillsDirs: sharedMemoryContext.skillsDirs,
-  });
+  const cloudGeneration = getCloudSkillsGeneration();
+  // Stat the skill directories themselves: a clone can create the checkout
+  // root before it populates .agents/skills or .skills.
+  const cloudRevisions = new Map<string, string>();
+  const existingCloudDirectories: string[] = [];
+  if (useCache && skillSources.includes("project")) {
+    for (const dir of extraProjectSkillsDirectories) {
+      const revision = cloudSkillDirectoryRevision(dir);
+      cloudRevisions.set(dir, JSON.stringify([cloudGeneration, revision]));
+      if (revision !== null) existingCloudDirectories.push(dir);
+    }
+  }
   if (useCache && shouldStartSkillWatchers()) {
-    getWatcher().ensureRoots(skillRoots);
+    getWatcher().ensureRoots(
+      getSkillRoots({
+        agentId: options.agentId,
+        skillSources,
+        configuredSkillsDirectory,
+        legacySkillsDirectory,
+        primaryProjectSkillsDirectory,
+        memorySkillsDirs,
+        sharedMemorySkillsDirs: sharedMemoryContext.skillsDirs,
+      }),
+    );
+    if (existingCloudDirectories.length > 0) {
+      watchCloudSkillDirectories(existingCloudDirectories);
+    }
   }
   const cacheComponents = {
     agentId: options.agentId,
@@ -648,28 +709,38 @@ export async function buildClientSkillsPayload(
   };
   const cacheKey = computeCacheKey(cacheComponents);
 
-  if (useCache) {
-    const cache = getCache();
-    const cached = cache.get(cacheKey);
-    if (cached && cached.checkoutGeneration === getCheckoutGeneration()) {
-      return cloneResult(cached.result);
-    }
+  const cloudRevisionKey = JSON.stringify([...cloudRevisions]);
+  const checkoutGeneration = getCheckoutGeneration();
+  const cached = useCache ? getCache().get(cacheKey) : undefined;
+  const previous =
+    cached?.checkoutGeneration === checkoutGeneration ? cached : undefined;
+  if (previous?.cloudRevisions === cloudRevisionKey) {
+    return cloneResult(previous.result);
   }
 
   const generationBeforeDiscovery = getCacheGeneration();
-  const checkoutGenerationBeforeDiscovery = getCheckoutGeneration();
-  const discovery = await collectClientSideSkills({
-    ...options,
-    configuredSkillsDirectory,
-    legacySkillsDirectory,
-    skillSources,
-    bundledSkills,
-    primaryProjectSkillsDirectory,
-    extraProjectSkillsDirectories,
-    sharedMemorySkillsDirs: sharedMemoryContext.skillsDirs,
-    sharedMemoryErrors: sharedMemoryContext.errors,
-    discoverSkillsFn,
-  });
+  const discoveries = new Map<string, Promise<SkillDiscoveryResult>>();
+  const discovery = await collectClientSideSkills(
+    {
+      ...options,
+      configuredSkillsDirectory,
+      legacySkillsDirectory,
+      skillSources,
+      bundledSkills,
+      primaryProjectSkillsDirectory,
+      extraProjectSkillsDirectories,
+      sharedMemorySkillsDirs: sharedMemoryContext.skillsDirs,
+      sharedMemoryErrors: sharedMemoryContext.errors,
+      discoverSkillsFn,
+    },
+    cloudRevisions.size > 0
+      ? {
+          previous: previous?.discoveries,
+          current: discoveries,
+          cloudRevisions,
+        }
+      : undefined,
+  );
   const errors = discovery.errors;
 
   const sortedSkills = discovery.skills.filter(isModelInvocableSkill);
@@ -705,12 +776,15 @@ export async function buildClientSkillsPayload(
   if (
     useCache &&
     generationBeforeDiscovery === getCacheGeneration() &&
-    checkoutGenerationBeforeDiscovery === getCheckoutGeneration()
+    checkoutGeneration === getCheckoutGeneration() &&
+    cloudGeneration === getCloudSkillsGeneration()
   ) {
     getCache().set(cacheKey, {
       key: cacheKey,
       result: cloneResult(result),
-      checkoutGeneration: getCheckoutGeneration(),
+      checkoutGeneration,
+      cloudRevisions: cloudRevisionKey,
+      discoveries,
     });
   }
 

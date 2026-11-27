@@ -1,6 +1,11 @@
 {
   "tests": [
     {
+      "path": "src/agent/cloud-project-skills-late-checkout.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Maps sandbox repository names to a temporary checkout while exercising real skill discovery and request construction."
+    },
+    {
       "path": "src/websocket/ask-user-question-async.test.ts",
       "timeoutMs": 30000,
       "reason": "Runs a real local App Server with isolated HOME, settings, backend, and WebSocket clients to verify nonblocking questions and later responses."

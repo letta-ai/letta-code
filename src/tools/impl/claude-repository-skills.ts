@@ -19,12 +19,18 @@ export async function stageClaudeRepositorySkills(
             return undefined;
           throw error;
         });
-        if (!info?.isDirectory()) continue;
+        // Outside Windows, a dangling link becomes usable when the checkout
+        // creates the skills directory. Windows junctions need an existing target.
+        if (info ? !info.isDirectory() : process.platform === "win32") continue;
         stagingRoot ??= await mkdtemp(join(tmpdir(), "letta-claude-skills-"));
         const directory = join(stagingRoot, source, basename(repo));
         const claudeDir = join(directory, ".claude");
         await mkdir(claudeDir, { recursive: true });
-        await symlink(skills, join(claudeDir, "skills"), "dir");
+        await symlink(
+          skills,
+          join(claudeDir, "skills"),
+          process.platform === "win32" ? "junction" : "dir",
+        );
         directories.push(directory);
       }
     }
