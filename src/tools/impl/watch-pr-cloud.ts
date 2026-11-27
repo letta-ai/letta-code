@@ -92,6 +92,12 @@ export async function startCloudPullRequestWatch(args: Args, deps: Deps = {}) {
       actingUserRequestOptions(scope.actingUserId),
     );
   } catch (error) {
+    if (
+      error instanceof ApiRequestError &&
+      error.status >= 500 &&
+      error.status < 600
+    )
+      return undefined;
     if (error instanceof ApiRequestError && error.status === 400) {
       let body: { errorCode?: string } = {};
       try {
@@ -99,7 +105,8 @@ export async function startCloudPullRequestWatch(args: Args, deps: Deps = {}) {
       } catch {}
       if (
         body.errorCode === "REPOSITORY_INACCESSIBLE" ||
-        body.errorCode === "CLOUD_WATCH_PR_DISABLED"
+        body.errorCode === "CLOUD_WATCH_PR_DISABLED" ||
+        body.errorCode === "PR_SNAPSHOT_UNAVAILABLE"
       )
         return undefined;
     }
