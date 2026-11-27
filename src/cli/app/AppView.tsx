@@ -33,7 +33,6 @@ import { InstallGithubAppFlow } from "@/cli/components/InstallGithubAppFlow";
 import { LettaLoginOverlay } from "@/cli/components/LettaLoginOverlay";
 import { McpSelector } from "@/cli/components/McpSelector";
 import { MemfsTreeViewer } from "@/cli/components/MemfsTreeViewer";
-import { MemoryTabViewer } from "@/cli/components/MemoryTabViewer";
 import { MessageSearch } from "@/cli/components/MessageSearch";
 import { ModelReasoningSelector } from "@/cli/components/ModelReasoningSelector";
 import {
@@ -1546,34 +1545,26 @@ export function AppView(props: AppViewProps) {
               />
             )}
 
-            {activeOverlay === "memory" &&
-              (isActiveMemfsEnabled(agentId) ? (
-                <MemfsTreeViewer
-                  agentId={agentId}
-                  agentName={agentState?.name}
-                  onClose={closeOverlay}
-                  conversationId={conversationId}
-                  contextUsage={
-                    usedContextTokens > 0
-                      ? {
-                          usedTokens: usedContextTokens,
-                          contextWindow: contextWindowSize ?? 0,
-                          model:
-                            currentModelHandle ??
-                            currentModelDisplay ??
-                            "unknown",
-                        }
-                      : undefined
-                  }
-                />
-              ) : (
-                <MemoryTabViewer
-                  blocks={agentState?.memory?.blocks || []}
-                  agentId={agentId}
-                  onClose={closeOverlay}
-                  conversationId={conversationId}
-                />
-              ))}
+            {activeOverlay === "memory" && (
+              <MemfsTreeViewer
+                agentId={agentId}
+                agentName={agentState?.name}
+                onClose={closeOverlay}
+                conversationId={conversationId}
+                contextUsage={
+                  usedContextTokens > 0
+                    ? {
+                        usedTokens: usedContextTokens,
+                        contextWindow: contextWindowSize ?? 0,
+                        model:
+                          currentModelHandle ??
+                          currentModelDisplay ??
+                          "unknown",
+                      }
+                    : undefined
+                }
+              />
+            )}
 
             {activeOverlay === "mcp" && (
               <McpSelector

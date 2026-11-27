@@ -1217,10 +1217,11 @@ async function main(): Promise<void> {
   markMilestone("TUI_MODE_START");
 
   markMilestone("REACT_IMPORT_START");
-  const [React, { render }, AppModule] = await Promise.all([
+  const [React, { render }, AppModule, { TerminalApp }] = await Promise.all([
     import("react"),
     import("ink"),
     import("@/cli/App"),
+    import("@/cli/app/TerminalApp"),
   ]);
   markMilestone("REACT_IMPORT_DONE");
   await terminalPreflightPromise;
@@ -2267,29 +2268,13 @@ async function main(): Promise<void> {
       });
     }
 
-    return React.createElement(App, {
+    return React.createElement(TerminalApp, {
       key: `${agentId}:${conversationId}`,
       agentId,
-      agentState,
       conversationId,
-      loadingState: appLoadingState,
-      continueSession: isResumingSession,
-      startupApproval: resumeData?.pendingApproval ?? null,
-      startupApprovals: resumeData?.pendingApprovals ?? EMPTY_APPROVAL_ARRAY,
-      messageHistory: resumeData?.messageHistory ?? EMPTY_MESSAGE_ARRAY,
-      resumedExistingConversation,
-      startupConversationTitleEligible,
-      tokenStreaming: settings.tokenStreaming,
-      reasoningTabCycleEnabled: settings.reasoningTabCycleEnabled === true,
-      showCompactions: settings.showCompactions,
-      agentProvenance,
-      startupHasCloudCredentials,
-      startupHasAvailableLocalModels,
-      releaseNotes,
+      cloud: startupHasCloudCredentials === true,
+      name: agentState?.name ?? "Letta Code",
       updateNotification,
-      systemInfoReminderEnabled: !noSystemInfoReminderFlag,
-      modsDisabled,
-      fileAutocompleteFdPath,
     });
   }
   markMilestone("REACT_RENDER_START");
