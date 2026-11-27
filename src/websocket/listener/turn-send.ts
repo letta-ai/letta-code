@@ -5,13 +5,19 @@ import type {
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { sendMessageStream } from "@/agent/message";
-import { getRetryDelayMs } from "@/agent/turn-recovery-policy";
+import {
+  getRetryDelayMs,
+  isProviderStreamTimeoutDetail,
+} from "@/agent/turn-recovery-policy";
 import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
 import type { StopReasonType } from "@/types/protocol_v2";
 import {
   CLOUD_API_DEPLOYMENT_RECOVERY_MAX_ATTEMPTS,
   LLM_API_ERROR_MAX_RETRIES,
 } from "./constants";
+import { appendQueuedTurnToInput } from "./continuation-input";
+import { emitDequeuedUserMessage } from "./protocol-outbound";
+import { consumeQueuedTurn } from "./queue";
 import { emitRecoverableRetryNotice } from "./recoverable-notices";
 import {
   finalizeHandledRecoveryTurn,
@@ -25,14 +31,18 @@ import {
 } from "./send";
 import { injectQueuedSkillContent } from "./skill-injection";
 import type { ListenerTransport } from "./transport";
+import type { TurnCorrelation } from "./turn-correlation";
 import {
+  createDeploymentRecoveryTurnInput,
+  ensureTurnInputMessageOtids,
   refreshTurnInputOtidsForNewRequest,
   type TurnInputState,
   updateTurnInputMessagesPreservingOtids,
 } from "./turn-input-state";
 import type { TurnFinishTransition, TurnLease } from "./turn-lifecycle";
+import { setTurnLoopStatus } from "./turn-status";
 import type { finishListenerTurn } from "./turn-terminal";
-import type { ConversationRuntime } from "./types";
+import type { ConversationRuntime, IncomingMessage } from "./types";
 
 type SendOptions = NonNullable<Parameters<typeof sendMessageStream>[2]>;
 
@@ -46,44 +56,47 @@ export async function startTurnInput(
     preparedToolContext: SendOptions["preparedToolContext"];
     overrideModel: SendOptions["overrideModel"];
     responseFormat?: SendOptions["responseFormat"];
-    actingUserId?: SendOptions["actingUserId"];
+    getActingUserId: () => SendOptions["actingUserId"];
     getInput: () => TurnInputState;
     getInterruptedToolCallIds: () => string[];
   },
 ) {
   const sendParams = {
     ...params,
-    buildSendOptions: () => ({
-      ...(params.agentId ? { agentId: params.agentId } : {}),
-      streamTokens: true,
-      background: true,
-      workingDirectory: params.workingDirectory,
-      permissionModeState: params.permissionModeState,
-      ...(params.runtime.skillSources !== undefined
-        ? { skillSources: params.runtime.skillSources }
-        : {}),
-      preparedToolContext: params.preparedToolContext,
-      ...(params.getInput().imageFailureModesByMessageOtid
-        ? {
-            imageFailureModesByMessageOtid:
-              params.getInput().imageFailureModesByMessageOtid,
-          }
-        : {}),
-      ...(params.overrideModel ? { overrideModel: params.overrideModel } : {}),
-      ...(params.responseFormat
-        ? { responseFormat: params.responseFormat }
-        : {}),
-      ...(params.actingUserId !== undefined
-        ? { actingUserId: params.actingUserId }
-        : {}),
-      ...(params.getInterruptedToolCallIds().length > 0
-        ? {
-            approvalNormalization: {
-              interruptedToolCallIds: params.getInterruptedToolCallIds(),
-            },
-          }
-        : {}),
-    }),
+    buildSendOptions: () => {
+      const actingUserId = params.getActingUserId();
+      return {
+        ...(params.agentId ? { agentId: params.agentId } : {}),
+        streamTokens: true,
+        background: true,
+        workingDirectory: params.workingDirectory,
+        permissionModeState: params.permissionModeState,
+        ...(params.runtime.skillSources !== undefined
+          ? { skillSources: params.runtime.skillSources }
+          : {}),
+        preparedToolContext: params.preparedToolContext,
+        ...(params.getInput().imageFailureModesByMessageOtid
+          ? {
+              imageFailureModesByMessageOtid:
+                params.getInput().imageFailureModesByMessageOtid,
+            }
+          : {}),
+        ...(params.overrideModel
+          ? { overrideModel: params.overrideModel }
+          : {}),
+        ...(params.responseFormat
+          ? { responseFormat: params.responseFormat }
+          : {}),
+        ...(actingUserId !== undefined ? { actingUserId } : {}),
+        ...(params.getInterruptedToolCallIds().length > 0
+          ? {
+              approvalNormalization: {
+                interruptedToolCallIds: params.getInterruptedToolCallIds(),
+              },
+            }
+          : {}),
+      };
+    },
   };
   const sender = createTurnInputSender(sendParams);
   const input = params.getInput();
@@ -97,7 +110,13 @@ export async function startTurnInput(
   };
 }
 
-export async function prepareProviderRetryInput(params: {
+function getProviderRetryLimit(errorDetail: string | null): number {
+  return isProviderStreamTimeoutDetail(errorDetail)
+    ? 1
+    : LLM_API_ERROR_MAX_RETRIES;
+}
+
+async function prepareProviderRetryInput(params: {
   input: TurnInputState;
   errorDetail: string | null;
   attempt: number;
@@ -108,6 +127,7 @@ export async function prepareProviderRetryInput(params: {
   conversationId: string;
   runId: string | null;
 }): Promise<TurnInputState> {
+  const maxAttempts = getProviderRetryLimit(params.errorDetail);
   const delayMs = getRetryDelayMs({
     category: "transient_provider",
     attempt: params.attempt,
@@ -117,10 +137,10 @@ export async function prepareProviderRetryInput(params: {
     kind: "transient_provider_retry",
     message:
       getRetryStatusMessage(params.errorDetail) ||
-      `LLM API error encountered, retrying (attempt ${params.attempt}/${LLM_API_ERROR_MAX_RETRIES})...`,
+      `LLM API error encountered, retrying (attempt ${params.attempt}/${maxAttempts})...`,
     reason: "llm_api_error",
     attempt: params.attempt,
-    maxAttempts: LLM_API_ERROR_MAX_RETRIES,
+    maxAttempts,
     delayMs,
     runId: params.runId ?? undefined,
     agentId: params.agentId,
@@ -131,6 +151,59 @@ export async function prepareProviderRetryInput(params: {
     throw new Error("Cancelled by user");
   }
   return refreshTurnInputOtidsForNewRequest(params.input);
+}
+
+export async function sendPostStopRetry(
+  params: Parameters<typeof prepareProviderRetryInput>[0] & {
+    deploymentInterrupted: boolean;
+    sender: ReturnType<typeof createTurnInputSender>;
+    setInput: (input: TurnInputState) => void;
+    finishIfInterrupted: (runId?: string | null) => boolean;
+    turnCorrelation: TurnCorrelation;
+    noCoalesce?: boolean;
+    onConsumeQueuedTurn: (queuedTurn: IncomingMessage) => Promise<void>;
+    onDequeued: (batchId: string, actingUserId: string | null) => void;
+  },
+): Promise<
+  | { kind: "interrupted" }
+  | {
+      kind: "sent";
+      result: ApprovalContinuationSendResult;
+    }
+> {
+  const { agentId, conversationId, runtime, runId, socket, turnLease } = params;
+  let input = params.deploymentInterrupted
+    ? createDeploymentRecoveryTurnInput()
+    : await prepareProviderRetryInput(params);
+  if (params.finishIfInterrupted(runId)) return { kind: "interrupted" };
+
+  const consumed =
+    params.deploymentInterrupted || params.noCoalesce
+      ? null
+      : consumeQueuedTurn(runtime, { continuation: true });
+  if (consumed) {
+    const { dequeuedBatch, queuedTurn } = consumed;
+    queuedTurn.messages = ensureTurnInputMessageOtids(queuedTurn.messages);
+    await params.onConsumeQueuedTurn(queuedTurn);
+    if (params.finishIfInterrupted(runId)) return { kind: "interrupted" };
+    params.turnCorrelation.appendDequeuedBatch(dequeuedBatch.batchId);
+    params.onDequeued(dequeuedBatch.batchId, queuedTurn.actingUserId ?? null);
+    input = appendQueuedTurnToInput(input, queuedTurn);
+    emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
+  }
+
+  setTurnLoopStatus(runtime, turnLease, "SENDING_API_REQUEST", {
+    agent_id: agentId,
+    conversation_id: conversationId,
+  });
+  const messages = params.deploymentInterrupted
+    ? input.messages
+    : injectQueuedSkillContent(input.messages, params);
+  params.setInput(updateTurnInputMessagesPreservingOtids(input, messages));
+  const result = await params.sender.send(messages);
+  return params.finishIfInterrupted(runId)
+    ? { kind: "interrupted" }
+    : { kind: "sent", result };
 }
 
 export async function shouldRetryPostStopTurn(params: {
@@ -146,7 +219,8 @@ export async function shouldRetryPostStopTurn(params: {
       params.deploymentAttempts < CLOUD_API_DEPLOYMENT_RECOVERY_MAX_ATTEMPTS
     );
   }
-  if (params.providerAttempts >= LLM_API_ERROR_MAX_RETRIES) return false;
+  if (params.providerAttempts >= getProviderRetryLimit(params.errorDetail))
+    return false;
   return isRetriablePostStopError(
     params.stopReason,
     params.runId,
