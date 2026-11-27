@@ -214,3 +214,23 @@ test("completed run allows the final message to become visible on a later read",
   expect(reply.text).toBe("visible now");
   expect(reads).toBe(2);
 });
+
+test("notification placement OTIDs preserve the original send waiter", async () => {
+  const reply = await waitForEnqueuedReply({
+    ...base,
+    firstEvent: event({
+      "run-original": ["cm-1"],
+      "run-notice": ["cm-1", "notice-otid"],
+      "run-unrelated": ["cm-other", "other-notice-otid"],
+    }),
+    retrieveRun: async (id): Promise<Run> => ({
+      id,
+      agent_id: "agent-1",
+      status: "completed",
+      stop_reason: "end_turn",
+    }),
+    listRunMessages: async (id) => [assistant("final notification answer", id)],
+  });
+  expect(reply.runIds).toEqual(["run-original", "run-notice"]);
+  expect(reply.text).toBe("final notification answer");
+});
