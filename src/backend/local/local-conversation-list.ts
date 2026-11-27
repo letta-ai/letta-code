@@ -3,7 +3,22 @@ import type { ConversationListBody } from "@/backend/backend";
 
 type ListableLocalConversation = Conversation & {
   hidden?: boolean;
+  archived?: boolean;
 };
+
+type ArchiveStatus = "unarchived" | "archived" | "all";
+
+function archiveStatus(value: unknown): ArchiveStatus {
+  return value === "archived" || value === "all" ? value : "unarchived";
+}
+
+function matchesArchiveStatus(
+  conversation: ListableLocalConversation,
+  status: ArchiveStatus,
+): boolean {
+  if (status === "all") return true;
+  return (conversation.archived === true) === (status === "archived");
+}
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
@@ -32,10 +47,12 @@ export function listLocalConversations(
     ?.trim()
     .toLowerCase();
   const limit = typeof bodyRecord.limit === "number" ? bodyRecord.limit : 20;
+  const status = archiveStatus(bodyRecord.archive_status);
   let conversations = [...source].filter(
     (conversation) =>
       conversation.id !== "default" &&
       (bodyRecord.include_hidden === true || !conversation.hidden) &&
+      matchesArchiveStatus(conversation, status) &&
       (!agentId || conversation.agent_id === agentId) &&
       matchesSummarySearch(conversation, normalizedSearch),
   );
