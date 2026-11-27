@@ -427,6 +427,16 @@ function getReflectionCompletionMessage(
       if (integration.failurePhase === "integration") {
         return `${integration.summary} Will retry later.`;
       }
+      const missingExecutable = subagentError?.includes(
+        "sandbox-exec: execvp() of 'letta' failed: No such file or directory",
+      )
+        ? "Letta"
+        : subagentError?.includes("env: node: No such file or directory")
+          ? "Node"
+          : undefined;
+      if (missingExecutable) {
+        return `Reflection failed: ${missingExecutable} executable was not found. Reinstall or update Letta/Node, or fix the local runtime PATH before running /reflect. Will retry later.`;
+      }
       const configurationError =
         classifyReflectionConfigurationError(subagentError);
       if (!configurationError) {
