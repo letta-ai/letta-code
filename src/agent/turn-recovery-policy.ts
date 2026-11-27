@@ -156,6 +156,15 @@ export function isEmptyResponseError(detail: unknown): boolean {
   return detail.toLowerCase().includes(EMPTY_RESPONSE_DETAIL_FRAGMENT);
 }
 
+export function isProviderStreamTimeoutDetail(detail: unknown): boolean {
+  return (
+    typeof detail === "string" &&
+    /\bstream sent no output within|\bstream(?:ing)? (?:timed out|timeout)\b/i.test(
+      detail,
+    )
+  );
+}
+
 export function isRetryableProviderErrorDetail(detail: unknown): boolean {
   if (isCloudflareEdge52xDetail(detail)) return true;
   if (typeof detail !== "string") return false;
@@ -183,7 +192,9 @@ export function shouldRetryRunMetadataError(
   const nonRetryableQuotaDetail = hasNonRetryableQuotaDetail(detail);
   const retryable429Detail =
     typeof detail === "string" && RETRYABLE_429_PATTERN.test(detail);
-  const retryableDetail = isRetryableProviderErrorDetail(detail);
+  const retryableDetail =
+    isRetryableProviderErrorDetail(detail) ||
+    isProviderStreamTimeoutDetail(detail);
   const nonRetryableDetail = isNonRetryableProviderErrorDetail(detail);
 
   if (nonRetryableErrorType) return false;
