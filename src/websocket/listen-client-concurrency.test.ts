@@ -2326,7 +2326,7 @@ describe("listen-client multi-worker concurrency", () => {
       message: "Conversation is busy, waiting and retrying…",
       reason: "error",
       attempt: 1,
-      max_attempts: 3,
+      max_attempts: 11,
       delay_ms: 10000,
     });
   });

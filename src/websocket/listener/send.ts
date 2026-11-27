@@ -53,6 +53,12 @@ import {
   isApprovalToolCallDesyncError,
 } from "./recovery";
 import { retryApprovalRecoveryRead } from "./recovery-read";
+import {
+  BUSY_RUN_WAIT_TIMEOUT_MS,
+  type BusyRetryState,
+  MAX_CONVERSATION_BUSY_RETRIES,
+  waitToRetryBusyConversation,
+} from "./send-busy-retry";
 import { injectQueuedSkillContent } from "./skill-injection";
 import type { ListenerTransport } from "./transport";
 import type { TurnCorrelation } from "./turn-correlation";
@@ -60,10 +66,6 @@ import { createTurnInputState } from "./turn-input-state";
 import type { TurnLease } from "./turn-lifecycle";
 import { setTurnLoopStatus } from "./turn-status";
 import type { ConversationRuntime } from "./types";
-
-const ACTIVE_BLOCKING_RUN_STATUSES = new Set(["created", "running"]);
-const BUSY_RUN_WAIT_TIMEOUT_MS = 5 * 60 * 1000;
-const BUSY_RUN_POLL_INTERVAL_MS = 5000;
 
 type MessageStreamResult = Awaited<ReturnType<typeof sendMessageStream>>;
 type RecoveryDrainResult = Awaited<
@@ -73,7 +75,6 @@ type RetrieveAgent = ReturnType<typeof getBackend>["retrieveAgent"];
 export type ApprovalContinuationSendResult =
   | { kind: "stream"; stream: NonNullable<MessageStreamResult> }
   | { kind: "terminal"; drainResult: RecoveryDrainResult };
-type BlockingRunWaitResult = "settled" | "timed_out" | "unavailable";
 
 export function isApprovalOnlyInput(
   input: Array<MessageCreate | ApprovalCreate>,
@@ -101,128 +102,6 @@ function isBackendNotFoundError(err: unknown): boolean {
     (err instanceof APIError && (err.status === 404 || err.status === 422)) ||
     (err instanceof Error && err.name === "LocalBackendNotFoundError")
   );
-}
-
-function isBlockingRunActive(status: unknown): boolean {
-  return typeof status === "string" && ACTIVE_BLOCKING_RUN_STATUSES.has(status);
-}
-
-async function sleepWithAbort(
-  delayMs: number,
-  abortSignal?: AbortSignal,
-): Promise<void> {
-  if (delayMs <= 0) {
-    return;
-  }
-
-  await new Promise<void>((resolve, reject) => {
-    let timeout: ReturnType<typeof setTimeout> | null = null;
-
-    function cleanup() {
-      if (timeout) {
-        clearTimeout(timeout);
-        timeout = null;
-      }
-      abortSignal?.removeEventListener("abort", onAbort);
-    }
-
-    function onAbort() {
-      cleanup();
-      reject(new Error("Cancelled by user"));
-    }
-
-    if (abortSignal?.aborted) {
-      onAbort();
-      return;
-    }
-
-    abortSignal?.addEventListener("abort", onAbort, { once: true });
-    timeout = setTimeout(() => {
-      cleanup();
-      resolve();
-    }, delayMs);
-  });
-}
-
-async function waitForBlockingRunToSettle(
-  runId: string,
-  abortSignal?: AbortSignal,
-): Promise<BlockingRunWaitResult> {
-  const timeoutMs = BUSY_RUN_WAIT_TIMEOUT_MS;
-  const startedAt = Date.now();
-
-  while (true) {
-    if (abortSignal?.aborted) {
-      throw new Error("Cancelled by user");
-    }
-
-    let run: Awaited<ReturnType<ReturnType<typeof getBackend>["retrieveRun"]>>;
-    try {
-      run = await getBackend().retrieveRun(runId);
-    } catch {
-      return "unavailable";
-    }
-
-    if (!isBlockingRunActive(run.status)) {
-      return "settled";
-    }
-
-    const elapsedMs = Date.now() - startedAt;
-    if (elapsedMs >= timeoutMs) {
-      return "timed_out";
-    }
-
-    await sleepWithAbort(
-      Math.min(BUSY_RUN_POLL_INTERVAL_MS, timeoutMs - elapsedMs),
-      abortSignal,
-    );
-  }
-}
-
-async function maybeWaitForBlockingRun(params: {
-  runId: string | null;
-  retriedAfterSettled: Set<string>;
-  abortSignal?: AbortSignal;
-}): Promise<"retry_now" | "fall_back"> {
-  const { runId, retriedAfterSettled, abortSignal } = params;
-  if (!runId) {
-    return "fall_back";
-  }
-
-  const waitResult = await waitForBlockingRunToSettle(runId, abortSignal);
-
-  if (waitResult === "settled") {
-    if (retriedAfterSettled.has(runId)) {
-      return "fall_back";
-    }
-    retriedAfterSettled.add(runId);
-    return "retry_now";
-  }
-
-  if (waitResult === "timed_out") {
-    throw new Error(
-      `Conversation is still busy because run ${runId} remained active after ${BUSY_RUN_WAIT_TIMEOUT_MS}ms`,
-    );
-  }
-
-  return "fall_back";
-}
-
-function getConversationBusyRetryNotice(
-  blockingRunId: string | null,
-  retryDelayMs: number,
-): { message: string; delayMs: number } {
-  if (!blockingRunId) {
-    return {
-      message: "Conversation is busy, waiting and retrying…",
-      delayMs: retryDelayMs,
-    };
-  }
-
-  return {
-    message: `Conversation is busy; waiting for run ${blockingRunId} to finish…`,
-    delayMs: BUSY_RUN_POLL_INTERVAL_MS,
-  };
 }
 
 async function tryResumeBusyConversationStream(params: {
@@ -550,10 +429,13 @@ export async function sendMessageStreamWithRetry(
 ): Promise<Awaited<ReturnType<typeof sendMessageStream>>> {
   const abortSignal = turnLease.signal;
   let transientRetries = 0;
-  let conversationBusyRetries = 0;
   let preStreamRecoveryAttempts = 0;
-  const MAX_CONVERSATION_BUSY_RETRIES = 3;
-  const retriedAfterBlockingRunSettled = new Set<string>();
+  const busyRetry: BusyRetryState = {
+    runRetries: 0,
+    lockAttempts: 0,
+    lockDeadline: null,
+    retriedAfterSettled: new Set(),
+  };
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
@@ -591,9 +473,10 @@ export async function sendMessageStreamWithRetry(
       }
 
       const errorDetail = extractConflictDetail(preStreamError);
+      const blockingRunId = extractConversationBusyRunId(errorDetail);
       const action = getPreStreamErrorAction(
         errorDetail,
-        conversationBusyRetries,
+        blockingRunId ? busyRetry.runRetries : 0,
         MAX_CONVERSATION_BUSY_RETRIES,
         {
           status:
@@ -688,9 +571,14 @@ export async function sendMessageStreamWithRetry(
         continue;
       }
 
-      const blockingRunId = extractConversationBusyRunId(errorDetail);
-
       if (action === "retry_conversation_busy" || blockingRunId) {
+        if (!blockingRunId) {
+          busyRetry.lockDeadline ??=
+            performance.now() + BUSY_RUN_WAIT_TIMEOUT_MS;
+          if (performance.now() >= busyRetry.lockDeadline) {
+            throw preStreamError;
+          }
+        }
         setTurnLoopStatus(runtime, turnLease, "RETRYING_API_REQUEST", {
           agent_id: runtime.agentId,
           conversation_id: conversationId,
@@ -711,43 +599,17 @@ export async function sendMessageStreamWithRetry(
           return resumeStream;
         }
 
-        const retryBudgetAvailable = action === "retry_conversation_busy";
-        const attempt = conversationBusyRetries + 1;
-        if (retryBudgetAvailable) {
-          conversationBusyRetries = attempt;
-        }
-        const delayMs = getRetryDelayMs({
-          category: "conversation_busy",
-          attempt,
-        });
-        const retryNotice = getConversationBusyRetryNotice(
+        await waitToRetryBusyConversation({
+          state: busyRetry,
           blockingRunId,
-          delayMs,
-        );
-
-        emitRetryDelta(socket, runtime, {
-          message: retryNotice.message,
-          reason: "error",
-          attempt,
-          maxAttempts: MAX_CONVERSATION_BUSY_RETRIES,
-          delayMs: retryNotice.delayMs,
-          agentId: runtime.agentId ?? undefined,
+          retryBudgetAvailable: action === "retry_conversation_busy",
+          error: preStreamError,
+          socket,
+          runtime,
           conversationId,
-        });
-
-        const blockingRunDisposition = await maybeWaitForBlockingRun({
-          runId: blockingRunId,
-          retriedAfterSettled: retriedAfterBlockingRunSettled,
           abortSignal,
+          authorityGuard: retryOptions.authorityGuard,
         });
-        if (blockingRunDisposition === "retry_now") {
-          continue;
-        }
-        if (!retryBudgetAvailable) {
-          throw preStreamError;
-        }
-
-        await sleepWithAbort(delayMs, abortSignal);
         continue;
       }
 
@@ -771,10 +633,13 @@ export async function sendApprovalContinuationWithRetry(
   const abortSignal = turnLease.signal;
   const allowApprovalRecovery = retryOptions.allowApprovalRecovery ?? true;
   let transientRetries = 0;
-  let conversationBusyRetries = 0;
   let preStreamRecoveryAttempts = 0;
-  const MAX_CONVERSATION_BUSY_RETRIES = 3;
-  const retriedAfterBlockingRunSettled = new Set<string>();
+  const busyRetry: BusyRetryState = {
+    runRetries: 0,
+    lockAttempts: 0,
+    lockDeadline: null,
+    retriedAfterSettled: new Set(),
+  };
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
@@ -812,9 +677,10 @@ export async function sendApprovalContinuationWithRetry(
       }
 
       const errorDetail = extractConflictDetail(preStreamError);
+      const blockingRunId = extractConversationBusyRunId(errorDetail);
       const action = getPreStreamErrorAction(
         errorDetail,
-        conversationBusyRetries,
+        blockingRunId ? busyRetry.runRetries : 0,
         MAX_CONVERSATION_BUSY_RETRIES,
         {
           status:
@@ -908,13 +774,13 @@ export async function sendApprovalContinuationWithRetry(
         continue;
       }
 
-      const blockingRunId = extractConversationBusyRunId(errorDetail);
-
       if (action === "retry_conversation_busy" || blockingRunId) {
-        const retryBudgetAvailable = action === "retry_conversation_busy";
-        const attempt = conversationBusyRetries + 1;
-        if (retryBudgetAvailable) {
-          conversationBusyRetries = attempt;
+        if (!blockingRunId) {
+          busyRetry.lockDeadline ??=
+            performance.now() + BUSY_RUN_WAIT_TIMEOUT_MS;
+          if (performance.now() >= busyRetry.lockDeadline) {
+            throw preStreamError;
+          }
         }
         setTurnLoopStatus(runtime, turnLease, "RETRYING_API_REQUEST", {
           agent_id: runtime.agentId,
@@ -937,38 +803,17 @@ export async function sendApprovalContinuationWithRetry(
           return { kind: "stream", stream: resumeStream };
         }
 
-        const retryDelayMs = getRetryDelayMs({
-          category: "conversation_busy",
-          attempt,
-        });
-        const retryNotice = getConversationBusyRetryNotice(
+        await waitToRetryBusyConversation({
+          state: busyRetry,
           blockingRunId,
-          retryDelayMs,
-        );
-
-        emitRetryDelta(socket, runtime, {
-          message: retryNotice.message,
-          reason: "error",
-          attempt,
-          maxAttempts: MAX_CONVERSATION_BUSY_RETRIES,
-          delayMs: retryNotice.delayMs,
-          agentId: runtime.agentId ?? undefined,
+          retryBudgetAvailable: action === "retry_conversation_busy",
+          error: preStreamError,
+          socket,
+          runtime,
           conversationId,
-        });
-
-        const blockingRunDisposition = await maybeWaitForBlockingRun({
-          runId: blockingRunId,
-          retriedAfterSettled: retriedAfterBlockingRunSettled,
           abortSignal,
+          authorityGuard: retryOptions.authorityGuard,
         });
-        if (blockingRunDisposition === "retry_now") {
-          continue;
-        }
-        if (!retryBudgetAvailable) {
-          throw preStreamError;
-        }
-
-        await sleepWithAbort(retryDelayMs, abortSignal);
         continue;
       }
 
