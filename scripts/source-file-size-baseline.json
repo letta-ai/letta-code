@@ -2,7 +2,7 @@
   "src/agent/memory-git.ts": 1819,
   "src/backend/local/local-store.ts": 3179,
   "src/cli/app/AppCoordinator.tsx": 4744,
-  "src/cli/app/AppView.tsx": 1661,
+  "src/cli/app/AppView.tsx": 1656,
   "src/cli/app/use-approval-flow.ts": 1031,
   "src/cli/app/use-configuration-handlers.ts": 1381,
   "src/cli/app/use-conversation-loop.ts": 2540,

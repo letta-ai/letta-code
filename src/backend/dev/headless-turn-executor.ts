@@ -170,3 +170,85 @@ export class DeterministicToolCallExecutor implements HeadlessTurnExecutor {
     ]);
   }
 }
+
+const SCRIPTED_TOOL_PATTERN = /^tool\s+([A-Za-z_][\w-]*)\s+(\{[\s\S]*\})\s*$/;
+const SCRIPTED_WORD_DELAY_MS = 60;
+
+function lastUserText(body: HeadlessTurnBody): string {
+  const messages =
+    (body as { messages?: Array<{ role?: string; content?: unknown }> })
+      .messages ?? [];
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!message || message.role !== "user") continue;
+    if (typeof message.content === "string") return message.content;
+    if (Array.isArray(message.content)) {
+      return message.content
+        .map((part) =>
+          part && typeof part === "object" && "text" in part
+            ? String((part as { text: unknown }).text ?? "")
+            : "",
+        )
+        .join("");
+    }
+  }
+  return "";
+}
+
+function createWordStream(text: string): Stream<LettaStreamingResponse> {
+  const controller = new AbortController();
+  const words = text.split(/(?<=\s)/);
+  const id = `message-scripted-${Date.now().toString(36)}`;
+  return {
+    controller,
+    async *[Symbol.asyncIterator]() {
+      for (const word of words) {
+        if (controller.signal.aborted) return;
+        await new Promise((resolve) =>
+          setTimeout(resolve, SCRIPTED_WORD_DELAY_MS),
+        );
+        yield {
+          message_type: "assistant_message",
+          id,
+          content: [{ type: "text", text: word }],
+        } as LettaStreamingResponse;
+      }
+      yield {
+        message_type: "stop_reason",
+        stop_reason: "end_turn",
+      } as LettaStreamingResponse;
+    },
+  } as unknown as Stream<LettaStreamingResponse>;
+}
+
+export class DeterministicScriptedExecutor implements HeadlessTurnExecutor {
+  private toolCallSeq = 0;
+
+  async execute(input: HeadlessTurnExecutorInput) {
+    if (hasApprovalResults(input.body)) {
+      return createWordStream(summarizeApprovalResults(input.body));
+    }
+    const text = lastUserText(input.body)
+      .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "")
+      .trim();
+    const match = SCRIPTED_TOOL_PATTERN.exec(text);
+    if (!match) {
+      return createWordStream(`You said: ${text || "nothing"}`);
+    }
+    this.toolCallSeq += 1;
+    return createStream([
+      {
+        message_type: "approval_request_message",
+        tool_call: {
+          tool_call_id: `tool-call-scripted-${this.toolCallSeq}`,
+          name: match[1],
+          arguments: match[2],
+        },
+      } as LettaStreamingResponse,
+      {
+        message_type: "stop_reason",
+        stop_reason: "requires_approval",
+      } as LettaStreamingResponse,
+    ]);
+  }
+}
