@@ -353,6 +353,31 @@ export async function handleChangeDeviceStateInput(
   return true;
 }
 
+const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "cancelled"]);
+
+export async function cancelOrphanedBackendRun(
+  agentId: string | null | undefined,
+  conversationId: string,
+  runId: string | null,
+): Promise<boolean> {
+  const backend = getBackend();
+  if (!backend.capabilities.localModelCatalog) return false;
+  const run = runId
+    ? await backend.retrieveRun(runId).catch(() => null)
+    : await backend.latestConversationRun(conversationId);
+  if (
+    !run ||
+    !run.status ||
+    TERMINAL_RUN_STATUSES.has(run.status) ||
+    run.conversation_id !== conversationId ||
+    (conversationId === "default" && run.agent_id !== agentId)
+  ) {
+    return false;
+  }
+  const result = await backend.cancelRun(run.agent_id, run.id);
+  return result[run.id] === "cancelled";
+}
+
 export async function handleAbortMessageInput(
   listener: ListenerRuntime,
   params: {
@@ -386,6 +411,7 @@ export async function handleAbortMessageInput(
       conversationId: string,
       runId?: string | null,
     ) => Promise<void>;
+    cancelOrphanedBackendRun: typeof cancelOrphanedBackendRun;
   }> = {},
 ): Promise<boolean> {
   const resolvedDeps = {
@@ -434,6 +460,7 @@ export async function handleAbortMessageInput(
         );
       }
     },
+    cancelOrphanedBackendRun,
     ...deps,
   };
 
@@ -462,14 +489,18 @@ export async function handleAbortMessageInput(
       scopedRuntime.turnLifecycle.currentLease?.id ===
         lifecycleSnapshot.lease.id);
 
+  if (!hasCurrentTurn && !hasPendingApprovals) {
+    return resolvedDeps.cancelOrphanedBackendRun(
+      scopedRuntime.agentId,
+      scopedRuntime.conversationId,
+      params.command.run_id ?? null,
+    );
+  }
+
   if (
     params.command.run_id &&
     (!hasCurrentTurn || params.command.run_id !== lifecycleSnapshot.runId)
   ) {
-    return false;
-  }
-
-  if (!hasCurrentTurn && !hasPendingApprovals) {
     return false;
   }
 
