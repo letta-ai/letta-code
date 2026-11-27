@@ -1,8 +1,8 @@
 import { LettaAgentClient } from "@letta-ai/letta-agent-sdk";
 import { render, useApp, useInput } from "ink";
 import { useEffect } from "react";
-import WebSocket from "ws";
 import { TerminalApp } from "./TerminalApp";
+import { terminalSocket } from "./terminal-runtime-events";
 import { TerminalSession } from "./terminal-session";
 
 function AttachedTerminal({ store }: { store: TerminalSession }) {
@@ -21,10 +21,13 @@ export async function runAttachedTerminal(address: string, target?: string) {
   const url = new URL(address);
   if (url.protocol !== "ws:" && url.protocol !== "wss:")
     throw new Error("Expected a ws:// or wss:// app server URL");
+  let activeStore: TerminalSession | undefined;
   const client = new LettaAgentClient({
     backend: "remote",
     url: url.href,
-    WebSocket,
+    WebSocket: terminalSocket((event) =>
+      activeStore?.receiveRuntimeEvent(event),
+    ),
     authToken: process.env.LETTA_APP_SERVER_TOKEN,
   });
   try {
@@ -35,6 +38,7 @@ export async function runAttachedTerminal(address: string, target?: string) {
         client.resumeSession(target ?? id, { canUseTool }),
       client,
     );
+    activeStore = store;
     const app = render(<AttachedTerminal store={store} />, {
       exitOnCtrlC: false,
     });

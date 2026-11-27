@@ -88,20 +88,6 @@ export const commands: Record<string, Command> = {
     order: 50,
     handler: handleReflectionCommand,
   },
-  "/reflection": {
-    desc: "Alias for /reflect",
-    args: "[--recent N | --conversation ID ... | --auto] [--instruction TEXT]",
-    hidden: true,
-    handler: handleReflectionCommand,
-  },
-  "/reflect-arena": {
-    desc: "Experimental blind A/B reflection model comparison",
-    args: "[--model-a MODEL] [--model-b MODEL] | resume <run-id> | choose <run-id> <1|2|tie> [notes]",
-    order: 50.1,
-    handler: () => {
-      return "Preparing reflection arena...";
-    },
-  },
   "/skills": {
     desc: "Browse available skills",
     order: 28,
@@ -123,14 +109,6 @@ export const commands: Record<string, Command> = {
     noArgs: true,
     handler: () => {
       return "Opening memory viewer...";
-    },
-  },
-  "/palace": {
-    desc: "Open the Memory Palace in your browser",
-    order: 16,
-    noArgs: true,
-    handler: () => {
-      return "Opening Memory Palace...";
     },
   },
   "/sleeptime": {
@@ -157,14 +135,6 @@ export const commands: Record<string, Command> = {
       return "Setting max context window...";
     },
   },
-  "/memfs": {
-    desc: "Manage filesystem-backed memory (/memfs [enable|sync|reset])",
-    args: "[enable|disable|sync|reset]",
-    order: 27.5,
-    handler: () => {
-      return "Managing memory filesystem...";
-    },
-  },
   "/search": {
     desc: "Search messages across all agents (/search [query])",
     order: 15.1,
@@ -186,14 +156,6 @@ export const commands: Record<string, Command> = {
     noArgs: true,
     handler: () => {
       return "Clearing in-context messages...";
-    },
-  },
-  "/clear-messages": {
-    desc: "Reset all agent messages (destructive)",
-    hidden: true,
-    noArgs: true,
-    handler: () => {
-      return "Resetting agent messages...";
     },
   },
   "/chdir": {
@@ -293,14 +255,6 @@ export const commands: Record<string, Command> = {
     args: "learn [memory-citations] [options] | generate-env [request]",
     handler: () => {
       return "Starting mod learning...";
-    },
-  },
-  "/ade": {
-    desc: "Open agent in ADE (browser)",
-    order: 28,
-    noArgs: true,
-    handler: () => {
-      return "Opening ADE...";
     },
   },
 
@@ -553,43 +507,11 @@ export const commands: Record<string, Command> = {
     },
   },
 
-  "/stream": {
-    desc: "Toggle token streaming on/off",
-    hidden: true,
-    noArgs: true,
-    handler: () => {
-      return "Toggling token streaming...";
-    },
-  },
   "/compact": {
     desc: "Summarize conversation history (compaction) with optional mode",
     args: "[all|sliding_window|self_compact_all|self_compact_sliding_window]",
     handler: () => {
       return "Compacting conversation...";
-    },
-  },
-  "/set-max-context": {
-    desc: "Alias for /context-limit",
-    args: "[tokens] [--override]",
-    hidden: true,
-    handler: () => {
-      return "Setting max context window...";
-    },
-  },
-  "/link": {
-    desc: "Attach all Letta Code tools to agent (deprecated, use /toolset instead)",
-    hidden: true,
-    noArgs: true,
-    handler: () => {
-      return "Linking tools...";
-    },
-  },
-  "/unlink": {
-    desc: "Remove all Letta Code tools from agent (deprecated, use /toolset instead)",
-    hidden: true,
-    noArgs: true,
-    handler: () => {
-      return "Unlinking tools...";
     },
   },
   "/resume": {
@@ -598,22 +520,6 @@ export const commands: Record<string, Command> = {
     order: 19,
     handler: () => {
       return "Opening conversation selector...";
-    },
-  },
-  "/pinned": {
-    desc: "Browse pinned agents",
-    hidden: true,
-    noArgs: true,
-    handler: () => {
-      return "Opening agent browser...";
-    },
-  },
-  "/profiles": {
-    desc: "Browse pinned agents",
-    hidden: true,
-    noArgs: true,
-    handler: () => {
-      return "Opening agent browser...";
     },
   },
 };

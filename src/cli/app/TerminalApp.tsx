@@ -79,7 +79,7 @@ export function TerminalApp({ store }: { store: TerminalSession }) {
   const approval = state.approvals[0];
   const suggestion = approval?.context?.permissionSuggestions?.[0];
   useInput((input, key) => {
-    if (approval || state.memory || state.picker) return;
+    if (approval || state.question || state.memory || state.picker) return;
     if (key.shift && key.tab) void store.cyclePermissionMode();
     else if (key.escape) void store.interrupt();
     else if (state.status === "offline" && input === "r") void store.connect();
@@ -107,7 +107,8 @@ export function TerminalApp({ store }: { store: TerminalSession }) {
       {state.device && (
         <Text dimColor>
           {state.status} · {state.model} · {state.device.permissionMode} ·{" "}
-          {state.device.workingDirectory}
+          {state.device.workingDirectory}{" "}
+          {state.tokens !== undefined && `· ${state.tokens} tokens`}
         </Text>
       )}
       {Array.isArray(state.device?.raw?.background_processes) &&
@@ -116,6 +117,11 @@ export function TerminalApp({ store }: { store: TerminalSession }) {
             {item.kind} · {item.description ?? item.command} · {item.status}
           </Text>
         ))}
+      {state.subagents?.map((agent) => (
+        <Text key={agent.id} dimColor>
+          {agent.description} · {agent.status}
+        </Text>
+      ))}
       {state.commandOutput && <Text>{state.commandOutput}</Text>}
       {state.error && <Text color="red">{state.error}</Text>}
       {approval ? (
@@ -182,6 +188,15 @@ export function TerminalApp({ store }: { store: TerminalSession }) {
             />
           )}
         </Box>
+      ) : state.question ? (
+        <InlineQuestionApproval
+          key={state.question.toolCallId}
+          questions={state.question.questions}
+          onSubmit={(answers) =>
+            state.question && void store.answer(state.question, answers)
+          }
+          onCancel={() => state.question && void store.answer(state.question)}
+        />
       ) : state.picker ? (
         <SessionPicker
           key={state.picker.kind}
@@ -206,6 +221,7 @@ export function TerminalApp({ store }: { store: TerminalSession }) {
         active={
           state.status === "online" &&
           !approval &&
+          !state.question &&
           !state.memory &&
           !state.picker
         }

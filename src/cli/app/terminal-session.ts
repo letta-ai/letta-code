@@ -11,9 +11,17 @@ import {
   type TranscriptRow,
 } from "@letta-ai/letta-agent-sdk";
 
+import {
+  type AskUserQuestionReceipt,
+  parseAskUserQuestionNotif,
+  parseAskUserQuestionReceipt,
+  prepareAskUserQuestionNotif,
+} from "@/ask-user-question";
 import { VALID_PERMISSION_MODES } from "@/permissions/mode";
 
 import type { MemoryFileEntry } from "@/types/protocol_v2";
+
+import { isRecord } from "@/utils/type-guards";
 
 type Approval = {
   name: string;
@@ -32,7 +40,10 @@ type Snapshot = {
   error?: string;
   commandOutput?: string;
   device?: SessionDeviceStatus;
+  question?: AskUserQuestionReceipt;
   model?: string;
+  subagents?: { id: string; description: string; status: string }[];
+  tokens?: number;
   picker?: {
     kind: "agents" | "resume" | "model";
     items: { key: string; label: string; description?: string }[];
@@ -43,6 +54,7 @@ type Snapshot = {
 };
 
 export class TerminalSession {
+  private pendingAnswers = new Set<string>();
   private echoes = new Map<string, { anchor?: string; text: string }>();
   private historyMessages = new Map<
     string,
@@ -51,6 +63,7 @@ export class TerminalSession {
   private transcript = createTranscriptAccumulator();
   private listeners = new Set<() => void>();
   private unsubscribeDevice?: () => void;
+  private eventSeq = new Map<string, number>();
   private target?: string;
   private session?: LettaCodeSession;
   private state: Snapshot = {
@@ -99,6 +112,25 @@ export class TerminalSession {
       );
       projected.splice(index + 1, 0, { key: otid, otid, kind: "user", text });
     }
+    const answered = new Set(this.pendingAnswers);
+    const questions: AskUserQuestionReceipt[] = [];
+    for (const row of projected) {
+      if (
+        row.kind === "user" &&
+        row.text.includes("<ask-user-question-response>")
+      ) {
+        for (const answer of parseAskUserQuestionNotif(row.text))
+          answered.add(answer.toolCallId);
+      }
+      if (
+        row.kind === "tool_call" &&
+        row.toolName === "AskUserQuestion" &&
+        row.result
+      ) {
+        const receipt = parseAskUserQuestionReceipt(row.result.content);
+        if (receipt) questions.push(receipt);
+      }
+    }
     const previous = this.state;
     const reset = previous.rows
       .slice(0, previous.committed)
@@ -109,6 +141,7 @@ export class TerminalSession {
       );
     this.update({
       rows: projected,
+      question: questions.find((q) => !answered.has(q.toolCallId)),
       committed:
         settled && !this.echoes.size
           ? projected.length
@@ -259,7 +292,9 @@ export class TerminalSession {
   }
 
   private switchTarget(target: string) {
+    this.eventSeq.clear();
     this.target = target;
+    this.pendingAnswers.clear();
     this.echoes.clear();
     this.historyMessages.clear();
     this.transcript = createTranscriptAccumulator();
@@ -270,8 +305,40 @@ export class TerminalSession {
       picker: undefined,
       commandOutput: undefined,
       model: undefined,
+      tokens: undefined,
+      subagents: undefined,
     });
     void this.connect();
+  }
+
+  async answer(
+    question: AskUserQuestionReceipt,
+    answers?: Record<string, string>,
+  ) {
+    const session = this.session;
+    if (
+      !session ||
+      this.state.question?.toolCallId !== question.toolCallId ||
+      this.pendingAnswers.has(question.toolCallId)
+    )
+      return;
+    const text = prepareAskUserQuestionNotif({
+      ...question,
+      type: "ask_user_question_response",
+      status: answers ? "answered" : "dismissed",
+      answers,
+    });
+    this.pendingAnswers.add(question.toolCallId);
+    this.project(this.transcript.rows());
+    try {
+      await session.send(text, { otid: crypto.randomUUID() });
+    } catch (error) {
+      if (session === this.session) {
+        this.pendingAnswers.delete(question.toolCallId);
+        this.project(this.transcript.rows());
+        this.fail(error);
+      }
+    }
   }
 
   closePicker() {
@@ -354,6 +421,48 @@ export class TerminalSession {
     });
   }
 
+  receiveRuntimeEvent(event: Record<string, unknown>) {
+    const session = this.session;
+    const scope = event.runtime;
+    if (
+      !session ||
+      !isRecord(scope) ||
+      scope.conversation_id !== session.conversationId ||
+      scope.agent_id !== session.agentId ||
+      typeof event.event_seq !== "number"
+    )
+      return;
+    const type = event.type;
+    if (type !== "update_subagent_state" && type !== "turn_finished") return;
+    if (event.event_seq <= (this.eventSeq.get(type) ?? -1)) return;
+    this.eventSeq.set(type, event.event_seq);
+    if (type === "update_subagent_state" && Array.isArray(event.subagents)) {
+      this.update({
+        subagents: event.subagents.flatMap((item) =>
+          isRecord(item) &&
+          !item.silent &&
+          typeof item.subagent_id === "string" &&
+          typeof item.description === "string" &&
+          typeof item.status === "string"
+            ? [
+                {
+                  id: item.subagent_id,
+                  description: item.description,
+                  status: item.status,
+                },
+              ]
+            : [],
+        ),
+      });
+    }
+    if (
+      type === "turn_finished" &&
+      isRecord(event.usage) &&
+      typeof event.usage.total_tokens === "number"
+    )
+      this.update({ tokens: event.usage.total_tokens });
+  }
+
   async searchFiles(query: string) {
     const session = this.session;
     if (!session) return [];
@@ -380,6 +489,15 @@ export class TerminalSession {
     if (!session || this.state.status !== "online") return;
     const otid = crypto.randomUUID();
     try {
+      if (text === "/usage") {
+        this.update({
+          commandOutput:
+            this.state.tokens === undefined
+              ? "No turn usage reported by the server yet"
+              : "Last turn: " + this.state.tokens + " tokens",
+        });
+        return;
+      }
       if (text === "/skills") {
         const status = await session.getDeviceStatus();
         if (session !== this.session) return;

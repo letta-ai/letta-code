@@ -39,36 +39,10 @@ const EXPERIMENT_DEFINITIONS: readonly ExperimentDefinition[] = [
     description: "Generate AI conversation titles automatically when possible.",
   },
   {
-    id: "desktop_conversation_bootstrap",
-    label: "conversation bootstrap",
-    description:
-      "Inject lightweight prior-conversation context into the first turn of brand-new Letta Code conversations.",
-  },
-  {
     id: "diffs",
     label: "diffs",
     description:
       "Open browser-based worktree diff previews powered by Diffs from Pierre.",
-  },
-  {
-    id: "memory_palace",
-    label: "memory palace",
-    description:
-      "Opt-in memory palace experiment flag for disposable local listener runs. Disabled by default; no behavior changes unless consumers gate on it.",
-    envVar: "LETTA_MEMORY_PALACE",
-  },
-  {
-    id: "reflection_arena",
-    label: "reflection arena",
-    description:
-      "Run blind A/B comparisons between reflection models on the same transcript sample.",
-    envVar: "LETTA_REFLECTION_ARENA",
-  },
-  {
-    id: "tui_cron",
-    label: "TUI cron scheduler",
-    description:
-      "Fire scheduled tasks from the CLI when the desktop app isn't running.",
   },
 ] as const;
 

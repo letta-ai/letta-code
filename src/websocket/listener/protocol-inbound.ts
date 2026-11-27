@@ -106,12 +106,7 @@ export {
   isChatGPTUsageReadCommand,
 } from "@/websocket/listener/chatgpt-usage-protocol-inbound";
 
-const EXPERIMENT_IDS = new Set<ExperimentId>([
-  "conversation_titles",
-  "desktop_conversation_bootstrap",
-  "memory_palace",
-  "tui_cron",
-]);
+const EXPERIMENT_IDS = new Set<ExperimentId>(["conversation_titles"]);
 
 function isExperimentId(value: unknown): value is ExperimentId {
   return typeof value === "string" && EXPERIMENT_IDS.has(value as ExperimentId);

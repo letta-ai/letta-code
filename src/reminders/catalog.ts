@@ -7,7 +7,6 @@ export type SharedReminderMode =
 
 export type SharedReminderId =
   | "session-context"
-  | "conversation-bootstrap"
   | "agent-info"
   | "variables-info"
   | "secrets-info"
@@ -34,11 +33,6 @@ export const SHARED_REMINDER_CATALOG: ReadonlyArray<SharedReminderDefinition> =
         "headless-bidirectional",
         "listen",
       ],
-    },
-    {
-      id: "conversation-bootstrap",
-      description: "First-turn prior-conversation bootstrap context",
-      modes: ["interactive"],
     },
     {
       id: "agent-info",

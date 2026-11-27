@@ -229,3 +229,32 @@ test("a stale approval action cannot grant the next parallel request", async () 
   store.close();
   await reading;
 });
+
+test("a failed interrupt can be retried without dropping queued messages", async () => {
+  const transport = connection();
+  transport.abort.mockRejectedValueOnce(new Error("Cancel failed"));
+  const store = new TerminalSession(() => transport.session);
+  const reading = store.connect();
+  await Bun.sleep(0);
+  transport.push({
+    type: "queue_update",
+    queue: [
+      {
+        id: "next",
+        clientMessageId: "next",
+        kind: "message",
+        source: "user",
+        content: "next",
+        enqueuedAt: "now",
+      },
+    ],
+  });
+  await Bun.sleep(0);
+  await store.interrupt();
+  expect(store.snapshot().error).toBe("Cancel failed");
+  await store.interrupt();
+  expect(store.snapshot().activity).toBe("Interrupt requested");
+  expect(store.snapshot().queue.map((item) => item.id)).toEqual(["next"]);
+  store.close();
+  await reading;
+});

@@ -1,7 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { hostname } from "node:os";
 import { LettaAgentClient } from "@letta-ai/letta-agent-sdk";
-import WebSocket from "ws";
 import { permissionMode } from "@/permissions/mode";
 import { settingsManager } from "@/settings-manager";
 import { startAppServer } from "@/websocket/app-server";
@@ -16,6 +15,7 @@ import {
 import { resolveListenerRegistrationOptions } from "@/websocket/listener/auth";
 import { getActiveRuntime } from "@/websocket/listener/runtime";
 import type { ListenerClientReplacement } from "@/websocket/listener/types";
+import { terminalSocket } from "./terminal-runtime-events";
 import { TerminalSession } from "./terminal-session";
 
 export async function openEmbeddedTerminal(
@@ -105,11 +105,14 @@ export async function openEmbeddedTerminal(
     stopListener();
     throw error;
   });
+  let activeStore: TerminalSession | undefined;
   const client = new LettaAgentClient({
     backend: "remote",
     url: handle.controlUrl,
     authToken: token,
-    WebSocket,
+    WebSocket: terminalSocket((event) =>
+      activeStore?.receiveRuntimeEvent(event),
+    ),
   });
   const store = new TerminalSession(
     (canUseTool, target) =>
@@ -123,6 +126,7 @@ export async function openEmbeddedTerminal(
       ),
     client,
   );
+  activeStore = store;
   return {
     store,
 
