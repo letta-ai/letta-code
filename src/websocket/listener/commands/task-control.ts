@@ -7,6 +7,12 @@ import type {
   SubagentStopCommand,
 } from "@/types/subagent-protocol";
 import type { MonitorStopCommand } from "@/types/task-control-protocol";
+import {
+  getConversationRuntime,
+  getConversationRuntimeKey,
+  markLocalTurnScope,
+  markSidebandOnlyScope,
+} from "@/websocket/listener/runtime";
 import type { ListenerRuntime } from "@/websocket/listener/types";
 import { handleMonitorStopCommand } from "./monitors";
 import { stopListenerConversation } from "./stop-conversation";
@@ -80,11 +86,20 @@ export async function handleTaskControlCommand(
       safeSocketSend(socket, response, response.type, command.type);
       return;
     }
-    const parent = getOrCreateScopedRuntime(
-      runtime,
-      command.runtime.agent_id,
-      command.runtime.conversation_id,
-    );
+    const { agent_id, conversation_id } = command.runtime;
+    const sidebandOnly =
+      command.type !== "launch_subagent" || command.notify === "caller";
+    if (
+      sidebandOnly &&
+      !getConversationRuntime(runtime, agent_id, conversation_id)
+    ) {
+      markSidebandOnlyScope(
+        runtime,
+        getConversationRuntimeKey(agent_id, conversation_id),
+      );
+    }
+    const parent = getOrCreateScopedRuntime(runtime, agent_id, conversation_id);
+    if (!sidebandOnly) markLocalTurnScope(parent);
     const response =
       command.type === "launch_subagent"
         ? await handleLaunchSubagentCommand(command, parent, connectionId)

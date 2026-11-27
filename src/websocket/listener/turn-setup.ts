@@ -44,7 +44,7 @@ import {
 } from "./mod-adapter";
 import type { ConversationPermissionModeState } from "./permission-mode";
 import { retryApprovalRecoveryRead } from "./recovery-read";
-import { hasInterruptedCacheForScope } from "./runtime";
+import { hasInterruptedCacheForScope, markLocalTurnScope } from "./runtime";
 import { emitListenerTurnStart } from "./turn-events";
 import {
   createTurnInputState,
@@ -117,6 +117,7 @@ export async function prepareListenerTurn(params: {
     return { kind: "interrupted" };
   }
 
+  markLocalTurnScope(runtime);
   setCurrentAgentId(agentId);
   setCurrentAgentName(listenAgentMetadata?.name ?? null);
   setConversationId(conversationId);

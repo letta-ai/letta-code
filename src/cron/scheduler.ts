@@ -9,7 +9,9 @@ import { emitProtocolV2Message } from "@/websocket/listener/protocol-outbound";
 import { scheduleQueuePump } from "@/websocket/listener/queue";
 import {
   getActiveRuntime,
+  getConversationRuntimeKey,
   getOrCreateConversationRuntime,
+  isSidebandOnlyScope,
 } from "@/websocket/listener/runtime";
 import type { ListenerTransport } from "@/websocket/listener/transport";
 import type {
@@ -329,30 +331,34 @@ async function fireCronTask(
     return false;
   }
 
-  const rawRuntime = getOrCreateConversationRuntime(
-    listener,
-    task.agent_id,
-    targetConversationId,
-  );
-
-  if (!rawRuntime) {
+  if (
+    isSidebandOnlyScope(
+      listener,
+      getConversationRuntimeKey(task.agent_id, targetConversationId),
+    )
+  ) {
     setLastRunOutcome(task.id, {
       outcome: "failed",
       reason: "runtime_unavailable",
       runAt: timing.schedulerNow,
-      error: "Conversation runtime unavailable",
+      error: "Conversation is only held for remote worker control",
     });
     safeAppendCronRunLogForTask(task, {
       status: "error",
       outcome: "failed",
       reason: "runtime_unavailable",
-      error: "Conversation runtime unavailable",
+      error: "Conversation is only held for remote worker control",
       runAtMs: timing.schedulerNow.getTime(),
       scheduledFor: task.scheduled_for,
     });
     return false;
   }
 
+  const rawRuntime = getOrCreateConversationRuntime(
+    listener,
+    task.agent_id,
+    targetConversationId,
+  );
   const conversationRuntime = ensureConversationQueueRuntime(
     listener,
     rawRuntime,
