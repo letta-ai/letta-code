@@ -891,6 +891,7 @@ async function handleIncomingMessageInner(
         return;
       }
 
+      llmApiErrorRetries = 0;
       stream = approvalResult.stream;
       turnToolContextId = getStreamToolContextId(
         stream as Stream<LettaStreamingResponse>,
