@@ -1,21 +1,15 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
+import { SYSTEM_ALERT_CLOSE, SYSTEM_ALERT_OPEN } from "@/constants";
 import {
-  SYSTEM_ALERT_CLOSE,
-  SYSTEM_ALERT_OPEN,
-  SYSTEM_REMINDER_CLOSE,
-  SYSTEM_REMINDER_OPEN,
-} from "@/constants";
+  scheduledTaskPromptDisplayText,
+  stripNonScheduledSystemReminders,
+} from "@/cron/scheduled-task-prompt";
 
 export function stripSystemReminders(text: string): string {
-  return text
-    .replace(
-      new RegExp(
-        `${SYSTEM_REMINDER_OPEN}[\\s\\S]*?${SYSTEM_REMINDER_CLOSE}`,
-        "g",
-      ),
-      "",
-    )
+  const scheduled = scheduledTaskPromptDisplayText(text);
+  if (scheduled !== null) return scheduled;
+  return stripNonScheduledSystemReminders(text)
     .replace(
       new RegExp(`${SYSTEM_ALERT_OPEN}[\\s\\S]*?${SYSTEM_ALERT_CLOSE}`, "g"),
       "",
@@ -31,13 +25,10 @@ export function getRestorableUserText(
   if (typeof content === "string") return stripSystemReminders(content);
   if (!Array.isArray(content)) return "";
   return content
-    .flatMap((c) =>
-      c.type === "text" &&
-      !c.text.includes(SYSTEM_REMINDER_OPEN) &&
-      !c.text.includes(SYSTEM_ALERT_OPEN)
-        ? [c.text]
-        : [],
+    .flatMap((part) =>
+      part.type === "text" ? [stripSystemReminders(part.text)] : [],
     )
+    .filter(Boolean)
     .join("\n")
     .trim();
 }

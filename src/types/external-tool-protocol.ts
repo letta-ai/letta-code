@@ -8,6 +8,7 @@ export interface ExternalToolDefinitionPayload {
   parameters: Record<string, unknown>;
   timeout_ms?: number;
   auto_background?: boolean;
+  foreground_yield_ms?: number;
 }
 
 export interface RuntimeStartExternalToolsGroup {

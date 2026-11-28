@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { apiRequest } from "./request";
+import { ApiRequestError, apiRequest } from "./request";
 
 export interface EnvironmentMetadata {
   os?: string;
@@ -50,6 +50,7 @@ export interface SendEnvironmentMessageResponse {
 }
 
 export interface CreateAgentSandboxResponse {
+  resumed?: boolean;
   sandboxId: string;
   deviceId: string;
   connectionName: string;
@@ -99,26 +100,58 @@ export interface AgentSandboxOptions {
   sandboxSize?: "regular" | "large" | "xlarge";
 }
 
+export class WorkerSandboxExpiredError extends Error {
+  constructor() {
+    super(
+      "The worker's cloud sandbox expired and was deleted. Launch a new worker with Agent.",
+    );
+  }
+}
+
+function isSandboxExpiredResponse(error: unknown): boolean {
+  if (!(error instanceof ApiRequestError)) return false;
+  if (error.status === 410) return true;
+  try {
+    return JSON.parse(error.responseText)?.code === "SANDBOX_EXPIRED";
+  } catch {
+    return false;
+  }
+}
+
 export async function createAgentSandbox(
   agentId: string,
-  options: AgentSandboxOptions & { conversationId?: string } = {},
+  options: AgentSandboxOptions & {
+    conversationId?: string;
+    resumeOnly?: boolean;
+  } = {},
   request: typeof apiRequest = apiRequest,
 ): Promise<CreateAgentSandboxResponse> {
   const conversationId =
     options.conversationId === "default" ? undefined : options.conversationId;
-  return request<CreateAgentSandboxResponse>(
-    "POST",
-    `/v1/agents/${encodeURIComponent(agentId)}/sandboxes`,
-    {
-      ...(conversationId && { conversationId }),
-      ...(options.githubRepositories !== undefined && {
-        githubRepositories: options.githubRepositories,
-      }),
-      ...(options.sandboxSize !== undefined && {
-        sandboxSize: options.sandboxSize,
-      }),
-    },
-  );
+  let sandbox: CreateAgentSandboxResponse;
+  try {
+    sandbox = await request<CreateAgentSandboxResponse>(
+      "POST",
+      `/v1/agents/${encodeURIComponent(agentId)}/sandboxes`,
+      {
+        ...(conversationId && { conversationId }),
+        ...(options.resumeOnly && { resumeOnly: true }),
+        ...(options.githubRepositories !== undefined && {
+          githubRepositories: options.githubRepositories,
+        }),
+        ...(options.sandboxSize !== undefined && {
+          sandboxSize: options.sandboxSize,
+        }),
+      },
+    );
+  } catch (error) {
+    if (options.resumeOnly && isSandboxExpiredResponse(error))
+      throw new WorkerSandboxExpiredError();
+    throw error;
+  }
+  if (options.resumeOnly && sandbox.resumed === false)
+    throw new WorkerSandboxExpiredError();
+  return sandbox;
 }
 
 export function isEnvironmentOnline(
@@ -185,16 +218,34 @@ export function environmentMatchesSelector(
 }
 
 export class ComputerResolutionError extends Error {
+  readonly httpStatus: number | undefined;
+
   constructor(
     public readonly code:
       | "computer_selector_empty"
       | "computer_not_found"
       | "computer_offline"
-      | "computer_ambiguous",
+      | "computer_ambiguous"
+      | "cloud_conversation_create_failed"
+      | "cloud_sandbox_create_failed"
+      | "cloud_sandbox_register_timeout"
+      | "cloud_sandbox_online_timeout",
     message: string,
+    cause?: unknown,
   ) {
-    super(message);
+    super(message, { cause });
     this.name = "ComputerResolutionError";
+    if (cause && typeof cause === "object" && "status" in cause) {
+      const status = cause.status;
+      if (
+        typeof status === "number" &&
+        Number.isInteger(status) &&
+        status >= 400 &&
+        status <= 599
+      ) {
+        this.httpStatus = status;
+      }
+    }
   }
 }
 
@@ -262,14 +313,27 @@ export async function resolveAgentSandboxConnectionId(
   agentId: string,
   options: AgentSandboxOptions & {
     conversationId?: string;
+    resumeOnly?: boolean;
     timeoutMs?: number;
     pollIntervalMs?: number;
   } = {},
 ): Promise<{ connectionId: string; environment: EnvironmentConnection }> {
   const timeoutMs = options.timeoutMs ?? 3 * 60_000;
   const pollIntervalMs = options.pollIntervalMs ?? 2_000;
-  const sandbox = await createAgentSandbox(agentId, options);
-  const deviceId = sandbox.deviceId || `sandbox-${agentId}`;
+  let deviceId: string;
+  let connectionName: string;
+  try {
+    const sandbox = await createAgentSandbox(agentId, options);
+    deviceId = sandbox.deviceId || `sandbox-${agentId}`;
+    connectionName = sandbox.connectionName;
+  } catch (error) {
+    if (error instanceof WorkerSandboxExpiredError) throw error;
+    throw new ComputerResolutionError(
+      "cloud_sandbox_create_failed",
+      error instanceof Error ? error.message : String(error),
+      error,
+    );
+  }
   const deadline = Date.now() + timeoutMs;
   let lastEnvironment: EnvironmentConnection | null = null;
   let lastError: unknown = null;
@@ -288,13 +352,17 @@ export async function resolveAgentSandboxConnectionId(
   }
 
   if (lastEnvironment) {
-    throw new Error(
-      `Timed out waiting for cloud sandbox ${sandbox.connectionName} to come online. Last status: ${describeEnvironment(lastEnvironment)}`,
+    throw new ComputerResolutionError(
+      "cloud_sandbox_online_timeout",
+      `Timed out waiting for cloud sandbox ${connectionName} to come online. Last status: ${describeEnvironment(lastEnvironment)}`,
+      lastError,
     );
   }
 
-  throw new Error(
-    `Timed out waiting for cloud sandbox ${sandbox.connectionName} to register${lastError instanceof Error ? `: ${lastError.message}` : ""}`,
+  throw new ComputerResolutionError(
+    "cloud_sandbox_register_timeout",
+    `Timed out waiting for cloud sandbox ${connectionName} to register${lastError instanceof Error ? `: ${lastError.message}` : ""}`,
+    lastError,
   );
 }
 

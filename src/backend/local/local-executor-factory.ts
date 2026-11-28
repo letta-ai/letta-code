@@ -6,6 +6,7 @@ import {
 import type { LocalPiModelsRuntime } from "@/backend/dev/pi-models-runtime";
 import {
   type LocalContextPressure,
+  type LocalTurnCompaction,
   PiStreamAdapter,
   type PiStreamFunction,
 } from "@/backend/dev/pi-stream-adapter";
@@ -15,7 +16,6 @@ import type {
   ProviderTurnInput,
 } from "@/backend/dev/provider-turn-executor";
 import { ProviderTurnExecutor } from "@/backend/dev/provider-turn-executor";
-import type { LocalCompactionStats, LocalMessage } from "./local-message";
 
 export type LocalBackendExecutionMode =
   | "pi"
@@ -32,11 +32,7 @@ export interface CreateLocalExecutorOptions {
 type LocalCompactionCallback = (
   input: ProviderTurnInput,
   trigger: unknown,
-) => Promise<{
-  uiMessages: LocalMessage[];
-  summary: string;
-  stats?: LocalCompactionStats;
-} | null>;
+) => Promise<LocalTurnCompaction | null>;
 
 export function createLocalExecutor(
   options: CreateLocalExecutorOptions,

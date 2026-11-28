@@ -5,12 +5,7 @@ import type {
   Message,
   TextContent,
 } from "@letta-ai/letta-client/resources/agents/messages";
-import {
-  SYSTEM_ALERT_CLOSE,
-  SYSTEM_ALERT_OPEN,
-  SYSTEM_REMINDER_CLOSE,
-  SYSTEM_REMINDER_OPEN,
-} from "@/constants";
+import { stripSystemReminders } from "@/cli/app/system-reminders";
 import { extractTaskNotificationsForDisplay } from "@/utils/task-notifications";
 import type { Buffers } from "./accumulator";
 import { extractCompactionSummary } from "./compaction-utils";
@@ -42,20 +37,7 @@ function normalizeLineEndings(s: string): string {
 }
 
 function removeSystemContextBlocks(text: string): string {
-  return stripSkillContentBlocks(
-    text
-      .replace(
-        new RegExp(
-          `${SYSTEM_REMINDER_OPEN}[\\s\\S]*?${SYSTEM_REMINDER_CLOSE}`,
-          "g",
-        ),
-        "",
-      )
-      .replace(
-        new RegExp(`${SYSTEM_ALERT_OPEN}[\\s\\S]*?${SYSTEM_ALERT_CLOSE}`, "g"),
-        "",
-      ),
-  );
+  return stripSkillContentBlocks(stripSystemReminders(text));
 }
 
 function renderAssistantContentParts(

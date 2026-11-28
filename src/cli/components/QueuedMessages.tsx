@@ -1,6 +1,7 @@
 import { Box } from "ink";
 import { memo } from "react";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
+import { scheduledTaskPromptDisplayText } from "@/cron/scheduled-task-prompt";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
 import { Text } from "./Text";
 
@@ -14,7 +15,7 @@ export const QueuedMessages = memo(
     const maxDisplay = 5;
     const userMessages = messages.filter((msg) => msg.kind === "user");
     const displayMessages = userMessages
-      .map((msg) => msg.text.trim())
+      .map(({ text }) => scheduledTaskPromptDisplayText(text) ?? text.trim())
       .filter((msg) => msg.length > 0);
 
     if (displayMessages.length === 0) {

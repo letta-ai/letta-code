@@ -1,5 +1,9 @@
 import type { SubagentResult } from "@/agent/subagents";
-import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { resumeSubagentWriter } from "@/backend/api/subagents";
+import {
+  getCurrentWorkingDirectory,
+  getRuntimeActingUserAttribution,
+} from "@/runtime-context";
 import {
   createExternalCodingAgentConfig,
   type ExternalCodingAgentType,
@@ -12,6 +16,7 @@ import {
   reportNativeSessionCaptureFailure,
 } from "./native-session-capture";
 import { getNextTaskId } from "./process_manager";
+import { persistedSubagentStatus } from "./subagent-persistence";
 import {
   type SpawnBackgroundSubagentTaskResult,
   spawnBackgroundSubagentTask,
@@ -37,6 +42,23 @@ export function trackExternalFollowupCompletion(args: {
   claimsParentRuntime?: boolean;
 }): SpawnBackgroundSubagentTaskResult {
   return spawnBackgroundSubagentTask({
+    observePersistedState: args.publishResult
+      ? undefined
+      : () => {
+          const writer = resumeSubagentWriter(
+            args.parentScope.conversationId,
+            { worker_session_id: args.agentId },
+            args.parentScope.actingUserId === undefined
+              ? getRuntimeActingUserAttribution()
+              : args.parentScope.actingUserId,
+          );
+          let stopped = false;
+          return (state) => {
+            const status = stopped ? "stopped" : persistedSubagentStatus(state);
+            stopped = status === "stopped";
+            writer?.update({ status, worker_session_id: args.agentId });
+          };
+        },
     taskId: args.taskId,
     subagentType: args.type,
     config: createExternalCodingAgentConfig(args.type),

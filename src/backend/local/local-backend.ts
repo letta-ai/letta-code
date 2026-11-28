@@ -26,6 +26,7 @@ import { toPiTools } from "@/backend/dev/pi-messages";
 import { LocalPiModelsRuntime } from "@/backend/dev/pi-models-runtime";
 import type {
   LocalContextPressure,
+  LocalTurnCompaction,
   PiStreamFunction,
 } from "@/backend/dev/pi-stream-adapter";
 import {
@@ -491,11 +492,7 @@ export class LocalBackend extends HeadlessBackend {
   private async compactAfterContextOverflow(
     input: ProviderTurnInput,
     _error: unknown,
-  ): Promise<{
-    uiMessages: LocalMessage[];
-    summary: string;
-    stats?: LocalCompactionStats;
-  } | null> {
+  ): Promise<LocalTurnCompaction | null> {
     const result = await this.compactLocalConversation(
       input.conversationId,
       input.agentId,
@@ -503,24 +500,13 @@ export class LocalBackend extends HeadlessBackend {
       undefined,
       input,
     );
-    return {
-      uiMessages: this.store.listLocalMessages(
-        input.conversationId,
-        input.agentId,
-      ),
-      summary: result.summary,
-      stats: result.stats,
-    };
+    return this.turnCompaction(input, result);
   }
 
   private async compactForContextPressure(
     input: ProviderTurnInput,
     pressure: LocalContextPressure,
-  ): Promise<{
-    uiMessages: LocalMessage[];
-    summary: string;
-    stats?: LocalCompactionStats;
-  } | null> {
+  ): Promise<LocalTurnCompaction | null> {
     const messageTokens = estimateLocalMessageTokens(
       this.store.listLocalMessages(input.conversationId, input.agentId),
     );
@@ -536,6 +522,13 @@ export class LocalBackend extends HeadlessBackend {
       ),
     );
     if (!result) return null;
+    return this.turnCompaction(input, result);
+  }
+
+  private turnCompaction(
+    input: ProviderTurnInput,
+    result: LocalCompactionResult & { systemPrompt?: string },
+  ): LocalTurnCompaction {
     return {
       uiMessages: this.store.listLocalMessages(
         input.conversationId,
@@ -543,6 +536,14 @@ export class LocalBackend extends HeadlessBackend {
       ),
       summary: result.summary,
       stats: result.stats,
+      ...(result.systemPrompt !== undefined
+        ? {
+            systemPrompt: appendAvailableSkillsBlock(
+              result.systemPrompt,
+              input.clientSkills,
+            ),
+          }
+        : {}),
     };
   }
 
@@ -618,7 +619,7 @@ export class LocalBackend extends HeadlessBackend {
     body?: ConversationMessageCompactBody,
     turn?: ProviderTurnInput,
     maxMessageTokens?: number,
-  ): Promise<LocalCompactionResult> {
+  ): Promise<LocalCompactionResult & { systemPrompt?: string }> {
     await this.emitCompactStart(conversationId, agentId, trigger);
     const result = await this.compactLocalConversationInner(
       conversationId,
@@ -628,8 +629,30 @@ export class LocalBackend extends HeadlessBackend {
       turn,
       maxMessageTokens,
     );
+    const systemPrompt = await this.recompileMemoryAfterCompaction(
+      conversationId,
+      agentId,
+    );
     await this.emitCompactEnd(conversationId, agentId, trigger, result.stats);
-    return result;
+    return systemPrompt === undefined ? result : { ...result, systemPrompt };
+  }
+
+  private async recompileMemoryAfterCompaction(
+    conversationId: string,
+    agentId: string,
+  ): Promise<string | undefined> {
+    if (
+      this.store.isAgentFreeConversation(conversationId) ||
+      !this.isMemfsEnabledForAgent(agentId)
+    ) {
+      return undefined;
+    }
+    const compiled = await this.compileAndMaybePersistSystemPrompt(
+      conversationId,
+      agentId,
+      { dryRun: false },
+    );
+    return compiled.content;
   }
 
   private async compactLocalConversationInner(
@@ -663,20 +686,13 @@ export class LocalBackend extends HeadlessBackend {
           result.stats.context_tokens_after === undefined ||
           result.stats.context_tokens_after < result.stats.context_window
         ) {
-          await this.compileAndMaybePersistSystemPrompt(
-            conversationId,
-            agentId,
-            {
-              dryRun: false,
-            },
-          );
           return result;
         }
       } catch (error) {
         if (!isLocalSlidingWindowCompactionPlanningError(error)) throw error;
       }
     }
-    const result = await this.compactLocalConversationPass(
+    return this.compactLocalConversationPass(
       conversationId,
       agentId,
       agent,
@@ -688,10 +704,6 @@ export class LocalBackend extends HeadlessBackend {
       },
       self,
     );
-    await this.compileAndMaybePersistSystemPrompt(conversationId, agentId, {
-      dryRun: false,
-    });
-    return result;
   }
 
   private async compactLocalConversationPass(

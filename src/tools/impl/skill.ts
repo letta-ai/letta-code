@@ -23,6 +23,7 @@ import {
   PROJECT_SKILLS_DIR,
   SKILLS_DIR,
 } from "@/agent/skills";
+import { SKILL_CONTENT_TAG } from "@/constants";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { parseFrontmatter } from "@/utils/frontmatter";
 import { queueSkillContent } from "./skill-content-registry";
@@ -307,7 +308,7 @@ function escapeXmlAttribute(value: string): string {
 }
 
 export function wrapSkillContent(skillName: string, content: string): string {
-  return `<skill_content name="${escapeXmlAttribute(skillName)}">\n${content}\n</skill_content>`;
+  return `<${SKILL_CONTENT_TAG} name="${escapeXmlAttribute(skillName)}">\n${content}\n</${SKILL_CONTENT_TAG}>`;
 }
 
 export function wrapSkillPrompt(

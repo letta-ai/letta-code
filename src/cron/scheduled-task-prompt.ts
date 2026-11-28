@@ -1,3 +1,5 @@
+import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
+
 export type ScheduledTaskRecurrence =
   | { type: "one-off" }
   | { type: "recurring"; cron: string; fireNumber?: number };
@@ -32,8 +34,6 @@ interface ZonedDateTimeParts {
   second: number;
 }
 
-const SYSTEM_REMINDER_OPEN = "<system-reminder>";
-const SYSTEM_REMINDER_CLOSE = "</system-reminder>";
 const AUTONOMOUS_NOTICE_PREFIX = "You are running autonomously:";
 const AUTONOMOUS_NOTICE =
   "You are running autonomously: no user is watching this turn and questions will not be answered. Deliver results through your available channels or record them in memory, and work until the task is done or genuinely blocked.";
@@ -173,7 +173,7 @@ export function formatScheduledTaskPrompt(
     "",
     `Prompt: ${input.prompt}`,
   ];
-  return lines.join("\n");
+  return `${SYSTEM_REMINDER_OPEN}\n${lines.join("\n")}\n${SYSTEM_REMINDER_CLOSE}`;
 }
 
 function unwrapSystemReminder(text: string): string {
@@ -263,4 +263,33 @@ export function parseScheduledTaskPrompt(
     recurrence,
     prompt,
   };
+}
+
+export function scheduledTaskPromptDisplayText(text: string): string | null {
+  const trimmed = text.trim();
+  const closeIndex = trimmed.indexOf(SYSTEM_REMINDER_CLOSE);
+  if (
+    trimmed.includes(SYSTEM_REMINDER_OPEN) &&
+    (!trimmed.startsWith(SYSTEM_REMINDER_OPEN) ||
+      closeIndex !== trimmed.length - SYSTEM_REMINDER_CLOSE.length)
+  ) {
+    return null;
+  }
+  return parseScheduledTaskPrompt(trimmed)
+    ? unwrapSystemReminder(trimmed)
+    : null;
+}
+
+export function stripNonScheduledSystemReminders(text: string): string {
+  if (!text.includes(SYSTEM_REMINDER_OPEN)) return text;
+  return (
+    scheduledTaskPromptDisplayText(text) ??
+    text.replace(
+      new RegExp(
+        `${SYSTEM_REMINDER_OPEN}[\\s\\S]*?${SYSTEM_REMINDER_CLOSE}`,
+        "g",
+      ),
+      (block) => scheduledTaskPromptDisplayText(block) ?? "",
+    )
+  );
 }

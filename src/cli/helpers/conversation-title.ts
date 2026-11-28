@@ -2,6 +2,7 @@ import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Backend, ConversationMessageListBody } from "@/backend";
 import { summarizeConversation } from "@/backend/api/conversations";
 import { DEFAULT_TITLE_SUMMARIZATION_MODEL } from "@/constants";
+import { stripNonScheduledSystemReminders } from "@/cron/scheduled-task-prompt";
 import { settingsManager } from "@/settings-manager";
 import { isDebugEnabled } from "@/utils/debug";
 
@@ -90,15 +91,9 @@ function extractAssistantText(content: unknown): string {
   return "";
 }
 
-function stripSystemReminders(content: string): string {
-  return content
-    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "")
-    .trim();
-}
-
 function extractUserText(content: unknown): string {
   if (typeof content === "string") {
-    return stripSystemReminders(content);
+    return stripNonScheduledSystemReminders(content);
   }
   if (Array.isArray(content)) {
     const parts: string[] = [];
@@ -111,7 +106,7 @@ function extractUserText(content: unknown): string {
         parts.push("[image]");
       }
     }
-    return stripSystemReminders(parts.join("\n"));
+    return stripNonScheduledSystemReminders(parts.join("\n"));
   }
   return "";
 }

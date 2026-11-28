@@ -4,12 +4,16 @@ import { join } from "node:path";
 import { isCloudRepositoryNames } from "@/utils/cloud-repository-roots";
 import { resolveGlobalConfigDir } from "@/utils/settings-path";
 
-type NativeSessionSource = "claude_code" | "codex";
+type NativeSessionSource = "claude_code" | "codex" | "antigravity";
 export interface NativeSessionOwner {
   agentId: string;
   conversationId: string;
   actingUserId?: string | null;
   cloudSkillRepositories?: string[];
+  cwd?: string;
+  model?: string;
+  /** The Agent task description the session was launched for. */
+  description?: string;
 }
 
 function ownerPath(source: NativeSessionSource, sessionId: string): string {

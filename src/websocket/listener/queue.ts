@@ -22,7 +22,7 @@ import {
   getOrCreateProcessTransport,
   getSubscribedListenerConnections,
 } from "./connection";
-import { getInboundImageFailureMode } from "./image-policy";
+import { getInboundImageFailureMode, hasImageContent } from "./image-policy";
 import { getInboundClientMessageIds } from "./inbound-queue";
 import {
   emitDequeuedUserMessage,
@@ -99,6 +99,7 @@ function getBatchActingUserId(items: QueueItem[]): string | null | undefined {
 function buildQueuedTurnMessage(
   runtime: ConversationRuntime,
   batch: DequeuedBatch,
+  imageFailureMode: IncomingMessage["imageFailureMode"],
 ): IncomingMessage | null {
   let template: IncomingMessage | undefined;
   const messages: IncomingMessage["messages"] = [];
@@ -180,6 +181,7 @@ function buildQueuedTurnMessage(
     agentId: scopeItem?.agentId ?? runtime.agentId ?? undefined,
     conversationId: scopeItem?.conversationId ?? runtime.conversationId,
     ...template,
+    imageFailureMode,
     mcpOriginatorSuperRunId,
     ...(processOwnedTurn ? { processOwnedTurn: true } : {}),
     actingUserId: batchActingUserId ?? undefined,
@@ -227,7 +229,10 @@ export function shouldQueueInboundMessage(parsed: IncomingMessage): boolean {
   return parsed.messages.some((payload) => "content" in payload);
 }
 
-export function consumeQueuedTurn(runtime: ConversationRuntime): {
+export function consumeQueuedTurn(
+  runtime: ConversationRuntime,
+  options?: { continuation?: boolean },
+): {
   dequeuedBatch: DequeuedBatch;
   queuedTurn: IncomingMessage;
 } | null {
@@ -249,6 +254,9 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
   );
   const isNoCoalesce = (candidate: (typeof queuedItems)[number]): boolean =>
     candidate.kind === "message" && candidate.noCoalesce === true;
+  if (options?.continuation && isNoCoalesce(firstQueuedItem)) {
+    return null;
+  }
   for (const item of queuedItems) {
     if (!hasSameQueueScope(firstQueuedItem, item)) {
       break;
@@ -281,16 +289,22 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
         break;
       }
       batchConnectionId ??= itemConnectionId;
-      const itemImageFailureMode = getInboundImageFailureMode(
-        runtime.queuedMessagesByItemId.get(item.id),
-      );
-      if (
-        batchImageFailureMode !== null &&
-        itemImageFailureMode !== batchImageFailureMode
-      ) {
-        break;
+      const hasImages = incoming
+        ? incoming.messages.some(
+            (message) =>
+              "content" in message && hasImageContent(message.content),
+          )
+        : hasImageContent(item.content);
+      if (hasImages) {
+        const itemImageFailureMode = getInboundImageFailureMode(incoming);
+        if (
+          batchImageFailureMode !== null &&
+          itemImageFailureMode !== batchImageFailureMode
+        ) {
+          break;
+        }
+        batchImageFailureMode = itemImageFailureMode;
       }
-      batchImageFailureMode = itemImageFailureMode;
     }
 
     queueLen += 1;
@@ -343,7 +357,11 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
   }
 
   const clientMessageIds = getDequeuedClientMessageIds(runtime, dequeuedBatch);
-  const queuedTurn = buildQueuedTurnMessage(runtime, dequeuedBatch);
+  const queuedTurn = buildQueuedTurnMessage(
+    runtime,
+    dequeuedBatch,
+    batchImageFailureMode ?? undefined,
+  );
   if (!queuedTurn) {
     return null;
   }

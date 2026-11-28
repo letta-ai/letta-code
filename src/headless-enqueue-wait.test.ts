@@ -95,7 +95,7 @@ test("Skill and approval continuation followed by an answer belongs to the origi
           date: "2026-09-01T02:33:40Z",
           message_type: "user_message",
           content:
-            '<skill_content name="acquiring-skills">instructions</skill_content>',
+            '<skill-content name="acquiring-skills">instructions</skill-content>',
           run_id: id,
         },
         {

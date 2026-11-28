@@ -18,6 +18,7 @@ interface OpenCodeTurnOptions {
   mcpReminder?: string;
   signal?: AbortSignal;
   resumeSessionId?: string;
+  sessionName?: string;
   onStarted?: (sessionId: string) => void;
   onToolCall?: ExternalToolCallListener;
   onToolResult?: ExternalWorkerListeners["onToolResult"];
@@ -184,7 +185,11 @@ async function createSession(
       options.resumeSessionId
         ? `/session/${options.resumeSessionId}`
         : "/session",
-      options.resumeSessionId ? undefined : {},
+      options.resumeSessionId
+        ? undefined
+        : options.sessionName
+          ? { title: options.sessionName }
+          : {},
     );
     if (!/^ses_[a-zA-Z0-9]+$/.test(info.id))
       throw new Error("OpenCode returned an invalid session ID");
