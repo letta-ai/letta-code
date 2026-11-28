@@ -8,6 +8,7 @@ import {
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
 } from "@/constants";
+import { scheduledTaskPromptDisplayText } from "@/cron/scheduled-task-prompt";
 import { extractTaskNotificationsForDisplay } from "@/utils/task-notifications";
 import { colors } from "./colors";
 import { Text } from "./Text";
@@ -154,6 +155,9 @@ function wordWrap(text: string, width: number): string[] {
 export function splitSystemReminderBlocks(
   text: string,
 ): Array<{ text: string; isSystemReminder: boolean }> {
+  const scheduled = scheduledTaskPromptDisplayText(text);
+  if (scheduled !== null) return [{ text: scheduled, isSystemReminder: false }];
+
   const blocks: Array<{ text: string; isSystemReminder: boolean }> = [];
   const tags = [
     { open: SYSTEM_REMINDER_OPEN, close: SYSTEM_REMINDER_CLOSE },
@@ -195,7 +199,11 @@ export function splitSystemReminderBlocks(
       nextTag.idx,
       closeIdx + nextTag.close.length,
     );
-    blocks.push({ text: sysBlock, isSystemReminder: true });
+    const scheduled = scheduledTaskPromptDisplayText(sysBlock);
+    blocks.push({
+      text: scheduled ?? sysBlock,
+      isSystemReminder: scheduled === null,
+    });
 
     remaining = remaining.slice(closeIdx + nextTag.close.length);
   }

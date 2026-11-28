@@ -611,7 +611,12 @@ async function createSession(
     await assertCodexSignedIn(client);
     trace = deps.createTransport
       ? undefined
-      : await traceCodexLaunch(options.traceContext, env, client);
+      : await traceCodexLaunch(
+          options.traceContext,
+          env,
+          client,
+          options.resumeThreadId,
+        );
     if (trace) {
       client.dispose();
       transport = spawnTransport({
@@ -637,6 +642,7 @@ async function createSession(
     const params = options.resumeThreadId
       ? {
           threadId: options.resumeThreadId,
+          model: options.model,
           ...(options.mcpReminder
             ? { developerInstructions: options.mcpReminder }
             : {}),
@@ -648,7 +654,7 @@ async function createSession(
           sandbox: "danger-full-access",
           developerInstructions: options.mcpReminder,
         };
-    response = await client.request(method, { ...params, ...trace?.params });
+    response = await client.request(method, params);
   } catch (error) {
     void trace?.close();
     client.dispose();
@@ -670,7 +676,7 @@ async function createSession(
     client,
     cwd: readString(thread, "cwd") ?? options.cwd,
     parentAgentId: options.parentAgentId,
-    model: options.model,
+    model: readString(response, "model") ?? options.model,
     startLock: Promise.resolve(),
     pendingNotifications,
     idleTimeoutMs: deps.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS,
@@ -708,7 +714,6 @@ async function startTurnAttempt(
     threadId: session.threadId,
     input: textInput(prompt),
     cwd: session.cwd,
-    model: session.model,
     approvalPolicy: "never",
     sandboxPolicy: { type: "dangerFullAccess" },
   });

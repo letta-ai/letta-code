@@ -327,6 +327,7 @@ export async function startTraceProxy(options: {
         reply.on("end", () => finish());
         reply.on("error", () => {
           finish(true);
+          res.socket?.destroy();
           res.destroy();
         });
         reply.pipe(res);
@@ -356,6 +357,13 @@ export async function startTraceProxy(options: {
     });
     req.pipe(target);
   });
+  if (options.harness === "codex") {
+    server.on("upgrade", (_request, socket) => {
+      socket.end(
+        "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+      );
+    });
+  }
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", resolve);

@@ -1,0 +1,135 @@
+import { expect, test } from "bun:test";
+import type {
+  LettaUserMessageContentUnion,
+  UserMessage,
+} from "@letta-ai/letta-client/resources/agents/messages";
+import { createBuffers } from "@/cli/helpers/accumulator";
+import { backfillBuffers } from "@/cli/helpers/backfill";
+import { formatScheduledTaskPrompt } from "@/cron/scheduled-task-prompt";
+import { formatMultimodalTaskNotification } from "@/utils/task-notifications";
+import { extractUserMessagePreview } from "./ConversationSelector";
+import { splitSystemReminderBlocks } from "./UserMessageRich";
+
+test("recognizes a split notification in conversation previews and clipped history", () => {
+  const content = formatMultimodalTaskNotification(
+    {
+      taskId: "task-1",
+      status: "completed",
+      summary: "Tool capture completed",
+    },
+    [{ type: "text", text: "Long tool result ".repeat(100) }],
+  ).filter(
+    (part): part is LettaUserMessageContentUnion =>
+      part.type === "text" || part.type === "image",
+  );
+  const message: UserMessage = {
+    id: "message-1",
+    date: "2026-01-01T00:00:00Z",
+    message_type: "user_message",
+    content,
+  };
+
+  expect(extractUserMessagePreview(message)).toBeNull();
+  const withQuestion: UserMessage = {
+    ...message,
+    content: [...content, { type: "text", text: "What did you find?" }],
+  };
+  expect(extractUserMessagePreview(withQuestion)).toBe("What did you find?");
+
+  const buffers = createBuffers();
+  backfillBuffers(buffers, [withQuestion]);
+  expect(buffers.byId.get("message-1-task-0")).toMatchObject({
+    eventType: "task_notification",
+    summary: "Tool capture completed",
+  });
+  expect(buffers.byId.get("message-1")).toMatchObject({
+    kind: "user",
+    text: "What did you find?",
+  });
+});
+
+test("hides the payload of a legacy notification in conversation previews", () => {
+  const message: UserMessage = {
+    id: "message-2",
+    date: "2026-01-01T00:00:00Z",
+    message_type: "user_message",
+    content: [
+      { type: "text", text: "Check the screenshot" },
+      {
+        type: "text",
+        text: "<task-notification><summary>Done</summary></task-notification>",
+      },
+      { type: "text", text: "<external-tool-result>" },
+      { type: "text", text: "<text>Tool output</text>" },
+      { type: "text", text: "</external-tool-result>" },
+    ],
+  };
+  expect(extractUserMessagePreview(message)).toBe("Check the screenshot");
+});
+
+test("shows a scheduled fire in previews and history with ordinary reminders hidden", () => {
+  const time = new Date("2026-01-01T00:00:00Z");
+  const scheduled = formatScheduledTaskPrompt({
+    name: "Daily status",
+    timezone: "UTC",
+    scheduledFor: time,
+    currentTime: time,
+    recurrence: { type: "one-off" },
+    prompt: "Summarize open items.",
+  });
+  const message: UserMessage = {
+    id: "schedule-1",
+    date: time.toISOString(),
+    message_type: "user_message",
+    content: [
+      {
+        type: "text",
+        text: "<system-reminder>Private context</system-reminder>",
+      },
+      { type: "text", text: scheduled },
+    ],
+  };
+
+  expect(extractUserMessagePreview(message)).toStartWith(
+    'Scheduled task "Daily status" is firing.',
+  );
+  const buffers = createBuffers();
+  backfillBuffers(buffers, [message]);
+  const line = buffers.byId.get(message.id);
+  expect(line).toMatchObject({ kind: "user" });
+  if (line?.kind !== "user") throw new Error("Expected scheduled user line");
+  expect(line.text).toContain("Summarize open items.");
+  expect(line.text).not.toContain("Private context");
+
+  const live = splitSystemReminderBlocks(
+    `<system-reminder>Private context</system-reminder>\n${scheduled}`,
+  );
+  expect(live[0]?.isSystemReminder).toBe(true);
+  expect(live[1]).toEqual({ text: line.text, isSystemReminder: false });
+});
+
+test("hides current and legacy skill blocks from saved user lines", () => {
+  const buffers = createBuffers();
+  backfillBuffers(buffers, [
+    {
+      id: "skill-history",
+      date: "2026-01-01T00:00:00Z",
+      message_type: "user_message",
+      content: [
+        {
+          type: "text",
+          text: '<skill-content name="current">New instructions</skill-content>',
+        },
+        {
+          type: "text",
+          text: '<skill_content name="legacy">Old instructions</skill_content>',
+        },
+        { type: "text", text: "Review the plan." },
+      ],
+    },
+  ]);
+  expect(buffers.byId.get("skill-history")).toMatchObject({
+    kind: "user",
+    text: "Review the plan.",
+  });
+});

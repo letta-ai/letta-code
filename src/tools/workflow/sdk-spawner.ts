@@ -475,15 +475,11 @@ export function createSdkSpawner(
         error: `Unknown model "${options.model}". Run \`letta model list\` for valid handles.`,
       };
     }
-    const loadedSkills = options.skills?.length
-      ? await loadPreloadedSkills(options.skills, {
-          agentId: config.parentAgentId,
-          ...(config.cwd ? { workingDirectory: config.cwd } : {}),
-        })
-      : "";
-    const missingSkills = (options.skills ?? []).filter(
-      (id) => !loadedSkills.includes(`<${id}>\n`),
-    );
+    const { content: loadedSkills, missingIds: missingSkills } =
+      await loadPreloadedSkills(options.skills ?? [], {
+        agentId: config.parentAgentId,
+        ...(config.cwd ? { workingDirectory: config.cwd } : {}),
+      });
     if (missingSkills.length) {
       return {
         value: null,

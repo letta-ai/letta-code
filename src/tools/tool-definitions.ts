@@ -10,6 +10,7 @@ import ExecCommandDescription from "./descriptions/ExecCommand.md";
 import ExitWorktreeDescription from "./descriptions/ExitWorktree.md";
 import GlobDescription from "./descriptions/Glob.md";
 import GrepDescription from "./descriptions/Grep.md";
+import ListAgentsDescription from "./descriptions/ListAgents.md";
 import LSDescription from "./descriptions/LS.md";
 import MemoryDescription from "./descriptions/Memory.md";
 import MonitorDescription from "./descriptions/Monitor.md";
@@ -44,6 +45,7 @@ import { exec_command, write_stdin } from "./impl/exec-command";
 import { exit_worktree } from "./impl/exit-worktree";
 import { glob } from "./impl/glob";
 import { grep } from "./impl/grep";
+import { list_agents } from "./impl/list-agents";
 import { ls } from "./impl/ls";
 import { memory } from "./impl/memory";
 import { monitor } from "./impl/monitor";
@@ -66,7 +68,6 @@ import { wake } from "./impl/wake";
 import { watch_pr } from "./impl/watch-pr";
 import { workflow } from "./impl/workflow";
 import { write } from "./impl/write";
-
 import ApplyPatchSchema from "./schemas/ApplyPatch.json";
 import AskUserQuestionSchema from "./schemas/AskUserQuestion.json";
 import BashSchema from "./schemas/Bash.json";
@@ -77,6 +78,7 @@ import ExecCommandSchema from "./schemas/ExecCommand.json";
 import ExitWorktreeSchema from "./schemas/ExitWorktree.json";
 import GlobSchema from "./schemas/Glob.json";
 import GrepSchema from "./schemas/Grep.json";
+import ListAgentsSchema from "./schemas/ListAgents.json";
 import LSSchema from "./schemas/LS.json";
 import MemorySchema from "./schemas/Memory.json";
 import MonitorSchema from "./schemas/Monitor.json";
@@ -236,6 +238,11 @@ const toolDefinitions = {
     schema: ReadLSPSchema,
     description: ReadLSPDescription.trim(),
     impl: read_lsp,
+  }),
+  ListAgents: defineTool({
+    schema: ListAgentsSchema,
+    description: ListAgentsDescription.trim(),
+    impl: list_agents,
   }),
   SendAgentMessage: defineTool({
     schema: SendAgentMessageSchema,

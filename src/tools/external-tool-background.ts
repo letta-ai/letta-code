@@ -1,5 +1,4 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import { buildExternalToolNotificationContent } from "@/queue/turn-queue-runtime";
 import { resolveForegroundYieldMs } from "@/tools/foreground-yield";
 import {
   appendToOutputFile,
@@ -17,6 +16,7 @@ import {
   type QueuedMessage,
 } from "@/utils/message-queue-bridge";
 import {
+  formatMultimodalTaskNotification,
   formatTaskNotification,
   type NotificationScope,
 } from "@/utils/task-notifications";
@@ -39,7 +39,7 @@ export function interruptedExternalToolResult(
 ): InterruptedExternalResult {
   return {
     status: "error",
-    toolReturn: `External tool call interrupted by user: ${toolName}. The remote tool may still finish; its outcome is unknown. Check the destination before retrying a write.`,
+    toolReturn: `Tool call interrupted by user: ${toolName}. The remote tool may still finish; its outcome is unknown. Check the destination before retrying a write.`,
   };
 }
 
@@ -99,7 +99,6 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
 ): Promise<
   T | { status: "success"; toolReturn: string } | InterruptedExternalResult
 > {
-  const label = options?.abortController ? "Tool" : "External tool";
   const signal = options?.signal;
   const runtime = options?.runtimeScope;
   const scope =
@@ -172,7 +171,7 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
   const entry: BackgroundProcess = {
     process: { kill: () => options?.abortController?.abort() },
     command: toolName,
-    description: `${label} ${toolName}`,
+    description: `Tool ${toolName}`,
     kind: "tool",
     remote: !options?.abortController,
     status: "running",
@@ -226,7 +225,7 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
       : undefined;
     let raw = result
       ? richContent
-        ? "The tool result follows this notification as text and image parts."
+        ? "See the attached tool result."
         : notificationText(result.toolReturn)
       : scrubAmbientSecrets(
           String(outcome.kind === "error" ? outcome.error : "Unknown error"),
@@ -241,6 +240,15 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
     ) {
       raw +=
         " The remote tool may still finish; its outcome is unknown. Check the destination before retrying a write.";
+    }
+    if (
+      status === "failed" &&
+      raw.startsWith("External tool execution error:")
+    ) {
+      raw = raw.replace(
+        /^External tool execution error:/,
+        "Tool execution error:",
+      );
     }
     appendToOutputFile(
       outputFile,
@@ -270,22 +278,24 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
       LIMITS.TOOL_RETURN_MAX_CHARS + 1_000,
       toolName,
     );
-    const text = formatTaskNotification({
+    const notification = {
       taskId,
       status,
-      summary: `${label} ${toolName} ${status}`,
-      result: content.content,
+      summary: `Tool ${toolName} ${status}`,
       usage: { durationMs: Date.now() - startedAt },
-    });
+    } as const;
     enqueue({
       kind: "task_notification",
-      text,
+      text: formatTaskNotification({
+        ...notification,
+        result: content.content,
+      }),
       ...(richContent
         ? {
-            content: buildExternalToolNotificationContent({
-              text,
-              content: richContent,
-            }),
+            content: formatMultimodalTaskNotification(
+              notification,
+              richContent,
+            ),
           }
         : {}),
       ...scope,

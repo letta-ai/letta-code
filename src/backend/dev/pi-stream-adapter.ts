@@ -46,7 +46,6 @@ import type {
   ProviderTurnInput,
 } from "./provider-turn-executor";
 import {
-  contextTokensFromUsage,
   estimateProviderContextTokens,
   estimateProviderPromptFloorTokens,
   providerLettaChunk,
@@ -71,14 +70,24 @@ export type PiStreamFunction = (
 export interface LocalContextPressure {
   contextTokens: number;
   contextWindow: number;
-  phase: "preflight" | "post_turn";
-  source: "estimate" | "usage";
 }
 
-interface LocalCompactionResult {
+export interface LocalTurnCompaction {
   uiMessages: LocalMessage[];
   summary: string;
   stats?: LocalCompactionStats;
+  systemPrompt?: string;
+}
+
+function inputAfterCompaction(
+  input: ProviderTurnInput,
+  compaction: LocalTurnCompaction,
+): ProviderTurnInput {
+  return {
+    ...input,
+    uiMessages: compaction.uiMessages,
+    systemPrompt: compaction.systemPrompt ?? input.systemPrompt,
+  };
 }
 
 export interface PiStreamAdapterOptions {
@@ -89,15 +98,11 @@ export interface PiStreamAdapterOptions {
   onContextWindowOverflow?: (
     input: ProviderTurnInput,
     error: unknown,
-  ) => Promise<{
-    uiMessages: LocalMessage[];
-    summary: string;
-    stats?: LocalCompactionStats;
-  } | null>;
+  ) => Promise<LocalTurnCompaction | null>;
   onContextPressure?: (
     input: ProviderTurnInput,
     pressure: LocalContextPressure,
-  ) => Promise<LocalCompactionResult | null>;
+  ) => Promise<LocalTurnCompaction | null>;
   onLlmStart?: (info: LlmStartInfo) => void | Promise<void>;
   onLlmEnd?: (info: LlmEndInfo) => void | Promise<void>;
 }
@@ -379,7 +384,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
 
   private async compactBeforeProviderCall(
     input: ProviderTurnInput,
-  ): Promise<LocalCompactionResult | null> {
+  ): Promise<LocalTurnCompaction | null> {
     if (!this.onContextPressure) return null;
 
     const contextTokens = estimateProviderContextTokens(input);
@@ -405,12 +410,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       return null;
     }
 
-    return this.onContextPressure(input, {
-      contextTokens,
-      contextWindow,
-      phase: "preflight",
-      source: "estimate",
-    });
+    return this.onContextPressure(input, { contextTokens, contextWindow });
   }
 
   private async *streamOnce(
@@ -555,7 +555,6 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
 
       let streamError: unknown;
       let finalMessage: AssistantMessage | undefined;
-      let finalLocalMessage: LocalAssistantMessage | undefined;
       for await (const part of result) {
         if (part.type === "error") {
           const error = new PiProviderError(part.error);
@@ -574,8 +573,9 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
         }
         if (part.type === "done") {
           finalMessage = part.message;
-          finalLocalMessage = toLocalAssistantMessage(part.message, input);
-          yield providerLocalMessage(finalLocalMessage);
+          yield providerLocalMessage(
+            toLocalAssistantMessage(part.message, input),
+          );
         }
         yield providerStreamPart(part, resolved.model);
       }
@@ -601,32 +601,6 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
         finalMessage.stopReason === "aborted"
       ) {
         throw new PiProviderError(finalMessage);
-      }
-      if (this.onContextPressure) {
-        const usageContextTokens = contextTokensFromUsage(finalMessage.usage);
-        const contextTokens =
-          usageContextTokens ??
-          estimateProviderContextTokens({
-            ...input,
-            uiMessages: [
-              ...input.uiMessages,
-              finalLocalMessage ?? toLocalAssistantMessage(finalMessage, input),
-            ],
-          });
-        const contextWindow = resolved.model.contextWindow;
-        const compaction =
-          shouldCompactForContextPressure({ contextTokens, contextWindow }) &&
-          contextTokens !== undefined
-            ? await this.onContextPressure(input, {
-                contextTokens,
-                contextWindow,
-                phase: "post_turn",
-                source: usageContextTokens === undefined ? "estimate" : "usage",
-              })
-            : null;
-        if (compaction) {
-          yield* this.emitCompactionChunks(compaction, "context_window_limit");
-        }
       }
     } catch (error) {
       if (!llmEnded) {
@@ -654,7 +628,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
         preflightCompactionChecked = true;
         const compaction = await this.compactBeforeProviderCall(activeInput);
         if (compaction) {
-          activeInput = { ...activeInput, uiMessages: compaction.uiMessages };
+          activeInput = inputAfterCompaction(activeInput, compaction);
           yield* this.emitCompactionChunks(compaction, "context_window_limit");
           continue;
         }
@@ -684,7 +658,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           if (!compaction) throw error;
 
           contextOverflowCompactions += 1;
-          activeInput = { ...activeInput, uiMessages: compaction.uiMessages };
+          activeInput = inputAfterCompaction(activeInput, compaction);
           yield* this.emitCompactionChunks(
             compaction,
             "context_window_overflow",
@@ -727,7 +701,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           }
           if (compaction) {
             contextOverflowCompactions += 1;
-            activeInput = { ...activeInput, uiMessages: compaction.uiMessages };
+            activeInput = inputAfterCompaction(activeInput, compaction);
             yield* this.emitCompactionChunks(
               compaction,
               "context_window_overflow",

@@ -25,6 +25,7 @@ export interface AppServerInfoResponseMessage {
     runtime_external_tools_update?: boolean;
     runtime_tool_policy?: boolean;
     runtime_tool_policy_foreground_yield?: boolean;
+    external_tool_foreground_yield?: boolean;
     structured_outputs?: boolean;
     write_file_base64?: boolean;
     split_channels: boolean;
