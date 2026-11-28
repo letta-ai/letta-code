@@ -28,7 +28,7 @@ export async function openEmbeddedTerminal(
   signal: AbortSignal,
   reportCloud: (error?: string) => void,
 ) {
-  const connectionName = `${hostname()} (terminal ${process.pid})`;
+  const connectionName = `${hostname()} (Letta TUI)`;
   let runtime = getActiveRuntime();
   let ownsListener = false;
   const stopListener = () => {
@@ -49,6 +49,7 @@ export async function openEmbeddedTerminal(
         signal.throwIfAborted();
         const registration = await registerWithCloud({
           ...options,
+          registrationSource: "embedded-terminal",
           listenerInstanceId: deriveListenerInstanceId(
             "listen",
             connectionName,

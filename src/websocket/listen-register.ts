@@ -23,6 +23,7 @@ export interface RegisterOptions {
   deviceId: string;
   connectionName: string;
   listenerInstanceId?: string;
+  registrationSource?: "embedded-terminal";
   onCredentialBootstrap?: (bootstrap: CredentialBootstrap) => Promise<void>;
 }
 
@@ -99,6 +100,7 @@ export async function registerWithCloud(
         : {}),
       connectionName: opts.connectionName,
       metadata: {
+        registrationSource: opts.registrationSource,
         lettaCodeVersion: getVersion(),
         os: process.platform,
         nodeVersion: process.version,
