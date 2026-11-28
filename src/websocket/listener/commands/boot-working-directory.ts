@@ -1,6 +1,6 @@
-import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import type WebSocket from "ws";
+import { resolveTraversableDirectory } from "@/helpers/working-directory";
 import { settingsManager } from "@/settings-manager";
 import type {
   GetCwdMapCommand,
@@ -32,12 +32,7 @@ async function resolveDirectory(
   const resolvedPath = path.isAbsolute(trimmedPath)
     ? trimmedPath
     : path.resolve(currentBootWorkingDirectory, trimmedPath);
-  const normalizedPath = await realpath(resolvedPath);
-  const stats = await stat(normalizedPath);
-  if (!stats.isDirectory()) {
-    throw new Error(`Not a directory: ${normalizedPath}`);
-  }
-  return normalizedPath;
+  return resolveTraversableDirectory(resolvedPath);
 }
 
 function getCwdScopeKeyFromRuntimeKey(runtimeKey: string): string | null {

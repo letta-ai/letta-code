@@ -1,5 +1,8 @@
 import path from "node:path";
-import { isConfirmedUnusableDirectory } from "@/helpers/usable-directory";
+import {
+  isConfirmedUnusableDirectory,
+  isUsableDirectory,
+} from "@/helpers/usable-directory";
 import { getFallbackWorkingDirectory } from "@/runtime-context";
 import {
   loadRemoteSettings,
@@ -34,19 +37,21 @@ export function getConversationWorkingDirectory(
   if (stored === undefined) {
     return bootWorkingDirectory;
   }
+  if (isUsableDirectory(stored)) {
+    return stored;
+  }
 
   if (isConfirmedUnusableDirectory(stored)) {
     runtime.workingDirectoryByConversation.delete(scopeKey);
     bumpWorkingDirectoryRevision(runtime);
     persistCwdMapSync(runtime.workingDirectoryByConversation);
-    return bootWorkingDirectory;
   }
 
-  return stored;
+  return bootWorkingDirectory;
 }
 
 export function getBootWorkingDirectory(runtime: ListenerRuntime): string {
-  if (!isConfirmedUnusableDirectory(runtime.bootWorkingDirectory)) {
+  if (isUsableDirectory(runtime.bootWorkingDirectory)) {
     return runtime.bootWorkingDirectory;
   }
 

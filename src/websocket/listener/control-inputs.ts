@@ -1,8 +1,8 @@
-import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import type WebSocket from "ws";
 import { getBackend } from "@/backend";
 import { INTERRUPTED_BY_USER } from "@/constants";
+import { resolveTraversableDirectory } from "@/helpers/working-directory";
 import { migratePermissionMode } from "@/permissions/mode";
 import { telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
@@ -646,11 +646,7 @@ export async function handleCwdChange(
     const resolvedPath = path.isAbsolute(requestedPath)
       ? requestedPath
       : path.resolve(currentWorkingDirectory, requestedPath);
-    const normalizedPath = await realpath(resolvedPath);
-    const stats = await stat(normalizedPath);
-    if (!stats.isDirectory()) {
-      throw new Error(`Not a directory: ${normalizedPath}`);
-    }
+    const normalizedPath = await resolveTraversableDirectory(resolvedPath);
 
     setConversationWorkingDirectory(
       runtime.listener,
