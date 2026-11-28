@@ -175,6 +175,29 @@ Only set `LETTA_BASE_URL` for a separate self-hosted server. For example,
 a server running at that URL. Do not set a dummy `LETTA_BASE_URL` for
 `--backend local`.
 
+## Voice transcription
+
+Enable `transcribe_voice` for the channel account and set the transcription
+variables in the environment of the channel listener. Transcription settings
+are independent of the agent's model provider.
+
+| Environment variable | Description |
+| --- | --- |
+| `LETTA_TRANSCRIBE_PROVIDER` | `openai` (default) or `openai-compatible`. |
+| `LETTA_TRANSCRIBE_BASE_URL` | API base including any version prefix, such as `/v1`. Required for `openai-compatible`. Letta appends `/audio/transcriptions`. Custom endpoints use HTTPS, with HTTP allowed on loopback. |
+| `LETTA_TRANSCRIBE_MODEL` | Model override. Defaults to `gpt-4o-transcribe` for `openai` and `whisper-1` for `openai-compatible`. |
+| `LETTA_TRANSCRIBE_API_KEY` | Optional for `openai-compatible` servers. With the default `openai` endpoint, Letta falls back to `OPENAI_API_KEY`. |
+
+For a local Whisper server exposing an OpenAI-compatible API, start your listener
+with these settings. Leave `LETTA_TRANSCRIBE_API_KEY` unset for a server that
+accepts unauthenticated requests.
+
+```bash
+export LETTA_TRANSCRIBE_PROVIDER=openai-compatible
+export LETTA_TRANSCRIBE_BASE_URL=http://127.0.0.1:8000/v1
+letta server --channels telegram
+```
+
 ## Channel slash commands
 
 Typed slash commands are handled before normal channel ingress so operational

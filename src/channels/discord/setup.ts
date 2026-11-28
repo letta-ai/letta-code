@@ -131,7 +131,7 @@ export async function runDiscordSetup(): Promise<boolean> {
     const acknowledgeMessageReaction = /^(y|yes)$/i.test(reactionsInput.trim());
 
     const transcriptionInput = await rl.question(
-      "Auto-transcribe audio attachments when OPENAI_API_KEY is set? [y/N]: ",
+      "Auto-transcribe audio attachments when transcription is configured? [y/N]: ",
     );
     const transcribeVoice = /^(y|yes)$/i.test(transcriptionInput.trim());
 

@@ -198,6 +198,47 @@ describe("shell secret execution", () => {
     }
   });
 
+  test("keeps the listener transcription key out of agent shells", async () => {
+    const transcribeSentinel =
+      "sk-lettatest-TRANSCRIBE-SENTINEL-credential-0123456789abcdef";
+    const originalTranscribeKey = process.env.LETTA_TRANSCRIBE_API_KEY;
+    process.env.LETTA_TRANSCRIBE_API_KEY = transcribeSentinel;
+    const context = await prepareToolExecutionContextForSpecificTools(
+      ["Bash"],
+      {
+        runtimeContext: {
+          agentId: TEST_AGENT_ID,
+          workingDirectory: process.cwd(),
+        },
+        workingDirectory: process.cwd(),
+      },
+    );
+
+    try {
+      const command =
+        process.platform === "win32"
+          ? 'Write-Output "[$env:LETTA_TRANSCRIBE_API_KEY]"'
+          : 'printf "[%s]" "$LETTA_TRANSCRIBE_API_KEY"';
+      const result = await executeTool(
+        "Bash",
+        { command, description: "Print the transcription key slot" },
+        { toolContextId: context.contextId },
+      );
+
+      expect(result.status).toBe("success");
+      const output = toolReturnText(result.toolReturn);
+      expect(output).toContain("[]");
+      expect(output).not.toContain(transcribeSentinel);
+    } finally {
+      releaseToolExecutionContext(context.contextId);
+      if (originalTranscribeKey === undefined) {
+        delete process.env.LETTA_TRANSCRIBE_API_KEY;
+      } else {
+        process.env.LETTA_TRANSCRIBE_API_KEY = originalTranscribeKey;
+      }
+    }
+  });
+
   test("keeps background output scoped to the launch secrets", async () => {
     await seedSecrets();
     const context = await prepareToolExecutionContextForSpecificTools(

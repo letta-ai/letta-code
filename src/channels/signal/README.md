@@ -258,7 +258,7 @@ Important fields:
 | `recipient_aliases` | Optional map from inbound sender identities to replyable recipients, e.g. Signal UUID to E.164 phone number. Useful when native `signal-cli` receives from a UUID but can only send replies to the phone number. |
 | `download_media` | Download/surface inbound media. Defaults to `true` for new accounts. |
 | `media_max_bytes` | Maximum inbound media bytes to consider. Default setup value is 25 MiB. |
-| `transcribe_voice` | Auto-transcribe inbound audio when `OPENAI_API_KEY` is set. |
+| `transcribe_voice` | Auto-transcribe inbound audio when transcription is configured (`LETTA_TRANSCRIBE_*`). |
 
 ## Personal-number / self-chat safety model
 

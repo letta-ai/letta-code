@@ -126,7 +126,7 @@ export async function runWhatsAppSetup(): Promise<boolean> {
     const mediaInput = await rl.question("Download inbound media? [y/N]: ");
     const downloadMedia = /^(y|yes)$/i.test(mediaInput.trim());
     const transcriptionInput = await rl.question(
-      "Auto-transcribe voice memos when OPENAI_API_KEY is set? [y/N]: ",
+      "Auto-transcribe voice memos when transcription is configured? [y/N]: ",
     );
     const transcribeVoice = /^(y|yes)$/i.test(transcriptionInput.trim());
 
