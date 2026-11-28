@@ -20,7 +20,9 @@ import { AssistantMessage } from "@/cli/components/AssistantMessageRich";
 import { CommandMessage } from "@/cli/components/CommandMessage";
 import { ConversationSelector } from "@/cli/components/ConversationSelector";
 import { ErrorMessage } from "@/cli/components/ErrorMessageRich";
+import { ExperimentSelector } from "@/cli/components/ExperimentSelector";
 import { HelpDialog } from "@/cli/components/HelpDialog";
+import { HooksManager } from "@/cli/components/HooksManager";
 import { InlineQuestionApproval } from "@/cli/components/InlineQuestionApproval";
 import { Input } from "@/cli/components/InputRich";
 import { LettaLoginOverlay } from "@/cli/components/LettaLoginOverlay";
@@ -30,20 +32,24 @@ import {
   MemfsTreeViewer,
   type MemfsViewerSource,
 } from "@/cli/components/MemfsTreeViewer";
+import { MessageSearch } from "@/cli/components/MessageSearch";
 import { ModelSelector } from "@/cli/components/ModelSelector";
 import { ProviderSelector } from "@/cli/components/ProviderSelector";
 import { ReasoningMessage } from "@/cli/components/ReasoningMessageRich";
 import { SkillsDialog } from "@/cli/components/SkillsDialog";
 import { StatusMessage } from "@/cli/components/StatusMessage";
 import { SubagentGroupDisplay } from "@/cli/components/SubagentGroupDisplay";
+import { SubagentManager } from "@/cli/components/SubagentManager";
 import { Text } from "@/cli/components/Text";
 import { ToolCallMessage } from "@/cli/components/ToolCallMessageRich";
+import { ToolsetSelector } from "@/cli/components/ToolsetSelector";
 import { UserMessage } from "@/cli/components/UserMessageRich";
 import { AnimationProvider } from "@/cli/contexts/AnimationContext";
 import { buildCliModContext } from "@/cli/helpers/cli-mod-context";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { useLocalModAdapter } from "@/cli/mods/use-local-mod-adapter";
+import type { ExperimentSnapshot } from "@/experiments/types";
 import type { PermissionMode } from "@/permissions/mode";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
 import {
@@ -72,7 +78,10 @@ export interface TuiRootProps {
   hostLabel: string;
   switchSession: (target: SessionTarget) => void;
   renameAgent: (name: string) => void;
-  services: Pick<CommandContext, "logout" | "usage" | "context">;
+  services: Pick<
+    CommandContext,
+    "logout" | "usage" | "context" | "feedback" | "setPinned"
+  >;
   isLocalBackend: boolean;
 }
 
@@ -183,6 +192,9 @@ export function TuiRoot({
     ReadonlySet<string>
   >(() => new Set());
   const [paintedEpoch, setPaintedEpoch] = useState(snapshot.epoch);
+  const [experiments, setExperiments] = useState<ExperimentSnapshot[] | null>(
+    null,
+  );
 
   useEffect(() => {
     if (paintedEpoch === snapshot.epoch) return;
@@ -220,6 +232,18 @@ export function TuiRoot({
   const openOverlay = useCallback(
     (next: TuiOverlay) => {
       setOverlay(next);
+      if (next === "experiments") {
+        setExperiments(null);
+        store
+          .request<{ experiments: ExperimentSnapshot[] }>(
+            { type: "get_experiments" },
+            "get_experiments_response",
+            { scoped: false },
+          )
+          .then((response) => setExperiments(response.experiments))
+          .catch(() => setOverlay(null));
+        return;
+      }
       if (next !== "memory") return;
       setMemory("loading");
       loadMemorySource(store, agentId)
@@ -526,6 +550,75 @@ export function TuiRoot({
       ) : null}
       {overlay === "connect" ? (
         <ProviderSelector onCancel={closeOverlay} />
+      ) : null}
+      {overlay === "hooks" ? (
+        <HooksManager onClose={closeOverlay} agentId={agentId} />
+      ) : null}
+      {overlay === "subagents" ? (
+        <SubagentManager onClose={closeOverlay} />
+      ) : null}
+      {overlay === "search" ? (
+        <MessageSearch
+          onClose={closeOverlay}
+          agentId={agentId}
+          conversationId={conversationId}
+          onOpenConversation={(targetAgentId, targetConversationId) => {
+            setOverlay(null);
+            switchSession({
+              agentId: targetAgentId,
+              conversationId: targetConversationId ?? "default",
+            });
+          }}
+        />
+      ) : null}
+      {overlay === "toolset" ? (
+        <ToolsetSelector
+          onCancel={closeOverlay}
+          onSelect={(preference) => {
+            setOverlay(null);
+            void store.runLocalCommand("/toolset", async () => {
+              const response = await store.request<{
+                success: boolean;
+                error?: string;
+              }>(
+                { type: "update_toolset", toolset_preference: preference },
+                "update_toolset_response",
+              );
+              if (!response.success) {
+                throw new Error(response.error ?? "Unable to switch toolset");
+              }
+              return { output: `Toolset set to ${preference}` };
+            });
+          }}
+        />
+      ) : null}
+      {overlay === "experiments" && experiments ? (
+        <ExperimentSelector
+          experiments={experiments}
+          onCancel={closeOverlay}
+          onConfirm={(changes) => {
+            setOverlay(null);
+            void store.runLocalCommand("/experiments", async () => {
+              for (const change of changes) {
+                await store.request(
+                  {
+                    type: "set_experiment",
+                    experiment_id: change.experimentId,
+                    enabled: change.enabled,
+                  },
+                  "set_experiment_response",
+                  { scoped: false },
+                );
+              }
+              return {
+                output:
+                  changes.length === 0
+                    ? "No experiment changes"
+                    : `Updated ${changes.length} experiment(s)`,
+              };
+            });
+          }}
+        />
       ) : null}
       {overlay === "mcp" ? (
         <McpSelector

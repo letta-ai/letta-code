@@ -109,8 +109,6 @@ export {
 const EXPERIMENT_IDS = new Set<ExperimentId>([
   "conversation_titles",
   "desktop_conversation_bootstrap",
-  "memory_palace",
-  "tui_cron",
 ]);
 
 function isExperimentId(value: unknown): value is ExperimentId {

@@ -2,24 +2,37 @@ import { Box } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getBackend } from "@/backend";
 import { getAgentContextOverview } from "@/backend/api/agents";
-import { getBalanceMetadata } from "@/backend/api/metadata";
+import {
+  getBalanceMetadata,
+  getFeedbackClientType,
+  submitFeedbackMetadata,
+} from "@/backend/api/metadata";
+import { CLEAR_SCREEN_AND_HOME } from "@/cli/app/constants";
 import type { AppProps } from "@/cli/app/types";
 import { Text } from "@/cli/components/Text";
 import { WelcomeScreen } from "@/cli/components/WelcomeScreen";
 import { renderContextUsage } from "@/cli/helpers/context-chart";
-import type { CommandContext, SessionTarget } from "./command-router";
+import { getDeviceType, getLocalTime } from "@/cli/helpers/session-context";
+import { settingsManager } from "@/settings-manager";
+import { getVersion } from "@/version";
+import type { SessionTarget } from "./command-router";
 import {
   readSessionHostOptions,
   type SessionHost,
   startSessionHost,
 } from "./session-host";
 import type { TuiSessionStore } from "./session-store";
-import { TuiRoot } from "./TuiRoot";
+import { TuiRoot, type TuiRootProps } from "./TuiRoot";
 
 let sharedHost: Promise<SessionHost> | null = null;
 
 function getSharedHost(): Promise<SessionHost> {
-  sharedHost ??= startSessionHost(readSessionHostOptions(process.argv));
+  sharedHost ??= startSessionHost(readSessionHostOptions(process.argv)).then(
+    (host) => {
+      process.stdout.write(CLEAR_SCREEN_AND_HOME);
+      return host;
+    },
+  );
   return sharedHost;
 }
 
@@ -100,11 +113,34 @@ function SessionApp({
     };
   }, [target]);
 
-  const services = useMemo<
-    Pick<CommandContext, "logout" | "usage" | "context">
-  >(
+  const services = useMemo<TuiRootProps["services"]>(
     () => ({
       logout,
+      setPinned: (pinned) => {
+        if (pinned) settingsManager.pinAgent(target.agentId);
+        else settingsManager.unpinAgent(target.agentId);
+        return pinned ? "Agent pinned" : "Agent unpinned";
+      },
+      feedback: async (message) => {
+        const settings = settingsManager.getSettings();
+        await submitFeedbackMetadata(
+          process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY,
+          settingsManager.getOrCreateDeviceId(),
+          {
+            message,
+            feature: "letta-code",
+            submission_source: "slash_command",
+            client_type: getFeedbackClientType(),
+            agent_id: target.agentId,
+            version: getVersion(),
+            platform: process.platform,
+            local_time: getLocalTime(),
+            device_type: getDeviceType(),
+            model: active?.store.getSnapshot().session?.model ?? undefined,
+          },
+        );
+        return "Feedback submitted. To chat with the Letta team, join https://discord.gg/letta.";
+      },
       usage: async () => {
         const wallSeconds = Math.round(
           (Date.now() - startedAtRef.current) / 1000,
@@ -138,6 +174,7 @@ function SessionApp({
 
   const switchSession = useCallback(
     (next: SessionTarget) => {
+      process.stdout.write(CLEAR_SCREEN_AND_HOME);
       setAgentName((current) =>
         next.agentId === target.agentId ? current : null,
       );

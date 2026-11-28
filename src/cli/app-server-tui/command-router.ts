@@ -10,7 +10,12 @@ export type TuiOverlay =
   | "help"
   | "login"
   | "connect"
-  | "mcp";
+  | "mcp"
+  | "toolset"
+  | "experiments"
+  | "search"
+  | "hooks"
+  | "subagents";
 
 export interface SessionTarget {
   agentId: string;
@@ -26,6 +31,8 @@ export interface CommandContext {
   renameAgent: (name: string) => void;
   exit: () => void;
   logout: () => Promise<string>;
+  feedback: (message: string) => Promise<string>;
+  setPinned: (pinned: boolean) => string;
   usage: () => Promise<string>;
   context: () => Promise<string>;
 }
@@ -40,6 +47,11 @@ const OVERLAY_COMMANDS: Record<string, TuiOverlay> = {
   "/login": "login",
   "/connect": "connect",
   "/mcp": "mcp",
+  "/toolset": "toolset",
+  "/experiments": "experiments",
+  "/search": "search",
+  "/hooks": "hooks",
+  "/subagents": "subagents",
 };
 
 const SERVER_COMMANDS = new Set([
@@ -152,8 +164,18 @@ export async function routeCommand(
     context.exit();
     return;
   }
+  if (args && (name === "/mcp" || name === "/connect")) {
+    store.note([
+      `Run \`letta ${name.slice(1)} ${args}\` from a shell; ${name} here opens the picker.`,
+    ]);
+    return;
+  }
+  if (args && name === "/resume") {
+    context.switchSession({ agentId: context.agentId, conversationId: args });
+    return;
+  }
   const overlay = OVERLAY_COMMANDS[name];
-  if (overlay && !args) {
+  if (overlay) {
     context.openOverlay(overlay);
     return;
   }
@@ -171,8 +193,100 @@ export async function routeCommand(
     });
     return;
   }
+  if (name === "/cd" || name === "/chdir") {
+    await store.runLocalCommand(input, async () => {
+      if (!args) return { output: `Usage: ${name} <path>`, success: false };
+      await store.setWorkingDirectory(args);
+      return {
+        output: `Working directory: ${store.getSnapshot().device?.cwd ?? args}`,
+      };
+    });
+    return;
+  }
+  if (name === "/description") {
+    await store.runLocalCommand(input, async () => {
+      if (!args)
+        return { output: "Usage: /description <text>", success: false };
+      const response = await store.request<AgentResponse>(
+        {
+          type: "agent_update",
+          agent_id: context.agentId,
+          body: { description: args },
+        },
+        "agent_update_response",
+        { scoped: false },
+      );
+      if (!response.success) {
+        throw new Error(response.error ?? "Unable to update the description");
+      }
+      return { output: "Description updated" };
+    });
+    return;
+  }
+  if (name === "/recompile") {
+    await store.runLocalCommand(input, async () => {
+      const response = await store.request<ConversationResponse>(
+        {
+          type: "conversation_recompile",
+          conversation_id: context.conversationId,
+          ...(context.conversationId === "default"
+            ? { body: { agent_id: context.agentId } }
+            : {}),
+        },
+        "conversation_recompile_response",
+        { scoped: false },
+      );
+      if (!response.success) {
+        throw new Error(response.error ?? "Unable to recompile");
+      }
+      return { output: "System prompt recompiled" };
+    });
+    return;
+  }
+  if (name === "/fork") {
+    let forked: string | null = null;
+    await store.runLocalCommand(input, async () => {
+      const response = await store.request<ConversationResponse>(
+        {
+          type: "conversation_fork",
+          conversation_id: context.conversationId,
+          ...(context.conversationId === "default"
+            ? { body: { agent_id: context.agentId } }
+            : {}),
+        },
+        "conversation_fork_response",
+        { scoped: false },
+      );
+      if (!response.success || !response.conversation) {
+        throw new Error(response.error ?? "Unable to fork the conversation");
+      }
+      forked = response.conversation.id;
+      return { output: "Forked the conversation" };
+    });
+    if (forked) {
+      context.switchSession({
+        agentId: context.agentId,
+        conversationId: forked,
+      });
+    }
+    return;
+  }
   if (name === "/rename") {
     await rename(context, input);
+    return;
+  }
+  if (name === "/feedback") {
+    await store.runLocalCommand(input, async () => {
+      if (!args)
+        return { output: "Usage: /feedback <message>", success: false };
+      return { output: await context.feedback(args) };
+    });
+    return;
+  }
+  if (name === "/pin" || name === "/unpin") {
+    await store.runLocalCommand(input, async () => ({
+      output: context.setPinned(name === "/pin"),
+    }));
     return;
   }
   if (name === "/logout") {

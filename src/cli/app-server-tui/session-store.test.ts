@@ -457,4 +457,79 @@ describe("TUI session store", () => {
     });
     store.close();
   });
+
+  test("server commands run in the runtime scope and report their output", async () => {
+    const session = new FakeSession();
+    session.respond = () => ({ success: false, output: "nothing to compact" });
+    const store = await startStore(session);
+    const succeeded = await store.runServerCommand("compact", " now ");
+    expect(succeeded).toBe(false);
+    expect(session.commands).toEqual([
+      {
+        type: "execute_command",
+        command_id: "compact",
+        args: "now",
+        runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+      },
+    ]);
+    expect(store.getSnapshot().items).toEqual([
+      {
+        kind: "command",
+        id: "command-1",
+        input: "/compact now",
+        output: "nothing to compact",
+        success: false,
+        phase: "finished",
+      },
+    ]);
+    store.close();
+  });
+
+  test("taking the queue removes every queued item and returns its text", async () => {
+    const session = new FakeSession();
+    const store = await startStore(session);
+    session.emit({
+      type: "queue_update",
+      queue: ["one", "two"].map((content, index) => ({
+        id: `q-${index}`,
+        clientMessageId: `c-${index}`,
+        kind: "message",
+        source: "user",
+        content,
+        enqueuedAt: "2026-01-01T00:00:00.000Z",
+      })),
+    });
+    await settle();
+    expect(await store.takeQueue()).toBe("one\ntwo");
+    expect(session.removed).toEqual(["q-0", "q-1"]);
+    store.close();
+  });
+
+  test("the default conversation lists history with the agent id", async () => {
+    const session = new FakeSession();
+    session.respond = () => ({
+      success: true,
+      messages: [userHistory("user-0", "otid-0", "from default")],
+      has_more: false,
+    });
+    let counter = 0;
+    const store = createTuiSessionStore({
+      defaultConversation: true,
+      openSession: () => session,
+      createId: (prefix) => {
+        counter += 1;
+        return `${prefix}-${counter}`;
+      },
+    });
+    await store.start();
+    await settle();
+    expect(session.commands[0]).toMatchObject({
+      type: "conversation_messages_list",
+      conversation_id: "default",
+      query: { agent_id: "agent-1" },
+    });
+    expect(texts(store)).toEqual(["user:from default"]);
+    expect(store.getSnapshot().hasOlder).toBe(false);
+    store.close();
+  });
 });

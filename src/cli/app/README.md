@@ -1,36 +1,16 @@
 # CLI App Layout
 
-`src/cli/App.tsx` is the public entrypoint. This directory holds the actual
-implementation, split by responsibility so agents can open the smallest useful
-file first.
+`src/cli/App.tsx` is the public entrypoint. The interactive TUI is a client of
+the App Server runtime; it does not run turns, tools, or approvals itself.
 
-- `App.tsx`: local entrypoint that re-exports the coordinator.
-- `AppCoordinator.tsx`: Ink state, effects, overlay wiring, and render tree.
-- `AppView.tsx`: render-only Ink tree for the coordinator.
-- `useSubmitHandler.ts`: slash-command and user-submit router.
-- `useConversationLoop.ts`: streaming turn loop, retry/recovery, tool execution,
-  and reflection auto-launch.
-- `useApprovalFlow.ts`: approval recovery and approve/deny batching.
-- `useConversationSwitching.ts`: `/btw`, agent selection, and new-agent
-  conversation switching flows.
-- `useBashHandlers.ts`: bash-mode submit/interrupt handling.
-- `useQueuedApprovalSubmit.ts`: stale approval recovery helpers used before
-  slash-command sends.
-- `useFeedbackHandler.ts`: `/feedback` submission and diagnostics payload.
-- `useInterruptHandler.ts`: ESC interrupt, cancellation, and recovery cleanup.
-- `useReasoningCycle.ts`: reasoning-tier tab cycling and debounced persistence.
-- `useConfigurationHandlers.ts`: model/system/personality/toolset/experiment
-  selectors and their queued overlay actions.
-- `constants.ts`: timing, retry, provider fallback, and layout constants.
-- `modelConfig.ts`: model handle, reasoning effort, and model error hint helpers.
-- `commandRouting.ts`: slash command queue-bypass classification.
-- `approvalDiffs.ts`, `approvalQuestions.ts`: approval helpers.
-- `ids.ts`, `layout.ts`, `contentParts.ts`, `systemReminders.ts`: transcript and content utilities.
-- `reflection.ts`, `retry.ts`, `session.ts`, `notifications.ts`, `errors.ts`: focused runtime helpers.
-- `StaticTranscript.tsx`, `ExitStats.tsx`: render-only pieces extracted from the coordinator.
-- `types.ts`: app props and static transcript item types.
-
-The split intentionally mirrors the listener layout at a coarse level:
-`useConversationLoop.ts` is the interactive analogue of listener `turn.ts`,
-while `useSubmitHandler.ts` owns the command-routing surface that can converge
-with listener command handling in a later PR.
+- `src/cli/app-server-tui/App.tsx`: startup states and session lifecycle
+  (embedded or attached App Server, agent and conversation switching).
+- `src/cli/app-server-tui/TuiRoot.tsx`: Ink tree: transcript, approvals,
+  composer, and picker overlays.
+- `src/cli/app-server-tui/session-store.ts`: renderer-agnostic client state
+  (transcript rows, current-turn buffer, run phase, queue, approvals).
+- `src/cli/app-server-tui/command-router.ts`: slash command routing to the
+  runtime, session RPCs, or overlays.
+- `src/cli/app-server-tui/session-host.ts`,
+  `embedded-app-server.ts`: loopback App Server and `--connect` / `--register`.
+- `constants.ts`, `types.ts` in this directory: shared constants and app props.

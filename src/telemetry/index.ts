@@ -795,16 +795,6 @@ class TelemetryManager {
     this.track("reflection_worktree_cleanup", data);
   }
 
-  trackReflectionArenaVote(
-    vote: Omit<ReflectionArenaVoteData, "version" | "platform">,
-  ) {
-    this.track("reflection_arena_vote", {
-      ...vote,
-      version: getVersion(),
-      platform: process.platform,
-    });
-  }
-
   async flush(): Promise<void> {
     if (this.inflightFlush) {
       return this.inflightFlush;

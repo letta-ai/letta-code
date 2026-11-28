@@ -105,6 +105,7 @@ export interface TuiSessionStore {
   resolveApproval(requestId: string, decision: TuiApprovalDecision): void;
   removeQueued(id: string): Promise<void>;
   setPermissionMode(mode: PermissionMode): Promise<void>;
+  setWorkingDirectory(cwd: string): Promise<void>;
   reconnect(): Promise<void>;
   note(lines: string[]): void;
   runServerCommand(commandId: string, args?: string): Promise<boolean>;
@@ -381,6 +382,13 @@ class SessionStore implements TuiSessionStore {
     const session = this.session;
     if (!session) return;
     await session.changeDeviceState({ permissionMode: mode });
+    await this.syncDevice(session);
+  }
+
+  async setWorkingDirectory(cwd: string): Promise<void> {
+    const session = this.session;
+    if (!session) return;
+    await session.changeDeviceState({ cwd });
     await this.syncDevice(session);
   }
 

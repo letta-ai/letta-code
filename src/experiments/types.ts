@@ -4,10 +4,7 @@ export type ExperimentId =
   | "artifacts"
   | "conversation_titles"
   | "desktop_conversation_bootstrap"
-  | "diffs"
-  | "memory_palace"
-  | "reflection_arena"
-  | "tui_cron";
+  | "diffs";
 
 export type ExperimentSource = "override" | "env" | "default";
 
