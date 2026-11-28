@@ -1,18 +1,24 @@
 import { Box, Text, useInput } from "ink";
 import { useState } from "react";
 import { SingleSelectPicker } from "@/cli/components/SingleSelectPicker";
-import type { TerminalSession } from "./terminal-session";
+import type { SelectableItem } from "./SingleSelectPicker";
 
-export function SessionPicker({
-  picker,
-  store,
+export function SearchablePicker({
+  items: allItems,
+  title,
+  more,
+  onSelect,
+  onCancel,
 }: {
-  picker: NonNullable<ReturnType<TerminalSession["snapshot"]>["picker"]>;
-  store: TerminalSession;
+  items: SelectableItem[];
+  title: string;
+  more?: boolean;
+  onSelect: (key: string) => void;
+  onCancel: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(0);
-  const filtered = picker.items.filter((item) =>
+  const filtered = allItems.filter((item) =>
     (item.label + " " + item.key).toLowerCase().includes(query.toLowerCase()),
   );
   useInput((input, key) => {
@@ -38,17 +44,17 @@ export function SessionPicker({
     }
   });
   const items = filtered.slice(page * 10, (page + 1) * 10);
-  if (picker.after && (page + 1) * 10 >= filtered.length)
+  if (more && (page + 1) * 10 >= filtered.length)
     items.push({ key: "@more", label: "Load more…" });
   return (
     <Box flexDirection="column">
-      <Text bold>/{picker.kind}</Text>
+      <Text bold>{title}</Text>
       <Text>Search: {query}</Text>
       <SingleSelectPicker
         key={query + page}
         items={items}
-        onSelect={(key) => void store.select(key)}
-        onCancel={() => store.closePicker()}
+        onSelect={onSelect}
+        onCancel={onCancel}
         footer={
           <Text dimColor>↑↓ select · ←→ page · Enter choose · Esc close</Text>
         }

@@ -3,7 +3,7 @@ export const SUPPORTED_REMOTE_COMMANDS: readonly string[] = [
   "doctor",
   "dream",
   "reflect",
-  "reflection",
+  "context",
   "init",
   "compact",
   "reload",

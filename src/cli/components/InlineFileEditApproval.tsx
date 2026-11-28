@@ -78,12 +78,6 @@ function getHeaderText(fileEdit: FileEditInfo): string {
   const displayPath = relPath.startsWith("..") ? fileEdit.filePath : relPath;
 
   if (t === "write") {
-    const { existsSync } = require("node:fs");
-    try {
-      if (existsSync(fileEdit.filePath)) {
-        return `Overwrite ${displayPath}?`;
-      }
-    } catch {}
     return `Write to ${displayPath}?`;
   }
 

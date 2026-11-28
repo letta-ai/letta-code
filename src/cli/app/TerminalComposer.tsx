@@ -1,36 +1,21 @@
-import { Box, Text, useApp, useInput } from "ink";
-import { useEffect, useState } from "react";
-import { appendInputHistory } from "@/cli/components/input-history";
-import { PasteAwareTextInput } from "@/cli/components/PasteAwareTextInput";
-import { resolvePlaceholders } from "@/cli/helpers/paste-registry";
+import type { MessageContentItem } from "@letta-ai/letta-agent-sdk";
+import { useApp } from "ink";
+import { useMemo } from "react";
+import { Input } from "@/cli/components/InputRich";
+import {
+  buildMessageContentFromDisplay,
+  resolvePlaceholders,
+} from "@/cli/helpers/paste-registry";
+import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
+import { buildModInvocationContext } from "@/mods/context";
+import { terminalCommands } from "./terminal-commands";
 import type { TerminalSession } from "./terminal-session";
 
-const commands = [
-  "agents",
-  "clear",
-  "compact",
-  "connect",
-  "context",
-  "context-limit",
-  "dream",
-  "exit",
-  "help",
-  "history",
-  "init",
-  "login",
-  "logout",
-  "mcp",
-  "memory",
-  "model",
-  "new",
-  "queue",
-  "reflect",
-  "rename",
-  "resume",
-  "skills",
-  "usage",
-];
-
+const adapter = {
+  isLoading: false,
+  hadModPanels: false,
+  hasModSources: false,
+};
 export function TerminalComposer({
   store,
   active,
@@ -39,119 +24,70 @@ export function TerminalComposer({
   active: boolean;
 }) {
   const { exit } = useApp();
-  const [draft, setDraft] = useState("");
-  const [cursor, setCursor] = useState(0);
-  const [history, setHistory] = useState<string[]>([]);
-  const [position, setPosition] = useState<number>();
-  const [parked, setParked] = useState("");
-  const [selected, setSelected] = useState(0);
-  const [files, setFiles] = useState<string[]>([]);
-  const prefix = /(?:^|\s)(@[^\s]*)$/.exec(draft.slice(0, cursor))?.[1];
-  useEffect(() => {
-    let current = true;
-    setFiles([]);
-    setSelected(0);
-    if (active && prefix)
-      void store
-        .searchFiles(prefix.slice(1))
-        .then((paths) => {
-          if (current) setFiles(paths);
-        })
-        .catch(() => {});
-    return () => {
-      current = false;
-    };
-  }, [store, active, prefix]);
-  const matches = prefix
-    ? files.map((path) => (path.includes(" ") ? `@"${path}"` : `@${path}`))
-    : /^\/[\w-]*$/.test(draft)
-      ? commands
-          .map((command) => "/" + command)
-          .filter((command) => command.startsWith(draft) && command !== draft)
-      : [];
-  function change(value: string) {
-    setDraft(value);
-    setSelected(0);
-    setPosition(undefined);
-  }
-  function complete() {
-    const match = matches[selected];
-    if (!match) return;
-    const start = prefix ? cursor - prefix.length : 0;
-    const end = prefix ? cursor : draft.length;
-    change(draft.slice(0, start) + match + " " + draft.slice(end));
-    setCursor(start + match.length + 1);
-  }
-  useInput(
-    (_input, key) => {
-      if (key.tab && !key.shift && matches.length) {
-        complete();
-        return;
-      }
-      if (!key.upArrow && !key.downArrow) return;
-      if (matches.length) {
-        setSelected((index) =>
-          Math.max(
-            0,
-            Math.min(matches.length - 1, index + (key.upArrow ? -1 : 1)),
-          ),
-        );
-        return;
-      }
-      if (!history.length) return;
-      if (position === undefined) setParked(draft);
-      const next = Math.max(
-        0,
-        Math.min(
-          history.length,
-          (position ?? history.length) + (key.upArrow ? -1 : 1),
-        ),
-      );
-      const value = history[next] ?? parked;
-      setDraft(value);
-      setCursor(value.length);
-      setPosition(next);
-    },
-    { isActive: active },
+  const state = store.snapshot();
+  const width = useTerminalWidth();
+  const completions = useMemo(
+    () => ({
+      commands: terminalCommands,
+      searchFiles: (query: string) => store.searchFiles(query),
+    }),
+    [store],
   );
-  function submit(raw: string) {
-    if (!active || !raw.trim()) return;
-    if (prefix && matches.length) {
-      complete();
-      return;
-    }
-    const value = resolvePlaceholders(raw).trimEnd();
-    if (value === "/exit") {
-      exit();
-      return;
-    }
-    setHistory((previous) => appendInputHistory(previous, value));
-    change("");
-    setCursor(0);
-    void store.send(value);
-  }
+  const context = useMemo(
+    () =>
+      buildModInvocationContext({
+        workingDirectory: state.device?.workingDirectory ?? "",
+        agent: { id: state.agentId, name: state.agentName },
+        modelIdentifier: state.model,
+        permissionMode: state.device?.permissionMode,
+      }),
+    [state.device, state.model, state.agentId, state.agentName],
+  );
   return (
-    <Box display={active ? "flex" : "none"} flexDirection="column">
-      <Box borderStyle="round" borderColor="gray" paddingX={1}>
-        <Text bold>❯ </Text>
-        <PasteAwareTextInput
-          focus={active}
-          value={draft}
-          cursorPosition={cursor}
-          onCursorMove={setCursor}
-          onChange={change}
-          onSubmit={submit}
-          placeholder="Message · /help for commands"
-        />
-      </Box>
-      {matches
-        .slice(Math.max(0, selected - 5), Math.max(0, selected - 5) + 6)
-        .map((match) => (
-          <Text key={match} dimColor={match !== matches[selected]}>
-            {match === matches[selected] ? "❯ " : "  "}
-            {match}
-          </Text>
-        ))}
-    </Box>
+    <Input
+      visible={active}
+      inputEnabled={active}
+      streaming={state.activity?.startsWith("Working") ?? false}
+      tokenCount={state.tokens ?? 0}
+      thinkingMessage="Working"
+      terminalWidth={width}
+      currentModel={state.model}
+      modContext={context}
+      modAdapter={adapter}
+      sessionCompletions={completions}
+      permissionMode={state.device?.permissionMode ?? "standard"}
+      onPermissionModeChange={(mode) => void store.setPermissionMode(mode)}
+      onInterrupt={() => void store.interrupt()}
+      onExit={exit}
+      onSubmit={async (value) => {
+        const text = resolvePlaceholders(value ?? "").trimEnd();
+        if (!text) return { submitted: false };
+        if (text === "/exit") exit();
+        else {
+          const parts: MessageContentItem[] = buildMessageContentFromDisplay(
+            value ?? "",
+          ).map((part) => {
+            if (part.type === "text") return part;
+            const { media_type, data } = part.source;
+            if (
+              media_type !== "image/jpeg" &&
+              media_type !== "image/png" &&
+              media_type !== "image/webp" &&
+              media_type !== "image/gif"
+            )
+              throw new Error("Unsupported image type");
+            return {
+              type: "image",
+              source: { type: "base64", media_type, data },
+            };
+          });
+          await store.send(
+            text,
+            parts.some((part) => part.type === "image") ? parts : undefined,
+          );
+        }
+        return { submitted: true };
+      }}
+    />
   );
 }

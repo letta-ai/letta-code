@@ -170,6 +170,7 @@ export async function handleExecuteCommand(
         break;
 
       case "dream":
+      case "reflection":
       case "reflect":
         output = await handleReflectCommand(
           socket,

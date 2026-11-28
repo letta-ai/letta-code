@@ -5,7 +5,13 @@ export interface ModCommandAutocompleteItem {
   order: number;
 }
 
+export interface SessionCompletions {
+  commands: CommandMatch[];
+  searchFiles: (query: string) => Promise<string[]>;
+}
+
 export interface AutocompleteProps {
+  session?: SessionCompletions;
   currentInput: string;
   cursorPosition?: number;
   onSelect?: (value: string) => void;

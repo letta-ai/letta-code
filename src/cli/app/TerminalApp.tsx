@@ -1,18 +1,21 @@
 import type { TranscriptRow } from "@letta-ai/letta-agent-sdk";
-import { Box, Static, Text, useInput, useStdout } from "ink";
+import { Box, Static, Text, useApp, useInput, useStdout } from "ink";
 import { useCallback, useSyncExternalStore } from "react";
 import { isAskUserQuestions } from "@/ask-user-question";
+import { LettaLoginView } from "@/auth/LettaLoginView";
+import { AgentSelector } from "@/cli/components/AgentSelector";
 import { ApprovalSwitch } from "@/cli/components/ApprovalSwitch";
 import { AssistantMessage } from "@/cli/components/AssistantMessageRich";
 import { InlineQuestionApproval } from "@/cli/components/InlineQuestionApproval";
 import { MemfsTreeViewer } from "@/cli/components/MemfsTreeViewer";
+import { ModelSelector } from "@/cli/components/ModelSelector";
 import { ReasoningMessage } from "@/cli/components/ReasoningMessageRich";
+import { SearchablePicker } from "@/cli/components/SearchablePicker";
 import { SessionDiff } from "@/cli/components/SessionDiff";
 import { ToolCallMessage } from "@/cli/components/ToolCallMessageRich";
 import { UserMessage } from "@/cli/components/UserMessageRich";
 import type { DiffPreview } from "@/types/protocol_v2";
 import { CLEAR_SCREEN_AND_HOME } from "./constants";
-import { SessionPicker } from "./SessionPicker";
 import { TerminalComposer } from "./TerminalComposer";
 import type { TerminalSession } from "./terminal-session";
 
@@ -78,11 +81,21 @@ export function TerminalApp({ store }: { store: TerminalSession }) {
 
   const approval = state.approvals[0];
   const suggestion = approval?.context?.permissionSuggestions?.[0];
+  const { exit } = useApp();
   useInput((input, key) => {
-    if (approval || state.question || state.memory || state.picker) return;
-    if (key.shift && key.tab) void store.cyclePermissionMode();
-    else if (key.escape) void store.interrupt();
-    else if (state.status === "offline" && input === "r") void store.connect();
+    if (state.status !== "online" && key.ctrl && input === "c") {
+      exit();
+      return;
+    }
+    if (
+      approval ||
+      state.login ||
+      state.question ||
+      state.memory ||
+      state.picker
+    )
+      return;
+    if (state.status === "offline" && input === "r") void store.connect();
   });
   return (
     <Box flexDirection="column">
@@ -188,6 +201,12 @@ export function TerminalApp({ store }: { store: TerminalSession }) {
             />
           )}
         </Box>
+      ) : state.login ? (
+        <LettaLoginView
+          activateCloudBackend={false}
+          onComplete={() => store.closeLogin()}
+          onCancel={() => store.closeLogin()}
+        />
       ) : state.question ? (
         <InlineQuestionApproval
           key={state.question.toolCallId}
@@ -198,11 +217,32 @@ export function TerminalApp({ store }: { store: TerminalSession }) {
           onCancel={() => state.question && void store.answer(state.question)}
         />
       ) : state.picker ? (
-        <SessionPicker
-          key={state.picker.kind}
-          picker={state.picker}
-          store={store}
-        />
+        state.picker.kind === "agents" ? (
+          <AgentSelector
+            currentAgentId={state.agentId ?? ""}
+            sessionList={store.listAgents}
+            onSelect={(id) => void store.select(id)}
+            onCancel={() => store.closePicker()}
+            showNewTab={false}
+            allowPinActions={false}
+            allowDelete={false}
+          />
+        ) : state.picker.models ? (
+          <ModelSelector
+            entries={state.picker.models}
+            onSelect={(id) => void store.select(id)}
+            onCancel={() => store.closePicker()}
+          />
+        ) : (
+          <SearchablePicker
+            title="Resume conversation"
+            key={state.picker.kind}
+            items={state.picker.items}
+            more={!!state.picker.after}
+            onSelect={(id) => void store.select(id)}
+            onCancel={() => store.closePicker()}
+          />
+        )
       ) : state.memory ? (
         <MemfsTreeViewer
           agentId={state.memory.agentId}
@@ -222,6 +262,7 @@ export function TerminalApp({ store }: { store: TerminalSession }) {
           state.status === "online" &&
           !approval &&
           !state.question &&
+          !state.login &&
           !state.memory &&
           !state.picker
         }

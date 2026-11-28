@@ -4,6 +4,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { type AgentBackendMode, isLocalAgentId } from "@/agent/agent-id";
 import { unpinAgentForCurrentUser } from "@/agent/favorites";
 import { getBackendForMode } from "@/backend/backend";
+import {
+  FETCH_PAGE_SIZE,
+  fetchCloudAgentPage,
+} from "@/cli/helpers/cloud-agent-page";
 import { listLocalAgentsFromDisk } from "@/cli/helpers/local-agent-listing";
 import {
   hasCloudCredentials,
@@ -38,6 +42,10 @@ import { Text } from "./Text";
 
 interface AgentSelectorProps {
   currentAgentId: string;
+  sessionList?: (
+    after?: string | null,
+    query?: string,
+  ) => Promise<{ agents: AgentSelectorListAgent[]; nextCursor: string | null }>;
   onSelect: (agentId: string, backendMode: AgentBackendMode) => void;
   onCancel: () => void;
   onLogin?: () => void;
@@ -53,17 +61,17 @@ type ViewState =
   | { type: "list" }
   | {
       type: "deleteConfirm";
-      agent: AgentState;
+      agent: AgentSelectorListAgent;
       agentId: string;
       isLocal: boolean;
     };
 
 const DISPLAY_PAGE_SIZE = 5;
-const FETCH_PAGE_SIZE = 20;
 const NEW_AGENT_DEFAULT_BACKEND: AgentBackendMode = "api";
 
 export function AgentSelector({
   currentAgentId,
+  sessionList,
   onSelect,
   onCancel,
   onLogin,
@@ -77,6 +85,7 @@ export function AgentSelector({
   const terminalWidth = useTerminalWidth();
 
   const [hasLocalAgents, setHasLocalAgents] = useState(() => {
+    if (sessionList) return false;
     try {
       return listLocalAgentsFromDisk().length > 0;
     } catch {
@@ -87,11 +96,19 @@ export function AgentSelector({
 
   const visibleTabs = useMemo(
     () =>
-      getVisibleAgentSelectorTabs({ showNewTab, hasLocalAgents, hasCloudAuth }),
-    [hasCloudAuth, hasLocalAgents, showNewTab],
+      sessionList
+        ? [{ id: "cloud" as const, label: "App server" }]
+        : getVisibleAgentSelectorTabs({
+            showNewTab,
+            hasLocalAgents,
+            hasCloudAuth,
+          }),
+    [sessionList, hasCloudAuth, hasLocalAgents, showNewTab],
   );
 
-  const [activeTab, setActiveTab] = useState<AgentSelectorTabId>("pinned");
+  const [activeTab, setActiveTab] = useState<AgentSelectorTabId>(
+    sessionList ? "cloud" : "pinned",
+  );
 
   useEffect(() => {
     if (activeTab === "local" && !hasLocalAgents) {
@@ -114,7 +131,7 @@ export function AgentSelector({
   const [localPage, setLocalPage] = useState(0);
   const [localLoaded, setLocalLoaded] = useState(false);
 
-  const [cloudAgents, setCloudAgents] = useState<AgentState[]>([]);
+  const [cloudAgents, setCloudAgents] = useState<AgentSelectorListAgent[]>([]);
   const [cloudCursor, setCloudCursor] = useState<string | null>(null);
   const [cloudLoading, setCloudLoading] = useState(false);
   const [cloudLoadingMore, setCloudLoadingMore] = useState(false);
@@ -187,29 +204,7 @@ export function AgentSelector({
     }
   }, []);
 
-  const fetchCloudAgents = useCallback(
-    async (afterCursor?: string | null, query?: string) => {
-      const { getClient } = await import("@/backend/api/client");
-      const client = await getClient();
-
-      const agentList = await client.agents.list({
-        limit: FETCH_PAGE_SIZE,
-        include: ["agent.blocks"],
-        order: "desc",
-        order_by: "last_run_completion",
-        ...(afterCursor && { after: afterCursor }),
-        ...(query && { query_text: query }),
-      });
-
-      const cursor =
-        agentList.items.length === FETCH_PAGE_SIZE
-          ? (agentList.items[agentList.items.length - 1]?.id ?? null)
-          : null;
-
-      return { agents: agentList.items, nextCursor: cursor };
-    },
-    [],
-  );
+  const fetchCloudAgents = sessionList ?? fetchCloudAgentPage;
 
   const loadCloudAgents = useCallback(
     async (query?: string) => {
@@ -303,12 +298,12 @@ export function AgentSelector({
   }, [sharedLoadingMore, sharedHasMore, sharedCursor, activeQuery]);
 
   useEffect(() => {
-    setHasCloudAuth(hasCloudCredentials());
-  }, []);
+    setHasCloudAuth(sessionList ? true : hasCloudCredentials());
+  }, [sessionList]);
 
   useEffect(() => {
-    loadPinnedAgents();
-  }, [loadPinnedAgents]);
+    if (!sessionList) loadPinnedAgents();
+  }, [sessionList, loadPinnedAgents]);
 
   useEffect(() => {
     if (activeTab === "local" && !localLoaded && !localLoading) {
@@ -646,7 +641,7 @@ export function AgentSelector({
         });
       }
     } else if (allowDelete && input === "D" && activeTab !== "shared") {
-      let selectedAgent: AgentState | null = null;
+      let selectedAgent: AgentSelectorListAgent | null = null;
       let selectedAgentId: string | null = null;
       let selectedIsLocal = false;
 
@@ -709,14 +704,11 @@ export function AgentSelector({
     const availableForId = Math.max(15, terminalWidth - nameLen - fixedChars);
     const displayId = truncateAgentId(agent.id, availableForId);
 
-    let backendLabel = "";
-    if (extra?.backend === "local") {
-      backendLabel = "Local · ";
-    } else if (extra?.backend === "cloud") {
-      backendLabel = "Cloud · ";
-    } else if (extra?.backend === "shared") {
-      backendLabel = "Shared · ";
-    }
+    const backendLabel = extra?.backend
+      ? { local: "Local · ", cloud: "Cloud · ", shared: "Shared · " }[
+          extra.backend
+        ]
+      : "";
 
     return (
       <Box key={agent.id} flexDirection="column" marginBottom={1}>
@@ -842,7 +834,12 @@ export function AgentSelector({
             visibleTabs.find((t) => t.id === tabId)?.label ?? tabId
           }
         />
-        <Text dimColor> {AGENT_SELECTOR_TAB_DESCRIPTIONS[activeTab]}</Text>
+        <Text dimColor>
+          {" "}
+          {sessionList
+            ? "Agents available on this device"
+            : AGENT_SELECTOR_TAB_DESCRIPTIONS[activeTab]}
+        </Text>
         <Box height={1} />
       </Box>
 
@@ -936,7 +933,8 @@ export function AgentSelector({
           <Box flexDirection="column">
             {cloudPageAgents.map((agent, index) =>
               renderAgentItem(agent, index, index === cloudSelectedIndex, {
-                backend: "cloud",
+                backend:
+                  sessionList && isLocalAgentId(agent.id) ? "local" : "cloud",
               }),
             )}
           </Box>

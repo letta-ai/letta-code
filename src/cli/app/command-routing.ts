@@ -11,17 +11,13 @@ const INTERACTIVE_SLASH_COMMANDS = new Set([
   "/help",
   "/agents",
   "/resume",
-  "/pinned",
-  "/profiles",
   "/search",
   "/feedback",
   "/pin",
   "/conversations",
-  "/profile",
 ]);
 
 const NON_STATE_COMMANDS = new Set([
-  "/ade",
   "/bg",
   "/workflows",
   "/btw",
@@ -34,7 +30,6 @@ const NON_STATE_COMMANDS = new Set([
   "/mods",
   "/reasoning-tab",
   "/secret",
-  "/palace",
   "/exit",
   "/rename",
   "/btw",

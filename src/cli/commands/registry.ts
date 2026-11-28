@@ -554,7 +554,7 @@ export async function executeCommand(
     };
   }
 
-  const handler = commands[command];
+  const handler = commands[command === "/reflection" ? "/reflect" : command];
   if (!handler) {
     return {
       success: false,

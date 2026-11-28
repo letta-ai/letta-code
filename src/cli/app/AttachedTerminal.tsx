@@ -1,15 +1,11 @@
 import { LettaAgentClient } from "@letta-ai/letta-agent-sdk";
-import { render, useApp, useInput } from "ink";
+import { render } from "ink";
 import { useEffect } from "react";
 import { TerminalApp } from "./TerminalApp";
 import { terminalSocket } from "./terminal-runtime-events";
 import { TerminalSession } from "./terminal-session";
 
 function AttachedTerminal({ store }: { store: TerminalSession }) {
-  const { exit } = useApp();
-  useInput((input, key) => {
-    if (key.ctrl && input === "c") exit();
-  });
   useEffect(() => {
     void store.connect();
     return () => store.close();

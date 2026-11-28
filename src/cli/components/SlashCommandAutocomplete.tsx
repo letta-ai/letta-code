@@ -54,6 +54,7 @@ function extractSearchQuery(
 }
 
 export function SlashCommandAutocomplete({
+  session,
   currentInput,
   cursorPosition = currentInput.length,
   onSelect,
@@ -69,6 +70,7 @@ export function SlashCommandAutocomplete({
   const [skillCommands, setSkillCommands] = useState<CommandMatch[]>([]);
 
   useEffect(() => {
+    if (session) return;
     import("@/cli/commands/custom.js").then(({ getCustomCommands }) => {
       getCustomCommands().then((customs) => {
         const matches: CommandMatch[] = customs.map((cmd) => ({
@@ -79,9 +81,10 @@ export function SlashCommandAutocomplete({
         setCustomCommands(matches);
       });
     });
-  }, []);
+  }, [session]);
 
   useEffect(() => {
+    if (session) return;
     let cancelled = false;
     (async () => {
       try {
@@ -119,9 +122,10 @@ export function SlashCommandAutocomplete({
     return () => {
       cancelled = true;
     };
-  }, [agentId]);
+  }, [agentId, session]);
 
   const allCommands = useMemo(() => {
+    if (session) return session.commands;
     let builtins = _allCommands;
 
     if (agentId) {
@@ -175,7 +179,7 @@ export function SlashCommandAutocomplete({
       ...customCommands,
       ...visibleSkillCommands,
     ].sort((a, b) => (a.order ?? 100) - (b.order ?? 100));
-  }, [agentId, modCommands, customCommands, skillCommands]);
+  }, [session, agentId, modCommands, customCommands, skillCommands]);
 
   const queryInfo = useMemo(
     () => extractSearchQuery(currentInput, cursorPosition),

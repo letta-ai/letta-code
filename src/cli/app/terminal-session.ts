@@ -4,8 +4,10 @@ import {
   type CanUseToolResponse,
   createTranscriptAccumulator,
   type LettaAgentClient,
+  type LettaCodeModelEntry,
   type LettaCodeSession,
   type ListMessagesResult,
+  type MessageContentItem,
   type SDKQueueItem,
   type SessionDeviceStatus,
   type TranscriptRow,
@@ -17,11 +19,13 @@ import {
   parseAskUserQuestionReceipt,
   prepareAskUserQuestionNotif,
 } from "@/ask-user-question";
-import { VALID_PERMISSION_MODES } from "@/permissions/mode";
+import type { PermissionMode } from "@/permissions/mode";
 
 import type { MemoryFileEntry } from "@/types/protocol_v2";
 
 import { isRecord } from "@/utils/type-guards";
+
+import { terminalCommands } from "./terminal-commands";
 
 type Approval = {
   name: string;
@@ -41,13 +45,17 @@ type Snapshot = {
   commandOutput?: string;
   device?: SessionDeviceStatus;
   question?: AskUserQuestionReceipt;
+  login?: boolean;
   model?: string;
+  agentId?: string;
+  agentName?: string;
   subagents?: { id: string; description: string; status: string }[];
   tokens?: number;
   picker?: {
     kind: "agents" | "resume" | "model";
     items: { key: string; label: string; description?: string }[];
     after?: string;
+    models?: LettaCodeModelEntry[];
   };
   memory?: { agentId: string; entries: MemoryFileEntry[] };
   activity?: string;
@@ -84,6 +92,7 @@ export class TerminalSession {
       LettaAgentClient,
       "agents" | "conversations"
     >,
+    private readonly logout?: () => Promise<string>,
   ) {}
 
   snapshot = () => this.state;
@@ -229,6 +238,14 @@ export class TerminalSession {
     try {
       const ready = await session.ready();
       if (this.session !== session) return;
+      if (this.management && ready.agentId)
+        void this.management.agents
+          .retrieve(ready.agentId)
+          .then((agent) => {
+            if (this.session === session)
+              this.update({ agentName: agent.name });
+          })
+          .catch(() => {});
       const receiveDevice = (device: SessionDeviceStatus) => {
         if (session === this.session) this.update({ device });
       };
@@ -242,7 +259,11 @@ export class TerminalSession {
       const page = await this.history(session);
       if (this.session !== session) return;
       this.rebase(page);
-      this.update({ status: "online", model: ready.model ?? undefined });
+      this.update({
+        status: "online",
+        model: ready.model ?? undefined,
+        agentId: ready.agentId,
+      });
       void session.recoverPendingApprovals().catch((error) => {
         if (session === this.session) this.fail(error);
       });
@@ -341,6 +362,10 @@ export class TerminalSession {
     }
   }
 
+  closeLogin() {
+    this.update({ login: false });
+  }
+
   closePicker() {
     this.update({ picker: undefined });
   }
@@ -370,6 +395,29 @@ export class TerminalSession {
     }
   }
 
+  listAgents = async (after?: string | null, query?: string) => {
+    if (!this.management) throw new Error("Session management unavailable");
+    const agents = await this.management.agents.list({
+      limit: 20,
+      after: after ?? undefined,
+      query,
+      order: "desc",
+      orderBy: "lastRunCompletion",
+    });
+    return {
+      agents: agents.map(
+        ({ id, name, description, model, last_run_completion }) => ({
+          id,
+          name,
+          description,
+          model,
+          last_run_completion,
+        }),
+      ),
+      nextCursor: agents.length === 20 ? (agents.at(-1)?.id ?? null) : null,
+    };
+  };
+
   private async loadPicker(
     session: LettaCodeSession,
     kind: "agents" | "resume" | "model",
@@ -380,36 +428,28 @@ export class TerminalSession {
       const catalog = await session.listModels();
       const handles =
         catalog.availableHandles && new Set(catalog.availableHandles);
-      items = catalog.entries
-        .filter((entry) => !handles || handles.has(entry.handle))
-        .map((entry) => ({
-          key: entry.id,
-          label: entry.label,
-          description: entry.id,
-        }));
+      const models = catalog.entries.filter(
+        (entry) => !handles || handles.has(entry.handle),
+      );
+      if (session === this.session)
+        this.update({ picker: { kind, items: [], models } });
+      return;
+    } else if (kind === "agents") {
+      this.update({ picker: { kind, items: [] } });
+      return;
     } else {
       if (!this.management) throw new Error("Session management unavailable");
-      items =
-        kind === "agents"
-          ? (
-              await this.management.agents.list({
-                limit: 30,
-                after,
-                order: "desc",
-              })
-            ).map((agent) => ({ key: agent.id, label: agent.name ?? agent.id }))
-          : (
-              await this.management.conversations.list({
-                agentId: session.agentId ?? undefined,
-                limit: 30,
-                after,
-                order: "desc",
-              })
-            ).map((conv) => ({ key: conv.id, label: conv.summary ?? conv.id }));
+      items = (
+        await this.management.conversations.list({
+          agentId: session.agentId ?? undefined,
+          limit: 30,
+          after,
+          order: "desc",
+        })
+      ).map((conv) => ({ key: conv.id, label: conv.summary ?? conv.id }));
     }
     if (session !== this.session) return;
-    const next =
-      kind !== "model" && items.length === 30 ? items.at(-1)?.key : undefined;
+    const next = items.length === 30 ? items.at(-1)?.key : undefined;
     if (kind === "resume" && session.agentId && !after)
       items.unshift({ key: session.agentId, label: "Default conversation" });
     this.update({
@@ -484,7 +524,7 @@ export class TerminalSession {
       : [];
   }
 
-  async send(text: string) {
+  async send(text: string, content?: MessageContentItem[]) {
     const session = this.session;
     if (!session || this.state.status !== "online") return;
     const otid = crypto.randomUUID();
@@ -526,11 +566,32 @@ export class TerminalSession {
           this.update({ commandOutput: "Renamed to " + name });
         return;
       }
-      if (["/connect", "/mcp", "/login", "/logout"].includes(text)) {
-        const cli = text.slice(1);
+      if (text === "/login" || text === "/logout") {
+        if (!this.logout) {
+          this.update({
+            commandOutput:
+              "Open an interactive letta terminal on the app-server host and run " +
+              text +
+              " there.",
+          });
+          return;
+        }
+        if (text === "/login") {
+          this.update({ login: true });
+          return;
+        }
+        if (this.state.device?.isProcessing || this.state.approvals.length)
+          throw new Error("Finish the current turn before signing out.");
+        const output = await this.logout();
+        if (session === this.session) this.update({ commandOutput: output });
+        return;
+      }
+      if (text === "/connect" || text === "/mcp") {
         this.update({
           commandOutput:
-            "Run letta " + cli + " on the computer running the app server.",
+            "Run letta " +
+            text.slice(1) +
+            " --help on the computer running the app server.",
         });
         return;
       }
@@ -568,8 +629,9 @@ export class TerminalSession {
       }
       if (text === "/help") {
         this.update({
-          commandOutput:
-            "/agents   Switch agent\n/model    Select model and reasoning tier\n/new      Start a conversation\n/resume   Switch conversation\n/memory [path]   Browse memory files\n/queue resume    Resume queued input\nEsc              Interrupt the current turn\nCtrl+C           Exit",
+          commandOutput: terminalCommands
+            .map(({ cmd, desc }) => cmd.padEnd(16) + desc)
+            .join("\n"),
         });
         return;
       }
@@ -642,6 +704,12 @@ export class TerminalSession {
       }
       const command = /^\/([a-z][\w-]*)(?:\s+([\s\S]*))?$/i.exec(text);
       if (command) {
+        if (
+          ["reflection", "clear-messages", "set-max-context"].includes(
+            command[1] ?? "",
+          )
+        )
+          throw new Error("Unknown command: " + command[1]);
         const result = await session.sendCommand(
           {
             type: "execute_command",
@@ -666,7 +734,7 @@ export class TerminalSession {
         activity: "Working · Esc to interrupt",
       });
       this.project(this.transcript.rows());
-      await session.send(text, { otid });
+      await session.send(content ?? text, { otid });
     } catch (error) {
       if (session !== this.session) return;
       this.echoes.delete(otid);
@@ -679,13 +747,9 @@ export class TerminalSession {
     this.update({ memory: undefined });
   }
 
-  async cyclePermissionMode() {
+  async setPermissionMode(permissionMode: PermissionMode) {
     const session = this.session;
-    const device = this.state.device;
-    if (!session || !device) return;
-    const index = VALID_PERMISSION_MODES.indexOf(device.permissionMode);
-    const permissionMode =
-      VALID_PERMISSION_MODES[(index + 1) % VALID_PERMISSION_MODES.length];
+    if (!session) return;
     try {
       await session.changeDeviceState({ permissionMode });
     } catch (error) {

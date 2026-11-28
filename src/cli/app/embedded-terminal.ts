@@ -1,6 +1,9 @@
 import { createHash, randomBytes } from "node:crypto";
 import { hostname } from "node:os";
 import { LettaAgentClient } from "@letta-ai/letta-agent-sdk";
+import { clearOrganizationId } from "@/agent/organization-id";
+import { revokeToken } from "@/auth/oauth";
+import { buildLogoutSuccessMessage } from "@/cli/helpers/logout-message";
 import { permissionMode } from "@/permissions/mode";
 import { settingsManager } from "@/settings-manager";
 import { startAppServer } from "@/websocket/app-server";
@@ -125,6 +128,14 @@ export async function openEmbeddedTerminal(
         },
       ),
     client,
+    async () => {
+      const settings = await settingsManager.getSettingsWithSecureTokens();
+      if (settings.refreshToken) await revokeToken(settings.refreshToken);
+      clearOrganizationId();
+      await settingsManager.logout();
+      stopListener();
+      return buildLogoutSuccessMessage(Boolean(process.env.LETTA_API_KEY));
+    },
   );
   activeStore = store;
   return {

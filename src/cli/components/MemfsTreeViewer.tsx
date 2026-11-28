@@ -1,20 +1,10 @@
-import { existsSync } from "node:fs";
-import { join } from "node:path";
 import { Box, useInput } from "ink";
 import Link from "ink-link";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
-import {
-  getFileNodes,
-  readFileContent,
-  scanMemoryFilesystem,
-  type TreeNode,
-} from "@/agent/memory-scanner";
+import { useMemo, useState } from "react";
+import type { TreeNode } from "@/agent/memory-scanner";
 import { buildChatUrl, isLocalAgentId } from "@/cli/helpers/app-urls";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import type { MemoryFileEntry } from "@/types/protocol_v2";
-import type { ContextUsageSnapshot } from "@/web/context-usage";
-import { generateAndOpenMemoryViewer } from "@/web/generate-memory-viewer";
 import { colors } from "./colors";
 import { Text } from "./Text";
 
@@ -26,11 +16,9 @@ const FULL_VIEW_VISIBLE_LINES = 16;
 
 interface MemfsTreeViewerProps {
   agentId: string;
-  agentName?: string;
-  entries?: MemoryFileEntry[];
+  entries: MemoryFileEntry[];
   onClose: () => void;
   conversationId?: string;
-  contextUsage?: ContextUsageSnapshot;
 }
 
 function remoteTree(entries: MemoryFileEntry[]): TreeNode[] {
@@ -78,11 +66,9 @@ function renderTreePrefix(node: TreeNode): string {
 
 export function MemfsTreeViewer({
   agentId,
-  agentName,
   entries,
   onClose,
   conversationId,
-  contextUsage,
 }: MemfsTreeViewerProps) {
   const terminalWidth = useTerminalWidth();
   const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
@@ -96,86 +82,24 @@ export function MemfsTreeViewer({
   const [treeScrollOffset, setTreeScrollOffset] = useState(0);
   const [viewMode, setViewMode] = useState<"split" | "full">("split");
   const [fullViewScrollOffset, setFullViewScrollOffset] = useState(0);
-  const [status, setStatus] = useState<string | null>(null);
-  const statusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const memoryRoot = entries ? "" : getScopedMemoryFilesystemRoot(agentId);
-  const memoryExists = !!entries || existsSync(memoryRoot);
-  const hasGitRepo = useMemo(
-    () => !!memoryRoot && existsSync(join(memoryRoot, ".git")),
-    [memoryRoot],
+  const treeNodes = useMemo(() => remoteTree(entries), [entries]);
+  const fileNodes = useMemo(
+    () => treeNodes.filter((node) => !node.isDirectory),
+    [treeNodes],
   );
-
-  function showStatus(msg: string, durationMs: number) {
-    if (statusTimerRef.current) clearTimeout(statusTimerRef.current);
-    setStatus(msg);
-    statusTimerRef.current = setTimeout(() => setStatus(null), durationMs);
-  }
-
-  useEffect(
-    () => () => {
-      if (statusTimerRef.current) clearTimeout(statusTimerRef.current);
-    },
-    [],
-  );
-
-  const treeNodes = useMemo(
-    () =>
-      entries
-        ? remoteTree(entries)
-        : memoryExists
-          ? scanMemoryFilesystem(memoryRoot)
-          : [],
-    [entries, memoryRoot, memoryExists],
-  );
-  const fileNodes = useMemo(() => getFileNodes(treeNodes), [treeNodes]);
-
   const selectedFile = fileNodes[selectedIndex];
-  const selectedContent = useMemo(
-    () =>
-      entries
-        ? (entries.find(
-            (entry) => entry.relative_path === selectedFile?.relativePath,
-          )?.content ?? "")
-        : selectedFile
-          ? readFileContent(selectedFile.fullPath)
-          : "",
-    [selectedFile, entries],
-  );
-
+  const selectedContent =
+    entries.find((entry) => entry.relative_path === selectedFile?.relativePath)
+      ?.content ?? "";
   const contentLines = selectedContent.split("\n");
   const maxFullViewScroll = Math.max(
     0,
     contentLines.length - FULL_VIEW_VISIBLE_LINES,
   );
 
-  useInput((input, key) => {
-    if (key.ctrl && input === "c") {
+  useInput((_input, key) => {
+    if (key.ctrl && _input === "c") {
       onClose();
-      return;
-    }
-
-    if ((input === "o" || input === "O") && hasGitRepo) {
-      showStatus("Opening in browser...", 10000);
-      generateAndOpenMemoryViewer(agentId, {
-        agentName,
-        conversationId:
-          conversationId !== "default" ? conversationId : undefined,
-        contextUsage,
-      })
-        .then((result) => {
-          if (result.opened) {
-            showStatus("Opened in browser", 3000);
-          } else {
-            showStatus(`Run: open ${result.filePath}`, 15000);
-          }
-        })
-        .catch((err: unknown) =>
-          showStatus(
-            err instanceof Error ? err.message : "Failed to open viewer",
-            5000,
-          ),
-        );
       return;
     }
 
@@ -240,28 +164,6 @@ export function MemfsTreeViewer({
       }
     }
   });
-
-  if (!memoryExists) {
-    return (
-      <Box flexDirection="column">
-        <Text dimColor>{"> /memory"}</Text>
-        <Text dimColor>{solidLine}</Text>
-        <Box height={1} />
-        <Box marginBottom={1}>
-          <Text bold color={colors.selector.title}>
-            View your agent's memory
-          </Text>
-        </Box>
-        <Text dimColor>
-          {"  "}Memory filesystem not found at {memoryRoot}
-        </Text>
-        <Text dimColor>{"  "}Run /memfs enable to set up.</Text>
-        <Box marginTop={1}>
-          <Text dimColor>{"  "}Esc cancel</Text>
-        </Box>
-      </Box>
-    );
-  }
 
   if (treeNodes.length === 0) {
     return (
@@ -329,17 +231,7 @@ export function MemfsTreeViewer({
             {"  "}
             {charCount.toLocaleString()} chars
           </Text>
-          {status ? (
-            <Text dimColor>
-              {"  "}
-              {status}
-            </Text>
-          ) : (
-            <Text dimColor>
-              {"  "}↑↓ scroll{hasGitRepo ? " · O open in browser" : ""} · Esc
-              back
-            </Text>
-          )}
+          <Text dimColor>↑↓ scroll · Esc back</Text>
         </Box>
       </Box>
     );
@@ -482,25 +374,17 @@ export function MemfsTreeViewer({
       <Text dimColor>{DOTTED_LINE.repeat(terminalWidth)}</Text>
 
       <Box flexDirection="column" marginTop={1}>
-        {status ? (
-          <Text dimColor>
-            {"  "}
-            {status}
-          </Text>
-        ) : (
-          <Box>
-            <Text dimColor>{"  "}↑↓ navigate · Enter view · </Text>
-            {adeUrl && !isTmux && (
-              <Link url={adeUrl}>
-                <Text dimColor>Edit in ADE</Text>
-              </Link>
-            )}
-            {adeUrl && isTmux && <Text dimColor>Edit in ADE: {adeUrl}</Text>}
-            {!adeUrl && <Text dimColor>Local agent: {agentId}</Text>}
-            {hasGitRepo && <Text dimColor> · O open in browser</Text>}
-            <Text dimColor> · Esc close</Text>
-          </Box>
-        )}
+        <Box>
+          <Text dimColor>{"  "}↑↓ navigate · Enter view · </Text>
+          {adeUrl && !isTmux && (
+            <Link url={adeUrl}>
+              <Text dimColor>Edit in ADE</Text>
+            </Link>
+          )}
+          {adeUrl && isTmux && <Text dimColor>Edit in ADE: {adeUrl}</Text>}
+          {!adeUrl && <Text dimColor>Local agent: {agentId}</Text>}
+          <Text dimColor> · Esc close</Text>
+        </Box>
       </Box>
     </Box>
   );

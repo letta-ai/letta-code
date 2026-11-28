@@ -16,12 +16,12 @@ export function TerminalSessionHost({
   name: string;
   updateNotification: string | null;
 }) {
-  const { exit } = useApp();
-  useInput((input, key) => {
-    if (key.ctrl && input === "c") exit();
-  });
   const [session, setSession] =
     useState<Awaited<ReturnType<typeof openEmbeddedTerminal>>>();
+  const { exit } = useApp();
+  useInput((input, key) => {
+    if (!session && key.ctrl && input === "c") exit();
+  });
   const [cloudError, setCloudError] = useState<string>();
   const [error, setError] = useState<string>();
   useEffect(() => {

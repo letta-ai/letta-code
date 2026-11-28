@@ -4,6 +4,7 @@ import { hostname } from "node:os";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { isStatelessSubagentTags } from "@/agent/agent-tags";
+import { StartupAgentSelector } from "@/cli/components/StartupAgentSelector";
 import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import {
@@ -52,7 +53,6 @@ import { LETTA_CHAT_API_KEYS_URL } from "./cli/helpers/app-urls";
 import { formatErrorDetails } from "./cli/helpers/error-formatter";
 import { listPinnedAgentsForCurrentUser } from "./cli/helpers/pinned-agent-listing";
 import { initTerminalTheme } from "./cli/helpers/terminal-theme";
-import { ProfileSelectionInline } from "./cli/profile-selection";
 import {
   createStartupAgentPickerHandler,
   getStartupBackendLookupOrder,
@@ -145,7 +145,7 @@ USAGE
   letta                 Resume last conversation for this project
   letta --new           Create a new conversation (for concurrent sessions)
   letta --resume        Open agent selector UI to pick agent/conversation
-  letta --new-agent     Create a new agent directly (skip profile selector)
+  letta --new-agent     Create a new agent directly (skip agent selection)
   letta --agent <id>    Open a specific agent by ID
 
   # headless
@@ -203,10 +203,9 @@ SUBCOMMANDS
   letta local-backend migrate-transcripts [--storage-dir <path>] [--dry-run]
 
 BEHAVIOR
-  On startup, Letta Code checks for saved profiles:
-  - If profiles exist, you'll be prompted to select one or create a new agent
+  On startup, Letta Code can resume an existing agent:
+  - Use /agents to browse available agents
   - Agents can be pinned for quick access with /pin
-  - Use /profile save <name> to bookmark your current agent
 
   Agent pins are stored in ~/.letta/settings.json.
 
@@ -215,15 +214,14 @@ BEHAVIOR
 
 EXAMPLES
   # when installed as an executable
-  letta                    # Show profile selector or create new
+  letta                    # Open your agent or create one
   letta --new              # Create new conversation
   letta --agent agent_123  # Open specific agent
   letta install official/finance/stocks --agent agent-123
   letta install npm:@letta-ai/mod-plan-mode
 
   # inside the interactive session
-  /profile save MyAgent    # Save current agent as profile
-  /profiles                # Open profile selector
+  /agents                  # Switch agents
   /pin                     # Pin current agent
   /unpin                   # Unpin current agent
   /logout                  # Clear saved credentials and exit
@@ -2121,16 +2119,6 @@ async function main(): Promise<void> {
     if (showKeybindingSetup === null) {
       return null;
     }
-    if (loadingState === "selecting") {
-      return React.createElement(ProfileSelectionInline, {
-        lruAgentId: null,
-        loading: true,
-        freshRepoMode: true,
-        onSelect: () => {},
-        onCreateNew: () => {},
-        onExit: () => process.exit(0),
-      });
-    }
     if (loadingState === "selecting_conversation" && resumeAgentId) {
       return React.createElement(ConversationSelector, {
         agentId: resumeAgentId,
@@ -2149,15 +2137,12 @@ async function main(): Promise<void> {
       });
     }
     if (loadingState === "selecting_global") {
-      return React.createElement(ProfileSelectionInline, {
-        lruAgentId: null,
-        loading: false,
-        freshRepoMode: true,
+      return React.createElement(StartupAgentSelector, {
         failedAgentMessage: failedAgentMessage ?? undefined,
         serverModelsForNewAgent:
           availableServerModels.length > 0 ? availableServerModels : undefined,
         defaultModelHandle: customApiDefaultModel ?? undefined,
-        serverBaseUrl: customApiBaseUrl ?? undefined,
+
         onSelect: createStartupAgentPickerHandler(
           tryConfigureStartupLocalBackend,
           setSelectedGlobalAgentId,
@@ -2186,7 +2171,10 @@ async function main(): Promise<void> {
     if (!agentId || !conversationId) {
       return React.createElement(WelcomeScreen, {
         loadingState:
-          loadingState === "selecting_conversation" ? "checking" : loadingState,
+          loadingState === "selecting_conversation" ||
+          loadingState === "selecting"
+            ? "checking"
+            : loadingState,
         continueSession: isResumingSession,
         agentState,
         startupHasAvailableLocalModels,
