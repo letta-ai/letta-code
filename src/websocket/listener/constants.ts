@@ -38,9 +38,6 @@ export function isListenerPongStale(
   return now - lastPongAt > timeoutMs;
 }
 
-export const SYSTEM_REMINDER_RE =
-  /<system-reminder>[\s\S]*?<\/system-reminder>/g;
-
 export const LISTENER_STREAM_RESUME_POLICY = {
   initialDelayMs: 500,
   maxAttempts: 60,

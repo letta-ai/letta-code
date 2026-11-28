@@ -179,12 +179,21 @@ describe("external tool auto-backgrounding", () => {
     await Bun.sleep(0);
     expect(notifications).toHaveLength(1);
     expect(notifications[0]?.content).toEqual([
-      { type: "text", text: notifications[0]?.text },
-      { type: "text", text: "\n<external-tool-result>" },
-      { type: "text", text: "<text>before</text>" },
+      {
+        type: "text",
+        text: expect.stringMatching(
+          /^<task-notification>[\s\S]*<summary>Tool fetch_file completed<\/summary>\n<result>$/,
+        ),
+      },
+      richResult[0],
       richResult[1],
-      { type: "text", text: "<text>after</text>" },
-      { type: "text", text: "</external-tool-result>" },
+      richResult[2],
+      {
+        type: "text",
+        text: expect.stringMatching(
+          /^<\/result>\n<usage>duration_ms: \d+<\/usage>\n<\/task-notification>$/,
+        ),
+      },
     ]);
     const [, entry] = backgroundEntry(receipt);
     expect(readFileSync(entry?.outputFile as string, "utf8")).toBe(
@@ -322,6 +331,7 @@ describe("external tool auto-backgrounding", () => {
     await Bun.sleep(0);
     expect(notifications[0]?.text).toContain("outcome is unknown");
     expect(notifications[0]?.text).toContain("before retrying a write");
+    expect(notifications[0]?.text).toContain("<result>Tool execution error:");
   });
 
   test("drops a detached completion after its listener scope is invalidated", async () => {

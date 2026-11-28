@@ -4,6 +4,10 @@ import { getSubagents } from "@/agent/subagent-state";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import { getSystemPromptDoctorState } from "@/cli/helpers/system-prompt-warning";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
+import {
+  scheduledTaskPromptDisplayText,
+  stripNonScheduledSystemReminders,
+} from "@/cron/scheduled-task-prompt";
 import { experimentManager } from "@/experiments/manager";
 import { permissionMode } from "@/permissions/mode";
 import type { DequeuedBatch } from "@/queue/queue-runtime";
@@ -35,7 +39,6 @@ import {
   TO_SUBSCRIBERS,
   toListenerConnection,
 } from "./connection";
-import { SYSTEM_REMINDER_RE } from "./constants";
 import { getConversationWorkingDirectory, getExportedCwdMap } from "./cwd";
 import { deviceGitContextCache } from "./device-git-context";
 import {
@@ -589,15 +592,6 @@ function isTextContentPart(
   );
 }
 
-export function isSystemReminderPart(part: unknown): boolean {
-  if (!isTextContentPart(part)) return false;
-  const trimmed = part.text.trim();
-  return (
-    trimmed.startsWith(SYSTEM_REMINDER_OPEN) &&
-    trimmed.endsWith(SYSTEM_REMINDER_CLOSE)
-  );
-}
-
 function unwrapSystemReminderText(text: string): string | null {
   const trimmed = text.trim();
   if (
@@ -673,18 +667,18 @@ export function emitDequeuedUserMessage(
     let content: MessageCreate["content"];
 
     if (typeof rawContent === "string") {
-      content = replaceCronPromptsForDisplay(rawContent, batch)
-        .replace(SYSTEM_REMINDER_RE, "")
-        .trim();
+      content = stripNonScheduledSystemReminders(
+        replaceCronPromptsForDisplay(rawContent, batch),
+      ).trim();
     } else if (Array.isArray(rawContent)) {
       content = rawContent.flatMap((part) => {
-        if (isTextContentPart(part)) {
-          const cronDisplay = getCronPromptDisplayForText(part.text, batch);
-          if (cronDisplay !== null) {
-            return [{ ...part, text: cronDisplay }];
-          }
-        }
-        return isSystemReminderPart(part) ? [] : [part];
+        if (!isTextContentPart(part)) return [part];
+        const cronDisplay =
+          getCronPromptDisplayForText(part.text, batch) ??
+          scheduledTaskPromptDisplayText(part.text);
+        const display =
+          cronDisplay ?? stripNonScheduledSystemReminders(part.text);
+        return display.trim() ? [{ ...part, text: display }] : [];
       }) as MessageCreate["content"];
     } else {
       continue;
