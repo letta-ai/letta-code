@@ -4982,10 +4982,10 @@ Turn off Code sessions that run on the device in the [desktop app](https://code.
 
 The desktop app reads this key; the terminal CLI ignores it. Requires Claude Desktop v1.37937.0 or later.
 
-* **Scope**: [`Managed`](#scopes). By default, the desktop app reads the key from [one managed source](https://code.claude.com/docs/en/managed-settings.md#how-claude-code-combines-managed-sources).
-* **Type**: Boolean; only the JSON Boolean `true` takes effect
+* **Scope**: [`Managed`](#scopes). If you deliver server-managed settings, [set it there and on each computer](https://code.claude.com/docs/en/desktop.md#keys-that-apply-from-server-managed-settings-and-managed-settings-on-a-computer). Otherwise, the desktop app reads the key from [one managed source](https://code.claude.com/docs/en/managed-settings.md#how-claude-code-combines-managed-sources) by default.
+* **Type**: Boolean. Use the JSON Boolean `true`.
   * `true`: the desktop app offers no on-device Code sessions; existing local sessions stay listed but can't continue
-  * `false`: local sessions stay available
+  * `false`: local sessions stay available, though `true` in the other place can turn them off
 * **Default**: unset, so local sessions are available
 
 ```json managed-settings.json theme={null}
@@ -4994,7 +4994,7 @@ The desktop app reads this key; the terminal CLI ignores it. Requires Claude Des
 }
 ```
 
-The desktop app ignores any other value, and a value that isn't a Boolean, such as the string `"true"` or `1`, also logs a warning. Pair it with [`sshConfigs`](#sshconfigs) so users land on a working connection, and with [`sshHostAllowlist`](#sshhostallowlist) to limit which hosts they can reach. See [Local sessions on managed devices](https://code.claude.com/docs/en/desktop.md#local-sessions-on-managed-devices).
+Pair it with [`sshConfigs`](#sshconfigs) so users have a working connection, and with [`sshHostAllowlist`](#sshhostallowlist) to limit which hosts they can reach.
 
 Claude Desktop supplies Code sessions with policy derived from your desktop configuration, for example the egress allowlist, filesystem sandbox, and MCP restrictions in third-party deployments. Claude Code ignores those parent settings whenever an [admin source](https://code.claude.com/docs/en/managed-settings.md#how-claude-code-combines-managed-sources) is present: server-managed settings, an MDM or OS-level policy, or a managed settings file. Deploying this key through one of those on a device that had none before, as in third-party deployments, therefore stops the desktop-derived policies from applying. [Let an embedding host add policy](https://code.claude.com/docs/en/managed-settings.md#let-an-embedding-host-add-policy) covers when parent settings can still merge; this holds for any key you deploy that way, not only this one.
 
@@ -5161,9 +5161,9 @@ Limit the hosts a [Desktop SSH session](https://code.claude.com/docs/en/desktop.
 
 With Claude Desktop v3.1623.0 or later, a session's [jump hosts](https://code.claude.com/docs/en/desktop.md#allow-jump-hosts) have to match a pattern too.
 
-* **Scope**: [`Managed`](#scopes). By default, Desktop reads the key from [one managed source](https://code.claude.com/docs/en/managed-settings.md#how-claude-code-combines-managed-sources).
+* **Scope**: [`Managed`](#scopes). If you deliver server-managed settings, set the same list there and on each computer: see [Which SSH host allowlists apply](https://code.claude.com/docs/en/desktop.md#which-ssh-host-allowlists-apply). Without server-managed settings, Desktop reads the key from [one managed source](https://code.claude.com/docs/en/managed-settings.md#how-claude-code-combines-managed-sources) by default. Desktop doesn't read this key from a policy helper, so [set it in the policy or file that names the helper](#keys-that-only-claude-desktop-uses).
 * **Type**: array of hostname patterns
-* **Default**: unset, so any host is allowed
+* **Default**: unset, so any host is allowed. With a [third-party provider](https://code.claude.com/docs/en/third-party-integrations.md), SSH sessions are off by default. To turn them on, see [Enable SSH remote sessions](https://claude.com/docs/third-party/claude-desktop/ssh-remote-sessions#enable-ssh-remote-sessions).
 
 This example allows `devboxes.example.com` and its subdomains, plus the exact host `bastion.example.com`:
 
@@ -5175,7 +5175,7 @@ This example allows `devboxes.example.com` and its subdomains, plus the exact ho
 
 A value that Desktop can't read as a list of hosts, such as `true` or an object, counts as an empty array until you correct it, except `null`, which counts as unset. Requires Claude Desktop v2.26454.0 or later.
 
-If you set [`managedSourcesBehavior`](#managedsourcesbehavior) to `"merge"` in your highest-ranked source, Desktop combines the lists from every [admin source](https://code.claude.com/docs/en/managed-settings.md#how-claude-code-combines-managed-sources) and allows a host that matches any of them. If you set an empty array in one source, SSH sessions stay on for the hosts another source lists.
+If you set [`managedSourcesBehavior`](#managedsourcesbehavior) to `"merge"` in your highest-ranked source, Desktop combines the lists from every [admin source](https://code.claude.com/docs/en/managed-settings.md#how-claude-code-combines-managed-sources) and can allow a host that matches only one of them. If you set an empty array in one source, SSH sessions can stay on for the hosts another source lists.
 
 ### `sshHostCommands`
 
@@ -5832,6 +5832,10 @@ When the helper emits `managedSettings`, that object becomes the managed setting
 * **[`enforceAnthropicSignIn`](#enforceanthropicsignin)**: Claude Code reads it from the MDM policy or managed settings file
 
 A helper that exits `0` with an envelope that omits `managedSettings` contributes no managed settings, and the other sources apply as usual.
+
+#### Keys that only Claude Desktop uses
+
+Claude Desktop reads the keys that only it uses, such as [`sshHostAllowlist`](#sshhostallowlist) and [`disableDesktopLocalSessions`](#disabledesktoplocalsessions), without running the helper, so it treats a key that only the helper emits as unset. Set those keys in the MDM policy or managed settings file that names the helper.
 
 #### Helper failures
 
