@@ -31,6 +31,8 @@ export class LSPClient extends EventEmitter {
   >();
   private buffer = "";
   private initialized = false;
+  private disposed = false;
+  private terminalError: Error | undefined;
 
   constructor(options: LSPClientOptions) {
     super();
@@ -55,12 +57,39 @@ export class LSPClient extends EventEmitter {
     });
 
     this.stdout.on("error", (err) => {
-      this.emit("error", err);
+      this.disposed = true;
+      this.terminalError = new Error(`LSP stdout stream error: ${err.message}`);
+      this.rejectAllPending(this.terminalError);
+      try {
+        this.emit("error", err);
+      } finally {
+        this.process.process.kill();
+      }
     });
 
     this.process.process.on("exit", (code) => {
+      this.disposed = true;
+      this.terminalError ??= new Error(
+        `LSP server exited (code ${code ?? "null"})`,
+      );
       this.emit("exit", code);
     });
+
+    this.process.process.on("close", (code) => {
+      this.disposed = true;
+      this.terminalError ??= new Error(
+        `LSP server exited (code ${code ?? "null"})`,
+      );
+      this.rejectAllPending(this.terminalError);
+    });
+  }
+
+  private rejectAllPending(error: Error): void {
+    if (this.pendingRequests.size === 0) return;
+    for (const [, pending] of this.pendingRequests) {
+      pending.reject(error);
+    }
+    this.pendingRequests.clear();
   }
 
   private processBuffer(): void {
@@ -119,6 +148,10 @@ export class LSPClient extends EventEmitter {
 
   private sendRequest<T>(method: string, params?: unknown): Promise<T> {
     return new Promise((resolve, reject) => {
+      if (this.disposed) {
+        reject(this.terminalError ?? new Error("LSP server has exited"));
+        return;
+      }
       const id = ++this.requestId;
       const request: JsonRpcRequest = {
         jsonrpc: "2.0",
@@ -146,6 +179,9 @@ export class LSPClient extends EventEmitter {
   }
 
   private sendMessage(message: JsonRpcRequest | JsonRpcNotification): void {
+    if (this.disposed) {
+      return;
+    }
     const content = JSON.stringify(message);
     const header = `Content-Length: ${content.length}\r\n\r\n`;
     this.stdin.write(header + content);
@@ -222,10 +258,13 @@ export class LSPClient extends EventEmitter {
   }
 
   async shutdown(): Promise<void> {
-    if (this.initialized) {
-      await this.sendRequest("shutdown");
-      this.sendNotification("exit");
+    try {
+      if (this.initialized) {
+        await this.sendRequest("shutdown");
+        this.sendNotification("exit");
+      }
+    } finally {
+      this.process.process.kill();
     }
-    this.process.process.kill();
   }
 }
