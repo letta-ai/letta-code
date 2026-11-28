@@ -34,6 +34,10 @@ import {
   type TurnOutcome,
   type UserContentPart,
 } from "@/websocket/app-server-openai-turn";
+import {
+  deleteConversationFromListener,
+  EPHEMERAL_CONVERSATION_DELETE_WAIT_MS,
+} from "@/websocket/listener/conversation-delete";
 
 export { __testSetRunTurnImpl } from "@/websocket/app-server-openai-turn";
 
@@ -302,13 +306,13 @@ async function handleChatCompletions(
 
   if (!headerChatKey && conversationId) {
     const ephemeralConversationId = conversationId;
-    void getBackend()
-      .deleteConversation?.(ephemeralConversationId)
-      .catch(() => {
-        options.onLog?.(
-          `OpenAI-compat failed to delete ephemeral conversation ${ephemeralConversationId}`,
-        );
-      });
+    void deleteConversationFromListener(getBackend(), ephemeralConversationId, {
+      waitForIdleMs: EPHEMERAL_CONVERSATION_DELETE_WAIT_MS,
+    }).catch(() => {
+      options.onLog?.(
+        `OpenAI-compat failed to delete ephemeral conversation ${ephemeralConversationId}`,
+      );
+    });
   }
 
   if (clientClosed) return;

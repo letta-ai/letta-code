@@ -175,10 +175,10 @@ function cancelWorktreeWatcherIdleStop(
   }
 }
 
-export function evictConversationRuntimeIfIdle(
+export function conversationRuntimeHasPendingWork(
   runtime: ConversationRuntime,
 ): boolean {
-  if (
+  return (
     runtime.turnLifecycle.kind !== "idle" ||
     (runtime.expectedTeleportId !== null &&
       (runtime.expectedTeleportExpiresAt === null ||
@@ -195,15 +195,28 @@ export function evictConversationRuntimeIfIdle(
     (runtime.pendingInterruptedToolCallIds?.length ?? 0) > 0 ||
     runtime.queuedMessagesByItemId.size > 0 ||
     runtime.queueRuntime?.length > 0 ||
-    ((runtime.workspaceSandbox !== undefined ||
-      runtime.executionSettings !== undefined) &&
-      runtime.listener.connectionIdsByRuntimeKey.has(runtime.key)) ||
     (runtime.agentId !== null &&
       hasRunningBackgroundWork(runtime.agentId, runtime.conversationId))
+  );
+}
+
+export function evictConversationRuntimeIfIdle(
+  runtime: ConversationRuntime,
+): boolean {
+  if (
+    conversationRuntimeHasPendingWork(runtime) ||
+    ((runtime.workspaceSandbox !== undefined ||
+      runtime.executionSettings !== undefined) &&
+      runtime.listener.connectionIdsByRuntimeKey.has(runtime.key))
   ) {
     return false;
   }
+  return removeConversationRuntime(runtime);
+}
 
+export function removeConversationRuntime(
+  runtime: ConversationRuntime,
+): boolean {
   if (runtime.listener.conversationRuntimes.get(runtime.key) !== runtime) {
     return false;
   }

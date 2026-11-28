@@ -37,6 +37,13 @@ import {
   shouldUseDefaultLocalModel,
 } from "./local-agent-record";
 import { readAgentRecordFiles } from "./local-agent-record-file";
+import {
+  localImageContentFromLegacyImage,
+  normalizeContent,
+  parseToolInput,
+  textContent,
+  textFromContent,
+} from "./local-content";
 import { selectLocalMessagesForFork } from "./local-conversation-fork";
 import { localConversationKey } from "./local-conversation-key";
 import { listLocalConversations } from "./local-conversation-list";
@@ -71,10 +78,11 @@ import {
   isLocalToolCallContent,
   mergeSnapshotContentWithExistingToolCalls,
   projectedMessageLookupKeys,
+  projectLocalMessageAtSourceIndex,
   projectLocalMessageToStoredMessages,
   removeOrphanLocalToolResults,
   sourceLocalMessageIdFromStoredMessageId,
-  withProjectedMessageDates,
+  storedMessagesBelongTo,
 } from "./local-message-projection";
 import {
   normalizeLocalModelHandle,
@@ -158,56 +166,6 @@ function currentIsoTimestamp(): string {
   return new Date().toISOString();
 }
 
-function textContent(text: string) {
-  return [{ type: "text" as const, text }];
-}
-
-function normalizeContent(content: unknown): unknown {
-  if (typeof content === "string") {
-    return textContent(content);
-  }
-  return content;
-}
-
-function localImageContentFromLegacyImage(
-  part: Record<string, unknown>,
-): LocalImageContent | null {
-  if (part.type !== "image" || !isRecord(part.source)) return null;
-  const source = part.source;
-  if (source.type !== "base64") return null;
-  const mediaType = source.media_type;
-  const data = source.data;
-  if (typeof mediaType !== "string" || typeof data !== "string") return null;
-  return { type: "image", mimeType: mediaType, data };
-}
-
-function textFromContent(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((part) => {
-        if (!isRecord(part)) return "";
-        if (part.type === "text" && typeof part.text === "string") {
-          return part.text;
-        }
-        return "";
-      })
-      .filter((text) => text.length > 0)
-      .join("\n");
-  }
-  if (content === undefined || content === null) return "";
-  return JSON.stringify(content);
-}
-
-function parseToolInput(input: unknown): unknown {
-  if (typeof input !== "string") return input ?? {};
-  try {
-    return JSON.parse(input) as unknown;
-  } catch {
-    return input;
-  }
-}
-
 export interface StoredTurnInput {
   agentId: string;
   conversationId: string;
@@ -277,23 +235,6 @@ interface LocalTranscriptPersistOptions {
     previousMessages?: readonly LocalMessage[];
     stats?: LocalCompactionStats;
   };
-}
-
-function projectLocalMessageAtSourceIndex(
-  localMessage: LocalMessage,
-  agentId: string,
-  conversationId: string,
-  sourceIndex: number,
-): StoredMessage[] {
-  return withProjectedMessageDates(
-    projectLocalMessageToStoredMessages(
-      localMessage,
-      agentId,
-      conversationId,
-      new Date(Date.UTC(2026, 0, 1, 0, 0, sourceIndex + 1)).toISOString(),
-    ),
-    sourceIndex,
-  );
 }
 
 export class LocalStore {
@@ -447,35 +388,58 @@ export class LocalStore {
     this.agentRecordMtimeMsById.delete(agentId);
     this.loadConversationRecordsFromStorage();
     for (const [key, conversation] of [...this.conversations.entries()]) {
-      if (conversation.agent_id === agentId) {
-        this.conversations.delete(key);
-        this.localMessagesByConversationKey.delete(key);
-        this.loadedConversationKeys.delete(key);
-        this.tailResidentConversationKeys.delete(key);
-        this.residentTailStartIndexByConversationKey.delete(key);
-        this.loadRepairedConversationKeys.delete(key);
-        this.transcriptMetadataByConversationKey.delete(key);
-        this.conversationRecordJsonByKey.delete(key);
-        this.sessionEntryIdsByConversationKey.delete(key);
-        this.sessionEntryIdByMessageIdByConversationKey.delete(key);
-        this.persistedMessageByMessageIdByConversationKey.delete(key);
-        this.lastSessionEntryIdByConversationKey.delete(key);
-        if (this.storageDir) {
-          rmSync(
-            join(this.storageDir, "conversations", encodePathSegment(key)),
-            {
-              recursive: true,
-              force: true,
-            },
-          );
-        }
-      }
+      if (conversation.agent_id === agentId) this.forgetConversationKey(key);
     }
     if (this.storageDir) {
       rmSync(
         join(this.storageDir, "agents", `${encodePathSegment(agentId)}.json`),
         { force: true },
       );
+    }
+  }
+
+  deleteConversation(conversationId: string): void {
+    if (conversationId === "default") {
+      throw new Error("Default conversation cannot be deleted");
+    }
+    const conversation = this.findConversation(conversationId);
+    if (!conversation) {
+      throw new LocalBackendNotFoundError("Conversation", conversationId);
+    }
+    this.forgetConversationKey(
+      this.conversationKey(conversation.id, conversation.agent_id),
+    );
+  }
+
+  private forgetConversationKey(key: string): void {
+    const conversation = this.conversations.get(key);
+    for (const message of this.localMessagesByConversationKey.get(key) ?? []) {
+      this.settledLocalMessageIds.delete(message.id);
+    }
+    for (const [lookupKey, messages] of this.messagesById) {
+      if (conversation && storedMessagesBelongTo(messages, conversation)) {
+        this.messagesById.delete(lookupKey);
+      }
+    }
+    this.conversations.delete(key);
+    this.localMessagesByConversationKey.delete(key);
+    this.loadedConversationKeys.delete(key);
+    this.tailResidentConversationKeys.delete(key);
+    this.residentTailStartIndexByConversationKey.delete(key);
+    this.loadRepairedConversationKeys.delete(key);
+    this.unreadTranscriptHeadBytesByKey.delete(key);
+    this.transcriptMetadataByConversationKey.delete(key);
+    this.conversationRecordJsonByKey.delete(key);
+    this.sessionEntryIdsByConversationKey.delete(key);
+    this.sessionEntryIdByMessageIdByConversationKey.delete(key);
+    this.persistedMessageByMessageIdByConversationKey.delete(key);
+    this.lastSessionEntryIdByConversationKey.delete(key);
+    this.compiledSystemPromptByConversationKey.delete(key);
+    if (this.storageDir) {
+      rmSync(join(this.storageDir, "conversations", encodePathSegment(key)), {
+        recursive: true,
+        force: true,
+      });
     }
   }
 

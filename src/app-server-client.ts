@@ -10,6 +10,8 @@ import type {
   AppServerInfoResponseMessage,
   AppServerProtocolCommand,
   AppServerProtocolMessage,
+  ConversationDeleteCommand,
+  ConversationDeleteResponseMessage,
   ConversationListCommand,
   ConversationListResponseMessage,
   ExternalToolCallRequestMessage,
@@ -822,6 +824,30 @@ export class AppServerClient {
         ...options,
         predicate: (message): message is ConversationListResponseMessage =>
           message.type === "conversation_list_response",
+      },
+    );
+  }
+
+  conversationDelete(
+    command: Omit<ConversationDeleteCommand, "type" | "request_id"> & {
+      request_id?: string;
+    },
+    options: Omit<
+      AppServerRequestOptions<ConversationDeleteResponseMessage>,
+      "predicate"
+    > = {},
+  ): Promise<ConversationDeleteResponseMessage> {
+    return this.request(
+      {
+        ...command,
+        type: "conversation_delete",
+        request_id:
+          command.request_id ?? this.nextRequestId("conversation-delete"),
+      },
+      {
+        ...options,
+        predicate: (message): message is ConversationDeleteResponseMessage =>
+          message.type === "conversation_delete_response",
       },
     );
   }

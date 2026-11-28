@@ -638,6 +638,11 @@ describe("agent/conversation management protocol-inbound validators", () => {
       body: { hidden: true, message_id: "msg-1" },
     },
     {
+      type: "conversation_delete",
+      request_id: "r11b",
+      conversation_id: "conv-1",
+    },
+    {
       type: "conversation_messages_list",
       request_id: "r12",
       conversation_id: "conv-1",
@@ -795,6 +800,10 @@ describe("agent/conversation management protocol-inbound validators", () => {
       conversation_id: "conv-1",
       body: { hidden: "yes" },
     },
+    { type: "conversation_delete", request_id: "r9" },
+    { type: "conversation_delete", request_id: "r9", conversation_id: "" },
+    { type: "conversation_delete", request_id: "r9", conversation_id: 1 },
+    { type: "conversation_delete", request_id: "", conversation_id: "conv-1" },
     {
       type: "conversation_messages_list",
       request_id: "r10",
