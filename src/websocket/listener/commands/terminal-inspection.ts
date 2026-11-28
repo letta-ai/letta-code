@@ -2,8 +2,10 @@ import { lstat, realpath } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { buildClientSkillsPayload } from "@/agent/client-skills";
 import { getGlobalSkillsDir } from "@/agent/skills";
+import { estimateSystemTokens } from "@/agent/system-prompt-size";
 import { getBackend } from "@/backend";
 import { getAgentContextOverview } from "@/backend/api/agents";
+import { ApiRequestError } from "@/backend/api/request";
 import { collectLocalMemoryContextData } from "@/web/local-memory-context";
 import { getConversationWorkingDirectory } from "@/websocket/listener/cwd";
 import type { ConversationRuntime } from "@/websocket/listener/types";
@@ -68,8 +70,48 @@ export async function terminalContext(runtime: ConversationRuntime) {
       `Messages: ${context.breakdown.messages}`,
     ].join("\n");
   }
-  const overview =
-    await getAgentContextOverview<Record<string, number>>(agentId);
+  return cloudContext(
+    agentId,
+    runtime.conversationId,
+    runtime.contextTracker.lastContextTokens,
+  );
+}
+
+export async function cloudContext(
+  agentId: string,
+  conversationId: string,
+  used: number,
+  overviewFor = getAgentContextOverview<Record<string, number>>,
+  backend = getBackend(),
+) {
+  let overview: Record<string, number>;
+  try {
+    overview = await overviewFor(agentId);
+  } catch (error) {
+    if (!(error instanceof ApiRequestError) || error.status !== 404)
+      throw error;
+    const [agent, prompt] = await Promise.all([
+      backend.retrieveAgent(agentId),
+      backend.recompileConversation(conversationId, {
+        agent_id: agentId,
+        dry_run: true,
+      }),
+    ]);
+    const system = estimateSystemTokens(prompt);
+    const limit = agent.llm_config?.context_window;
+    return [
+      used
+        ? `Last reported context: ${used} tokens`
+        : "No usage reported for this session yet.",
+      ...(limit ? [`Agent context limit: ${limit} tokens`] : []),
+      `System and memory (estimated): ${system} tokens`,
+      ...(used > system
+        ? [
+            `Messages, tools and other input (estimated): ${used - system} tokens`,
+          ]
+        : []),
+    ].join("\n");
+  }
   return [
     `Agent context: ${overview.context_window_size_current} / ${overview.context_window_size_max} tokens`,
     ...Object.entries(overview)

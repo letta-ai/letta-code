@@ -47,6 +47,7 @@ export function TerminalComposer({
     <Input
       recallQueued={store.queuedInput ? () => store.recallQueued() : undefined}
       visible={active}
+      includeSystemPromptUpgradeTip={false}
       inputEnabled={active}
       streaming={state.activity?.startsWith("Working") ?? false}
       tokenCount={state.tokens ?? 0}
