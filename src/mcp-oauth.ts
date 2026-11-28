@@ -24,11 +24,7 @@ import {
   legacyMcpOAuthCredentialKeys,
   mcpOAuthCredentialKey,
 } from "@/mcp-oauth-identity";
-import {
-  deleteSecretValue,
-  getSecretValue,
-  setSecretValue,
-} from "@/utils/secrets";
+import { getLocalSecretStorage } from "@/utils/secrets-store";
 
 const credentialCoordinators = new Map<string, CredentialCoordinator>();
 const storageObjectIds = new WeakMap<object, number>();
@@ -234,9 +230,10 @@ export async function createMcpOAuthSessionWithStorage(
 
 const bunSecretStorage: McpOAuthStorage = {
   get: (credentialKey) =>
-    getSecretValue(credentialKey, "MCP OAuth credentials"),
-  set: setSecretValue,
-  delete: deleteSecretValue,
+    getLocalSecretStorage().get(credentialKey, "MCP OAuth credentials"),
+  set: (credentialKey, value) =>
+    getLocalSecretStorage().set(credentialKey, value),
+  delete: (credentialKey) => getLocalSecretStorage().delete(credentialKey),
 };
 
 class PersistentMcpOAuthProvider implements OAuthClientProvider {
