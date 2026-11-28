@@ -28,7 +28,12 @@ export function useTerminalInput({
 }) {
   const { exit } = useApp();
   const state = store.snapshot();
-  const streaming = !!state.activity?.startsWith("Working");
+  const stopping =
+    state.activity === "Interrupted" ||
+    state.activity === "Interrupt requested";
+  const streaming =
+    !stopping &&
+    (!!state.device?.isProcessing || !!state.activity?.startsWith("Working"));
   const thinkingMessage = useMemo(
     () => (streaming ? getRandomThinkingVerb() : ""),
     [streaming],
@@ -40,6 +45,7 @@ export function useTerminalInput({
         .map(({ content, id }) => ({
           kind: "user" as const,
           queueItemId: id,
+          paused: state.pausedQueueIds?.includes(id),
           text:
             typeof content === "string"
               ? content
@@ -51,7 +57,7 @@ export function useTerminalInput({
                     .join(" ")
                 : "[Message]",
         })),
-    [state.queue],
+    [state.queue, state.pausedQueueIds],
   );
   const width = useTerminalWidth();
   const completions = useMemo(
@@ -96,7 +102,13 @@ export function useTerminalInput({
     onExit: exit,
     onSubmit: async (value) => {
       const text = resolvePlaceholders(value ?? "").trimEnd();
-      if (!text) return { submitted: false };
+      if (!text) {
+        if (messageQueue.some((item) => item.paused)) {
+          await store.send("/queue resume");
+          return { submitted: true };
+        }
+        return { submitted: false };
+      }
       if (text === "/exit") exit();
       else {
         const parts: MessageContentItem[] = buildMessageContentFromDisplay(

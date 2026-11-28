@@ -1,6 +1,8 @@
 import { Box } from "ink";
+import { isLocalAgentId } from "@/agent/agent-id";
 import { isAskUserQuestions } from "@/ask-user-question";
 import { LettaLoginView } from "@/auth/LettaLoginView";
+import { SessionModelPicker } from "@/cli/app/SessionModelPicker";
 import { StaticTranscript } from "@/cli/app/StaticTranscript";
 import { terminalCommands } from "@/cli/app/terminal-commands";
 import type { useSessionView } from "@/cli/app/use-session-view";
@@ -9,13 +11,13 @@ import { ApprovalSwitch } from "@/cli/components/ApprovalSwitch";
 import { AssistantMessage } from "@/cli/components/AssistantMessageRich";
 import { BashCommandMessage } from "@/cli/components/BashCommandMessage";
 import { CommandMessage } from "@/cli/components/CommandMessage";
+import { ConversationSelector } from "@/cli/components/ConversationSelector";
 import { ErrorMessage } from "@/cli/components/ErrorMessageRich";
 import { EventMessage } from "@/cli/components/EventMessage";
 import { HelpDialog } from "@/cli/components/HelpDialog";
 import { InlineQuestionApproval } from "@/cli/components/InlineQuestionApproval";
 import { Input } from "@/cli/components/InputRich";
 import { MemfsTreeViewer } from "@/cli/components/MemfsTreeViewer";
-import { ModelSelector } from "@/cli/components/ModelSelector";
 import { PendingApprovalStub } from "@/cli/components/PendingApprovalStub";
 import { LiveReasoningMessage } from "@/cli/components/ReasoningMessageRich";
 import { SearchablePicker } from "@/cli/components/SearchablePicker";
@@ -221,24 +223,7 @@ export function AppView({
                     ln.kind === "tool_call" &&
                     ln.toolCallId === currentApproval.toolCallId,
                 ) && <Box flexDirection="column">{approvalView}</Box>}
-              <SubagentGroupDisplay
-                agents={(state.subagents ?? []).map((agent) => ({
-                  ...agent,
-                  status:
-                    agent.status === "completed" ||
-                    agent.status === "error" ||
-                    agent.status === "pending"
-                      ? agent.status
-                      : "running",
-                  type: "Subagent",
-                  agentURL: null,
-                  toolCalls: [],
-                  totalTokens: 0,
-                  maxToolCallsSeen: 0,
-                  durationMs: 0,
-                  startTime: 0,
-                }))}
-              />
+              <SubagentGroupDisplay agents={state.subagents ?? []} />
             </AnimationProvider>
 
             <Box marginTop={1}>
@@ -271,24 +256,34 @@ export function AppView({
                 <AgentSelector
                   currentAgentId={state.agentId ?? ""}
                   sessionList={store.listAgents}
+                  sessionCollection={store.listAgentCollection}
+                  onCreateNewAgent={store.createPickerAgent}
                   onSelect={(id) => void store.select(id)}
                   onCancel={() => store.closePicker()}
-                  showNewTab={false}
-                  allowPinActions={false}
-                  allowDelete={false}
+                  sessionUnpin={store.unpinPickerAgent}
+                  sessionDelete={store.deletePickerAgent}
                 />
               ) : state.picker.models ? (
-                <ModelSelector
+                <SessionModelPicker
                   entries={state.picker.models}
+                  handles={state.picker.handles}
+                  aliases={state.picker.aliases}
+                  currentModel={state.model}
+                  local={isLocalAgentId(state.agentId ?? "")}
+                  refresh={() => store.send("/model")}
+                  onOpenConnect={() => {
+                    store.closePicker();
+                    void store.send("/connect");
+                  }}
                   onSelect={(id) => void store.select(id)}
                   onCancel={() => store.closePicker()}
                 />
               ) : (
-                <SearchablePicker
-                  title="Resume conversation"
-                  key={state.picker.kind}
-                  items={state.picker.items}
-                  more={!!state.picker.after}
+                <ConversationSelector
+                  reader={store.conversations}
+                  agentId={state.agentId ?? ""}
+                  agentName={state.agentName}
+                  currentConversationId={store.conversationId}
                   onSelect={(id) => void store.select(id)}
                   onCancel={() => store.closePicker()}
                 />
@@ -313,6 +308,7 @@ export function AppView({
             ) : state.memory ? (
               <MemfsTreeViewer
                 agentId={state.memory.agentId}
+                conversationId={state.memory.conversationId}
                 entries={state.memory.entries}
                 onClose={() => store.closeMemory()}
               />

@@ -275,6 +275,9 @@ test("turn and subagent frames from another runtime or an older snapshot cannot 
     subagents: [
       {
         subagent_id: "child",
+        subagent_type: "Explorer",
+        tool_calls: [{ id: "read", name: "Read", args: "{}" }],
+        total_tokens: 42,
         description: "Checking files",
         status: "running",
       },
@@ -288,8 +291,15 @@ test("turn and subagent frames from another runtime or an older snapshot cannot 
     runtime: { agent_id: "agent-b", conversation_id: "conv-a" },
     subagents: [],
   });
-  expect(store.snapshot().subagents).toEqual([
-    { id: "child", description: "Checking files", status: "running" },
+  expect(store.snapshot().subagents).toMatchObject([
+    {
+      id: "child",
+      type: "Explorer",
+      description: "Checking files",
+      status: "running",
+      totalTokens: 42,
+      toolCalls: [{ id: "read", name: "Read", args: "{}" }],
+    },
   ]);
   store.receiveRuntimeEvent({
     ...event,
@@ -297,6 +307,22 @@ test("turn and subagent frames from another runtime or an older snapshot cannot 
     event_seq: 13,
     usage: { total_tokens: 77 },
   });
+  store.receiveRuntimeEvent({
+    ...event,
+    type: "update_queue",
+    event_seq: 5,
+    queue: [
+      { id: "waiting", paused: true },
+      { id: "active", paused: false },
+    ],
+  });
+  store.receiveRuntimeEvent({
+    ...event,
+    type: "update_queue",
+    event_seq: 4,
+    queue: [],
+  });
+  expect(store.snapshot().pausedQueueIds).toEqual(["waiting"]);
   expect(store.snapshot().tokens).toBe(77);
   store.close();
   await reading;

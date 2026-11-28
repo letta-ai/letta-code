@@ -21,7 +21,15 @@ import type {
   ConversationRetrieveCommand,
   ConversationUpdateCommand,
 } from "@/types/protocol_v2";
-import { isConversationForkCommand } from "@/websocket/listener/management-protocol-inbound";
+import {
+  readPickerPage,
+  unpinPickerAgent,
+} from "@/websocket/listener/commands/agent-picker";
+import {
+  isConversationForkCommand,
+  isPickerPageRequest,
+  isPickerUnpinRequest,
+} from "@/websocket/listener/management-protocol-inbound";
 import {
   isAgentCreateCommand,
   isAgentDeleteCommand,
@@ -589,6 +597,20 @@ export function handleAgentConversationManagementProtocolCommand(
   context: AgentConversationManagementCommandContext,
 ): boolean {
   const { socket, safeSocketSend, runDetachedListenerTask } = context;
+
+  if (isPickerPageRequest(parsed) || isPickerUnpinRequest(parsed)) {
+    runDetachedListenerTask("agent_picker_page", async () => {
+      safeSocketSend(
+        socket,
+        parsed.type === "agent_picker_page"
+          ? await readPickerPage(parsed)
+          : await unpinPickerAgent(parsed),
+        "listener_agent_management_send_failed",
+        "listener_agent_management",
+      );
+    });
+    return true;
+  }
 
   if (
     isAgentListCommand(parsed) ||

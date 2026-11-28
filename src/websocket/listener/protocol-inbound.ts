@@ -13,7 +13,6 @@ import type {
   AbortMessageCommand,
   AgentCreateCommand,
   AgentDeleteCommand,
-  AgentListCommand,
   AgentRetrieveCommand,
   AgentUpdateCommand,
   ChangeDeviceStateCommand,
@@ -131,8 +130,11 @@ import {
   isRuntimeExternalToolsUpdateCommand,
 } from "./external-tool-protocol";
 import {
+  isAgentListCommand,
   isAppServerInfoCommand,
   isConversationForkCommand,
+  isPickerPageRequest,
+  isPickerUnpinRequest,
 } from "./management-protocol-inbound";
 import {
   isAgentRuntimeScope,
@@ -1097,19 +1099,7 @@ export function isCreateAgentCommand(
   );
 }
 
-export function isAgentListCommand(value: unknown): value is AgentListCommand {
-  if (!value || typeof value !== "object") return false;
-  const c = value as {
-    type?: unknown;
-    request_id?: unknown;
-    query?: unknown;
-  };
-  return (
-    c.type === "agent_list" &&
-    typeof c.request_id === "string" &&
-    (c.query === undefined || isObjectRecord(c.query))
-  );
-}
+export { isAgentListCommand } from "./management-protocol-inbound";
 
 export function isAgentRetrieveCommand(
   value: unknown,
@@ -1966,6 +1956,8 @@ export function parseServerMessage(
       isSkillDisableCommand(parsed) ||
       isAppServerInfoCommand(parsed) ||
       isCreateAgentCommand(parsed) ||
+      isPickerPageRequest(parsed) ||
+      isPickerUnpinRequest(parsed) ||
       isAgentListCommand(parsed) ||
       isAgentRetrieveCommand(parsed) ||
       isAgentCreateCommand(parsed) ||

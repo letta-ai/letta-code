@@ -1,6 +1,5 @@
 import type {
   AgentCreateParams,
-  AgentListParams,
   AgentState,
   AgentUpdateParams,
   MessageCreate,
@@ -1199,12 +1198,6 @@ export interface CreateAgentCommand {
   tags?: string[];
   pin_global?: boolean;
 }
-export interface AgentListCommand {
-  type: "agent_list";
-  request_id: string;
-  query?: AgentListParams;
-}
-
 export interface AgentRetrieveCommand {
   type: "agent_retrieve";
   request_id: string;
@@ -1491,14 +1484,6 @@ export interface CreateAgentResponseMessage {
   agent_id?: string;
   name?: string;
   model?: string;
-  error?: string;
-}
-
-export interface AgentListResponseMessage {
-  type: "agent_list_response";
-  request_id: string;
-  success: boolean;
-  agents: AgentState[];
   error?: string;
 }
 
@@ -1965,7 +1950,8 @@ export type WsProtocolCommand =
   | SkillDisableCommand
   | CreateAgentCommand
   | AppServerInfoCommand
-  | AgentListCommand
+  | import("./agent-picker").PickerRequest
+  | import("./agent-picker").AgentListCommand
   | AgentRetrieveCommand
   | AgentCreateCommand
   | AgentUpdateCommand
@@ -2071,7 +2057,8 @@ export type WsProtocolMessage =
   | SkillsUpdatedMessage
   | CreateAgentResponseMessage
   | AppServerInfoResponseMessage
-  | AgentListResponseMessage
+  | import("./agent-picker").PickerResponse
+  | import("./agent-picker").AgentListResponseMessage
   | AgentRetrieveResponseMessage
   | AgentCreateResponseMessage
   | AgentUpdateResponseMessage
@@ -2127,3 +2114,8 @@ export type WsProtocolMessage =
 export type WsProtocolMessageType = WsProtocolMessage["type"];
 
 export type { StopReasonType };
+
+export type {
+  AgentListCommand,
+  AgentListResponseMessage,
+} from "./agent-picker";

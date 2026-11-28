@@ -1,6 +1,6 @@
 import { Box, useInput } from "ink";
 import Link from "ink-link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { TreeNode } from "@/agent/memory-scanner";
 import { buildChatUrl, isLocalAgentId } from "@/cli/helpers/app-urls";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
@@ -82,6 +82,22 @@ export function MemfsTreeViewer({
   const [treeScrollOffset, setTreeScrollOffset] = useState(0);
   const [viewMode, setViewMode] = useState<"split" | "full">("split");
   const [fullViewScrollOffset, setFullViewScrollOffset] = useState(0);
+  const [status, setStatus] = useState<string | null>(null);
+  const statusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function showStatus(msg: string, durationMs: number) {
+    if (statusTimerRef.current) clearTimeout(statusTimerRef.current);
+    setStatus(msg);
+    statusTimerRef.current = setTimeout(() => setStatus(null), durationMs);
+  }
+
+  useEffect(
+    () => () => {
+      if (statusTimerRef.current) clearTimeout(statusTimerRef.current);
+    },
+    [],
+  );
+
   const treeNodes = useMemo(() => remoteTree(entries), [entries]);
   const fileNodes = useMemo(
     () => treeNodes.filter((node) => !node.isDirectory),
@@ -97,12 +113,19 @@ export function MemfsTreeViewer({
     contentLines.length - FULL_VIEW_VISIBLE_LINES,
   );
 
-  useInput((_input, key) => {
-    if (key.ctrl && _input === "c") {
+  useInput((input, key) => {
+    if (key.ctrl && input === "c") {
       onClose();
       return;
     }
 
+    if ((input === "o" || input === "O") && adeUrl) {
+      void import("open")
+        .then(({ default: open }) => open(adeUrl))
+        .then(() => showStatus("Opened in browser", 3000))
+        .catch(() => showStatus("Could not open browser", 3000));
+      return;
+    }
     if (key.escape) {
       if (viewMode === "full") {
         setViewMode("split");
@@ -231,7 +254,16 @@ export function MemfsTreeViewer({
             {"  "}
             {charCount.toLocaleString()} chars
           </Text>
-          <Text dimColor>↑↓ scroll · Esc back</Text>
+          {status ? (
+            <Text dimColor>
+              {"  "}
+              {status}
+            </Text>
+          ) : (
+            <Text dimColor>
+              {"  "}↑↓ scroll{adeUrl ? " · O open in browser" : ""} · Esc back
+            </Text>
+          )}
         </Box>
       </Box>
     );
@@ -374,16 +406,25 @@ export function MemfsTreeViewer({
       <Text dimColor>{DOTTED_LINE.repeat(terminalWidth)}</Text>
 
       <Box flexDirection="column" marginTop={1}>
-        <Box>
-          <Text dimColor>{"  "}↑↓ navigate · Enter view</Text>
-          {adeUrl && !isTmux && (
-            <Link url={adeUrl}>
-              <Text dimColor> · Open memory in browser</Text>
-            </Link>
-          )}
-          {adeUrl && isTmux && <Text dimColor>Edit in ADE: {adeUrl}</Text>}
-          <Text dimColor> · Esc close</Text>
-        </Box>
+        {status ? (
+          <Text dimColor>
+            {"  "}
+            {status}
+          </Text>
+        ) : (
+          <Box>
+            <Text dimColor>{"  "}↑↓ navigate · Enter view · </Text>
+            {adeUrl && !isTmux && (
+              <Link url={adeUrl}>
+                <Text dimColor>Edit in ADE</Text>
+              </Link>
+            )}
+            {adeUrl && isTmux && <Text dimColor>Edit in ADE: {adeUrl}</Text>}
+            {!adeUrl && <Text dimColor>Local agent: {agentId}</Text>}
+            {adeUrl && <Text dimColor> · O open in browser</Text>}
+            <Text dimColor> · Esc close</Text>
+          </Box>
+        )}
       </Box>
     </Box>
   );

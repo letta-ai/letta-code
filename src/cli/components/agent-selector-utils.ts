@@ -1,5 +1,7 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
+import type { AgentBackendMode } from "@/agent/agent-id";
 import { getModelDisplayName } from "@/agent/model";
+import type { PinnedAgentData } from "@/cli/helpers/pinned-agent-listing";
 
 export interface AgentSelectorListAgent {
   id: string;
@@ -8,6 +10,7 @@ export interface AgentSelectorListAgent {
   last_run_completion?: string | null;
   creator?: AgentSelectorAgentCreator | null;
   blocks?: AgentState["blocks"];
+  memoryBlockCount?: number;
   model?: AgentState["model"];
   llm_config?: AgentState["llm_config"];
 }
@@ -132,4 +135,53 @@ export function formatAgentModel(agent: AgentSelectorListAgent): string {
     return handle;
   }
   return "unknown";
+}
+
+export interface AgentSelectorProps {
+  currentAgentId: string;
+  sessionCollection?: import("@/cli/app/terminal-session").TerminalSession["listAgentCollection"];
+  sessionDelete?: (id: string) => Promise<void>;
+  sessionUnpin?: (id: string) => Promise<void>;
+  sessionList?: (
+    after?: string | null,
+    query?: string,
+  ) => Promise<{ agents: AgentSelectorListAgent[]; nextCursor: string | null }>;
+  onSelect: (agentId: string, backendMode: AgentBackendMode) => void;
+  onCancel: () => void;
+  onLogin?: () => void;
+  onCreateNewAgent?: (name: string, backendMode: AgentBackendMode) => void;
+  command?: string;
+  title?: string;
+  showNewTab?: boolean;
+  allowDelete?: boolean;
+  allowPinActions?: boolean;
+}
+
+export type PickerPin = Omit<PinnedAgentData, "agent"> & {
+  agent: AgentSelectorListAgent | null;
+};
+
+export type ViewState =
+  | { type: "list" }
+  | {
+      type: "deleteConfirm";
+      agent: AgentSelectorListAgent;
+      agentId: string;
+      isLocal: boolean;
+    };
+
+export async function listSessionLocalAgents(
+  list: NonNullable<AgentSelectorProps["sessionList"]>,
+) {
+  const agents: AgentSelectorListAgent[] = [];
+  let cursor: string | null = null;
+  const seen = new Set<string>();
+  do {
+    const page = await list(cursor);
+    agents.push(...page.agents);
+    cursor = page.nextCursor;
+    if (cursor && seen.has(cursor)) break;
+    if (cursor) seen.add(cursor);
+  } while (cursor);
+  return agents;
 }

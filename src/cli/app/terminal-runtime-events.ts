@@ -12,6 +12,7 @@ export function terminalSocket(
         if (
           !text.includes('"update_subagent_state"') &&
           !text.includes('"turn_finished"') &&
+          !text.includes('"update_queue"') &&
           !text.includes('"skills_updated"')
         )
           return;

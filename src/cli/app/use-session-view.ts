@@ -13,7 +13,7 @@ import {
   isPatchTool,
 } from "@/cli/helpers/tool-name-mapping";
 import type { DiffPreview } from "@/types/protocol_v2";
-import { CLEAR_SCREEN_AND_HOME } from "./constants";
+import { CLEAR_SCREEN_AND_HOME, INTERRUPT_MESSAGE } from "./constants";
 import type { TerminalSession } from "./terminal-session";
 
 function transcriptLine(row: TranscriptRow, live: boolean): Line {
@@ -124,12 +124,19 @@ export function useSessionView({
             kind: "status",
             id: "session-start",
             lines: [
-              `Resuming new conversation with **${state.agentName ?? initialName ?? "your agent"}**`,
-              "→ **/rename**    name your agent",
-              "→ **/init**      initialize your agent's memory",
+              `Resuming ${state.resumedHistory ? "" : "new "}conversation with **${state.agentName ?? initialName ?? "your agent"}**`,
+              ...(state.resumedHistory
+                ? []
+                : [
+                    "→ **/rename**    name your agent",
+                    "→ **/init**      initialize your agent's memory",
+                  ]),
               "→ **/agents**    list all agents",
               "→ **/resume**    browse all conversations",
               "→ **/new**       start a new conversation",
+              ...(state.resumedHistory
+                ? ["→ **/init**      initialize your agent's memory"]
+                : []),
             ],
           },
           ...state.rows
@@ -150,6 +157,8 @@ export function useSessionView({
       id: "command",
       lines: state.commandOutput.split("\n"),
     });
+  if (state.activity === "Interrupted")
+    liveItems.push({ kind: "error", id: "interrupt", text: INTERRUPT_MESSAGE });
   if (state.error)
     liveItems.push({ kind: "error", id: "error", text: state.error });
   if (state.status === "offline")

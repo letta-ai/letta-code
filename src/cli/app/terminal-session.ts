@@ -12,6 +12,7 @@ import {
   type SessionDeviceStatus,
   type TranscriptRow,
 } from "@letta-ai/letta-agent-sdk";
+import { isLocalAgentId } from "@/agent/agent-id";
 import {
   type AskUserQuestionReceipt,
   parseAskUserQuestionNotif,
@@ -19,7 +20,13 @@ import {
   prepareAskUserQuestionNotif,
 } from "@/ask-user-question";
 import { queuedDraft } from "@/cli/app/queued-draft";
+import { sessionConversations } from "@/cli/app/session-conversations";
+import { sessionSubagents } from "@/cli/app/session-subagents";
 import type { PermissionMode } from "@/permissions/mode";
+import type {
+  PickerCollection,
+  PickerPageResponse,
+} from "@/types/agent-picker";
 
 import type { MemoryFileEntry } from "@/types/protocol_v2";
 
@@ -46,6 +53,8 @@ type Snapshot = {
   committed: number;
   epoch: number;
   queue: readonly SDKQueueItem[];
+  pausedQueueIds?: readonly string[];
+  resumedHistory?: boolean;
   approvals: readonly Approval[];
   status: "connecting" | "online" | "offline";
   error?: string;
@@ -57,16 +66,22 @@ type Snapshot = {
   model?: string;
   agentId?: string;
   agentName?: string;
-  subagents?: { id: string; description: string; status: string }[];
+  subagents?: ReturnType<typeof sessionSubagents>;
   tokens?: number;
   picker?: {
     kind: "agents" | "resume" | "model";
     items: { key: string; label: string; description?: string }[];
     after?: string;
     models?: LettaCodeModelEntry[];
+    handles?: string[] | null;
+    aliases?: Record<string, string>;
   };
   skills?: Skill[];
-  memory?: { agentId: string; entries: MemoryFileEntry[] };
+  memory?: {
+    agentId: string;
+    conversationId?: string;
+    entries: MemoryFileEntry[];
+  };
   activity?: string;
 };
 
@@ -104,6 +119,13 @@ export class TerminalSession {
     private readonly logout?: () => Promise<string>,
   ) {}
 
+  readonly conversations = sessionConversations(() => {
+    if (!this.session) throw new Error("Session disconnected");
+    return this.session;
+  });
+  get conversationId() {
+    return this.session?.conversationId ?? "default";
+  }
   snapshot = () => this.state;
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -270,6 +292,7 @@ export class TerminalSession {
       this.rebase(page);
       this.update({
         status: "online",
+        resumedHistory: page.messages.length > 0,
         model: ready.model ?? undefined,
         agentId: ready.agentId,
       });
@@ -390,17 +413,14 @@ export class TerminalSession {
     const picker = this.state.picker;
     const session = this.session;
     if (!session || !picker) return;
-    if (key === "@more" && picker.after) {
-      try {
-        await this.loadPicker(session, picker.kind, picker.after);
-      } catch (error) {
-        if (session === this.session) this.fail(error);
-      }
-      return;
-    }
-    if (picker.kind !== "model") return this.switchTarget(key);
+    if (picker.kind !== "model")
+      return this.switchTarget(
+        key === "default" && session.agentId ? session.agentId : key,
+      );
     try {
-      const model = await session.updateModel({ modelId: key });
+      const model = await session.updateModel(
+        key.includes("/") ? { modelHandle: key } : { modelId: key },
+      );
       if (session === this.session)
         this.update({
           model: model.modelHandle ?? model.modelId ?? key,
@@ -411,6 +431,72 @@ export class TerminalSession {
     }
   }
 
+  deletePickerAgent = async (id: string) => {
+    if (!this.management) throw new Error("Session management unavailable");
+    await this.management.agents.delete(id);
+  };
+  unpinPickerAgent = async (id: string) => {
+    if (!this.session) throw new Error("App server disconnected");
+    const result = await this.session.sendCommand(
+      { type: "agent_picker_unpin", agent_id: id },
+      { responseType: "agent_picker_unpin_response", timeoutMs: 5000 },
+    );
+    if (!result.success)
+      throw new Error(String(result.error ?? "Could not unpin agent"));
+  };
+  listAgentCollection = async (
+    collection: PickerCollection,
+    after?: string | null,
+    query?: string,
+  ) => {
+    const session = this.session;
+    if (!session) throw new Error("App server disconnected");
+    const result = await session.sendCommand<PickerPageResponse>(
+      {
+        type: "agent_picker_page",
+        collection,
+        after: after ?? undefined,
+        query,
+      },
+      { responseType: "agent_picker_page_response", timeoutMs: 5000 },
+    );
+    if (!result.success)
+      throw new Error(result.error ?? "Agent listing unavailable");
+    return {
+      agents: result.agents ?? [],
+      nextCursor: result.nextCursor ?? null,
+    };
+  };
+  createPickerAgent = async (name: string, mode: "local" | "api") => {
+    const session = this.session;
+    if (!session || !this.management) return;
+    try {
+      if (
+        (mode === "local") !==
+        (!!session.agentId && isLocalAgentId(session.agentId))
+      )
+        throw new Error("Select the backend connected to this app server.");
+      const result = await session.sendCommand(
+        {
+          type: "agent_create",
+          body: { name, tags: ["origin:letta-code", "git-memory-enabled"] },
+        },
+        { responseType: "agent_create_response" },
+      );
+      if (
+        !result.success ||
+        !isRecord(result.agent) ||
+        typeof result.agent.id !== "string"
+      )
+        throw new Error(String(result.error ?? "Agent creation failed"));
+      if (this.session === session) this.switchTarget(result.agent.id);
+    } catch (error) {
+      if (this.session === session) {
+        this.closePicker();
+        this.fail(error);
+      }
+    }
+  };
   listAgents = async (after?: string | null, query?: string) => {
     if (!this.management) throw new Error("Session management unavailable");
     const agents = await this.management.agents.list({
@@ -437,44 +523,22 @@ export class TerminalSession {
   private async loadPicker(
     session: LettaCodeSession,
     kind: "agents" | "resume" | "model",
-    after?: string,
   ) {
-    let items: { key: string; label: string; description?: string }[];
     if (kind === "model") {
       const catalog = await session.listModels();
-      const handles =
-        catalog.availableHandles && new Set(catalog.availableHandles);
-      const models = catalog.entries.filter(
-        (entry) => !handles || handles.has(entry.handle),
-      );
       if (session === this.session)
-        this.update({ picker: { kind, items: [], models } });
+        this.update({
+          picker: {
+            kind,
+            items: [],
+            models: catalog.entries,
+            handles: catalog.availableHandles,
+            aliases: catalog.byokProviderAliases,
+          },
+        });
       return;
-    } else if (kind === "agents") {
-      this.update({ picker: { kind, items: [] } });
-      return;
-    } else {
-      if (!this.management) throw new Error("Session management unavailable");
-      items = (
-        await this.management.conversations.list({
-          agentId: session.agentId ?? undefined,
-          limit: 30,
-          after,
-          order: "desc",
-        })
-      ).map((conv) => ({ key: conv.id, label: conv.summary ?? conv.id }));
     }
-    if (session !== this.session) return;
-    const next = items.length === 30 ? items.at(-1)?.key : undefined;
-    if (kind === "resume" && session.agentId && !after)
-      items.unshift({ key: session.agentId, label: "Default conversation" });
-    this.update({
-      picker: {
-        kind,
-        items: [...(after ? (this.state.picker?.items ?? []) : []), ...items],
-        after: next,
-      },
-    });
+    this.update({ picker: { kind, items: [] } });
   }
 
   receiveRuntimeEvent(event: Record<string, unknown>) {
@@ -491,26 +555,25 @@ export class TerminalSession {
     )
       return;
     const type = event.type;
-    if (type !== "update_subagent_state" && type !== "turn_finished") return;
+    if (
+      type !== "update_subagent_state" &&
+      type !== "turn_finished" &&
+      type !== "update_queue"
+    )
+      return;
     if (event.event_seq <= (this.eventSeq.get(type) ?? -1)) return;
     this.eventSeq.set(type, event.event_seq);
-    if (type === "update_subagent_state" && Array.isArray(event.subagents)) {
+    if (type === "update_queue" && Array.isArray(event.queue))
       this.update({
-        subagents: event.subagents.flatMap((item) =>
-          isRecord(item) &&
-          !item.silent &&
-          typeof item.subagent_id === "string" &&
-          typeof item.description === "string" &&
-          typeof item.status === "string"
-            ? [
-                {
-                  id: item.subagent_id,
-                  description: item.description,
-                  status: item.status,
-                },
-              ]
+        pausedQueueIds: event.queue.flatMap((item) =>
+          isRecord(item) && item.paused === true && typeof item.id === "string"
+            ? [item.id]
             : [],
         ),
+      });
+    if (type === "update_subagent_state" && Array.isArray(event.subagents)) {
+      this.update({
+        subagents: sessionSubagents(event.subagents),
       });
     }
     if (
@@ -812,7 +875,11 @@ export class TerminalSession {
         if (result.success === false) throw new Error(String(result.error));
 
         this.update({
-          memory: { agentId: session.agentId, entries },
+          memory: {
+            agentId: session.agentId,
+            conversationId: session.conversationId ?? undefined,
+            entries,
+          },
           commandOutput: undefined,
         });
         return;
@@ -903,6 +970,7 @@ export class TerminalSession {
       device: undefined,
       memory: undefined,
       approvals: [],
+      pausedQueueIds: undefined,
       queue: [],
       activity: undefined,
     });
