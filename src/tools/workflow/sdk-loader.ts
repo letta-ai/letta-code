@@ -23,6 +23,7 @@ export function supportsPublishedResume(version: string | undefined): boolean {
 
 export interface LoadedSdk {
   createLocalClient(harnessBackend: "api" | "local"): SdkClient;
+  createRemoteClient(url: string): SdkClient;
   supportsAgentFreeResume: boolean;
 }
 
@@ -126,12 +127,28 @@ export async function loadAgentSdk(): Promise<LoadedSdk> {
         LettaAgentClient: new (options: {
           backend: string;
           appServer?: { harnessBackend: "api" | "local" };
+          url?: string;
         }) => SdkClient;
       };
       if (typeof sdk.LettaAgentClient !== "function") {
         attempts.push(`${specifier}: module has no LettaAgentClient export`);
         continue;
       }
+      const wrapClient = (client: SdkClient): SdkClient => ({
+        query(params) {
+          const query = client.query(params);
+          if (!("conversationId" in query) || !("agentId" in query)) {
+            query.close();
+            throw new Error(
+              "Workflow requires an Agent SDK with ephemeral worker lineage and query identity support. Upgrade the Agent SDK.",
+            );
+          }
+          return query;
+        },
+        async [Symbol.asyncDispose]() {
+          await client[Symbol.asyncDispose]?.();
+        },
+      });
       return {
         supportsAgentFreeResume:
           (process.env.LETTA_WORKFLOW_AGENT_FREE_RESUME === "1" &&
@@ -139,27 +156,15 @@ export async function loadAgentSdk(): Promise<LoadedSdk> {
             specifier === specifiers[0]) ||
           (specifier.startsWith("file:") &&
             supportsPublishedResume(packageVersion(fileURLToPath(specifier)))),
-        createLocalClient: (harnessBackend) => {
-          const client = new sdk.LettaAgentClient({
-            backend: "local",
-            appServer: { harnessBackend },
-          });
-          return {
-            query(params) {
-              const query = client.query(params);
-              if (!("conversationId" in query) || !("agentId" in query)) {
-                query.close();
-                throw new Error(
-                  "Workflow requires an Agent SDK with ephemeral worker lineage and query identity support. Upgrade the Agent SDK.",
-                );
-              }
-              return query;
-            },
-            async [Symbol.asyncDispose]() {
-              await client[Symbol.asyncDispose]?.();
-            },
-          };
-        },
+        createLocalClient: (harnessBackend) =>
+          wrapClient(
+            new sdk.LettaAgentClient({
+              backend: "local",
+              appServer: { harnessBackend },
+            }),
+          ),
+        createRemoteClient: (url) =>
+          wrapClient(new sdk.LettaAgentClient({ backend: "remote", url })),
       };
     } catch (error) {
       attempts.push(`${specifier}: ${String(error)}`);

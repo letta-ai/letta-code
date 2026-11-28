@@ -459,3 +459,16 @@ export function compileLocalSystemPrompt(
     memfsRevision: memfs.revision,
   };
 }
+
+export function formatMidConversationMemoryUpdate(
+  compiled: LocalCompiledSystemPrompt,
+): string {
+  return [
+    "<memory_update>",
+    `The local memory filesystem has been edited and committed at revision ${compiled.memfsRevision ?? "unknown"}.`,
+    "This updates part of your persona/system memory. Treat the following freshly rendered memory context as authoritative from now on; where it conflicts with earlier memory context, this newer memory context wins.",
+    "",
+    compiled.coreMemory.trimEnd(),
+    "</memory_update>",
+  ].join("\n");
+}

@@ -145,6 +145,11 @@ import {
   resolveAmbientAgentId,
   retrieveHeadlessConversation,
 } from "./headless-ephemeral-startup";
+import {
+  importInitState,
+  importInitVerify,
+  importInitWaitForWorkflows,
+} from "./headless-import-init";
 import { launchListenerConversation } from "./headless-listener-launch";
 import { resolveHeadlessMemfsPolicy } from "./headless-memfs-policy";
 import {
@@ -1547,6 +1552,10 @@ export async function handleHeadlessCommand(
   telemetry.setSessionStatsGetter(() => sessionStats.getSnapshot());
 
   const sessionId = agent.id;
+  const importedInit = importInitState(
+    process.env.LETTA_IMPORT_INIT_WAIT,
+    agent.id,
+  );
   let headlessConversationClosed = false;
   let lastKnownRunId: string | null = null;
   const exitHeadless = async (
@@ -2362,6 +2371,20 @@ export async function handleHeadlessCommand(
           continue;
         }
 
+        if (importedInit) {
+          try {
+            const followUp = await importInitWaitForWorkflows(importedInit);
+            if (followUp) {
+              currentInput = [
+                { role: "user", content: followUp, otid: randomUUID() },
+              ];
+              continue;
+            }
+          } catch (error) {
+            console.error(`Import initialization blocked: ${String(error)}`);
+            await exitHeadless(1, "import_init_workflow_failed");
+          }
+        }
         break;
       }
 
@@ -2859,6 +2882,15 @@ export async function handleHeadlessCommand(
       }
     },
   });
+
+  if (importedInit) {
+    try {
+      importInitVerify(importedInit);
+    } catch (error) {
+      console.error(`Import initialization incomplete: ${String(error)}`);
+      await exitHeadless(1, "import_init_incomplete");
+    }
+  }
 
   sessionStats.updateUsageFromBuffers(buffers);
 
