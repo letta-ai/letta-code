@@ -119,10 +119,21 @@ export function MemfsTreeViewer({
       return;
     }
 
-    if ((input === "o" || input === "O") && adeUrl) {
-      void import("open")
-        .then(({ default: open }) => open(adeUrl))
-        .then(() => showStatus("Opened in browser", 3000))
+    if (input === "o" || input === "O") {
+      showStatus("Opening in browser...", 10000);
+      const opened = adeUrl
+        ? import("open")
+            .then(({ default: open }) => open(adeUrl))
+            .then(() => "Opened in browser")
+        : import("@/web/generate-memory-viewer")
+            .then(({ openSessionMemoryViewer }) =>
+              openSessionMemoryViewer(agentId, entries, conversationId),
+            )
+            .then((result) =>
+              result.opened ? "Opened in browser" : result.filePath,
+            );
+      void opened
+        .then((message) => showStatus(message, 3000))
         .catch(() => showStatus("Could not open browser", 3000));
       return;
     }
@@ -260,9 +271,7 @@ export function MemfsTreeViewer({
               {status}
             </Text>
           ) : (
-            <Text dimColor>
-              {"  "}↑↓ scroll{adeUrl ? " · O open in browser" : ""} · Esc back
-            </Text>
+            <Text dimColor>{"  "}↑↓ scroll · O open in browser · Esc back</Text>
           )}
         </Box>
       </Box>
@@ -421,7 +430,7 @@ export function MemfsTreeViewer({
             )}
             {adeUrl && isTmux && <Text dimColor>Edit in ADE: {adeUrl}</Text>}
             {!adeUrl && <Text dimColor>Local agent: {agentId}</Text>}
-            {adeUrl && <Text dimColor> · O open in browser</Text>}
+            <Text dimColor> · O open in browser</Text>
             <Text dimColor> · Esc close</Text>
           </Box>
         )}
