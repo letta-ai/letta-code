@@ -54,3 +54,8 @@ export type BackgroundProcessSummary =
   | AgentTaskBackgroundProcessSummary
   | MonitorBackgroundProcessSummary
   | WorkflowBackgroundProcessSummary;
+
+export interface DeviceBackgroundProcessStatus {
+  background_processes: BackgroundProcessSummary[];
+  active_non_persistent_monitor_count?: number;
+}

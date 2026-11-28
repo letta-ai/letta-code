@@ -33,8 +33,22 @@ export async function stopMonitor(
   }
   if (process.status !== "running") return { ...response, success: true };
 
-  if (!killBackgroundProcess(command.process_id))
-    return { ...response, error: "Monitor could not be stopped" };
+  const stopped = killBackgroundProcess(command.process_id, () => {
+    addToMessageQueue({
+      kind: "task_notification",
+      agentId: command.runtime.agent_id,
+      conversationId: command.runtime.conversation_id,
+      actingUserId: command.runtime.acting_user_id,
+      text: formatMonitorEventNotification({
+        taskId: command.process_id,
+        description: process.description,
+        event:
+          "The user cancelled this Monitor. Do not restart it unless the user asks.",
+      }),
+    });
+  });
+  if (!stopped) return { ...response, error: "Monitor could not be stopped" };
+
   let persistenceError: string | undefined;
   try {
     await process.persistState?.();
@@ -43,18 +57,6 @@ export async function stopMonitor(
       "Monitor stopped, but its server state could not be saved";
   }
 
-  addToMessageQueue({
-    kind: "task_notification",
-    agentId: command.runtime.agent_id,
-    conversationId: command.runtime.conversation_id,
-    actingUserId: command.runtime.acting_user_id,
-    text: formatMonitorEventNotification({
-      taskId: command.process_id,
-      description: process.description,
-      event:
-        "The user cancelled this Monitor. Do not restart it unless the user asks.",
-    }),
-  });
   return {
     ...response,
     success: !persistenceError,

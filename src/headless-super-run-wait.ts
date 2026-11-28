@@ -186,7 +186,9 @@ export async function waitForAcceptedSuperRun(
         idleNotified = false;
         return;
       }
-      const count = status.active_bash_count ?? 0;
+      const count =
+        (status.active_bash_count ?? 0) +
+        (status.active_non_persistent_monitor_count ?? 0);
       if (
         idleNotified ||
         status.loop_state?.status !== "WAITING_ON_INPUT" ||

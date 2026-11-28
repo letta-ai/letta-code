@@ -29,6 +29,7 @@ export interface AgentRuntimeStatusEntry {
   state: "IDLE" | "PENDING_DELIVERY" | "ACTIVE" | "ACTIVE_UNATTRIBUTED";
   loop_state: { status: string } | null;
   active_bash_count?: number;
+  active_non_persistent_monitor_count?: number;
   active_harness?: { connection_id: string } | null;
   has_conflicting_listeners?: boolean;
   active_run_ids: string[];

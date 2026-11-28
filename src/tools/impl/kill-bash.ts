@@ -7,7 +7,10 @@ import {
   scheduleBackgroundProcessCleanup,
 } from "./process_manager.js";
 
-export function killBackgroundProcess(shell_id: string): boolean {
+export function killBackgroundProcess(
+  shell_id: string,
+  onMonitorStopped?: () => void,
+): boolean {
   const proc = backgroundProcesses.get(shell_id);
   const retainsEntry =
     proc?.kind === "monitor" ||
@@ -33,12 +36,22 @@ export function killBackgroundProcess(shell_id: string): boolean {
     } else {
       backgroundProcesses.delete(shell_id);
     }
-    notifyBackgroundProcessStateChanged(proc.runtimeScope);
-    return true;
+    if (proc.kind !== "monitor") {
+      notifyBackgroundProcessStateChanged(proc.runtimeScope);
+      return true;
+    }
   } catch {
     proc.monitorEndStatus = undefined;
     proc.status = previousStatus;
     proc.completionNotificationSuppressed = previousNotificationSuppression;
     return false;
   }
+  try {
+    onMonitorStopped?.();
+  } finally {
+    queueMicrotask(() =>
+      notifyBackgroundProcessStateChanged(proc.runtimeScope),
+    );
+  }
+  return true;
 }

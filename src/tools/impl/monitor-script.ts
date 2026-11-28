@@ -223,12 +223,6 @@ export async function startScriptMonitor(
       `\n[${status === "completed" ? "result" : "error"}] ${detail}\n`,
     );
     if (processState.status !== "running") return;
-    hooks.markFinished(
-      taskId,
-      processState,
-      status,
-      status === "completed" ? 0 : 1,
-    );
     const durationMs = Date.now() - (processState.startTime?.getTime() ?? 0);
     addToMessageQueue({
       kind: "task_notification",
@@ -246,6 +240,12 @@ export async function startScriptMonitor(
       ...scope,
       ...(actingUserId !== undefined ? { actingUserId } : {}),
     });
+    hooks.markFinished(
+      taskId,
+      processState,
+      status,
+      status === "completed" ? 0 : 1,
+    );
   };
 
   const stopped = new Promise<never>((_resolve, reject) => {

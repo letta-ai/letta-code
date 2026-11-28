@@ -40,7 +40,7 @@ for (const busy of [false, true])
     setActiveRuntime(listener);
     const target = getOrCreateScopedRuntime(listener, "agent-a", "default");
     if (busy) target.turnLifecycle.startCommand();
-    const sent: unknown[] = [];
+    const sent: Record<string, unknown>[] = [];
     const socket = {
       readyState: WebSocket.OPEN,
       bufferedAmount: 0,
@@ -106,7 +106,7 @@ for (const busy of [false, true])
       handleAbortMessageInput: async () => false,
       stampInboundUserMessageOtids: (input) => input,
       safeSocketSend: (_socket, payload) => {
-        sent.push(payload);
+        sent.push(payload as Record<string, unknown>);
         return true;
       },
       runDetachedListenerTask() {},
@@ -142,6 +142,22 @@ for (const busy of [false, true])
         success: true,
         stopped: true,
       });
+      const queueIndex = sent.findIndex(
+        (frame) =>
+          frame.type === "update_queue" &&
+          JSON.stringify(frame.queue).includes("monitor-wire"),
+      );
+      const clearedIndex = sent.findIndex(
+        (frame) =>
+          frame.type === "update_device_status" &&
+          (
+            frame.device_status as {
+              active_non_persistent_monitor_count?: number;
+            }
+          ).active_non_persistent_monitor_count === 0,
+      );
+      expect(queueIndex).toBeGreaterThanOrEqual(0);
+      expect(clearedIndex).toBeGreaterThan(queueIndex);
       if (busy) {
         expect(delivered).toHaveLength(0);
         expect(target.queueRuntime.length).toBe(2);

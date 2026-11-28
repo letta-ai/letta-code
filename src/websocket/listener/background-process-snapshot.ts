@@ -18,12 +18,22 @@ function belongsToRuntime(
   );
 }
 
+function isNonPersistentMonitor(process: BackgroundProcessSummary): boolean {
+  return process.kind === "monitor" && process.persistent !== true;
+}
+
+export function countNonPersistentMonitors(
+  processes: BackgroundProcessSummary[],
+): number {
+  return processes.filter(isNonPersistentMonitor).length;
+}
+
 export function hasRunningBackgroundWork(
   agentId: string,
   conversationId: string,
 ): boolean {
   return buildBackgroundProcessSnapshot(agentId, conversationId).some(
-    (process) => process.kind === "bash",
+    (process) => process.kind === "bash" || isNonPersistentMonitor(process),
   );
 }
 
