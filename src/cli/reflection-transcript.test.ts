@@ -8,11 +8,11 @@ import {
   REFLECTION_PARENT_MEMORY_SNAPSHOT_CHAR_LIMIT,
   REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT,
 } from "@/agent/subagents/context-budget";
+import { buildParentMemorySnapshot } from "@/cli/helpers/reflection-memory";
 import {
   appendTranscriptDeltaJsonl,
   buildAutoReflectionPayload,
   buildMultiReflectionPayload,
-  buildParentMemorySnapshot,
   buildReflectionSelectorPrompt,
   buildReflectionSubagentPrompt,
   finalizeAutoReflectionPayload,

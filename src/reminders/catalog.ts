@@ -38,7 +38,7 @@ export const SHARED_REMINDER_CATALOG: ReadonlyArray<SharedReminderDefinition> =
     {
       id: "conversation-bootstrap",
       description: "First-turn prior-conversation bootstrap context",
-      modes: ["interactive"],
+      modes: ["interactive", "listen"],
     },
     {
       id: "agent-info",

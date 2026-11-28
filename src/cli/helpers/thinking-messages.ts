@@ -46,9 +46,9 @@ export const SYSTEM_PROMPT_UPGRADE_TIP =
   "Use /system to upgrade to the latest default prompt.";
 
 export const THINKING_TIPS = Object.freeze([
-  "Use /palace to inspect your agent's memory palace.",
+  "Use /memory to browse your agent's memory files.",
   "Use /reflect to launch a background reflection agent to update memory.",
-  "Use /search [query] to search messages across all agents.",
+  "Use /resume to switch conversations.",
   "Use /init to initialize (or re-init) your agent's memory.",
 ] as const);
 

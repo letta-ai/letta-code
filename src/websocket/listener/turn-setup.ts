@@ -13,6 +13,7 @@ import { loadPreloadedSkills } from "@/agent/preloaded-skills";
 import { INTERRUPT_RECOVERY_ALERT } from "@/agent/prompt-assets";
 import { getBackend } from "@/backend";
 import type { Line } from "@/cli/helpers/accumulator";
+import { experimentManager } from "@/experiments/manager";
 import {
   buildSharedReminderParts,
   prependReminderPartsToContent,
@@ -26,6 +27,7 @@ import { resolveTurnToolSelection } from "@/tools/tool-policy";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import { debugWarn, isDebugEnabled } from "@/utils/debug";
 import { detectShellContext } from "@/utils/shell-context";
+import { listConversationMessagePage } from "@/websocket/listener/commands/agents-conversations";
 import { publishChannelRuntimeToolsForTurn } from "./channel-runtime-tools";
 import { resolveTurnExecutionConnectionId } from "./connection";
 import {
@@ -222,11 +224,31 @@ export async function prepareListenerTurn(params: {
       setCurrentAgentName(
         listenAgentMetadata?.name ?? cachedAgent?.name ?? null,
       );
+      const firstUser = messagesToSend.find(
+        (message): message is MessageCreate =>
+          "role" in message && message.role === "user",
+      );
+      if (
+        firstUser &&
+        !runtime.reminderState.hasSentConversationBootstrap &&
+        experimentManager.isEnabled("desktop_conversation_bootstrap")
+      ) {
+        const page = await listConversationMessagePage(
+          getBackend(),
+          conversationId,
+          { agent_id: agentId, limit: 1 },
+        );
+        if (isInterrupted()) return { kind: "interrupted" };
+        runtime.reminderState.pendingConversationBootstrap =
+          !page.messages.length;
+        runtime.reminderState.hasSentConversationBootstrap =
+          !!page.messages.length;
+      }
       const { parts: reminderParts } = await runWithRuntimeContext(
         { executionSettings: runtime.executionSettings },
         () =>
-          buildSharedReminderParts(
-            buildListenReminderContext({
+          buildSharedReminderParts({
+            ...buildListenReminderContext({
               agentId,
               conversationId,
               agentName: listenAgentMetadata?.name ?? null,
@@ -236,7 +258,8 @@ export async function prepareListenerTurn(params: {
               workingDirectory,
               shellContext: detectShellContext(),
             }),
-          ),
+            conversationBootstrapContent: firstUser?.content,
+          }),
       );
       if (isInterrupted()) {
         return { kind: "interrupted" };

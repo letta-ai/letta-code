@@ -59,6 +59,7 @@ import { colors } from "./colors";
 import { InputAssist } from "./InputAssist";
 import { ModPanelRow, renderModPanelLines } from "./ModPanelRow";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
+import { getPermissionModeTransientHintInfo } from "./permission-mode-hint";
 import { QueuedMessages } from "./QueuedMessages";
 import { ShimmerText } from "./ShimmerText";
 import {
@@ -68,6 +69,7 @@ import {
 import { StreamingStatusSpinner } from "./spinners/StreamingStatusSpinner.js";
 import { Text } from "./Text";
 import { handleTranscriptDisplayShortcut } from "./transcript-display-state";
+import type { SessionCompletions } from "./types/autocomplete";
 
 const ESC_CLEAR_WINDOW_MS = 2500;
 const FOOTER_WIDTH_STREAMING_DELTA = 2;
@@ -80,35 +82,6 @@ const EMPTY_COMPOSER_PROMPT_HINTS = [
   'Try "explain what this function does"',
   'Try "review this pull request"',
 ];
-
-function getPermissionModeTransientHintInfo(mode: PermissionMode): {
-  name: string;
-  color: string;
-  glyph?: string;
-} {
-  switch (mode) {
-    case "acceptEdits":
-      return { name: "accept edits", color: colors.status.processing };
-    case "standard":
-      return {
-        name: "standard (request approval) mode",
-        color: colors.status.processingShimmer,
-        glyph: "▶",
-      };
-    case "unrestricted":
-      return {
-        name: "unrestricted mode",
-        color: colors.status.success,
-        glyph: "⚡︎",
-      };
-    case "strict":
-      return {
-        name: "strict (all tools require approval)",
-        color: colors.status.error,
-        glyph: "🔒",
-      };
-  }
-}
 
 type StatuslinePreemption =
   | { type: "confirm-exit" }
@@ -404,7 +377,12 @@ const StatuslineSlot = memo(function StatuslineSlot({
   modContext: ModContext;
   subagentLifecycleSnapshot: ReturnType<typeof getSubagentLifecycleSnapshot>;
   subagentLifecycleTick: number;
-  modAdapter: LocalModAdapter;
+  modAdapter: Partial<
+    Pick<
+      LocalModAdapter,
+      "registry" | "isLoading" | "hadModPanels" | "hasModSources"
+    >
+  >;
   transientHint?: StatuslineTransientHint | null;
 }) {
   const hideFooterContent = hideFooter;
@@ -522,7 +500,7 @@ const StreamingStatus = memo(function StreamingStatus({
   contextWindowSize,
   elapsedBaseMs,
   thinkingMessage,
-  includeSystemPromptUpgradeTip,
+  tipMessage,
   agentName,
   interruptRequested,
   networkPhase,
@@ -537,7 +515,7 @@ const StreamingStatus = memo(function StreamingStatus({
   contextWindowSize: number | null | undefined;
   elapsedBaseMs: number;
   thinkingMessage: string;
-  includeSystemPromptUpgradeTip: boolean;
+  tipMessage: string;
   agentName: string | null | undefined;
   interruptRequested: boolean;
   networkPhase: "upload" | "download" | "error" | null;
@@ -604,7 +582,6 @@ const StreamingStatus = memo(function StreamingStatus({
   const displayedTokenBytes = useTokenSmoothing(tokenCount, isLive);
 
   const [elapsedMs, setElapsedMs] = useState(0);
-  const [tipMessage, setTipMessage] = useState("");
   const streamStartRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -632,12 +609,6 @@ const StreamingStatus = memo(function StreamingStatus({
     streamStartRef.current = null;
     setElapsedMs(0);
   }, [streaming, visible]);
-
-  useEffect(() => {
-    if (streaming && visible) {
-      setTipMessage(getRandomThinkingTip({ includeSystemPromptUpgradeTip }));
-    }
-  }, [streaming, visible, includeSystemPromptUpgradeTip]);
 
   const actualEstimatedTokens = bytesToTokens(tokenCount);
   const estimatedTokens = bytesToTokens(displayedTokenBytes);
@@ -801,9 +772,10 @@ export function Input({
   currentModelProvider,
   hasTemporaryModelOverride = false,
   currentReasoningEffort,
+  sessionCompletions,
   fileAutocompleteFdPath,
   messageQueue,
-  onQueueEdit,
+  recallQueued,
   onEscapeCancel,
   onEscapeCommandCancel,
   inputDisabled = false,
@@ -853,8 +825,9 @@ export function Input({
   hasTemporaryModelOverride?: boolean;
   currentReasoningEffort?: ModelReasoningEffort | null;
   fileAutocompleteFdPath?: string | null;
+  sessionCompletions?: SessionCompletions;
   messageQueue?: QueuedMessage[];
-  onQueueEdit?: () => string;
+  recallQueued?: () => Promise<string>;
   onEscapeCancel?: () => void;
   onEscapeCommandCancel?: () => boolean;
   inputDisabled?: boolean;
@@ -867,7 +840,12 @@ export function Input({
   terminalWidth: number;
   shouldAnimate?: boolean;
   modContext: ModContext;
-  modAdapter: LocalModAdapter;
+  modAdapter: Partial<
+    Pick<
+      LocalModAdapter,
+      "registry" | "isLoading" | "hadModPanels" | "hasModSources"
+    >
+  >;
   statusLinePrompt?: string;
   onCycleReasoningEffort?: () => void;
   footerNotification?: string | null;
@@ -1200,11 +1178,11 @@ export function Input({
     };
   }, []);
 
-  const settings = settingsManager.getSettings();
-  const serverUrl =
-    process.env.LETTA_BASE_URL ||
-    settings.env?.LETTA_BASE_URL ||
-    LETTA_CLOUD_API_URL;
+  const serverUrl = sessionCompletions
+    ? undefined
+    : process.env.LETTA_BASE_URL ||
+      settingsManager.getSettings().env?.LETTA_BASE_URL ||
+      LETTA_CLOUD_API_URL;
 
   useInput((_input, key) => {
     if (!interactionEnabled) return;
@@ -1332,7 +1310,7 @@ export function Input({
       const nextIndex = (currentIndex + 1) % modes.length;
       const nextMode = modes[nextIndex] ?? "unrestricted";
 
-      permissionMode.setMode(nextMode);
+      if (!sessionCompletions) permissionMode.setMode(nextMode);
       setCurrentMode(nextMode);
 
       if (onPermissionModeChange) {
@@ -1357,6 +1335,15 @@ export function Input({
       const targetColumn = preferredColumn ?? column;
 
       if (key.upArrow) {
+        if (!value && recallQueued) {
+          void recallQueued().then((text) => {
+            if (text) {
+              setValue((current) => text + current);
+              setCursorPos(text.length);
+            }
+          });
+          return;
+        }
         const targetLine = visualLines[lineIndex - 1];
         if (lineIndex > 0 && targetLine) {
           if (preferredColumn === null) {
@@ -1376,22 +1363,6 @@ export function Input({
         ) {
           setCursorPos(0);
           setAtStartBoundary(true);
-          return;
-        }
-
-        if (
-          messageQueue &&
-          messageQueue.filter((m) => m.kind === "user").length > 0 &&
-          onQueueEdit &&
-          (atStartBoundary || currentCursorPosition === 0)
-        ) {
-          setAtStartBoundary(false);
-          const combined = onQueueEdit();
-          if (combined) {
-            releaseDiscardedDraftPlaceholders(value, combined);
-            setValue(combined);
-            setCursorPos(combined.length);
-          }
           return;
         }
 
@@ -1708,7 +1679,12 @@ export function Input({
     panelModContext,
     subagentLifecycleSnapshot,
     subagentLifecycleTick,
-  } = useProductStatusPanels({ modContext, modAdapter, shouldAnimate });
+  } = useProductStatusPanels({
+    modContext,
+    modAdapter,
+    shouldAnimate,
+    remote: !!sessionCompletions,
+  });
 
   const modPanelRow = useMemo(() => {
     void subagentLifecycleSnapshot;
@@ -1794,7 +1770,7 @@ export function Input({
                   cursorPosition={cursorPos}
                   onCursorMove={setCurrentCursorPosition}
                   focus={interactionEnabled && !onEscapeCancel}
-                  onBangAtEmpty={handleBangAtEmpty}
+                  onBangAtEmpty={onBashSubmit ? handleBangAtEmpty : undefined}
                   onBackspaceAtEmpty={handleBackspaceAtEmpty}
                   onPasteError={onPasteError}
                 />
@@ -1813,6 +1789,7 @@ export function Input({
             {!suppressDividers && (
               <InputAssist
                 currentInput={value}
+                session={sessionCompletions}
                 cursorPosition={currentCursorPosition}
                 fdPath={fileAutocompleteFdPath}
                 onFileAutocompleteApply={handleFileAutocompleteApply}
@@ -1824,7 +1801,7 @@ export function Input({
                 currentModel={currentModel}
                 currentReasoningEffort={currentReasoningEffort}
                 serverUrl={serverUrl}
-                workingDirectory={process.cwd()}
+                workingDirectory={modContext.cwd}
                 conversationId={conversationId}
                 modCommands={modAdapter.registry?.commands}
               />
@@ -1879,9 +1856,12 @@ export function Input({
     cursorPos,
     onEscapeCancel,
     handleBangAtEmpty,
+    sessionCompletions,
+    onBashSubmit,
     handleBackspaceAtEmpty,
     onPasteError,
     currentCursorPosition,
+    modContext.cwd,
     handleFileAutocompleteApply,
     handleCommandSelect,
     handleCommandAutocomplete,
@@ -1917,6 +1897,11 @@ export function Input({
     statuslineTransientHint,
   ]);
 
+  const tipMessage = useMemo(
+    () =>
+      streaming ? getRandomThinkingTip({ includeSystemPromptUpgradeTip }) : "",
+    [streaming, includeSystemPromptUpgradeTip],
+  );
   if (!visible) {
     return null;
   }
@@ -1931,7 +1916,7 @@ export function Input({
         contextWindowSize={contextWindowSize}
         elapsedBaseMs={elapsedBaseMs}
         thinkingMessage={thinkingMessage}
-        includeSystemPromptUpgradeTip={includeSystemPromptUpgradeTip}
+        tipMessage={tipMessage}
         agentName={agentName}
         interruptRequested={interruptRequested}
         networkPhase={networkPhase}

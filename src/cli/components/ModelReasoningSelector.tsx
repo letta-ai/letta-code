@@ -4,7 +4,7 @@ import type { ModelReasoningSelection } from "@/agent/model";
 import { formatXhighEffortLabel } from "@/agent/reasoning-effort-label";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { colors } from "./colors";
-import type { ModelSelectorSelection } from "./ModelSelector";
+import type { ModelSelectorSelection } from "./model-selector-helpers";
 import { Text } from "./Text";
 
 const SOLID_LINE = "─";

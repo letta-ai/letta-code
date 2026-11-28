@@ -13,6 +13,7 @@ import { getAgentContextOverview } from "@/backend/api/agents";
 import { getClient } from "@/backend/api/client";
 import { apiRequest } from "@/backend/api/request";
 import { getServerUrl } from "@/backend/api/server-url";
+import type { MemoryFileEntry } from "@/types/protocol_v2";
 import { resolveGlobalConfigDir } from "@/utils/settings-path";
 import {
   applyContextUsageSnapshot,
@@ -460,6 +461,37 @@ export async function generateAndOpenMemoryViewer(
 
   data.context = applyContextUsageSnapshot(data.context, options?.contextUsage);
 
+  return openMemoryViewerData(data);
+}
+
+export function openSessionMemoryViewer(
+  agentId: string,
+  entries: readonly MemoryFileEntry[],
+  conversationId?: string,
+) {
+  return openMemoryViewerData({
+    agent: { id: agentId, name: agentId, serverUrl: "" },
+    generatedAt: new Date().toISOString(),
+    totalCommitCount: 0,
+    commits: [],
+    selectedConversationId: conversationId,
+    files: entries
+      .filter((entry) => entry.kind !== "image")
+      .map((entry) => {
+        const { body, frontmatter } = parseFrontmatter(entry.content);
+        return {
+          path: entry.relative_path,
+          isSystem: entry.is_system,
+          content: body,
+          frontmatter,
+        };
+      }),
+  });
+}
+
+async function openMemoryViewerData(
+  data: MemoryViewerData,
+): Promise<GenerateResult> {
   const jsonPayload = JSON.stringify(data).replace(/</g, "\\u003c");
   const html = memoryViewerTemplate.replace(
     "<!--LETTA_DATA_PLACEHOLDER-->",
@@ -475,7 +507,7 @@ export async function generateAndOpenMemoryViewer(
 
   const filePath = join(
     VIEWERS_DIR,
-    `memory-${encodeURIComponent(agentId)}.html`,
+    `memory-${encodeURIComponent(data.agent.id)}.html`,
   );
   writeFileSync(filePath, html);
   chmodSync(filePath, 0o600);

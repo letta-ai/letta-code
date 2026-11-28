@@ -4,10 +4,7 @@ export type ExperimentId =
   | "artifacts"
   | "conversation_titles"
   | "desktop_conversation_bootstrap"
-  | "diffs"
-  | "memory_palace"
-  | "reflection_arena"
-  | "tui_cron";
+  | "diffs";
 
 export type ExperimentSource = "override" | "env" | "default";
 
@@ -22,4 +19,11 @@ export interface ExperimentSnapshot extends ExperimentDefinition {
   enabled: boolean;
   source: ExperimentSource;
   override: boolean | null;
+}
+
+export function isRemoteExperimentId(value: unknown): value is ExperimentId {
+  return (
+    value === "conversation_titles" ||
+    value === "desktop_conversation_bootstrap"
+  );
 }

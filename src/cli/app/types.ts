@@ -13,7 +13,7 @@ import type {
 import type { AgentProvenance } from "@/agent/create";
 import type { PersonalityId } from "@/agent/personality-presets";
 import type { CommandHandle, createCommandRunner } from "@/cli/commands/runner";
-import type { ModelSelectorSelection } from "@/cli/components/ModelSelector";
+import type { ModelSelectorSelection } from "@/cli/components/model-selector-helpers";
 import type { Line } from "@/cli/helpers/accumulator";
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
 import type { ReflectionSettings } from "@/cli/helpers/memory-reminder";
@@ -204,6 +204,7 @@ export type StaticItem =
       kind: "welcome";
       id: string;
       snapshot: {
+        session?: { model?: string; location?: string; connection: string };
         continueSession: boolean;
         agentState?: AgentState | null;
         startupHasAvailableLocalModels?: boolean;

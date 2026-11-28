@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
 import type WebSocket from "ws";
-import { regenerateConversationDescription } from "@/agent/conversation-description";
 import {
   applySetMaxContext,
   formatSetMaxContextResult,
@@ -33,6 +32,10 @@ import type {
   StreamDelta,
 } from "@/types/protocol_v2";
 import { debugLog } from "@/utils/debug";
+import {
+  terminalContext,
+  terminalSkills,
+} from "@/websocket/listener/commands/terminal-inspection";
 import { markSecretsReminderRefreshPending } from "./commands/secrets";
 import { getConversationWorkingDirectory } from "./cwd";
 import {
@@ -146,6 +149,12 @@ export async function handleExecuteCommand(
         break;
       }
 
+      case "context":
+        output = await terminalContext(conversationRuntime);
+        break;
+      case "skills":
+        output = JSON.stringify(await terminalSkills(conversationRuntime));
+        break;
       case "init":
         output = await handleInitCommand(socket, conversationRuntime, opts);
         break;
@@ -164,8 +173,8 @@ export async function handleExecuteCommand(
         break;
 
       case "dream":
-      case "reflect":
       case "reflection":
+      case "reflect":
         output = await handleReflectCommand(
           socket,
           conversationRuntime,
@@ -175,7 +184,6 @@ export async function handleExecuteCommand(
         break;
 
       case "context-limit":
-      case "set-max-context":
         output = await handleSetMaxContextCommand(
           conversationRuntime,
           trimmedArgs,
@@ -594,7 +602,6 @@ async function handleCompactCommand(
           : String(reflectionError),
       );
     }
-    void regenerateConversationDescription(conversationRuntime.conversationId);
 
     return [
       `Compaction completed${modeDisplay}. Message buffer length reduced from ${result.num_messages_before} to ${result.num_messages_after}.`,

@@ -15,6 +15,7 @@ interface FileAutocompleteProps {
   cursorPosition: number;
   fdPath?: string | null;
   workingDirectory?: string;
+  searchFiles?: (query: string) => Promise<string[]>;
   onApplyCompletion: (value: string, cursorPosition: number) => void;
   onActiveChange?: (isActive: boolean) => void;
 }
@@ -28,6 +29,7 @@ export function FileAutocomplete({
   cursorPosition,
   fdPath,
   workingDirectory,
+  searchFiles,
   onApplyCompletion,
   onActiveChange,
 }: FileAutocompleteProps) {
@@ -73,6 +75,27 @@ export function FileAutocomplete({
     onActiveChange?.(true);
 
     async function search() {
+      if (searchFiles) {
+        const prefix = /(?:^|\s)(@[^\s]*)$/.exec(
+          currentInput.slice(0, cursorPosition),
+        )?.[1];
+        const paths = prefix ? await searchFiles(prefix.slice(1)) : [];
+        if (controller.signal.aborted || gen !== searchGenRef.current) return;
+        setSuggestions(
+          prefix
+            ? {
+                prefix,
+                items: paths.map((path) => ({
+                  label: path,
+                  value: path.includes(" ") ? `@"${path}"` : `@${path}`,
+                })),
+              }
+            : null,
+        );
+        setIsLoading(false);
+        onActiveChange?.(paths.length > 0);
+        return;
+      }
       if (!fdPath) {
         setSuggestions(null);
         setIsLoading(false);
@@ -109,7 +132,14 @@ export function FileAutocomplete({
     return () => {
       controller.abort();
     };
-  }, [currentInput, cursorPosition, fdPath, onActiveChange, workingDirectory]);
+  }, [
+    currentInput,
+    cursorPosition,
+    fdPath,
+    onActiveChange,
+    workingDirectory,
+    searchFiles,
+  ]);
 
   if (!currentInput.includes("@")) return null;
   if (matches.length === 0 && !isLoading) return null;

@@ -1,5 +1,5 @@
 import type WebSocket from "ws";
-import type { ExperimentId } from "@/experiments/types";
+import { isRemoteExperimentId } from "@/experiments/types";
 import { isToolsetPreference } from "@/tools/toolset-catalog";
 import {
   CHANNEL_ACCOUNT_CREATE_FIELDS,
@@ -9,11 +9,11 @@ import {
   hasValidChannelPolicyFields,
   isChannelId,
 } from "@/types/channel-service-validation";
+import { isListMemoryCommand } from "@/types/list-memory-command";
 import type {
   AbortMessageCommand,
   AgentCreateCommand,
   AgentDeleteCommand,
-  AgentListCommand,
   AgentRetrieveCommand,
   AgentUpdateCommand,
   ChangeDeviceStateCommand,
@@ -66,7 +66,6 @@ import type {
   InputCreateMessagePayload,
   ListConnectProvidersCommand,
   ListInDirectoryCommand,
-  ListMemoryCommand,
   ListModelsCommand,
   MemoryCommitDiffCommand,
   MemoryFileAtRefCommand,
@@ -106,17 +105,6 @@ export {
   isChatGPTUsageReadCommand,
 } from "@/websocket/listener/chatgpt-usage-protocol-inbound";
 
-const EXPERIMENT_IDS = new Set<ExperimentId>([
-  "conversation_titles",
-  "desktop_conversation_bootstrap",
-  "memory_palace",
-  "tui_cron",
-]);
-
-function isExperimentId(value: unknown): value is ExperimentId {
-  return typeof value === "string" && EXPERIMENT_IDS.has(value as ExperimentId);
-}
-
 import { isValidApprovalResponseBody } from "./approval";
 import {
   isCronPauseCommand,
@@ -142,8 +130,11 @@ import {
   isRuntimeExternalToolsUpdateCommand,
 } from "./external-tool-protocol";
 import {
+  isAgentListCommand,
   isAppServerInfoCommand,
   isConversationForkCommand,
+  isPickerPageRequest,
+  isPickerUnpinRequest,
 } from "./management-protocol-inbound";
 import {
   isAgentRuntimeScope,
@@ -631,24 +622,7 @@ export function isFileOpsCommand(value: unknown): value is FileOpsCommand {
   );
 }
 
-export function isListMemoryCommand(
-  value: unknown,
-): value is ListMemoryCommand {
-  if (!value || typeof value !== "object") return false;
-  const c = value as {
-    type?: unknown;
-    request_id?: unknown;
-    agent_id?: unknown;
-    include_references?: unknown;
-  };
-  return (
-    c.type === "list_memory" &&
-    typeof c.request_id === "string" &&
-    typeof c.agent_id === "string" &&
-    (c.include_references === undefined ||
-      typeof c.include_references === "boolean")
-  );
-}
+export { isListMemoryCommand };
 
 export function isMemoryHistoryCommand(
   value: unknown,
@@ -1108,19 +1082,7 @@ export function isCreateAgentCommand(
   );
 }
 
-export function isAgentListCommand(value: unknown): value is AgentListCommand {
-  if (!value || typeof value !== "object") return false;
-  const c = value as {
-    type?: unknown;
-    request_id?: unknown;
-    query?: unknown;
-  };
-  return (
-    c.type === "agent_list" &&
-    typeof c.request_id === "string" &&
-    (c.query === undefined || isObjectRecord(c.query))
-  );
-}
+export { isAgentListCommand } from "./management-protocol-inbound";
 
 export function isAgentRetrieveCommand(
   value: unknown,
@@ -1389,7 +1351,7 @@ export function isSetExperimentCommand(
   return (
     c.type === "set_experiment" &&
     typeof c.request_id === "string" &&
-    isExperimentId(c.experiment_id) &&
+    isRemoteExperimentId(c.experiment_id) &&
     typeof c.enabled === "boolean"
   );
 }
@@ -1977,6 +1939,8 @@ export function parseServerMessage(
       isSkillDisableCommand(parsed) ||
       isAppServerInfoCommand(parsed) ||
       isCreateAgentCommand(parsed) ||
+      isPickerPageRequest(parsed) ||
+      isPickerUnpinRequest(parsed) ||
       isAgentListCommand(parsed) ||
       isAgentRetrieveCommand(parsed) ||
       isAgentCreateCommand(parsed) ||

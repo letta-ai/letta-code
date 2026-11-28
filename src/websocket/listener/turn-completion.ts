@@ -1,5 +1,4 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
-import { regenerateConversationDescription } from "@/agent/conversation-description";
 import type { Line } from "@/cli/helpers/accumulator";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import { maybeLaunchPostTurnReflection } from "@/cli/helpers/post-turn-reflection";
@@ -27,12 +26,6 @@ export async function completeSuccessfulListenerTurn(params: {
   isInterrupted: () => boolean;
 }): Promise<"completed" | "interrupted"> {
   if (!params.agentId) {
-    if (
-      params.runtime.contextTracker.pendingConversationDescriptionRegeneration
-    ) {
-      params.runtime.contextTracker.pendingConversationDescriptionRegeneration = false;
-      void regenerateConversationDescription(params.conversationId);
-    }
     return params.isInterrupted() ? "interrupted" : "completed";
   }
 
@@ -117,11 +110,5 @@ export async function completeSuccessfulListenerTurn(params: {
     return "interrupted";
   }
 
-  if (
-    params.runtime.contextTracker.pendingConversationDescriptionRegeneration
-  ) {
-    params.runtime.contextTracker.pendingConversationDescriptionRegeneration = false;
-    void regenerateConversationDescription(params.conversationId);
-  }
   return "completed";
 }

@@ -37,6 +37,7 @@ export function StaticTranscript({
   statusLinePrompt,
   showCompactionsEnabled,
   precomputedDiffs,
+  groupedTaskIds,
   hiddenToolCallId,
   lastShellToolCallId,
 }: {
@@ -46,6 +47,7 @@ export function StaticTranscript({
   statusLinePrompt: string;
   showCompactionsEnabled: boolean;
   precomputedDiffs: Map<string, AdvancedDiffSuccess>;
+  groupedTaskIds?: ReadonlySet<string | undefined>;
   hiddenToolCallId?: string;
   lastShellToolCallId?: string;
 }) {
@@ -106,6 +108,8 @@ export function StaticTranscript({
                 <AssistantMessage line={item} />
               ) : item.kind === "tool_call" ? (
                 <ToolCallMessage
+                  remote
+                  groupedTask={groupedTaskIds?.has(item.toolCallId)}
                   line={item}
                   precomputedDiffs={precomputedDiffs}
                   expandedToolCallId={hiddenToolCallId}

@@ -3,20 +3,14 @@ import "@/utils/startup-log-boundary";
 import { hostname } from "node:os";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
-import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import { isStatelessSubagentTags } from "@/agent/agent-tags";
+import { StartupAgentSelector } from "@/cli/components/StartupAgentSelector";
 import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
-import {
-  getResumeDataFromBackend,
-  isResumedConversation,
-  type ResumeData,
-} from "./agent/check-approval";
 import {
   setAgentContext,
   setConversationId as setContextConversationId,
 } from "./agent/context";
-import type { AgentProvenance } from "./agent/create";
 import {
   getModelUpdateArgs,
   type ModelReasoningSelection,
@@ -44,6 +38,7 @@ import { LOCAL_BACKEND_EXPERIMENTAL_ENV } from "./backend/local/paths";
 import { startBrowserDiscoveryServer } from "./browser-discovery-server";
 import {
   extractBackendFlag,
+  normalizeUpdateCommandAliases,
   type ParsedCliArgs,
   parseCliArgs,
   preprocessCliArgs,
@@ -56,11 +51,8 @@ import {
 } from "./cli/flag-utils";
 import { LETTA_CHAT_API_KEYS_URL } from "./cli/helpers/app-urls";
 import { formatErrorDetails } from "./cli/helpers/error-formatter";
-import { ensureFdPath, resolveFdPath } from "./cli/helpers/file-autocomplete";
 import { listPinnedAgentsForCurrentUser } from "./cli/helpers/pinned-agent-listing";
-import type { ApprovalRequest } from "./cli/helpers/stream";
 import { initTerminalTheme } from "./cli/helpers/terminal-theme";
-import { ProfileSelectionInline } from "./cli/profile-selection";
 import {
   createStartupAgentPickerHandler,
   getStartupBackendLookupOrder,
@@ -95,22 +87,6 @@ import type { ToolsetPreference } from "./tools/toolset-types";
 import { debugLog, debugWarn, isDebugEnabled } from "./utils/debug";
 import { startOrphanDetection } from "./utils/orphan-detection";
 import { markMilestone } from "./utils/timing";
-
-const EMPTY_APPROVAL_ARRAY: ApprovalRequest[] = [];
-const EMPTY_MESSAGE_ARRAY: Message[] = [];
-function normalizeUpdateCommandAliases(args: string[]): string[] {
-  const [command, ...rest] = args;
-
-  if (
-    command === "upgrade" ||
-    command === "--update" ||
-    command === "--upgrade"
-  ) {
-    return ["update", ...rest];
-  }
-
-  return args;
-}
 
 function trackCliBoundaryError(
   errorType: string,
@@ -169,7 +145,7 @@ USAGE
   letta                 Resume last conversation for this project
   letta --new           Create a new conversation (for concurrent sessions)
   letta --resume        Open agent selector UI to pick agent/conversation
-  letta --new-agent     Create a new agent directly (skip profile selector)
+  letta --new-agent     Create a new agent directly (skip agent selection)
   letta --agent <id>    Open a specific agent by ID
 
   # headless
@@ -227,10 +203,9 @@ SUBCOMMANDS
   letta local-backend migrate-transcripts [--storage-dir <path>] [--dry-run]
 
 BEHAVIOR
-  On startup, Letta Code checks for saved profiles:
-  - If profiles exist, you'll be prompted to select one or create a new agent
+  On startup, Letta Code can resume an existing agent:
+  - Use /agents to browse available agents
   - Agents can be pinned for quick access with /pin
-  - Use /profile save <name> to bookmark your current agent
 
   Agent pins are stored in ~/.letta/settings.json.
 
@@ -239,15 +214,14 @@ BEHAVIOR
 
 EXAMPLES
   # when installed as an executable
-  letta                    # Show profile selector or create new
+  letta                    # Open your agent or create one
   letta --new              # Create new conversation
   letta --agent agent_123  # Open specific agent
   letta install official/finance/stocks --agent agent-123
   letta install npm:@letta-ai/mod-plan-mode
 
   # inside the interactive session
-  /profile save MyAgent    # Save current agent as profile
-  /profiles                # Open profile selector
+  /agents                  # Switch agents
   /pin                     # Pin current agent
   /unpin                   # Unpin current agent
   /logout                  # Clear saved credentials and exit
@@ -667,7 +641,14 @@ async function main(): Promise<void> {
     await printInfo();
     process.exit(0);
   }
-
+  if (values.cloud || values.connect) {
+    await initTerminalTheme().catch(() => undefined);
+    const { runAttachedTerminal } = await import("@/cli/app/AttachedTerminal");
+    return runAttachedTerminal(values).catch((error: Error) => {
+      console.error(error.message);
+      process.exitCode = 1;
+    });
+  }
   const shouldResume = values.resume ?? false;
   let specifiedConversationId = values.conversation ?? null;
   const forceNew = values["new-agent"] ?? false;
@@ -1217,16 +1198,17 @@ async function main(): Promise<void> {
   markMilestone("TUI_MODE_START");
 
   markMilestone("REACT_IMPORT_START");
-  const [React, { render }, AppModule] = await Promise.all([
-    import("react"),
-    import("ink"),
-    import("@/cli/App"),
-  ]);
+  const [React, { render }, { WelcomeScreen }, { TerminalSessionHost }] =
+    await Promise.all([
+      import("react"),
+      import("ink"),
+      import("@/cli/components/WelcomeScreen"),
+      import("@/cli/app/TerminalSessionHost"),
+    ]);
   markMilestone("REACT_IMPORT_DONE");
   await terminalPreflightPromise;
   markMilestone("TERMINAL_PREFLIGHT_DONE");
   const { useState, useEffect, useRef } = React;
-  const App = AppModule.App;
 
   function LoadingApp({
     forceNew,
@@ -1262,21 +1244,13 @@ async function main(): Promise<void> {
     const [agentId, setAgentId] = useState<string | null>(null);
     const [agentState, setAgentState] = useState<AgentState | null>(null);
     const [conversationId, setConversationId] = useState<string | null>(null);
-    const [resumeData, setResumeData] = useState<ResumeData | null>(null);
     const [isResumingSession, setIsResumingSession] = useState(false);
-    const [resumedExistingConversation, setResumedExistingConversation] =
-      useState(false);
-    const [agentProvenance, setAgentProvenance] =
-      useState<AgentProvenance | null>(null);
     const [selectedGlobalAgentId, setSelectedGlobalAgentId] = useState<
       string | null
     >(null);
     const startupCreatedAgentRef = useRef<AgentState | null>(null);
     const [startupHasCloudCredentials, setStartupHasCloudCredentials] =
       useState(Boolean(settings.refreshToken || apiKey));
-    const [fileAutocompleteFdPath, setFileAutocompleteFdPath] = useState<
-      string | null
-    >(() => resolveFdPath());
     const [startupHasAvailableLocalModels, setStartupHasAvailableLocalModels] =
       useState(true);
     const [validatedAgent, setValidatedAgent] = useState<AgentState | null>(
@@ -1307,8 +1281,6 @@ async function main(): Promise<void> {
     const [customApiBaseUrl, setCustomApiBaseUrl] = useState<string | null>(
       null,
     );
-
-    const [releaseNotes, setReleaseNotes] = useState<string | null>(null);
 
     const [updateNotification, setUpdateNotification] = useState<string | null>(
       null,
@@ -1389,15 +1361,6 @@ async function main(): Promise<void> {
 
       autoInstallKeybinding();
       autoInstallWezTermFix();
-    }, []);
-
-    useEffect(() => {
-      async function checkNotes() {
-        const { checkReleaseNotes } = await import("@/release-notes");
-        const notes = await checkReleaseNotes();
-        setReleaseNotes(notes);
-      }
-      checkNotes();
     }, []);
 
     useEffect(() => {
@@ -1653,7 +1616,6 @@ async function main(): Promise<void> {
               });
               if (defaultAgent) {
                 startupCreatedAgentRef.current = defaultAgent;
-                setAgentProvenance({ isNew: true, blocks: [] });
                 setValidatedAgent(defaultAgent);
                 setSelectedGlobalAgentId(defaultAgent.id);
                 setLoadingState("assembling");
@@ -1838,7 +1800,6 @@ async function main(): Promise<void> {
             baseTools,
           });
           agent = result.agent;
-          setAgentProvenance(result.provenance);
           autoEnableMemfsForFreshAgent = willAutoEnableMemfs;
         }
 
@@ -2033,12 +1994,8 @@ async function main(): Promise<void> {
           conversationIdToUse = specifiedConversationId;
           try {
             setLoadingState("checking");
-            const data = await getResumeDataFromBackend(
-              agent,
-              specifiedConversationId,
-            );
-            setResumeData(data);
-            setResumedExistingConversation(true);
+            if (specifiedConversationId !== "default")
+              await backend.retrieveConversation(specifiedConversationId);
           } catch (error) {
             if (isBackendNotFoundError(error)) {
               console.error(
@@ -2051,13 +2008,9 @@ async function main(): Promise<void> {
         } else if (selectedConversationId) {
           try {
             setLoadingState("checking");
-            const data = await getResumeDataFromBackend(
-              agent,
-              selectedConversationId,
-            );
+            if (selectedConversationId !== "default")
+              await backend.retrieveConversation(selectedConversationId);
             conversationIdToUse = selectedConversationId;
-            setResumedExistingConversation(true);
-            setResumeData(data);
           } catch (error) {
             if (isBackendNotFoundError(error)) {
               console.warn(
@@ -2065,9 +2018,6 @@ async function main(): Promise<void> {
               );
               conversationIdToUse = "default";
               setLoadingState("checking");
-              const data = await getResumeDataFromBackend(agent, "default");
-              setResumeData(data);
-              setResumedExistingConversation(data.messageHistory.length > 0);
             } else {
               throw error;
             }
@@ -2081,9 +2031,6 @@ async function main(): Promise<void> {
           conversationIdToUse = "default";
 
           setLoadingState("checking");
-          const data = await getResumeDataFromBackend(agent, "default");
-          setResumeData(data);
-          setResumedExistingConversation(data.messageHistory.length > 0);
         }
 
         if (shouldBlockOnMemfsStartup) {
@@ -2096,9 +2043,6 @@ async function main(): Promise<void> {
             process.exit(1);
           }
         }
-
-        const fdPath = await ensureFdPath();
-        setFileAutocompleteFdPath(fdPath);
 
         await secretsInitPromise;
 
@@ -2173,16 +2117,6 @@ async function main(): Promise<void> {
     if (showKeybindingSetup === null) {
       return null;
     }
-    if (loadingState === "selecting") {
-      return React.createElement(ProfileSelectionInline, {
-        lruAgentId: null,
-        loading: true,
-        freshRepoMode: true,
-        onSelect: () => {},
-        onCreateNew: () => {},
-        onExit: () => process.exit(0),
-      });
-    }
     if (loadingState === "selecting_conversation" && resumeAgentId) {
       return React.createElement(ConversationSelector, {
         agentId: resumeAgentId,
@@ -2201,15 +2135,12 @@ async function main(): Promise<void> {
       });
     }
     if (loadingState === "selecting_global") {
-      return React.createElement(ProfileSelectionInline, {
-        lruAgentId: null,
-        loading: false,
-        freshRepoMode: true,
+      return React.createElement(StartupAgentSelector, {
         failedAgentMessage: failedAgentMessage ?? undefined,
         serverModelsForNewAgent:
           availableServerModels.length > 0 ? availableServerModels : undefined,
         defaultModelHandle: customApiDefaultModel ?? undefined,
-        serverBaseUrl: customApiBaseUrl ?? undefined,
+
         onSelect: createStartupAgentPickerHandler(
           tryConfigureStartupLocalBackend,
           setSelectedGlobalAgentId,
@@ -2235,61 +2166,26 @@ async function main(): Promise<void> {
       });
     }
 
-    const appLoadingState = loadingState as Exclude<
-      typeof loadingState,
-      "selecting" | "selecting_global" | "selecting_conversation"
-    >;
-    const startupConversationTitleEligible = !isResumedConversation(
-      resumeData?.conversation,
-    );
-
     if (!agentId || !conversationId) {
-      return React.createElement(App, {
-        agentId: "loading",
-        conversationId: "loading",
-        loadingState: appLoadingState,
+      return React.createElement(WelcomeScreen, {
+        loadingState:
+          loadingState === "selecting_conversation" ||
+          loadingState === "selecting"
+            ? "checking"
+            : loadingState,
         continueSession: isResumingSession,
-        startupApproval: resumeData?.pendingApproval ?? null,
-        startupApprovals: resumeData?.pendingApprovals ?? EMPTY_APPROVAL_ARRAY,
-        messageHistory: resumeData?.messageHistory ?? EMPTY_MESSAGE_ARRAY,
-        resumedExistingConversation,
-        startupConversationTitleEligible,
-        tokenStreaming: settings.tokenStreaming,
-        reasoningTabCycleEnabled: settings.reasoningTabCycleEnabled === true,
-        showCompactions: settings.showCompactions,
-        agentProvenance,
-        startupHasCloudCredentials,
+        agentState,
         startupHasAvailableLocalModels,
-        releaseNotes,
-        systemInfoReminderEnabled: !noSystemInfoReminderFlag,
-        modsDisabled,
-        fileAutocompleteFdPath,
       });
     }
 
-    return React.createElement(App, {
+    return React.createElement(TerminalSessionHost, {
       key: `${agentId}:${conversationId}`,
       agentId,
-      agentState,
       conversationId,
-      loadingState: appLoadingState,
-      continueSession: isResumingSession,
-      startupApproval: resumeData?.pendingApproval ?? null,
-      startupApprovals: resumeData?.pendingApprovals ?? EMPTY_APPROVAL_ARRAY,
-      messageHistory: resumeData?.messageHistory ?? EMPTY_MESSAGE_ARRAY,
-      resumedExistingConversation,
-      startupConversationTitleEligible,
-      tokenStreaming: settings.tokenStreaming,
-      reasoningTabCycleEnabled: settings.reasoningTabCycleEnabled === true,
-      showCompactions: settings.showCompactions,
-      agentProvenance,
-      startupHasCloudCredentials,
-      startupHasAvailableLocalModels,
-      releaseNotes,
+      cloud: startupHasCloudCredentials === true,
+      name: agentState?.name ?? "Letta Code",
       updateNotification,
-      systemInfoReminderEnabled: !noSystemInfoReminderFlag,
-      modsDisabled,
-      fileAutocompleteFdPath,
     });
   }
   markMilestone("REACT_RENDER_START");

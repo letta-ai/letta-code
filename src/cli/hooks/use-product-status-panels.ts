@@ -21,9 +21,14 @@ import {
   subscribeToWorkflowExecutions,
 } from "@/tools/workflow/execution-registry";
 
+const emptyAgents: ReturnType<typeof getSubagentLifecycleSnapshot> = [];
+const noUpdates = () => () => {};
+const emptySnapshot = () => emptyAgents;
+const zero = () => 0;
 export function useProductStatusPanels(params: {
   modContext: ModContext;
-  modAdapter: LocalModAdapter;
+  modAdapter: Partial<Pick<LocalModAdapter, "registry">>;
+  remote?: boolean;
   shouldAnimate: boolean;
 }): {
   panelsWithDefaultProductStatus: Record<string, ModPanel>;
@@ -31,15 +36,15 @@ export function useProductStatusPanels(params: {
   subagentLifecycleSnapshot: ReturnType<typeof getSubagentLifecycleSnapshot>;
   subagentLifecycleTick: number;
 } {
-  const { modContext, modAdapter, shouldAnimate } = params;
+  const { modContext, modAdapter, shouldAnimate, remote } = params;
 
   const subagentLifecycleSnapshot = useSyncExternalStore(
-    subscribeToSubagentLifecycle,
-    getSubagentLifecycleSnapshot,
+    remote ? noUpdates : subscribeToSubagentLifecycle,
+    remote ? emptySnapshot : getSubagentLifecycleSnapshot,
   );
   const workflowExecutionsVersion = useSyncExternalStore(
-    subscribeToWorkflowExecutions,
-    getWorkflowExecutionsVersion,
+    remote ? noUpdates : subscribeToWorkflowExecutions,
+    remote ? zero : getWorkflowExecutionsVersion,
   );
   const hasActiveSubagent = subagentLifecycleSnapshot.some(
     (agent) => agent.status === "pending" || agent.status === "running",
@@ -49,8 +54,8 @@ export function useProductStatusPanels(params: {
   const workflowExecutions = useMemo(() => {
     void workflowExecutionsVersion;
     void subagentLifecycleTick;
-    return visibleWorkflowExecutions(listWorkflowExecutions());
-  }, [workflowExecutionsVersion, subagentLifecycleTick]);
+    return remote ? [] : visibleWorkflowExecutions(listWorkflowExecutions());
+  }, [remote, workflowExecutionsVersion, subagentLifecycleTick]);
   const hasVisibleWorkflow = workflowExecutions.length > 0;
 
   useEffect(() => {

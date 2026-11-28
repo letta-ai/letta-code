@@ -1,13 +1,5 @@
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
-import type { ApprovalRequest } from "@/cli/helpers/stream";
 import type { StaticItem } from "./types";
-
-export function buildApprovalBatchKey(approvals: ApprovalRequest[]): string {
-  return approvals
-    .map((approval) => approval.toolCallId)
-    .sort()
-    .join("|");
-}
 
 export function releasePrecomputedDiffPayloads(
   diffs: Map<string, AdvancedDiffSuccess>,

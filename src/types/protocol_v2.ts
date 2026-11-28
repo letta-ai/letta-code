@@ -1,6 +1,5 @@
 import type {
   AgentCreateParams,
-  AgentListParams,
   AgentState,
   AgentUpdateParams,
   MessageCreate,
@@ -23,6 +22,7 @@ import type {
 } from "@letta-ai/letta-client/resources/conversations/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import type { ExperimentId } from "@/experiments/types";
+import type { ListMemoryCommand } from "@/types/list-memory-command";
 import type { ConnectProviderOAuthConfig } from "@/types/provider-oauth-config";
 import type { TurnFinishedAckCommand } from "@/types/turn-finished-protocol";
 import type {
@@ -816,12 +816,7 @@ export interface FileChangedMessage {
   lastModified: number;
 }
 
-export interface ListMemoryCommand {
-  type: "list_memory";
-  request_id: string;
-  agent_id: string;
-  include_references?: boolean;
-}
+export type { ListMemoryCommand } from "@/types/list-memory-command";
 
 export interface MemoryHistoryCommand {
   type: "memory_history";
@@ -1199,12 +1194,6 @@ export interface CreateAgentCommand {
   tags?: string[];
   pin_global?: boolean;
 }
-export interface AgentListCommand {
-  type: "agent_list";
-  request_id: string;
-  query?: AgentListParams;
-}
-
 export interface AgentRetrieveCommand {
   type: "agent_retrieve";
   request_id: string;
@@ -1491,14 +1480,6 @@ export interface CreateAgentResponseMessage {
   agent_id?: string;
   name?: string;
   model?: string;
-  error?: string;
-}
-
-export interface AgentListResponseMessage {
-  type: "agent_list_response";
-  request_id: string;
-  success: boolean;
-  agents: AgentState[];
   error?: string;
 }
 
@@ -1965,7 +1946,8 @@ export type WsProtocolCommand =
   | SkillDisableCommand
   | CreateAgentCommand
   | AppServerInfoCommand
-  | AgentListCommand
+  | import("./agent-picker").PickerRequest
+  | import("./agent-picker").AgentListCommand
   | AgentRetrieveCommand
   | AgentCreateCommand
   | AgentUpdateCommand
@@ -2071,7 +2053,8 @@ export type WsProtocolMessage =
   | SkillsUpdatedMessage
   | CreateAgentResponseMessage
   | AppServerInfoResponseMessage
-  | AgentListResponseMessage
+  | import("./agent-picker").PickerResponse
+  | import("./agent-picker").AgentListResponseMessage
   | AgentRetrieveResponseMessage
   | AgentCreateResponseMessage
   | AgentUpdateResponseMessage
@@ -2127,3 +2110,8 @@ export type WsProtocolMessage =
 export type WsProtocolMessageType = WsProtocolMessage["type"];
 
 export type { StopReasonType };
+
+export type {
+  AgentListCommand,
+  AgentListResponseMessage,
+} from "./agent-picker";

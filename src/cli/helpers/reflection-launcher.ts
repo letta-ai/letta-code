@@ -37,13 +37,13 @@ import {
   buildReflectionIntegrationConversationTitle,
   buildReflectionIntegrationPrompt,
 } from "@/cli/helpers/reflection-integration";
+import { buildParentMemorySnapshot } from "@/cli/helpers/reflection-memory";
 import {
   isReflectionRetryDeferred,
   recordReflectionIntegrationRetry,
 } from "@/cli/helpers/reflection-retry";
 import {
   buildAutoReflectionPayload,
-  buildParentMemorySnapshot,
   buildReflectionSubagentPrompt,
   getReflectionTranscriptState,
 } from "@/cli/helpers/reflection-transcript";

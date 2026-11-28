@@ -17,6 +17,7 @@ import { colors } from "./colors";
 import { Text } from "./Text";
 
 interface AgentInfoBarProps {
+  session?: boolean;
   agentId?: string;
   agentName?: string | null;
   currentModel?: string | null;
@@ -98,6 +99,7 @@ function wrapTextToWidth(text: string, maxWidth: number): string[] {
 }
 
 export const AgentInfoBar = memo(function AgentInfoBar({
+  session,
   agentId,
   agentName,
   currentModel,
@@ -108,9 +110,9 @@ export const AgentInfoBar = memo(function AgentInfoBar({
   const columns = useTerminalWidth();
   const isTmux = Boolean(process.env.TMUX);
   const isPinned = useMemo(() => {
-    if (!agentId) return false;
+    if (session || !agentId) return false;
     return settingsManager.isAgentPinned(agentId);
-  }, [agentId]);
+  }, [session, agentId]);
 
   const isCloudUser = serverUrl?.includes("api.letta.com");
   const isLocalAgent = agentId ? isLocalAgentId(agentId) : false;
@@ -135,11 +137,13 @@ export const AgentInfoBar = memo(function AgentInfoBar({
   const contentWidth = Math.max(1, columns - 2);
 
   const agentNameLabel = agentName || "Unnamed";
-  const agentHint = isPinned
-    ? " (pinned)"
-    : agentName === DEFAULT_AGENT_NAME || !agentName
-      ? " (type /pin to give your agent a real name!)"
-      : " (type /pin to pin agent)";
+  const agentHint = session
+    ? ""
+    : isPinned
+      ? " (pinned)"
+      : agentName === DEFAULT_AGENT_NAME || !agentName
+        ? " (type /pin to give your agent a real name!)"
+        : " (type /pin to pin agent)";
   const agentNameLine = `${agentNameLabel}${agentHint}`;
   const conversationLabel =
     conversationId && conversationId !== "default"

@@ -1,3 +1,4 @@
+import type { AgentListCommand, PickerPageRequest } from "@/types/agent-picker";
 import type { AppServerInfoCommand } from "@/types/app-server-info";
 import type { ConversationForkBody } from "@/types/conversation-fork-protocol";
 import type { ConversationForkCommand } from "@/types/protocol_v2";
@@ -38,5 +39,45 @@ export function isConversationForkCommand(
     typeof value.request_id === "string" &&
     typeof value.conversation_id === "string" &&
     (value.body === undefined || isConversationForkBody(value.body))
+  );
+}
+
+export function isPickerPageRequest(
+  value: unknown,
+): value is PickerPageRequest {
+  return (
+    isObjectRecord(value) &&
+    value.type === "agent_picker_page" &&
+    typeof value.request_id === "string" &&
+    (value.collection === "pinned" ||
+      value.collection === "shared" ||
+      value.collection === "local") &&
+    (value.after === undefined || typeof value.after === "string") &&
+    (value.query === undefined || typeof value.query === "string")
+  );
+}
+export function isAgentListCommand(value: unknown): value is AgentListCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    query?: unknown;
+  };
+  return (
+    c.type === "agent_list" &&
+    typeof c.request_id === "string" &&
+    (c.query === undefined || isObjectRecord(c.query))
+  );
+}
+
+export function isPickerUnpinRequest(
+  value: unknown,
+): value is import("@/types/agent-picker").PickerUnpinRequest {
+  return (
+    isObjectRecord(value) &&
+    value.type === "agent_picker_unpin" &&
+    typeof value.request_id === "string" &&
+    typeof value.agent_id === "string" &&
+    value.agent_id.length > 0
   );
 }

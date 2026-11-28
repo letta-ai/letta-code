@@ -1,43 +1,21 @@
+import type { LettaCodeModelEntry } from "@letta-ai/letta-agent-sdk";
 import { Box, useInput } from "ink";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "react";
-import {
-  clearAvailableModelsCache,
-  getAvailableModelHandles,
-  getAvailableModelsCacheInfo,
-  getCachedModelHandles,
-  getCachedModelProviderTypes,
-  getCachedOpenAICompatibleProxyHandles,
-} from "@/agent/available-models";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CHATGPT_FAST_SERVICE_TIER,
   getChatGptFastRegistryHandleForModelHandle,
-  models,
   normalizeModelHandleForRegistry,
 } from "@/agent/model";
-import { refreshModelCatalog } from "@/agent/remote-model-catalog";
-import {
-  getPiProviderRegistryRevision,
-  subscribePiProviderRegistry,
-} from "@/backend/dev/pi-provider-mod-registry";
 
 import {
   buildByokProviderAliases,
-  buildOpenAICompatibleProxyProviderNames,
   isByokHandleForSelector,
-  listProviders,
 } from "@/providers/byok-providers";
-import { settingsManager } from "@/settings-manager";
 import { colors } from "./colors";
 import {
   baseHandleForByokAlias,
   filterModelsByAvailabilityForSelector,
+  getEmptyStateActionDescriptors,
   includeUnknownBackendHandleInRecommended,
   labelForBackendModel,
   type ModelSelectorSelection,
@@ -46,6 +24,7 @@ import {
   toByokSelectorModel,
   toSelectorModelForHandle,
   type UiModel,
+  usesBackendModelCatalog,
   withProviderMetadataForSelector,
 } from "./model-selector-helpers";
 import { OverlayShell } from "./OverlayShell";
@@ -70,6 +49,7 @@ export type {
 } from "./model-selector-helpers";
 export {
   filterModelsByAvailabilityForSelector,
+  getEmptyStateActionDescriptors,
   includeUnknownBackendHandleInRecommended,
   labelForBackendModel,
   labelForChatGPTByokAlias,
@@ -77,40 +57,9 @@ export {
   registryHandleForByokAlias,
   toByokSelectorModel,
   toSelectorModelForHandle,
+  usesBackendModelCatalog,
   withProviderMetadataForSelector,
 } from "./model-selector-helpers";
-
-export function usesBackendModelCatalog(
-  isSelfHosted?: boolean,
-  localModelCatalog?: boolean,
-): boolean {
-  return Boolean(isSelfHosted || localModelCatalog);
-}
-
-export function getEmptyStateActionDescriptors(
-  showLoginAction: boolean,
-): Array<{
-  id: "connect" | "login";
-  label: string;
-  description: string;
-}> {
-  return [
-    {
-      id: "connect",
-      label: "/connect",
-      description: "Connect your LLM API keys (OpenAI, Anthropic, etc.)",
-    },
-    ...(showLoginAction
-      ? [
-          {
-            id: "login" as const,
-            label: "/login",
-            description: "Sign in with Letta",
-          },
-        ]
-      : []),
-  ];
-}
 
 export function getModelCategories(
   _billingTier?: string,
@@ -118,8 +67,7 @@ export function getModelCategories(
   localModelCatalog?: boolean,
   recentModelCount?: number,
 ): ModelCategory[] {
-  const showRecents =
-    (recentModelCount ?? settingsManager.getRecentModels().length) >= 2;
+  const showRecents = (recentModelCount ?? 0) >= 2;
   if (usesBackendModelCatalog(isSelfHosted, localModelCatalog)) {
     const base: ModelCategory[] = ["server-recommended", "server-all"];
     if (showRecents) {
@@ -139,13 +87,12 @@ interface ModelSelectorProps {
   currentModelHandle?: string | null;
   currentModelServiceTier?: string | null;
   onSelect: (selection: ModelSelectorSelection) => void;
-  onOpenConnect?: () => void;
-  onOpenLogin?: () => void;
+  onOpenConnect: () => void;
   onCancel: () => void;
-  filterProvider?: string;
-  forceRefresh?: boolean;
-  billingTier?: string;
-  isSelfHosted?: boolean;
+  refresh: () => Promise<void>;
+  entries: LettaCodeModelEntry[];
+  handles?: string[] | null;
+  aliases?: Record<string, string>;
   localModelCatalog?: boolean;
 }
 
@@ -155,164 +102,60 @@ export function ModelSelector({
   currentModelServiceTier,
   onSelect,
   onOpenConnect,
-  onOpenLogin,
   onCancel,
-  filterProvider,
-  forceRefresh: forceRefreshOnMount,
-  billingTier,
-  isSelfHosted,
+  entries,
+  handles,
+  aliases,
+  refresh,
   localModelCatalog,
 }: ModelSelectorProps) {
-  const typedModels = models as UiModel[];
-
+  const typedModels = useMemo(
+    () =>
+      entries.map((entry) => ({
+        ...entry,
+        description: entry.description ?? "",
+      })),
+    [entries],
+  );
   const modelCategories = useMemo(
-    () => getModelCategories(billingTier, isSelfHosted, localModelCatalog),
-    [billingTier, isSelfHosted, localModelCatalog],
+    () => getModelCategories(undefined, false, localModelCatalog, 0),
+    [localModelCatalog],
   );
-  const backendModelCatalog = usesBackendModelCatalog(
-    isSelfHosted,
-    localModelCatalog,
+  const backendModelCatalog = !!localModelCatalog;
+  const isFreeTier = false;
+  const [category, setCategory] = useState<ModelCategory>(
+    modelCategories[0] ?? "supported",
   );
-  const isFreeTier = billingTier === "free";
-  const defaultCategory = modelCategories[0] ?? "supported";
-
-  const [category, setCategory] = useState<ModelCategory>(defaultCategory);
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const cachedHandlesAtMount = useMemo(() => getCachedModelHandles(), []);
-
-  const [availableHandles, setAvailableHandles] = useState<
-    Set<string> | null | undefined
-  >(cachedHandlesAtMount ?? undefined);
-  const [allApiHandles, setAllApiHandles] = useState<string[]>(
-    cachedHandlesAtMount ? Array.from(cachedHandlesAtMount) : [],
-  );
-  const [providerTypesByHandle, setProviderTypesByHandle] = useState<
-    Map<string, string>
-  >(() => getCachedModelProviderTypes() ?? new Map());
-  const [isLoading, setIsLoading] = useState(cachedHandlesAtMount === null);
-  const [error, setError] = useState<string | null>(null);
-  const [isCached, setIsCached] = useState(cachedHandlesAtMount !== null);
-  const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [showLoginAction, setShowLoginAction] = useState(false);
-  const [byokProviderAliases, setByokProviderAliases] = useState<
-    Record<string, string>
-  >(() => buildByokProviderAliases([]));
-  const [openAICompatibleProxyHandles, setOpenAICompatibleProxyHandles] =
-    useState<Set<string>>(
-      () => getCachedOpenAICompatibleProxyHandles() ?? new Set(),
-    );
-  const [openAICompatibleProxyProviders, setOpenAICompatibleProxyProviders] =
-    useState<Set<string>>(new Set());
-  const providerRegistryRevision = useSyncExternalStore(
-    subscribePiProviderRegistry,
-    getPiProviderRegistryRevision,
-    getPiProviderRegistryRevision,
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const allApiHandles = useMemo(
+    () => handles ?? [...new Set(entries.map((e) => e.handle))],
+    [entries, handles],
   );
-  const previousProviderRegistryRevision = useRef(providerRegistryRevision);
-
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (isSelfHosted) {
-      setShowLoginAction(false);
-      return;
-    }
-
-    let cancelled = false;
-    void settingsManager
-      .getSettingsWithSecureTokens()
-      .then((settings) => {
-        if (cancelled) return;
-        setShowLoginAction(!settings.refreshToken);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setShowLoginAction(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isSelfHosted]);
-
-  const loadModels = useRef(async (forceRefresh = false) => {
-    try {
-      if (forceRefresh) {
-        clearAvailableModelsCache();
-        if (mountedRef.current) {
-          setRefreshing(true);
-          setError(null);
-        }
-      }
-
-      const cacheInfoBefore = getAvailableModelsCacheInfo();
-      const [result] = await Promise.all([
-        getAvailableModelHandles({ forceRefresh }),
-        refreshModelCatalog(forceRefresh ? { force: true } : undefined).catch(
-          () => false,
+  const availableHandles = useMemo(
+    () => new Set(allApiHandles),
+    [allApiHandles],
+  );
+  const byokProviderAliases = useMemo(() => aliases ?? {}, [aliases]);
+  const providerTypesByHandle = useMemo(
+    () =>
+      new Map(
+        typedModels.flatMap((m) =>
+          typeof m.updateArgs?.provider_type === "string"
+            ? [[m.handle, m.updateArgs.provider_type] as const]
+            : [],
         ),
-      ]);
-
-      if (!mountedRef.current) return;
-
-      setAvailableHandles(result.handles);
-      setAllApiHandles(Array.from(result.handles));
-      setProviderTypesByHandle(new Map(result.providerTypes));
-      setOpenAICompatibleProxyHandles(
-        new Set(result.openAICompatibleProxyHandles),
-      );
-      setIsCached(!forceRefresh && cacheInfoBefore.isFresh);
-      setIsLoading(false);
-      setRefreshing(false);
-    } catch (err) {
-      if (!mountedRef.current) return;
-      setError(err instanceof Error ? err.message : "Failed to load models");
-      setIsLoading(false);
-      setRefreshing(false);
-      setAvailableHandles(null);
-      setAllApiHandles([]);
-      setProviderTypesByHandle(new Map());
-      setOpenAICompatibleProxyHandles(new Set());
-    }
-  });
-
-  useEffect(() => {
-    if (previousProviderRegistryRevision.current !== providerRegistryRevision) {
-      previousProviderRegistryRevision.current = providerRegistryRevision;
-      clearAvailableModelsCache();
-    }
-    loadModels.current(forceRefreshOnMount ?? false);
-  }, [forceRefreshOnMount, providerRegistryRevision]);
-
-  useEffect(() => {
-    if (localModelCatalog) {
-      setByokProviderAliases(buildByokProviderAliases([]));
-      setOpenAICompatibleProxyProviders(new Set());
-      return;
-    }
-    (async () => {
-      try {
-        const providers = await listProviders();
-        if (!mountedRef.current) return;
-        setByokProviderAliases(buildByokProviderAliases(providers));
-        setOpenAICompatibleProxyProviders(
-          buildOpenAICompatibleProxyProviderNames(providers),
-        );
-      } catch {
-        if (!mountedRef.current) return;
-        setByokProviderAliases(buildByokProviderAliases([]));
-        setOpenAICompatibleProxyProviders(new Set());
-      }
-    })();
-  }, [localModelCatalog]);
-
+      ),
+    [typedModels],
+  );
+  const openAICompatibleProxyHandles = useMemo(() => new Set<string>(), []);
+  const openAICompatibleProxyProviders = useMemo(() => new Set<string>(), []);
+  const filterProvider = undefined;
+  const isCached = false;
+  const isLoading = false;
+  const showLoginAction = false;
   const pickPreferredStaticModel = useCallback(
     (handle: string, contextWindow?: number): UiModel | undefined => {
       const registryHandle = normalizeModelHandleForRegistry(handle) ?? handle;
@@ -687,56 +530,7 @@ export function ModelSelector({
     searchQuery,
   ]);
 
-  const recentModels = useMemo(() => {
-    if (availableHandles === undefined) return [];
-    const recentHandles = settingsManager.getRecentModels();
-    if (recentHandles.length < 2) return [];
-
-    const resolved: UiModel[] = [];
-    for (const handle of recentHandles) {
-      if (availableHandles !== null && !availableHandles.has(handle)) continue;
-
-      if (backendModelCatalog) {
-        const backendModel = modelsForBackendHandle(handle, true)[0];
-        if (backendModel) resolved.push(backendModel);
-        continue;
-      }
-
-      const staticModel = pickPreferredStaticModel(toBaseHandle(handle));
-      if (staticModel) {
-        resolved.push(
-          toByokSelectorModel(
-            staticModel,
-            handle,
-            byokProviderAliases,
-            withProviderTypeMetadata(
-              handle,
-              staticModel.updateArgs as Record<string, unknown> | undefined,
-            ),
-          ),
-        );
-      } else {
-        const fallbackModel = toSelectorModelForHandle(handle);
-        resolved.push({
-          ...fallbackModel,
-          updateArgs: withProviderTypeMetadata(
-            handle,
-            fallbackModel.updateArgs,
-          ),
-        });
-      }
-    }
-    return resolved;
-  }, [
-    availableHandles,
-    backendModelCatalog,
-    byokProviderAliases,
-    modelsForBackendHandle,
-    pickPreferredStaticModel,
-    toBaseHandle,
-    withProviderTypeMetadata,
-  ]);
-
+  const recentModels = useMemo<UiModel[]>(() => [], []);
   const categoryListMap = useMemo(
     () => ({
       recents: recentModels,
@@ -795,9 +589,9 @@ export function ModelSelector({
     () =>
       getEmptyStateActionDescriptors(showLoginAction).map((action) => ({
         ...action,
-        onSelect: action.id === "connect" ? onOpenConnect : onOpenLogin,
+        onSelect: onOpenConnect,
       })),
-    [onOpenConnect, onOpenLogin, showLoginAction],
+    [onOpenConnect],
   );
 
   const displayCategories = useMemo(
@@ -891,7 +685,11 @@ export function ModelSelector({
 
       if (input === "r" && !searchQuery) {
         if (!refreshing) {
-          loadModels.current(true);
+          setRefreshing(true);
+          void refresh()
+            .then(() => setError(null))
+            .catch((e) => setError(String(e)))
+            .finally(() => setRefreshing(false));
         }
         return;
       }

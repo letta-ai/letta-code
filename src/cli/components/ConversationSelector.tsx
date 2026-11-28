@@ -6,6 +6,7 @@ import type { Conversation } from "@letta-ai/letta-client/resources/conversation
 import { Box, useInput } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type Backend, getBackend } from "@/backend";
+import type { sessionConversations } from "@/cli/app/session-conversations";
 import { stripSystemReminders } from "@/cli/app/system-reminders";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import {
@@ -21,7 +22,14 @@ import { Text } from "./Text";
 
 const SOLID_LINE = "─";
 
+type ConversationReader =
+  | Pick<
+      Backend,
+      "listAgentMessages" | "listConversations" | "listConversationMessages"
+    >
+  | ReturnType<typeof sessionConversations>;
 interface ConversationSelectorProps {
+  reader?: ConversationReader;
   agentId: string;
   agentName?: string;
   currentConversationId: string;
@@ -250,15 +258,16 @@ export function ConversationSelector({
   agentId,
   agentName,
   currentConversationId,
+  reader,
   onSelect,
   onCancel,
 }: ConversationSelectorProps) {
-  const backendRef = useRef<Backend | null>(null);
+  const backendRef = useRef<ConversationReader | null>(null);
   const selectorBackend = useCallback(() => {
-    const backend = backendRef.current ?? getBackend();
+    const backend = reader ?? backendRef.current ?? getBackend();
     backendRef.current = backend;
     return backend;
-  }, []);
+  }, [reader]);
 
   const [conversations, setConversations] = useState<EnrichedConversation[]>(
     [],
@@ -278,7 +287,7 @@ export function ConversationSelector({
   const [searching, setSearching] = useState(false);
 
   const enrichConversation = useCallback(
-    async (backend: Backend, convId: string) => {
+    async (backend: ConversationReader, convId: string) => {
       try {
         const messages = await backend.listConversationMessages(convId, {
           limit: ENRICH_MESSAGE_LIMIT,

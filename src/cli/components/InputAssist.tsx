@@ -4,10 +4,14 @@ import type { ModelReasoningEffort } from "@/agent/model";
 import { AgentInfoBar } from "./AgentInfoBar";
 import { FileAutocomplete } from "./FileAutocomplete";
 import { SlashCommandAutocomplete } from "./SlashCommandAutocomplete";
-import type { ModCommandAutocompleteItem } from "./types/autocomplete";
+import type {
+  ModCommandAutocompleteItem,
+  SessionCompletions,
+} from "./types/autocomplete";
 
 interface InputAssistProps {
   currentInput: string;
+  session?: SessionCompletions;
   cursorPosition: number;
   fdPath?: string | null;
   onFileAutocompleteApply: (value: string, cursorPosition: number) => void;
@@ -26,6 +30,7 @@ interface InputAssistProps {
 
 export function InputAssist({
   currentInput,
+  session,
   cursorPosition,
   fdPath,
   onFileAutocompleteApply,
@@ -61,6 +66,7 @@ export function InputAssist({
         currentInput={currentInput}
         cursorPosition={cursorPosition}
         fdPath={fdPath}
+        searchFiles={session?.searchFiles}
         onApplyCompletion={onFileAutocompleteApply}
         onActiveChange={onAutocompleteActiveChange}
         workingDirectory={workingDirectory}
@@ -73,6 +79,7 @@ export function InputAssist({
       <Box flexDirection="column">
         <SlashCommandAutocomplete
           currentInput={currentInput}
+          session={session}
           cursorPosition={cursorPosition}
           onSelect={onCommandSelect}
           onAutocomplete={onCommandAutocomplete}
@@ -82,6 +89,7 @@ export function InputAssist({
           modCommands={modCommands}
         />
         <AgentInfoBar
+          session={!!session}
           agentId={agentId}
           agentName={agentName}
           currentModel={currentModel}

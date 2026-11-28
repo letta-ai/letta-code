@@ -25,15 +25,17 @@ interface ShortcutItem {
 
 interface HelpDialogProps {
   onClose: () => void;
+  sessionCommands?: readonly { cmd: string; desc: string }[];
 }
 
-export function HelpDialog({ onClose }: HelpDialogProps) {
+export function HelpDialog({ onClose, sessionCommands }: HelpDialogProps) {
   const [activeTab, setActiveTab] = useState<HelpTab>("commands");
   const [currentPage, setCurrentPage] = useState(0);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [customCommands, setCustomCommands] = useState<CommandItem[]>([]);
 
   useEffect(() => {
+    if (sessionCommands) return;
     import("@/cli/commands/custom.js").then(({ getCustomCommands }) => {
       getCustomCommands().then((customs) => {
         setCustomCommands(
@@ -45,9 +47,15 @@ export function HelpDialog({ onClose }: HelpDialogProps) {
         );
       });
     });
-  }, []);
+  }, [sessionCommands]);
 
   const allCommands = useMemo<CommandItem[]>(() => {
+    if (sessionCommands)
+      return sessionCommands.map(({ cmd, desc }, order) => ({
+        name: cmd,
+        description: desc,
+        order,
+      }));
     const builtins = Object.entries(commands)
       .filter(([_, cmd]) => !cmd.hidden)
       .map(([name, cmd]) => ({
@@ -56,7 +64,7 @@ export function HelpDialog({ onClose }: HelpDialogProps) {
         order: cmd.order ?? 100,
       }));
     return [...builtins, ...customCommands].sort((a, b) => a.order - b.order);
-  }, [customCommands]);
+  }, [customCommands, sessionCommands]);
 
   const shortcuts = useMemo<ShortcutItem[]>(() => {
     return [

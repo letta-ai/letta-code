@@ -43,6 +43,19 @@ export const CLI_FLAG_CATALOG = {
     mode: "interactive",
     help: { description: "Open agent selector UI after loading" },
   },
+  cloud: {
+    parser: { type: "boolean" },
+    mode: "interactive",
+    help: { description: "Run the terminal directly on a Letta Cloud sandbox" },
+  },
+  connect: {
+    parser: { type: "string" },
+    mode: "interactive",
+    help: {
+      argLabel: "<ws-url>",
+      description: "Attach to an existing app server",
+    },
+  },
   conversation: { parser: { type: "string", short: "C" }, mode: "both" },
   "new-agent": {
     parser: { type: "boolean" },
@@ -456,4 +469,18 @@ export function extractBackendFlag(args: string[]): {
   }
 
   return { backend, args: filtered };
+}
+
+export function normalizeUpdateCommandAliases(args: string[]): string[] {
+  const [command, ...rest] = args;
+
+  if (
+    command === "upgrade" ||
+    command === "--update" ||
+    command === "--upgrade"
+  ) {
+    return ["update", ...rest];
+  }
+
+  return args;
 }

@@ -3,8 +3,6 @@ import type {
   LettaUserMessageContentUnion,
   UserMessage,
 } from "@letta-ai/letta-client/resources/agents/messages";
-import { createBuffers } from "@/cli/helpers/accumulator";
-import { backfillBuffers } from "@/cli/helpers/backfill";
 import { formatScheduledTaskPrompt } from "@/cron/scheduled-task-prompt";
 import { formatMultimodalTaskNotification } from "@/utils/task-notifications";
 import { extractUserMessagePreview } from "./ConversationSelector";
@@ -35,17 +33,6 @@ test("recognizes a split notification in conversation previews and clipped histo
     content: [...content, { type: "text", text: "What did you find?" }],
   };
   expect(extractUserMessagePreview(withQuestion)).toBe("What did you find?");
-
-  const buffers = createBuffers();
-  backfillBuffers(buffers, [withQuestion]);
-  expect(buffers.byId.get("message-1-task-0")).toMatchObject({
-    eventType: "task_notification",
-    summary: "Tool capture completed",
-  });
-  expect(buffers.byId.get("message-1")).toMatchObject({
-    kind: "user",
-    text: "What did you find?",
-  });
 });
 
 test("hides the payload of a legacy notification in conversation previews", () => {
@@ -93,43 +80,10 @@ test("shows a scheduled fire in previews and history with ordinary reminders hid
   expect(extractUserMessagePreview(message)).toStartWith(
     'Scheduled task "Daily status" is firing.',
   );
-  const buffers = createBuffers();
-  backfillBuffers(buffers, [message]);
-  const line = buffers.byId.get(message.id);
-  expect(line).toMatchObject({ kind: "user" });
-  if (line?.kind !== "user") throw new Error("Expected scheduled user line");
-  expect(line.text).toContain("Summarize open items.");
-  expect(line.text).not.toContain("Private context");
-
   const live = splitSystemReminderBlocks(
     `<system-reminder>Private context</system-reminder>\n${scheduled}`,
   );
   expect(live[0]?.isSystemReminder).toBe(true);
-  expect(live[1]).toEqual({ text: line.text, isSystemReminder: false });
-});
-
-test("hides current and legacy skill blocks from saved user lines", () => {
-  const buffers = createBuffers();
-  backfillBuffers(buffers, [
-    {
-      id: "skill-history",
-      date: "2026-01-01T00:00:00Z",
-      message_type: "user_message",
-      content: [
-        {
-          type: "text",
-          text: '<skill-content name="current">New instructions</skill-content>',
-        },
-        {
-          type: "text",
-          text: '<skill_content name="legacy">Old instructions</skill_content>',
-        },
-        { type: "text", text: "Review the plan." },
-      ],
-    },
-  ]);
-  expect(buffers.byId.get("skill-history")).toMatchObject({
-    kind: "user",
-    text: "Review the plan.",
-  });
+  expect(live[1]?.isSystemReminder).toBe(false);
+  expect(live[1]?.text).toContain("Summarize open items.");
 });

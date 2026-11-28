@@ -1,34 +1,58 @@
-import { existsSync } from "node:fs";
-import { join } from "node:path";
 import { Box, useInput } from "ink";
 import Link from "ink-link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
-import {
-  getFileNodes,
-  readFileContent,
-  scanMemoryFilesystem,
-  type TreeNode,
-} from "@/agent/memory-scanner";
+import type { TreeNode } from "@/agent/memory-scanner";
 import { buildChatUrl, isLocalAgentId } from "@/cli/helpers/app-urls";
-import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
-import type { ContextUsageSnapshot } from "@/web/context-usage";
-import { generateAndOpenMemoryViewer } from "@/web/generate-memory-viewer";
+import {
+  useTerminalRows,
+  useTerminalWidth,
+} from "@/cli/hooks/use-terminal-width";
+import type { MemoryFileEntry } from "@/types/protocol_v2";
 import { colors } from "./colors";
 import { Text } from "./Text";
 
 const SOLID_LINE = "─";
 const DOTTED_LINE = "╌";
 
-const TREE_VISIBLE_LINES = 15;
-const FULL_VIEW_VISIBLE_LINES = 16;
-
 interface MemfsTreeViewerProps {
   agentId: string;
-  agentName?: string;
+  entries: MemoryFileEntry[];
   onClose: () => void;
   conversationId?: string;
-  contextUsage?: ContextUsageSnapshot;
+}
+
+function remoteTree(entries: MemoryFileEntry[]): TreeNode[] {
+  const children = new Map<string, Set<string>>();
+  for (const entry of entries) {
+    let parent = "";
+    for (const name of entry.relative_path.split("/").filter(Boolean)) {
+      const names = children.get(parent) ?? new Set();
+      names.add(name);
+      children.set(parent, names);
+      parent = parent ? parent + "/" + name : name;
+    }
+  }
+  const nodes: TreeNode[] = [];
+  function visit(parent: string, ancestors: boolean[]) {
+    const names = [...(children.get(parent) ?? [])].sort();
+    names.forEach((name, index) => {
+      const path = parent ? parent + "/" + name : name;
+      const isLast = index === names.length - 1;
+      const isDirectory = children.has(path);
+      nodes.push({
+        name: isDirectory ? name + "/" : name,
+        relativePath: path,
+        fullPath: path,
+        depth: ancestors.length,
+        parentIsLast: ancestors,
+        isLast,
+        isDirectory,
+      });
+      if (isDirectory) visit(path, [...ancestors, isLast]);
+    });
+  }
+  visit("", []);
+  return nodes;
 }
 
 function renderTreePrefix(node: TreeNode): string {
@@ -42,12 +66,14 @@ function renderTreePrefix(node: TreeNode): string {
 
 export function MemfsTreeViewer({
   agentId,
-  agentName,
+  entries,
   onClose,
   conversationId,
-  contextUsage,
 }: MemfsTreeViewerProps) {
   const terminalWidth = useTerminalWidth();
+  const rows = useTerminalRows();
+  const treeLines = Math.max(2, Math.min(15, rows - 13));
+  const fullLines = Math.max(1, Math.min(16, rows - 10));
   const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
   const isTmux = Boolean(process.env.TMUX);
   const isLocalAgent = isLocalAgentId(agentId);
@@ -62,13 +88,6 @@ export function MemfsTreeViewer({
   const [status, setStatus] = useState<string | null>(null);
   const statusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const memoryRoot = getScopedMemoryFilesystemRoot(agentId);
-  const memoryExists = existsSync(memoryRoot);
-  const hasGitRepo = useMemo(
-    () => existsSync(join(memoryRoot, ".git")),
-    [memoryRoot],
-  );
-
   function showStatus(msg: string, durationMs: number) {
     if (statusTimerRef.current) clearTimeout(statusTimerRef.current);
     setStatus(msg);
@@ -82,23 +101,17 @@ export function MemfsTreeViewer({
     [],
   );
 
-  const treeNodes = useMemo(
-    () => (memoryExists ? scanMemoryFilesystem(memoryRoot) : []),
-    [memoryRoot, memoryExists],
+  const treeNodes = useMemo(() => remoteTree(entries), [entries]);
+  const fileNodes = useMemo(
+    () => treeNodes.filter((node) => !node.isDirectory),
+    [treeNodes],
   );
-  const fileNodes = useMemo(() => getFileNodes(treeNodes), [treeNodes]);
-
   const selectedFile = fileNodes[selectedIndex];
-  const selectedContent = useMemo(
-    () => (selectedFile ? readFileContent(selectedFile.fullPath) : ""),
-    [selectedFile],
-  );
-
+  const selectedContent =
+    entries.find((entry) => entry.relative_path === selectedFile?.relativePath)
+      ?.content ?? "";
   const contentLines = selectedContent.split("\n");
-  const maxFullViewScroll = Math.max(
-    0,
-    contentLines.length - FULL_VIEW_VISIBLE_LINES,
-  );
+  const maxFullViewScroll = Math.max(0, contentLines.length - fullLines);
 
   useInput((input, key) => {
     if (key.ctrl && input === "c") {
@@ -106,30 +119,24 @@ export function MemfsTreeViewer({
       return;
     }
 
-    if ((input === "o" || input === "O") && hasGitRepo) {
+    if (input === "o" || input === "O") {
       showStatus("Opening in browser...", 10000);
-      generateAndOpenMemoryViewer(agentId, {
-        agentName,
-        conversationId:
-          conversationId !== "default" ? conversationId : undefined,
-        contextUsage,
-      })
-        .then((result) => {
-          if (result.opened) {
-            showStatus("Opened in browser", 3000);
-          } else {
-            showStatus(`Run: open ${result.filePath}`, 15000);
-          }
-        })
-        .catch((err: unknown) =>
-          showStatus(
-            err instanceof Error ? err.message : "Failed to open viewer",
-            5000,
-          ),
-        );
+      const opened = adeUrl
+        ? import("open")
+            .then(({ default: open }) => open(adeUrl))
+            .then(() => "Opened in browser")
+        : import("@/web/generate-memory-viewer")
+            .then(({ openSessionMemoryViewer }) =>
+              openSessionMemoryViewer(agentId, entries, conversationId),
+            )
+            .then((result) =>
+              result.opened ? "Opened in browser" : result.filePath,
+            );
+      void opened
+        .then((message) => showStatus(message, 3000))
+        .catch(() => showStatus("Could not open browser", 3000));
       return;
     }
-
     if (key.escape) {
       if (viewMode === "full") {
         setViewMode("split");
@@ -168,11 +175,8 @@ export function MemfsTreeViewer({
           const nodeIndex = treeNodes.findIndex(
             (n) => n.relativePath === newFile.relativePath,
           );
-          if (
-            nodeIndex >= 0 &&
-            nodeIndex >= treeScrollOffset + TREE_VISIBLE_LINES
-          ) {
-            setTreeScrollOffset(nodeIndex - TREE_VISIBLE_LINES + 1);
+          if (nodeIndex >= 0 && nodeIndex >= treeScrollOffset + treeLines) {
+            setTreeScrollOffset(nodeIndex - treeLines + 1);
           }
         }
       } else if (key.return) {
@@ -191,28 +195,6 @@ export function MemfsTreeViewer({
       }
     }
   });
-
-  if (!memoryExists) {
-    return (
-      <Box flexDirection="column">
-        <Text dimColor>{"> /memory"}</Text>
-        <Text dimColor>{solidLine}</Text>
-        <Box height={1} />
-        <Box marginBottom={1}>
-          <Text bold color={colors.selector.title}>
-            View your agent's memory
-          </Text>
-        </Box>
-        <Text dimColor>
-          {"  "}Memory filesystem not found at {memoryRoot}
-        </Text>
-        <Text dimColor>{"  "}Run /memfs enable to set up.</Text>
-        <Box marginTop={1}>
-          <Text dimColor>{"  "}Esc cancel</Text>
-        </Box>
-      </Box>
-    );
-  }
 
   if (treeNodes.length === 0) {
     return (
@@ -236,7 +218,7 @@ export function MemfsTreeViewer({
   if (viewMode === "full" && selectedFile) {
     const visibleLines = contentLines.slice(
       fullViewScrollOffset,
-      fullViewScrollOffset + FULL_VIEW_VISIBLE_LINES,
+      fullViewScrollOffset + fullLines,
     );
     const canScrollDown = fullViewScrollOffset < maxFullViewScroll;
     const charCount = selectedContent.length;
@@ -286,10 +268,7 @@ export function MemfsTreeViewer({
               {status}
             </Text>
           ) : (
-            <Text dimColor>
-              {"  "}↑↓ scroll{hasGitRepo ? " · O open in browser" : ""} · Esc
-              back
-            </Text>
+            <Text dimColor>{"  "}↑↓ scroll · O open in browser · Esc back</Text>
           )}
         </Box>
       </Box>
@@ -301,10 +280,10 @@ export function MemfsTreeViewer({
 
   const visibleTreeNodes = treeNodes.slice(
     treeScrollOffset,
-    treeScrollOffset + TREE_VISIBLE_LINES,
+    treeScrollOffset + treeLines,
   );
 
-  const previewContentLines = TREE_VISIBLE_LINES - 1;
+  const previewContentLines = treeLines - 1;
   const previewLines = contentLines.slice(0, previewContentLines);
   const hasMorePreviewLines = contentLines.length > previewContentLines;
 
@@ -360,17 +339,17 @@ export function MemfsTreeViewer({
             );
           })}
 
-          {visibleTreeNodes.length < TREE_VISIBLE_LINES &&
+          {visibleTreeNodes.length < treeLines &&
             Array.from({
-              length: TREE_VISIBLE_LINES - visibleTreeNodes.length,
+              length: treeLines - visibleTreeNodes.length,
             }).map((_, i) => (
               // biome-ignore lint/suspicious/noArrayIndexKey: static padding elements
               <Text key={`pad-${i}`}> </Text>
             ))}
 
-          {treeScrollOffset + TREE_VISIBLE_LINES < treeNodes.length ? (
+          {treeScrollOffset + treeLines < treeNodes.length ? (
             <Text dimColor>
-              ...{treeNodes.length - treeScrollOffset - TREE_VISIBLE_LINES} more
+              ...{treeNodes.length - treeScrollOffset - treeLines} more
             </Text>
           ) : (
             <Text> </Text>
@@ -378,7 +357,7 @@ export function MemfsTreeViewer({
         </Box>
 
         <Box flexDirection="column" marginLeft={1} marginRight={1}>
-          {Array.from({ length: TREE_VISIBLE_LINES + 1 }).map((_, i) => (
+          {Array.from({ length: treeLines + 1 }).map((_, i) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: static separator elements
             <Text key={i} dimColor>
               │
@@ -421,7 +400,7 @@ export function MemfsTreeViewer({
             <>
               <Text dimColor>No file selected</Text>
 
-              {Array.from({ length: TREE_VISIBLE_LINES }).map((_, i) => (
+              {Array.from({ length: treeLines }).map((_, i) => (
                 // biome-ignore lint/suspicious/noArrayIndexKey: static padding elements
                 <Text key={`pad-${i}`}> </Text>
               ))}
@@ -448,7 +427,7 @@ export function MemfsTreeViewer({
             )}
             {adeUrl && isTmux && <Text dimColor>Edit in ADE: {adeUrl}</Text>}
             {!adeUrl && <Text dimColor>Local agent: {agentId}</Text>}
-            {hasGitRepo && <Text dimColor> · O open in browser</Text>}
+            <Text dimColor> · O open in browser</Text>
             <Text dimColor> · Esc close</Text>
           </Box>
         )}

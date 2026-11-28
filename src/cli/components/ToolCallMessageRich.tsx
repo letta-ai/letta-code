@@ -49,7 +49,6 @@ import {
   WriteRenderer,
 } from "./DiffRenderer.js";
 import { MarkdownDisplay } from "./MarkdownDisplay.js";
-import { MemoryDiffRenderer } from "./MemoryDiffRenderer.js";
 import { PlanRenderer } from "./PlanRenderer.js";
 import {
   parseSendAgentMessageDisplay,
@@ -94,12 +93,16 @@ type ToolCallLine = {
 export const ToolCallMessage = memo(
   ({
     line,
+    remote = false,
+    groupedTask = false,
     precomputedDiffs,
     isStreaming,
     expandedToolCallId,
     lastShellToolCallId,
   }: {
     line: ToolCallLine;
+    remote?: boolean;
+    groupedTask?: boolean;
     precomputedDiffs?: Map<string, AdvancedDiffSuccess>;
     isStreaming?: boolean;
     expandedToolCallId?: string | null;
@@ -117,10 +120,11 @@ export const ToolCallMessage = memo(
 
       if (isTaskTool(rawName)) {
         const isFinished = line.phase === "finished";
-        const subagent = line.toolCallId
-          ? getSubagentByToolCallId(line.toolCallId)
-          : undefined;
-        if (subagent) {
+        const subagent =
+          !remote && line.toolCallId
+            ? getSubagentByToolCallId(line.toolCallId)
+            : undefined;
+        if (subagent || groupedTask) {
           return null;
         }
         if (!isFinished) {
@@ -374,7 +378,7 @@ export const ToolCallMessage = memo(
           } catch {}
         }
 
-        if (isTaskCrudTool(rawName) && line.resultOk !== false) {
+        if (!remote && isTaskCrudTool(rawName) && line.resultOk !== false) {
           try {
             const tasks = listTasks();
             if (tasks.length > 0) {
@@ -424,15 +428,6 @@ export const ToolCallMessage = memo(
           } catch {}
         }
 
-        if (isMemoryTool(rawName) && line.resultOk !== false && line.argsText) {
-          const memoryDiff = (
-            <MemoryDiffRenderer argsText={line.argsText} toolName={rawName} />
-          );
-          if (memoryDiff) {
-            return memoryDiff;
-          }
-        }
-
         if (isQuestionTool(rawName) && line.resultOk !== false) {
           const qaPairs: Array<{ question: string; answer: string }> = [];
           const qaRegex = /"([^"]+)"="([^"]*)"/g;
@@ -471,7 +466,20 @@ export const ToolCallMessage = memo(
           );
         }
 
+        if (remote && line.resultOk !== false && line.toolCallId) {
+          const diff = precomputedDiffs?.get(line.toolCallId);
+          if (diff)
+            return (
+              <AdvancedDiffRenderer
+                precomputed={diff}
+                kind="write"
+                filePath={diff.fileName}
+                content=""
+              />
+            );
+        }
         if (
+          !remote &&
           isFileEditTool(rawName) &&
           line.resultOk !== false &&
           line.argsText
@@ -527,6 +535,7 @@ export const ToolCallMessage = memo(
         }
 
         if (
+          !remote &&
           isFileWriteTool(rawName) &&
           line.resultOk !== false &&
           line.argsText
@@ -556,7 +565,12 @@ export const ToolCallMessage = memo(
           } catch {}
         }
 
-        if (isPatchTool(rawName) && line.resultOk !== false && line.argsText) {
+        if (
+          !remote &&
+          isPatchTool(rawName) &&
+          line.resultOk !== false &&
+          line.argsText
+        ) {
           try {
             const parsedArgs = JSON.parse(line.argsText);
             if (parsedArgs.input) {

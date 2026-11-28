@@ -37,13 +37,15 @@ type Props = {
   allowPersistence?: boolean;
   showPreview?: boolean;
   defaultScope?: "project" | "session";
+  sessionPreview?: React.ReactNode;
+  workingDirectory?: string;
   headerOverride?: string;
 };
 
 const SOLID_LINE = "─";
 const DOTTED_LINE = "╌";
 
-function getHeaderText(fileEdit: FileEditInfo): string {
+function getHeaderText(fileEdit: FileEditInfo, cwd: string): string {
   const t = fileEdit.toolName.toLowerCase();
 
   if (t === "applypatch") {
@@ -55,7 +57,6 @@ function getHeaderText(fileEdit: FileEditInfo): string {
         const op = operations[0];
         if (op) {
           const { relative } = require("node:path");
-          const cwd = process.cwd();
           const relPath = relative(cwd, op.path);
           const displayPath = relPath.startsWith("..") ? op.path : relPath;
 
@@ -73,17 +74,10 @@ function getHeaderText(fileEdit: FileEditInfo): string {
   }
 
   const { relative } = require("node:path");
-  const cwd = process.cwd();
   const relPath = relative(cwd, fileEdit.filePath);
   const displayPath = relPath.startsWith("..") ? fileEdit.filePath : relPath;
 
   if (t === "write") {
-    const { existsSync } = require("node:fs");
-    try {
-      if (existsSync(fileEdit.filePath)) {
-        return `Overwrite ${displayPath}?`;
-      }
-    } catch {}
     return `Write to ${displayPath}?`;
   }
 
@@ -113,6 +107,8 @@ export const InlineFileEditApproval = memo(
     showPreview = true,
     defaultScope = "project",
     headerOverride,
+    sessionPreview,
+    workingDirectory,
   }: Props) => {
     const [selectedOption, setSelectedOption] = useState(0);
     const {
@@ -238,7 +234,9 @@ export const InlineFileEditApproval = memo(
 
     const solidLine = SOLID_LINE.repeat(Math.max(columns, 10));
     const dottedLine = DOTTED_LINE.repeat(Math.max(columns, 10));
-    const headerText = headerOverride || getHeaderText(fileEdit);
+    const headerText =
+      headerOverride ||
+      getHeaderText(fileEdit, workingDirectory ?? process.cwd());
     const diffKind = getDiffKind(fileEdit.toolName);
 
     const memoizedDiffContent = useMemo(
@@ -253,88 +251,92 @@ export const InlineFileEditApproval = memo(
           <Text dimColor>{dottedLine}</Text>
 
           <Box paddingLeft={0}>
-            {fileEdit.patchInput ? (
-              <Box flexDirection="column">
-                {parsePatchOperations(fileEdit.patchInput).map((op, idx) => {
-                  const { relative } = require("node:path");
-                  const cwd = process.cwd();
-                  const relPath = relative(cwd, op.path);
-                  const displayPath = relPath.startsWith("..")
-                    ? op.path
-                    : relPath;
+            {sessionPreview ??
+              (fileEdit.patchInput ? (
+                <Box flexDirection="column">
+                  {parsePatchOperations(fileEdit.patchInput).map((op, idx) => {
+                    const { relative } = require("node:path");
+                    const cwd = process.cwd();
+                    const relPath = relative(cwd, op.path);
+                    const displayPath = relPath.startsWith("..")
+                      ? op.path
+                      : relPath;
 
-                  const diffKey = fileEdit.toolCallId
-                    ? `${fileEdit.toolCallId}:${op.path}`
-                    : undefined;
-                  const opDiff =
-                    diffKey && allDiffs ? allDiffs.get(diffKey) : undefined;
+                    const diffKey = fileEdit.toolCallId
+                      ? `${fileEdit.toolCallId}:${op.path}`
+                      : undefined;
+                    const opDiff =
+                      diffKey && allDiffs ? allDiffs.get(diffKey) : undefined;
 
-                  if (op.kind === "add") {
-                    return (
-                      <Box key={`patch-add-${op.path}`} flexDirection="column">
-                        {idx > 0 && <Box height={1} />}
-                        <Text dimColor>{displayPath}</Text>
-                        <AdvancedDiffRenderer
-                          precomputed={opDiff}
-                          kind="write"
-                          filePath={op.path}
-                          content={op.content}
-                          showHeader={false}
-                        />
-                      </Box>
-                    );
-                  } else if (op.kind === "update") {
-                    return (
-                      <Box
-                        key={`patch-update-${op.path}`}
-                        flexDirection="column"
-                      >
-                        {idx > 0 && <Box height={1} />}
-                        <Text dimColor>{displayPath}</Text>
-                        <AdvancedDiffRenderer
-                          precomputed={opDiff}
-                          kind="edit"
-                          filePath={op.path}
-                          oldString={op.oldString}
-                          newString={op.newString}
-                          showHeader={false}
-                        />
-                      </Box>
-                    );
-                  } else if (op.kind === "delete") {
-                    return (
-                      <Box
-                        key={`patch-delete-${op.path}`}
-                        flexDirection="column"
-                      >
-                        {idx > 0 && <Box height={1} />}
-                        <Text dimColor>{displayPath}</Text>
-                        <Text color="red">File will be deleted</Text>
-                      </Box>
-                    );
-                  }
-                  return null;
-                })}
-              </Box>
-            ) : diffKind === "write" ? (
-              <AdvancedDiffRenderer
-                precomputed={precomputedDiff}
-                kind="write"
-                filePath={fileEdit.filePath}
-                content={fileEdit.content || ""}
-                showHeader={false}
-              />
-            ) : (
-              <AdvancedDiffRenderer
-                precomputed={precomputedDiff}
-                kind="edit"
-                filePath={fileEdit.filePath}
-                oldString={fileEdit.oldString || ""}
-                newString={fileEdit.newString || ""}
-                replaceAll={fileEdit.replaceAll}
-                showHeader={false}
-              />
-            )}
+                    if (op.kind === "add") {
+                      return (
+                        <Box
+                          key={`patch-add-${op.path}`}
+                          flexDirection="column"
+                        >
+                          {idx > 0 && <Box height={1} />}
+                          <Text dimColor>{displayPath}</Text>
+                          <AdvancedDiffRenderer
+                            precomputed={opDiff}
+                            kind="write"
+                            filePath={op.path}
+                            content={op.content}
+                            showHeader={false}
+                          />
+                        </Box>
+                      );
+                    } else if (op.kind === "update") {
+                      return (
+                        <Box
+                          key={`patch-update-${op.path}`}
+                          flexDirection="column"
+                        >
+                          {idx > 0 && <Box height={1} />}
+                          <Text dimColor>{displayPath}</Text>
+                          <AdvancedDiffRenderer
+                            precomputed={opDiff}
+                            kind="edit"
+                            filePath={op.path}
+                            oldString={op.oldString}
+                            newString={op.newString}
+                            showHeader={false}
+                          />
+                        </Box>
+                      );
+                    } else if (op.kind === "delete") {
+                      return (
+                        <Box
+                          key={`patch-delete-${op.path}`}
+                          flexDirection="column"
+                        >
+                          {idx > 0 && <Box height={1} />}
+                          <Text dimColor>{displayPath}</Text>
+                          <Text color="red">File will be deleted</Text>
+                        </Box>
+                      );
+                    }
+                    return null;
+                  })}
+                </Box>
+              ) : diffKind === "write" ? (
+                <AdvancedDiffRenderer
+                  precomputed={precomputedDiff}
+                  kind="write"
+                  filePath={fileEdit.filePath}
+                  content={fileEdit.content || ""}
+                  showHeader={false}
+                />
+              ) : (
+                <AdvancedDiffRenderer
+                  precomputed={precomputedDiff}
+                  kind="edit"
+                  filePath={fileEdit.filePath}
+                  oldString={fileEdit.oldString || ""}
+                  newString={fileEdit.newString || ""}
+                  replaceAll={fileEdit.replaceAll}
+                  showHeader={false}
+                />
+              ))}
           </Box>
 
           <Text dimColor>{dottedLine}</Text>
@@ -353,6 +355,7 @@ export const InlineFileEditApproval = memo(
         solidLine,
         dottedLine,
         headerText,
+        sessionPreview,
         diffKind,
       ],
     );

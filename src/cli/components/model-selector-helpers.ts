@@ -190,3 +190,35 @@ export function filterModelsByAvailabilityForSelector<
 
   return typedModels.filter((model) => availableHandles.has(model.handle));
 }
+
+export function usesBackendModelCatalog(
+  isSelfHosted?: boolean,
+  localModelCatalog?: boolean,
+): boolean {
+  return Boolean(isSelfHosted || localModelCatalog);
+}
+
+export function getEmptyStateActionDescriptors(
+  showLoginAction: boolean,
+): Array<{
+  id: "connect" | "login";
+  label: string;
+  description: string;
+}> {
+  return [
+    {
+      id: "connect",
+      label: "/connect",
+      description: "Connect your LLM API keys (OpenAI, Anthropic, etc.)",
+    },
+    ...(showLoginAction
+      ? [
+          {
+            id: "login" as const,
+            label: "/login",
+            description: "Sign in with Letta",
+          },
+        ]
+      : []),
+  ];
+}

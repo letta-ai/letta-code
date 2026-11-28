@@ -41,6 +41,7 @@ import type { ListenerTransport } from "./transport";
 import type { TurnLifecycle } from "./turn-lifecycle";
 
 export interface StartListenerOptions {
+  keepRuntimeOnDisconnect?: boolean;
   connectionId: string;
   wsUrl: string;
   supportsSplitStatusChannels?: boolean;

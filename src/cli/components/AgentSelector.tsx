@@ -1,14 +1,15 @@
-import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { Box, useInput } from "ink";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { type AgentBackendMode, isLocalAgentId } from "@/agent/agent-id";
 import { unpinAgentForCurrentUser } from "@/agent/favorites";
 import { getBackendForMode } from "@/backend/backend";
-import { listLocalAgentsFromDisk } from "@/cli/helpers/local-agent-listing";
+import {
+  FETCH_PAGE_SIZE,
+  fetchCloudAgentPage,
+} from "@/cli/helpers/cloud-agent-page";
 import {
   hasCloudCredentials,
   listPinnedAgentsForCurrentUser,
-  type PinnedAgentData,
 } from "@/cli/helpers/pinned-agent-listing";
 import { listSharedAgentsForCurrentUser } from "@/cli/helpers/shared-agent-listing";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
@@ -18,6 +19,11 @@ import {
   AgentDeleteConfirmOverlay,
   CloudLoginPrompt,
 } from "./AgentSelectorViews";
+import type {
+  AgentSelectorProps,
+  PickerPin,
+  ViewState,
+} from "./agent-selector-utils";
 import {
   AGENT_SELECTOR_TAB_DESCRIPTIONS,
   AGENT_SELECTOR_TAB_EMPTY_STATES,
@@ -27,6 +33,8 @@ import {
   formatAgentModel,
   formatRelativeTime,
   getVisibleAgentSelectorTabs,
+  initialLocalTab,
+  localPickerAgents,
   truncateAgentId,
 } from "./agent-selector-utils";
 import { colors } from "./colors";
@@ -36,34 +44,15 @@ import { validateAgentName } from "./PinDialog";
 import { TabBar } from "./TabBar";
 import { Text } from "./Text";
 
-interface AgentSelectorProps {
-  currentAgentId: string;
-  onSelect: (agentId: string, backendMode: AgentBackendMode) => void;
-  onCancel: () => void;
-  onLogin?: () => void;
-  onCreateNewAgent?: (name: string, backendMode: AgentBackendMode) => void;
-  command?: string;
-  title?: string;
-  showNewTab?: boolean;
-  allowDelete?: boolean;
-  allowPinActions?: boolean;
-}
-
-type ViewState =
-  | { type: "list" }
-  | {
-      type: "deleteConfirm";
-      agent: AgentState;
-      agentId: string;
-      isLocal: boolean;
-    };
-
 const DISPLAY_PAGE_SIZE = 5;
-const FETCH_PAGE_SIZE = 20;
 const NEW_AGENT_DEFAULT_BACKEND: AgentBackendMode = "api";
 
 export function AgentSelector({
   currentAgentId,
+  sessionList,
+  sessionCollection,
+  sessionDelete,
+  sessionUnpin,
   onSelect,
   onCancel,
   onLogin,
@@ -76,13 +65,9 @@ export function AgentSelector({
 }: AgentSelectorProps) {
   const terminalWidth = useTerminalWidth();
 
-  const [hasLocalAgents, setHasLocalAgents] = useState(() => {
-    try {
-      return listLocalAgentsFromDisk().length > 0;
-    } catch {
-      return false;
-    }
-  });
+  const [hasLocalAgents, setHasLocalAgents] = useState(() =>
+    initialLocalTab(currentAgentId, !!sessionList),
+  );
   const [hasCloudAuth, setHasCloudAuth] = useState<boolean | null>(null);
 
   const visibleTabs = useMemo(
@@ -103,18 +88,18 @@ export function AgentSelector({
     }
   }, [activeTab, hasCloudAuth, hasLocalAgents, showNewTab]);
 
-  const [pinnedAgents, setPinnedAgents] = useState<PinnedAgentData[]>([]);
+  const [pinnedAgents, setPinnedAgents] = useState<PickerPin[]>([]);
   const [pinnedLoading, setPinnedLoading] = useState(true);
   const [pinnedSelectedIndex, setPinnedSelectedIndex] = useState(0);
   const [pinnedPage, setPinnedPage] = useState(0);
 
-  const [localAgents, setLocalAgents] = useState<AgentState[]>([]);
+  const [localAgents, setLocalAgents] = useState<AgentSelectorListAgent[]>([]);
   const [localLoading, setLocalLoading] = useState(false);
   const [localSelectedIndex, setLocalSelectedIndex] = useState(0);
   const [localPage, setLocalPage] = useState(0);
   const [localLoaded, setLocalLoaded] = useState(false);
 
-  const [cloudAgents, setCloudAgents] = useState<AgentState[]>([]);
+  const [cloudAgents, setCloudAgents] = useState<AgentSelectorListAgent[]>([]);
   const [cloudCursor, setCloudCursor] = useState<string | null>(null);
   const [cloudLoading, setCloudLoading] = useState(false);
   const [cloudLoadingMore, setCloudLoadingMore] = useState(false);
@@ -153,7 +138,16 @@ export function AgentSelector({
   const loadPinnedAgents = useCallback(async () => {
     setPinnedLoading(true);
     try {
-      const pinnedData = await listPinnedAgentsForCurrentUser();
+      const pinnedData = sessionCollection
+        ? (await sessionCollection("pinned")).agents.map((agent) => ({
+            agent,
+            agentId: agent.id,
+            backendMode: isLocalAgentId(agent.id)
+              ? ("local" as const)
+              : ("api" as const),
+            error: null,
+          }))
+        : await listPinnedAgentsForCurrentUser();
       const validPinnedData = pinnedData.filter((p) => p.agent !== null);
 
       if (validPinnedData.length === 0) {
@@ -165,15 +159,17 @@ export function AgentSelector({
       setPinnedAgents(pinnedData);
     } catch {
       setPinnedAgents([]);
+      if (sessionCollection)
+        setActiveTab(isLocalAgentId(currentAgentId) ? "local" : "cloud");
     } finally {
       setPinnedLoading(false);
     }
-  }, []);
+  }, [sessionCollection, currentAgentId]);
 
-  const loadLocalAgents = useCallback(() => {
+  const loadLocalAgents = useCallback(async () => {
     setLocalLoading(true);
     try {
-      const agents = listLocalAgentsFromDisk();
+      const agents = await localPickerAgents(sessionCollection, sessionList);
       setLocalAgents(agents);
       setHasLocalAgents(agents.length > 0);
       setLocalPage(0);
@@ -185,31 +181,12 @@ export function AgentSelector({
     } finally {
       setLocalLoading(false);
     }
-  }, []);
+  }, [sessionList, sessionCollection]);
+  useEffect(() => {
+    if (sessionCollection) void loadLocalAgents();
+  }, [sessionCollection, loadLocalAgents]);
 
-  const fetchCloudAgents = useCallback(
-    async (afterCursor?: string | null, query?: string) => {
-      const { getClient } = await import("@/backend/api/client");
-      const client = await getClient();
-
-      const agentList = await client.agents.list({
-        limit: FETCH_PAGE_SIZE,
-        include: ["agent.blocks"],
-        order: "desc",
-        order_by: "last_run_completion",
-        ...(afterCursor && { after: afterCursor }),
-        ...(query && { query_text: query }),
-      });
-
-      const cursor =
-        agentList.items.length === FETCH_PAGE_SIZE
-          ? (agentList.items[agentList.items.length - 1]?.id ?? null)
-          : null;
-
-      return { agents: agentList.items, nextCursor: cursor };
-    },
-    [],
-  );
+  const fetchCloudAgents = sessionList ?? fetchCloudAgentPage;
 
   const loadCloudAgents = useCallback(
     async (query?: string) => {
@@ -257,42 +234,49 @@ export function AgentSelector({
     activeQuery,
   ]);
 
-  const loadSharedAgents = useCallback(async (query?: string) => {
-    setSharedLoading(true);
-    setSharedError(null);
-    try {
-      const result = await listSharedAgentsForCurrentUser({
-        limit: FETCH_PAGE_SIZE,
-        order: "desc",
-        orderBy: "last_run_completion",
-        queryText: query,
-      });
-      setSharedAgents(result.agents);
-      setSharedCursor(result.nextCursor ?? null);
-      setSharedHasMore(Boolean(result.nextCursor));
-      setSharedPage(0);
-      setSharedSelectedIndex(0);
-      setSharedLoaded(true);
-      setSharedQuery(query || "");
-    } catch (err) {
-      setSharedError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setSharedLoading(false);
-    }
-  }, []);
+  const loadSharedAgents = useCallback(
+    async (query?: string) => {
+      setSharedLoading(true);
+      setSharedError(null);
+      try {
+        const result = sessionCollection
+          ? await sessionCollection("shared", null, query)
+          : await listSharedAgentsForCurrentUser({
+              limit: FETCH_PAGE_SIZE,
+              order: "desc",
+              orderBy: "last_run_completion",
+              queryText: query,
+            });
+        setSharedAgents(result.agents);
+        setSharedCursor(result.nextCursor ?? null);
+        setSharedHasMore(Boolean(result.nextCursor));
+        setSharedPage(0);
+        setSharedSelectedIndex(0);
+        setSharedLoaded(true);
+        setSharedQuery(query || "");
+      } catch (err) {
+        setSharedError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setSharedLoading(false);
+      }
+    },
+    [sessionCollection],
+  );
 
   const fetchMoreSharedAgents = useCallback(async () => {
     if (sharedLoadingMore || !sharedHasMore || !sharedCursor) return;
 
     setSharedLoadingMore(true);
     try {
-      const result = await listSharedAgentsForCurrentUser({
-        limit: FETCH_PAGE_SIZE,
-        after: sharedCursor,
-        order: "desc",
-        orderBy: "last_run_completion",
-        queryText: activeQuery || undefined,
-      });
+      const result = sessionCollection
+        ? await sessionCollection("shared", sharedCursor, activeQuery)
+        : await listSharedAgentsForCurrentUser({
+            limit: FETCH_PAGE_SIZE,
+            after: sharedCursor,
+            order: "desc",
+            orderBy: "last_run_completion",
+            queryText: activeQuery || undefined,
+          });
       setSharedAgents((prev) => [...prev, ...result.agents]);
       setSharedCursor(result.nextCursor ?? null);
       setSharedHasMore(Boolean(result.nextCursor));
@@ -300,11 +284,19 @@ export function AgentSelector({
     } finally {
       setSharedLoadingMore(false);
     }
-  }, [sharedLoadingMore, sharedHasMore, sharedCursor, activeQuery]);
+  }, [
+    sharedLoadingMore,
+    sharedHasMore,
+    sharedCursor,
+    activeQuery,
+    sessionCollection,
+  ]);
 
   useEffect(() => {
-    setHasCloudAuth(hasCloudCredentials());
-  }, []);
+    setHasCloudAuth(
+      sessionList ? !isLocalAgentId(currentAgentId) : hasCloudCredentials(),
+    );
+  }, [sessionList, currentAgentId]);
 
   useEffect(() => {
     loadPinnedAgents();
@@ -417,7 +409,7 @@ export function AgentSelector({
     currentLoading = pinnedLoading;
     currentAgents = pinnedPageAgents
       .map((p) => p.agent)
-      .filter((agent): agent is AgentState => agent !== null);
+      .filter((agent): agent is AgentSelectorListAgent => agent !== null);
     setCurrentSelectedIndex = setPinnedSelectedIndex;
   } else if (activeTab === "local") {
     currentLoading = localLoading;
@@ -456,10 +448,9 @@ export function AgentSelector({
 
     setDeleteLoading(true);
     try {
-      const backend = isLocal
-        ? getBackendForMode("local")
-        : getBackendForMode("api");
-      await backend.deleteAgent(agentId);
+      if (sessionDelete) await sessionDelete(agentId);
+      else
+        await getBackendForMode(isLocal ? "local" : "api").deleteAgent(agentId);
 
       setViewState({ type: "list" });
       setDeleteConfirmInput("");
@@ -471,7 +462,7 @@ export function AgentSelector({
     } finally {
       setDeleteLoading(false);
     }
-  }, [viewState, deleteConfirmInput, loadPinnedAgents]);
+  }, [viewState, deleteConfirmInput, loadPinnedAgents, sessionDelete]);
 
   useInput((input, key) => {
     if (key.ctrl && input === "c") {
@@ -640,13 +631,16 @@ export function AgentSelector({
     ) {
       const selected = pinnedPageAgents[pinnedSelectedIndex];
       if (selected) {
-        const backend = getBackendForMode(selected.backendMode);
-        void unpinAgentForCurrentUser(selected.agentId, backend).finally(() => {
-          loadPinnedAgents();
-        });
+        const op = sessionUnpin
+          ? sessionUnpin(selected.agentId)
+          : unpinAgentForCurrentUser(
+              selected.agentId,
+              getBackendForMode(selected.backendMode),
+            );
+        void op.then(loadPinnedAgents).catch(() => loadPinnedAgents());
       }
     } else if (allowDelete && input === "D" && activeTab !== "shared") {
-      let selectedAgent: AgentState | null = null;
+      let selectedAgent: AgentSelectorListAgent | null = null;
       let selectedAgentId: string | null = null;
       let selectedIsLocal = false;
 
@@ -691,7 +685,9 @@ export function AgentSelector({
     const isCurrent = agent.id === currentAgentId;
     const isLocalAgent = isLocalAgentId(agent.id);
     const relativeTime = formatRelativeTime(agent.last_run_completion);
-    const blockCountText = formatAgentMemoryBlockCount(agent.blocks?.length);
+    const blockCountText = formatAgentMemoryBlockCount(
+      agent.memoryBlockCount ?? agent.blocks?.length,
+    );
     const modelStr = formatAgentModel(agent);
     const metadataParts = [relativeTime];
     if (!isLocalAgent && extra?.backend !== "shared") {
@@ -709,14 +705,11 @@ export function AgentSelector({
     const availableForId = Math.max(15, terminalWidth - nameLen - fixedChars);
     const displayId = truncateAgentId(agent.id, availableForId);
 
-    let backendLabel = "";
-    if (extra?.backend === "local") {
-      backendLabel = "Local · ";
-    } else if (extra?.backend === "cloud") {
-      backendLabel = "Cloud · ";
-    } else if (extra?.backend === "shared") {
-      backendLabel = "Shared · ";
-    }
+    const backendLabel = extra?.backend
+      ? { local: "Local · ", cloud: "Cloud · ", shared: "Shared · " }[
+          extra.backend
+        ]
+      : "";
 
     return (
       <Box key={agent.id} flexDirection="column" marginBottom={1}>
@@ -755,7 +748,7 @@ export function AgentSelector({
   };
 
   const renderPinnedItem = (
-    data: PinnedAgentData,
+    data: PickerPin,
     index: number,
     isSelected: boolean,
   ) => {
@@ -936,7 +929,8 @@ export function AgentSelector({
           <Box flexDirection="column">
             {cloudPageAgents.map((agent, index) =>
               renderAgentItem(agent, index, index === cloudSelectedIndex, {
-                backend: "cloud",
+                backend:
+                  sessionList && isLocalAgentId(agent.id) ? "local" : "cloud",
               }),
             )}
           </Box>
