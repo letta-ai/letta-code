@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.332:docs:5ff22bfa5fff2f7d578509955fc5609e6b86d0fecf50577d2e6dcf7c4f9a4c71:runtime:59cc5ae5ed87ef7c86759a4b880f286d22b67c0b9b47665ae4e011ad8d525559",
+  "candidate_id": "claude@2.1.332:docs:52f144e48a54c0bc70536e6d8e5ec49d3da2ac803a53bfbd0ff58b5ddf5c5cfb:runtime:4dcb7968ba7693adf5ab2f7213064531fdee1d2e289f2d749496a124c37dc69a",
   "package_version": "2.1.332",
   "npm_integrity": "sha512-tvSh6bLvEbd97APD31AnojOrRC3AmcRj5R8sF8QIQitu3x2ucOb1kKmTkGDw41kjva+CGJfpkt+wYouk6yv56Q==",
   "npm_published_at": "2026-11-24T22:06:38.097Z",
@@ -15,8 +15,8 @@
   "docs": {
     "index_url": "https://code.claude.com/docs/llms.txt",
     "index_hash": "1c87ddefe48af186c0cdc53c00897e8a41a2f0a464762f40ecfc47a673c230d9",
-    "full_scan": false,
-    "scanned_at": "2026-11-27T06:28:13.831Z",
+    "full_scan": true,
+    "scanned_at": "2026-11-28T08:21:09.017Z",
     "pages": {
       "https://code.claude.com/docs/en/accessibility.md": {
         "url": "https://code.claude.com/docs/en/accessibility.md",
@@ -446,7 +446,7 @@
       },
       "https://code.claude.com/docs/en/claude-tag.md": {
         "url": "https://code.claude.com/docs/en/claude-tag.md",
-        "hash": "6c6891c8365461b047bb66ef7840af78eeb15aef09c82309e4f2fbf4deb93062",
+        "hash": "93db0dcf023ae008605cbec5f47b804c3307ae05e8c56f937cf8a00fe5441c14",
         "watched": false,
         "source_path": null
       },
@@ -608,7 +608,7 @@
       },
       "https://code.claude.com/docs/en/desktop.md": {
         "url": "https://code.claude.com/docs/en/desktop.md",
-        "hash": "325175a43f4c3422a98213b46dceeb1aaed0484aa93091dfe7b4b2418a4b4054",
+        "hash": "ee2bb007396744a721c4e0220f9841c76863aceaab525fe0da6e92a292fd1368",
         "watched": false,
         "source_path": null
       },
@@ -830,7 +830,7 @@
       },
       "https://code.claude.com/docs/en/model-config.md": {
         "url": "https://code.claude.com/docs/en/model-config.md",
-        "hash": "5af716d1c4a3db4f932fc9dd5400403f50f335d67a737ff1134dac8757eab0da",
+        "hash": "4f10981d5b2b5d11244d105a916276423e05feea7a3780667473a42c938ca06a",
         "watched": false,
         "source_path": null
       },
@@ -1351,7 +1351,7 @@
         "source_path": "sources/raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
       }
     },
-    "digest": "5ff22bfa5fff2f7d578509955fc5609e6b86d0fecf50577d2e6dcf7c4f9a4c71"
+    "digest": "52f144e48a54c0bc70536e6d8e5ec49d3da2ac803a53bfbd0ff58b5ddf5c5cfb"
   },
   "runtime": {
     "probe_contract_version": 2,
@@ -1361,7 +1361,7 @@
     "help_hash": "e8ff5fd4f4a523bf34f63e2fc8541a38ff290f47caa1729e623b5af7e6b0b197",
     "doctor": {
       "exit_code": 0,
-      "summary": "Claude Code doctor\nRunning: npm-global (<version>)\nCommit: <commit>\nPlatform: linux-x64\nPath: /watch/install/node_modules/@anthropic-ai/claude-code/bin/claude.exe\nConfig install method: not set\nSearch: OK (bundled)\nAuto-updates: disabled (set by env: DISABLE_UPDATES)\nAuto-update channel: latest\nLast update attempt: none recorded\nManaged settings (remote): not fetched — no usable credentials for the settings fetch\nOrganization policy: not fetched: no API key or claude.ai sign-in for the policy lookup (apiKeyHelper keys are not used for it)\nAPI connectivity\n- API (api.anthropic.com): answered HTTP 200 in 62 ms\n- Sign-in (platform.claude.com): answered HTTP 200 in 87 ms\n- ANTHROPIC_BASE_URL: not set · NODE_EXTRA_CA_CERTS: not set · CLAUDE_CODE_CLIENT_CERT: not set\nRemote Control\nRemote Control requires a claude.ai subscription. Run claude auth login to sign in with your claude.ai account.\n- Not signed in to claude.ai\n- claude.ai subscription auth not active\n- Sign-in is missing the user:profile scope\n- Organization not found\n- Remote Control availability could not be verified (no server response this session)\nNo installation issues found.\nFor a full setup checkup that can also fix issues, run /doctor in a Claude Code session."
+      "summary": "Claude Code doctor\nRunning: npm-global (<version>)\nCommit: <commit>\nPlatform: linux-x64\nPath: /watch/install/node_modules/@anthropic-ai/claude-code/bin/claude.exe\nConfig install method: not set\nSearch: OK (bundled)\nAuto-updates: disabled (set by env: DISABLE_UPDATES)\nAuto-update channel: latest\nLast update attempt: none recorded\nManaged settings (remote): not fetched — no usable credentials for the settings fetch\nOrganization policy: not fetched: no API key or claude.ai sign-in for the policy lookup (apiKeyHelper keys are not used for it)\nAPI connectivity\n- API (api.anthropic.com): answered HTTP 200 in 82 ms\n- Sign-in (platform.claude.com): answered HTTP 200 in 113 ms\n- ANTHROPIC_BASE_URL: not set · NODE_EXTRA_CA_CERTS: not set · CLAUDE_CODE_CLIENT_CERT: not set\nRemote Control\nRemote Control requires a claude.ai subscription. Run claude auth login to sign in with your claude.ai account.\n- Not signed in to claude.ai\n- claude.ai subscription auth not active\n- Sign-in is missing the user:profile scope\n- Organization not found\n- Remote Control availability could not be verified (no server response this session)\nNo installation issues found.\nFor a full setup checkup that can also fix issues, run /doctor in a Claude Code session."
     },
     "auto_mode_defaults": {
       "allow": [
@@ -1590,7 +1590,7 @@
           {
             "name": "TaskCreate",
             "input": {
-              "description": "Probe task for exercising task tools.",
+              "description": "Probe task for exercising task tools metadata handling.",
               "metadata": {
                 "keep": "yes",
                 "probe": "remove"
@@ -1641,7 +1641,7 @@
         "tool_results": [
           "Task #1 created successfully: probe-task",
           "Updated task #1 metadata",
-          "Task #1: probe-task\nStatus: pending\nDescription: Probe task for exercising task tools.",
+          "Task #1: probe-task\nStatus: pending\nDescription: Probe task for exercising task tools metadata handling.",
           "Updated task #1 deleted",
           "Task not found",
           "No tasks found"
@@ -1650,10 +1650,10 @@
         "error": null
       }
     ],
-    "digest": "59cc5ae5ed87ef7c86759a4b880f286d22b67c0b9b47665ae4e011ad8d525559"
+    "digest": "4dcb7968ba7693adf5ab2f7213064531fdee1d2e289f2d749496a124c37dc69a"
   },
-  "fetched_at": "2026-11-28T06:26:22.151Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/46116501676",
-  "state_commit_parent": "772c94ab1f39880de2165aa2656ba08a97810f99",
-  "analysis_parent_sha": "772c94ab1f39880de2165aa2656ba08a97810f99"
+  "fetched_at": "2026-11-28T08:22:01.755Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/46125363428",
+  "state_commit_parent": "ac8973fd4ac84d551620275a123fcfaf6487ca22",
+  "analysis_parent_sha": "ac8973fd4ac84d551620275a123fcfaf6487ca22"
 }
