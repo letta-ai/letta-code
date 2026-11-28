@@ -18,6 +18,11 @@ function escapeXmlAttribute(text: string): string {
   return escapeXmlText(text).replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
 
+function formatChannelMessageTimestamp(timestamp: number): string | null {
+  const date = new Date(timestamp);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
 function sanitizeMentionDisplayName(mention: ChannelUserMention): string {
   const name = mention.displayName
     .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/gu, " ")
@@ -333,6 +338,11 @@ export function buildChannelNotificationXml(
     `chat_id="${escapeXmlAttribute(msg.chatId)}"`,
     `sender_id="${escapeXmlAttribute(msg.senderId)}"`,
   ];
+
+  const sentAt = formatChannelMessageTimestamp(msg.timestamp);
+  if (sentAt) {
+    attrs.push(`sent_at="${sentAt}"`);
+  }
 
   if (msg.accountId) {
     attrs.push(`account_id="${escapeXmlAttribute(msg.accountId)}"`);
