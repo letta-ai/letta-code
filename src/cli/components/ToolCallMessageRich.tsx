@@ -49,7 +49,6 @@ import {
   WriteRenderer,
 } from "./DiffRenderer.js";
 import { MarkdownDisplay } from "./MarkdownDisplay.js";
-import { MemoryDiffRenderer } from "./MemoryDiffRenderer.js";
 import { PlanRenderer } from "./PlanRenderer.js";
 import {
   parseSendAgentMessageDisplay,
@@ -422,15 +421,6 @@ export const ToolCallMessage = memo(
               return <PlanRenderer plan={safePlan} explanation={explanation} />;
             }
           } catch {}
-        }
-
-        if (isMemoryTool(rawName) && line.resultOk !== false && line.argsText) {
-          const memoryDiff = (
-            <MemoryDiffRenderer argsText={line.argsText} toolName={rawName} />
-          );
-          if (memoryDiff) {
-            return memoryDiff;
-          }
         }
 
         if (isQuestionTool(rawName) && line.resultOk !== false) {

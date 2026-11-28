@@ -43,6 +43,21 @@ export const CLI_FLAG_CATALOG = {
     mode: "interactive",
     help: { description: "Open agent selector UI after loading" },
   },
+  connect: {
+    parser: { type: "string" },
+    mode: "interactive",
+    help: {
+      argLabel: "<ws-url>",
+      description: "Attach the TUI to a running App Server",
+    },
+  },
+  register: {
+    parser: { type: "boolean" },
+    mode: "interactive",
+    help: {
+      description: "Register this computer with Letta Cloud for the session",
+    },
+  },
   conversation: { parser: { type: "string", short: "C" }, mode: "both" },
   "new-agent": {
     parser: { type: "boolean" },

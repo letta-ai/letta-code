@@ -56,6 +56,7 @@ type Props = {
 
   precomputedDiff?: AdvancedDiffSuccess;
   allDiffs?: Map<string, AdvancedDiffSuccess>;
+  fileEditHeader?: string;
 };
 
 function getBashInfo(approval: ApprovalRequest): BashInfo | null {
@@ -173,6 +174,7 @@ export const ApprovalSwitch = memo(
     allDiffs,
     showPreview = true,
     defaultScope = "project",
+    fileEditHeader,
   }: Props) => {
     const toolName = approval.toolName;
 
@@ -197,6 +199,7 @@ export const ApprovalSwitch = memo(
             allowPersistence={allowPersistence}
             defaultScope={defaultScope}
             showPreview={showPreview}
+            headerOverride={fileEditHeader}
           />
         );
       }

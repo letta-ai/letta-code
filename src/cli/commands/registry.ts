@@ -88,33 +88,12 @@ export const commands: Record<string, Command> = {
     order: 50,
     handler: handleReflectionCommand,
   },
-  "/reflection": {
-    desc: "Alias for /reflect",
-    args: "[--recent N | --conversation ID ... | --auto] [--instruction TEXT]",
-    hidden: true,
-    handler: handleReflectionCommand,
-  },
-  "/reflect-arena": {
-    desc: "Experimental blind A/B reflection model comparison",
-    args: "[--model-a MODEL] [--model-b MODEL] | resume <run-id> | choose <run-id> <1|2|tie> [notes]",
-    order: 50.1,
-    handler: () => {
-      return "Preparing reflection arena...";
-    },
-  },
   "/skills": {
     desc: "Browse available skills",
     order: 28,
     noArgs: true,
     handler: () => {
       return "Opening skills browser...";
-    },
-  },
-  "/skill-creator": {
-    desc: "Enter skill creation mode (/skill-creator [description])",
-    order: 28.5,
-    handler: () => {
-      return "Starting skill creation...";
     },
   },
   "/memory": {
@@ -125,44 +104,12 @@ export const commands: Record<string, Command> = {
       return "Opening memory viewer...";
     },
   },
-  "/palace": {
-    desc: "Open the Memory Palace in your browser",
-    order: 16,
-    noArgs: true,
-    handler: () => {
-      return "Opening Memory Palace...";
-    },
-  },
-  "/sleeptime": {
-    desc: "Configure sleep-time reflection trigger and merge settings",
-    order: 15.5,
-    noArgs: true,
-    handler: () => {
-      return "Opening sleeptime settings...";
-    },
-  },
-  "/compaction": {
-    desc: "Configure compaction mode settings",
-    order: 15.6,
-    noArgs: true,
-    handler: () => {
-      return "Opening compaction settings...";
-    },
-  },
   "/context-limit": {
     desc: "Set or reset the max context window",
     args: "[tokens] [--override]",
     order: 15.7,
     handler: () => {
       return "Setting max context window...";
-    },
-  },
-  "/memfs": {
-    desc: "Manage filesystem-backed memory (/memfs [enable|sync|reset])",
-    args: "[enable|disable|sync|reset]",
-    order: 27.5,
-    handler: () => {
-      return "Managing memory filesystem...";
     },
   },
   "/search": {
@@ -186,14 +133,6 @@ export const commands: Record<string, Command> = {
     noArgs: true,
     handler: () => {
       return "Clearing in-context messages...";
-    },
-  },
-  "/clear-messages": {
-    desc: "Reset all agent messages (destructive)",
-    hidden: true,
-    noArgs: true,
-    handler: () => {
-      return "Resetting agent messages...";
     },
   },
   "/chdir": {
@@ -227,27 +166,6 @@ export const commands: Record<string, Command> = {
     noArgs: true,
     handler: () => {
       return "Forking conversation...";
-    },
-  },
-  "/btw": {
-    desc: "Fork conversation and ask a side question (/btw <question>)",
-    order: 20.6,
-    handler: () => {
-      return "Forking conversation...";
-    },
-  },
-  "/pin": {
-    desc: "Pin current agent (/pin [name])",
-    order: 22,
-    handler: () => {
-      return "Pinning agent...";
-    },
-  },
-  "/unpin": {
-    desc: "Unpin current agent",
-    order: 23,
-    handler: () => {
-      return "Unpinning agent...";
     },
   },
   "/rename": {
@@ -287,39 +205,7 @@ export const commands: Record<string, Command> = {
       return "Reloading...";
     },
   },
-  "/mods": {
-    desc: "Run mod learning targets",
-    order: 27.3,
-    args: "learn [memory-citations] [options] | generate-env [request]",
-    handler: () => {
-      return "Starting mod learning...";
-    },
-  },
-  "/ade": {
-    desc: "Open agent in ADE (browser)",
-    order: 28,
-    noArgs: true,
-    handler: () => {
-      return "Opening ADE...";
-    },
-  },
 
-  "/system": {
-    desc: "Switch system prompt",
-    order: 30,
-    noArgs: true,
-    handler: () => {
-      return "Opening system prompt selector...";
-    },
-  },
-  "/personality": {
-    desc: "Switch personality",
-    order: 30.5,
-    noArgs: true,
-    handler: () => {
-      return "Opening personality selector...";
-    },
-  },
   "/subagents": {
     desc: "Manage custom subagents",
     order: 31,
@@ -380,13 +266,6 @@ export const commands: Record<string, Command> = {
       return "Recompiling agent and conversation...";
     },
   },
-  "/feedback": {
-    desc: "Send feedback to the Letta team",
-    order: 34,
-    handler: () => {
-      return "Sending feedback...";
-    },
-  },
   "/help": {
     desc: "Show available commands",
     order: 35,
@@ -402,30 +281,6 @@ export const commands: Record<string, Command> = {
     noArgs: true,
     handler: () => {
       return "Opening hooks manager...";
-    },
-  },
-  "/statusline": {
-    desc: "Customize the bottom statusline",
-    args: "[request]",
-    order: 36.5,
-    handler: () => {
-      return "Starting statusline setup...";
-    },
-  },
-  "/title": {
-    desc: "Configure terminal window title",
-    noArgs: true,
-    order: 36.6,
-    handler: () => {
-      return "Opening title configurator...";
-    },
-  },
-  "/reasoning-tab": {
-    desc: "Toggle Tab shortcut for reasoning tiers (/reasoning-tab on|off|status)",
-    args: "[on|off|status]",
-    order: 36.7,
-    handler: () => {
-      return "Managing reasoning Tab shortcut...";
     },
   },
   "/system-reminders": {
@@ -499,23 +354,7 @@ export const commands: Record<string, Command> = {
       return `Installed Shift+Enter keybinding for ${terminalName}\nLocation: ${keybindingsPath}`;
     },
   },
-  "/install-github-app": {
-    desc: "Setup Letta Code GitHub Action in this repo",
-    order: 38,
-    noArgs: true,
-    handler: () => {
-      return "Opening GitHub App installer...";
-    },
-  },
 
-  "/bg": {
-    desc: "Show background shell processes",
-    order: 42,
-    noArgs: true,
-    handler: () => {
-      return "Showing background processes...";
-    },
-  },
   "/workflows": {
     desc: "Show workflow runs, their agents, and token usage",
     order: 42.5,
@@ -526,6 +365,37 @@ export const commands: Record<string, Command> = {
         return "No workflow runs in this session";
       }
       return executions.flatMap(renderWorkflowTree).join("\n");
+    },
+  },
+  "/pin": {
+    desc: "Pin the current agent",
+    order: 22,
+    noArgs: true,
+    handler: () => {
+      return "Pinning agent...";
+    },
+  },
+  "/unpin": {
+    desc: "Unpin the current agent",
+    order: 23,
+    noArgs: true,
+    handler: () => {
+      return "Unpinning agent...";
+    },
+  },
+  "/feedback": {
+    desc: "Send feedback to the Letta team (/feedback <message>)",
+    order: 38,
+    handler: () => {
+      return "Sending feedback...";
+    },
+  },
+  "/history": {
+    desc: "Load older messages in this conversation",
+    order: 44,
+    noArgs: true,
+    handler: () => {
+      return "Loading older messages...";
     },
   },
   "/exit": {
@@ -553,43 +423,11 @@ export const commands: Record<string, Command> = {
     },
   },
 
-  "/stream": {
-    desc: "Toggle token streaming on/off",
-    hidden: true,
-    noArgs: true,
-    handler: () => {
-      return "Toggling token streaming...";
-    },
-  },
   "/compact": {
     desc: "Summarize conversation history (compaction) with optional mode",
     args: "[all|sliding_window|self_compact_all|self_compact_sliding_window]",
     handler: () => {
       return "Compacting conversation...";
-    },
-  },
-  "/set-max-context": {
-    desc: "Alias for /context-limit",
-    args: "[tokens] [--override]",
-    hidden: true,
-    handler: () => {
-      return "Setting max context window...";
-    },
-  },
-  "/link": {
-    desc: "Attach all Letta Code tools to agent (deprecated, use /toolset instead)",
-    hidden: true,
-    noArgs: true,
-    handler: () => {
-      return "Linking tools...";
-    },
-  },
-  "/unlink": {
-    desc: "Remove all Letta Code tools from agent (deprecated, use /toolset instead)",
-    hidden: true,
-    noArgs: true,
-    handler: () => {
-      return "Unlinking tools...";
     },
   },
   "/resume": {
@@ -598,22 +436,6 @@ export const commands: Record<string, Command> = {
     order: 19,
     handler: () => {
       return "Opening conversation selector...";
-    },
-  },
-  "/pinned": {
-    desc: "Browse pinned agents",
-    hidden: true,
-    noArgs: true,
-    handler: () => {
-      return "Opening agent browser...";
-    },
-  },
-  "/profiles": {
-    desc: "Browse pinned agents",
-    hidden: true,
-    noArgs: true,
-    handler: () => {
-      return "Opening agent browser...";
     },
   },
 };

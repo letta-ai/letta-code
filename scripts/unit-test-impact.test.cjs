@@ -96,7 +96,7 @@ describe("unit-test impact planning", () => {
 
   test("CLI app changes include root source-level contract tests", () => {
     const result = plan([
-      { status: "M", path: "src/cli/app/use-submit-handler.ts" },
+      { status: "M", path: "src/cli/app/types.ts" },
     ]);
 
     expect(result.selectedTests).toEqual([
@@ -338,12 +338,6 @@ describe("current repository impact graph", () => {
   test("source files read through literal file URLs are direct dependencies", () => {
     expect(impactIndex.familyDependencies.get("cli")).toContain(
       "src/utils/image-resize.ts",
-    );
-  });
-
-  test("tracked documentation imports are direct dependencies", () => {
-    expect(impactIndex.familyDependencies.get("cli")).toContain(
-      "docs/examples/mods/learning/memory-citations.env.json",
     );
   });
 

@@ -19,7 +19,7 @@ export const ExperimentSelector = memo(function ExperimentSelector({
   const items = useMemo(
     () =>
       experiments.map((exp) => {
-        const envOverrideAllowed = exp.id === "reflection_arena";
+        const envOverrideAllowed = false;
         return {
           key: exp.id,
           label: exp.label,
@@ -43,7 +43,7 @@ export const ExperimentSelector = memo(function ExperimentSelector({
     (selectedKeys: string[]) => {
       const selectedSet = new Set(selectedKeys);
       const changes = experiments
-        .filter((e) => e.source !== "env" || e.id === "reflection_arena")
+        .filter((e) => e.source !== "env")
         .flatMap((e) => {
           const nowEnabled = selectedSet.has(e.id);
           return nowEnabled !== e.enabled

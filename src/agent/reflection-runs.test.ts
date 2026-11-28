@@ -2,7 +2,6 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { Letta } from "@letta-ai/letta-client";
 import { __testSetBackend, APIBackend } from "@/backend";
 import { LocalBackend } from "@/backend/local";
-import { shouldSlashCommandBypassQueue } from "@/cli/app/command-routing";
 import { executeCommand } from "@/cli/commands/registry";
 import {
   requestCloudReflectionRun,
@@ -43,7 +42,7 @@ function fixture(
 }
 
 describe("manual reflection ownership", () => {
-  test.each(["dream", "reflect", "reflection"])(
+  test.each(["dream", "reflect"])(
     "/%s resolves Cloud ownership",
     async (alias) => {
       const { backend, requests } = fixture();
@@ -55,7 +54,6 @@ describe("manual reflection ownership", () => {
         "GET",
         "POST",
       ]);
-      expect(shouldSlashCommandBypassQueue(`/${alias}`)).toBe(true);
     },
   );
 
@@ -181,7 +179,6 @@ describe("/dream admission command", () => {
       { conversation_id: "default" },
       { conversation_id: "default" },
     ]);
-    expect(shouldSlashCommandBypassQueue("/dream")).toBe(true);
   });
 
   test("rejects arguments and missing scope without HTTP or model requests", async () => {
