@@ -44,7 +44,11 @@ export class TerminalRowLifecycle {
   }
 }
 
-function sameRenderedRow(previous: TranscriptRow, next?: TranscriptRow) {
+function sameRenderedRow(
+  previous: TranscriptRow,
+  next: TranscriptRow | undefined,
+  approvedArguments: ReadonlyMap<string, unknown>,
+) {
   if (!next || previous.key !== next.key || previous.kind !== next.kind)
     return false;
   if (previous.kind === "user" && next.kind === "user")
@@ -57,9 +61,10 @@ function sameRenderedRow(previous: TranscriptRow, next?: TranscriptRow) {
       previous.status === next.status &&
       previous.result?.content === next.result?.content &&
       previous.result?.isError === next.result?.isError &&
-      (previous.argumentsComplete && next.argumentsComplete
-        ? isDeepStrictEqual(previous.toolInput, next.toolInput)
-        : previous.rawArguments === next.rawArguments)
+      (approvedArguments.has(previous.toolCallId) ||
+        (previous.argumentsComplete && next.argumentsComplete
+          ? isDeepStrictEqual(previous.toolInput, next.toolInput)
+          : previous.rawArguments === next.rawArguments))
     );
   }
   return (
@@ -76,6 +81,7 @@ export function projectTranscript(
   lifecycle: TerminalRowLifecycle,
   echoes: Map<string, { anchor?: string; text: string }>,
   pendingAnswers: Set<string>,
+  approvedArguments: ReadonlyMap<string, unknown>,
 ) {
   for (const row of rows) {
     if (row.kind === "user" && row.otid) echoes.delete(row.otid);
@@ -118,7 +124,8 @@ export function projectTranscript(
     .slice(0, previous.committed)
     .some(
       (row, index) =>
-        row !== projected[index] && !sameRenderedRow(row, projected[index]),
+        row !== projected[index] &&
+        !sameRenderedRow(row, projected[index], approvedArguments),
     );
   const committed = lifecycle.project(projected, echoes, settled);
   const notices = reset

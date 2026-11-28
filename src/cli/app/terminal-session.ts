@@ -117,6 +117,7 @@ export class TerminalSession {
         this.rowLifecycle,
         this.echoes,
         this.pendingAnswers,
+        this.approvedArguments,
       ),
     );
   }

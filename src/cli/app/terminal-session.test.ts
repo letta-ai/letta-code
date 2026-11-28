@@ -552,7 +552,11 @@ test("finishes reasoning and commits a Write result before the turn ends", async
 
 test("a full turn preserves the Static epoch when history confirms the echo and streamed rows", async () => {
   const transport = connection();
-  const store = new TerminalSession(() => transport.session);
+  let approve!: CanUseToolCallback;
+  const store = new TerminalSession((callback) => {
+    approve = callback;
+    return transport.session;
+  });
   const epochs = new Set<number>();
   const unsubscribe = store.subscribe(() => epochs.add(store.snapshot().epoch));
   const reading = store.connect();
@@ -566,8 +570,17 @@ test("a full turn preserves the Static epoch when history confirms the echo and 
     uuid: "c",
     toolCallId: "write",
     toolName: "Write",
-    toolInput: { file_path: "sample.txt", content: "Hello" },
+    toolInput: {},
   });
+  const decision = approve(
+    "Write",
+    { file_path: "sample.txt", content: "Hello" },
+    { toolCallId: "write" },
+  );
+  const approval = store.snapshot().approvals[0];
+  if (!approval) throw new Error("Missing approval");
+  store.decide(approval, { behavior: "allow" });
+  await decision;
   transport.push({
     type: "tool_result",
     uuid: "tr",
