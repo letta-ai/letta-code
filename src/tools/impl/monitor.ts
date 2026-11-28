@@ -808,6 +808,7 @@ async function startScriptSource(
       timeout_ms: args.timeout_ms,
       persistent: args.persistent,
       parentScope: args.parentScope,
+      signal: args.signal,
     },
     {
       createOutput: (path) => new MonitorOutputWriter(path),
@@ -928,20 +929,43 @@ export async function monitor(args: MonitorArgs): Promise<MonitorResult> {
   return result;
 }
 
+function stopMonitorOnShutdown(processState: BackgroundProcess): void {
+  processState.completionNotificationSuppressed = true;
+  processState.monitorEndStatus = isManagedCloudRuntime()
+    ? "paused"
+    : "stopped";
+  processState.status = "failed";
+  try {
+    processState.process.kill("SIGKILL");
+  } catch {}
+}
+
+export function retireFiniteMonitors(
+  ownsScope: (agentId: string, conversationId: string) => boolean,
+): void {
+  for (const [taskId, processState] of backgroundProcesses) {
+    const scope = processState.runtimeScope;
+    if (
+      processState.kind === "monitor" &&
+      processState.status === "running" &&
+      processState.persistent !== true &&
+      scope &&
+      ownsScope(scope.agentId, scope.conversationId)
+    ) {
+      stopMonitorOnShutdown(processState);
+      void cancelMonitorBackup(taskId);
+      void persistMonitorState(processState);
+      scheduleBackgroundProcessCleanup(taskId);
+    }
+  }
+}
+
 export function stopMonitorsForProcessExit(): void {
   detachMonitorBackupsForProcessExit();
   for (const processState of backgroundProcesses.values()) {
-    if (processState.kind !== "monitor" || processState.status !== "running") {
-      continue;
+    if (processState.kind === "monitor" && processState.status === "running") {
+      stopMonitorOnShutdown(processState);
     }
-    processState.completionNotificationSuppressed = true;
-    processState.monitorEndStatus = isManagedCloudRuntime()
-      ? "paused"
-      : "stopped";
-    processState.status = "failed";
-    try {
-      processState.process.kill("SIGKILL");
-    } catch {}
   }
 }
 

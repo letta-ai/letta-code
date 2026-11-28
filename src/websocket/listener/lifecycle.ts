@@ -12,6 +12,7 @@ import {
   getTerminalTelemetrySurface,
   telemetry,
 } from "@/telemetry";
+import { retireFiniteMonitors } from "@/tools/impl/monitor";
 import { loadTools } from "@/tools/manager";
 import { isDebugEnabled } from "@/utils/debug";
 import { sealStartupLogs } from "@/utils/startup-log-boundary";
@@ -100,6 +101,7 @@ import {
   clearConversationRuntimeState,
   clearRuntimeTimers,
   getActiveRuntime,
+  getConversationRuntimeKey,
   safeEmitWsEvent,
   setActiveRuntime,
 } from "./runtime";
@@ -218,6 +220,11 @@ export function stopRuntime(
   disposeListenerModAdapter(runtime);
   rejectPendingExternalToolCalls(runtime, "Listener runtime stopped");
   invalidateProcessServices(runtime);
+  retireFiniteMonitors((agentId, conversationId) =>
+    runtime.conversationRuntimes.has(
+      getConversationRuntimeKey(agentId, conversationId),
+    ),
+  );
   for (const conversationRuntime of runtime.conversationRuntimes.values()) {
     rejectPendingApprovalResolvers(
       conversationRuntime,

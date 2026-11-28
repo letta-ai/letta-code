@@ -24,7 +24,7 @@ import {
 } from "./connection";
 import { emitInitialConnectionState } from "./connection-state-sync";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
-import { createRuntime } from "./lifecycle";
+import { createRuntime, stopRuntime } from "./lifecycle";
 import {
   clearProcessServices,
   installProcessEventRouting,
@@ -462,3 +462,38 @@ test.each([
     }
   },
 );
+
+test("retiring a listener prevents its finite monitor from enqueueing in a replacement", async () => {
+  const { script, releaseFile } = writeWaitScript();
+  const previous = createRuntime();
+  setActiveRuntime(previous);
+  getOrCreateScopedRuntime(previous, AGENT_ID, CONVERSATION_ID);
+  const taskId = await launchBackgroundWork("monitor", script);
+  const process = backgroundProcesses.get(taskId as string);
+  const completion = process?.completion;
+  expect(completion).toBeDefined();
+
+  stopRuntime(previous, true);
+  const replacement = createRuntime();
+  setActiveRuntime(replacement);
+  const target = getOrCreateScopedRuntime(
+    replacement,
+    AGENT_ID,
+    CONVERSATION_ID,
+  );
+  target.turnLifecycle.startCommand();
+  installProcessEventRouting({
+    runtime: replacement,
+    processTransport: new MockTransport(),
+    opts: options,
+    processQueuedTurn: async () => {},
+  });
+  try {
+    writeFileSync(releaseFile, "");
+    await completion?.catch(() => {});
+    expect(target.queueRuntime.length).toBe(0);
+    expect(process?.status).toBe("failed");
+  } finally {
+    stopRuntime(replacement, true);
+  }
+}, 15_000);

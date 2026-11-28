@@ -44,6 +44,7 @@ export interface ScriptMonitorArgs {
   timeout_ms: number;
   persistent: boolean;
   parentScope?: { agentId: string; conversationId: string };
+  signal?: AbortSignal;
 }
 
 export interface ScriptMonitorHooks {
@@ -142,6 +143,15 @@ export async function startScriptMonitor(
     await releaseToolContext(toolContextId);
     throw error;
   });
+
+  if (args.signal?.aborted) {
+    try {
+      await toolScope.cleanup();
+    } finally {
+      await releaseToolContext(toolContextId);
+    }
+    args.signal.throwIfAborted();
+  }
 
   const taskId = args.taskId ?? getNextMonitorId();
   const outputFile = createBackgroundOutputFile(taskId);
