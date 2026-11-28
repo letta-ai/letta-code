@@ -21,11 +21,20 @@ export async function terminalSkills(runtime: ConversationRuntime) {
     cloudSkillRepositories: runtime.executionSettings?.cloud_skill_repositories,
   });
   runtime.currentAvailableSkills = availableSkills;
+  return inspectSkillDirectories(availableSkills);
+}
+
+export function inspectSkillDirectories(
+  availableSkills: Pick<
+    ConversationRuntime["currentAvailableSkills"][number],
+    "name" | "path" | "description"
+  >[],
+) {
   return Promise.all(
     availableSkills.map(async (skill) => {
       const directory =
         basename(skill.path) === "SKILL.md" ? dirname(skill.path) : skill.path;
-      const path = await realpath(directory);
+      const path = await realpath(directory).catch(() => directory);
       const name = basename(directory);
       const link = join(getGlobalSkillsDir(), name);
       const stat = await lstat(link).catch(() => undefined);
