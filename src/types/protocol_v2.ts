@@ -33,7 +33,7 @@ import type {
   ApprovalClassificationEndMessage,
   UmiLifecycleMessageBase,
 } from "./approval-classification-protocol";
-import type { BackgroundProcessSummary } from "./background-process-protocol";
+import type { DeviceBackgroundProcessStatus } from "./background-process-protocol";
 import type {
   ChatGPTRateLimitResetCreditConsumeCommand,
   ChatGPTRateLimitResetCreditConsumeResponseMessage,
@@ -345,7 +345,7 @@ export interface GitContext {
   recent_branches: string[];
 }
 
-export interface DeviceStatus {
+export interface DeviceStatus extends DeviceBackgroundProcessStatus {
   current_connection_id: string | null;
   connection_name: string | null;
   is_online: boolean;
@@ -360,7 +360,6 @@ export interface DeviceStatus {
   available_toolsets: ToolsetOption[];
   current_loaded_tools: string[];
   current_available_skills: AvailableSkillSummary[];
-  background_processes: BackgroundProcessSummary[];
   pending_control_requests: PendingControlRequest[];
   experiments: ExperimentSnapshot[];
   memory_directory: string | null;

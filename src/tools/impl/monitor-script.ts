@@ -44,6 +44,7 @@ export interface ScriptMonitorArgs {
   timeout_ms: number;
   persistent: boolean;
   parentScope?: { agentId: string; conversationId: string };
+  signal?: AbortSignal;
 }
 
 export interface ScriptMonitorHooks {
@@ -143,6 +144,15 @@ export async function startScriptMonitor(
     throw error;
   });
 
+  if (args.signal?.aborted) {
+    try {
+      await toolScope.cleanup();
+    } finally {
+      await releaseToolContext(toolContextId);
+    }
+    args.signal.throwIfAborted();
+  }
+
   const taskId = args.taskId ?? getNextMonitorId();
   const outputFile = createBackgroundOutputFile(taskId);
   const output = hooks.createOutput(outputFile);
@@ -223,12 +233,6 @@ export async function startScriptMonitor(
       `\n[${status === "completed" ? "result" : "error"}] ${detail}\n`,
     );
     if (processState.status !== "running") return;
-    hooks.markFinished(
-      taskId,
-      processState,
-      status,
-      status === "completed" ? 0 : 1,
-    );
     const durationMs = Date.now() - (processState.startTime?.getTime() ?? 0);
     addToMessageQueue({
       kind: "task_notification",
@@ -246,6 +250,12 @@ export async function startScriptMonitor(
       ...scope,
       ...(actingUserId !== undefined ? { actingUserId } : {}),
     });
+    hooks.markFinished(
+      taskId,
+      processState,
+      status,
+      status === "completed" ? 0 : 1,
+    );
   };
 
   const stopped = new Promise<never>((_resolve, reject) => {

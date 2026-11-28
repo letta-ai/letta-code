@@ -32,7 +32,10 @@ import type {
 } from "@/types/protocol_v2";
 import type { QueueRemovalTransition } from "@/types/queue-update-protocol";
 import { debugLog, debugWarn } from "@/utils/debug";
-import { buildBackgroundProcessSnapshot } from "./background-process-snapshot";
+import {
+  buildBackgroundProcessSnapshot,
+  countNonPersistentMonitors,
+} from "./background-process-snapshot";
 import {
   nextListenerConnectionEventSeq,
   resolveListenerConnectionTargets,
@@ -234,6 +237,10 @@ export function buildDeviceStatus(
     ? getSystemPromptDoctorState(agentId)
     : null;
   const transport = listener.transport ?? listener.socket;
+  const backgroundProcesses = buildBackgroundProcessSnapshot(
+    agentId,
+    conversationId,
+  );
   return {
     current_connection_id: listener.connectionId,
     connection_name: listener.connectionName,
@@ -246,10 +253,9 @@ export function buildDeviceStatus(
     ...buildDeviceToolsetStatus(agentId, conversationId, conversationRuntime),
     current_loaded_tools: conversationRuntime?.currentLoadedTools ?? [],
     current_available_skills: conversationRuntime?.currentAvailableSkills ?? [],
-    background_processes: buildBackgroundProcessSnapshot(
-      agentId,
-      conversationId,
-    ),
+    background_processes: backgroundProcesses,
+    active_non_persistent_monitor_count:
+      countNonPersistentMonitors(backgroundProcesses),
     pending_control_requests: interruptedCacheActive
       ? []
       : getPendingControlRequests(listener, scope),

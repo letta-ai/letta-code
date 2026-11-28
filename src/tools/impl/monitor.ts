@@ -354,7 +354,7 @@ function queueCommandCompletion(params: {
   } = params;
   if (processState.completionNotificationSuppressed) return;
 
-  const status = processState.status === "completed" ? "completed" : "failed";
+  const status = exitCode === 0 ? "completed" : "failed";
   const exitSuffix = exitCode === null ? "" : ` (exit ${exitCode})`;
   const summary =
     status === "failed"
@@ -398,7 +398,9 @@ export function markMonitorFinished(
   persistMonitorState(processState);
   void cancelMonitorBackup(taskId);
   scrubCompletedBackgroundOutput(processState);
-  notifyBackgroundProcessStateChanged(processState.runtimeScope);
+  queueMicrotask(() =>
+    notifyBackgroundProcessStateChanged(processState.runtimeScope),
+  );
   scheduleBackgroundProcessCleanup(taskId);
 }
 
@@ -534,12 +536,6 @@ function startCommandMonitor(args: MonitorSourceArgs): MonitorResult {
       events.finish();
       output.append(`\n[exit code: ${exitCode}]\n`);
       if (processState.status !== "running") return;
-      markMonitorFinished(
-        taskId,
-        processState,
-        exitCode === 0 ? "completed" : "failed",
-        exitCode,
-      );
       queueCommandCompletion({
         taskId,
         description: args.description,
@@ -549,6 +545,12 @@ function startCommandMonitor(args: MonitorSourceArgs): MonitorResult {
         exitCode,
         producedOutput,
       });
+      markMonitorFinished(
+        taskId,
+        processState,
+        exitCode === 0 ? "completed" : "failed",
+        exitCode,
+      );
     },
     (error: unknown) => {
       if (backgroundProcesses.get(taskId) !== processState) return;
@@ -573,14 +575,6 @@ function startCommandMonitor(args: MonitorSourceArgs): MonitorResult {
           secrets,
         );
         output.append(`\n[error] ${message}\n`);
-      }
-      markMonitorFinished(
-        taskId,
-        processState,
-        shellError.killed ? "expired" : "failed",
-        null,
-      );
-      if (!shellError.killed) {
         queueCommandCompletion({
           taskId,
           description: args.description,
@@ -591,6 +585,12 @@ function startCommandMonitor(args: MonitorSourceArgs): MonitorResult {
           producedOutput,
         });
       }
+      markMonitorFinished(
+        taskId,
+        processState,
+        shellError.killed ? "expired" : "failed",
+        null,
+      );
     },
   );
 
@@ -808,6 +808,7 @@ async function startScriptSource(
       timeout_ms: args.timeout_ms,
       persistent: args.persistent,
       parentScope: args.parentScope,
+      signal: args.signal,
     },
     {
       createOutput: (path) => new MonitorOutputWriter(path),
@@ -928,20 +929,43 @@ export async function monitor(args: MonitorArgs): Promise<MonitorResult> {
   return result;
 }
 
+function stopMonitorOnShutdown(processState: BackgroundProcess): void {
+  processState.completionNotificationSuppressed = true;
+  processState.monitorEndStatus = isManagedCloudRuntime()
+    ? "paused"
+    : "stopped";
+  processState.status = "failed";
+  try {
+    processState.process.kill("SIGKILL");
+  } catch {}
+}
+
+export function retireFiniteMonitors(
+  ownsScope: (agentId: string, conversationId: string) => boolean,
+): void {
+  for (const [taskId, processState] of backgroundProcesses) {
+    const scope = processState.runtimeScope;
+    if (
+      processState.kind === "monitor" &&
+      processState.status === "running" &&
+      processState.persistent !== true &&
+      scope &&
+      ownsScope(scope.agentId, scope.conversationId)
+    ) {
+      stopMonitorOnShutdown(processState);
+      void cancelMonitorBackup(taskId);
+      void persistMonitorState(processState);
+      scheduleBackgroundProcessCleanup(taskId);
+    }
+  }
+}
+
 export function stopMonitorsForProcessExit(): void {
   detachMonitorBackupsForProcessExit();
   for (const processState of backgroundProcesses.values()) {
-    if (processState.kind !== "monitor" || processState.status !== "running") {
-      continue;
+    if (processState.kind === "monitor" && processState.status === "running") {
+      stopMonitorOnShutdown(processState);
     }
-    processState.completionNotificationSuppressed = true;
-    processState.monitorEndStatus = isManagedCloudRuntime()
-      ? "paused"
-      : "stopped";
-    processState.status = "failed";
-    try {
-      processState.process.kill("SIGKILL");
-    } catch {}
   }
 }
 
