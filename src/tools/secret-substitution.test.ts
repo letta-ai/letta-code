@@ -895,6 +895,19 @@ describe("always-on vault secret redaction", () => {
     expect(scrubbedB).toContain(VAULT_VALUE);
   });
 
+  test.each(["LETTA_AGENT_ID", "AGENT_ID"])(
+    "keeps the scoped agent identifier stored under %s",
+    (name) => {
+      __testSeedSecretsCache(AGENT_A, {
+        [name]: AGENT_A,
+        [VAULT_KEY]: VAULT_VALUE,
+      });
+      expect(
+        scrubSecretsFromString(`${AGENT_A} ${VAULT_VALUE}`, {}, AGENT_A),
+      ).toBe(`${AGENT_A} ${VAULT_KEY}=<REDACTED>`);
+    },
+  );
+
   test("short vault values are not redacted", () => {
     __testSeedSecretsCache(AGENT_A, { [SECRET_KEY]: "short" });
     const scrubbed = scrubSecretsFromString("a short word stays", {}, AGENT_A);

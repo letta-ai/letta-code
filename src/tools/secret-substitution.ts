@@ -190,6 +190,8 @@ function collectVaultSecretValues(
   }
   const candidates: AmbientSecretValue[] = [];
   for (const [name, value] of Object.entries(vault)) {
+    // Agent identifiers are used in navigable links, including the vault URL.
+    if (name === "LETTA_AGENT_ID" || name === "AGENT_ID") continue;
     const trimmed = value?.trim();
     if (!trimmed || trimmed.length < MIN_VAULT_SECRET_LENGTH) continue;
     candidates.push({ name, value: trimmed });

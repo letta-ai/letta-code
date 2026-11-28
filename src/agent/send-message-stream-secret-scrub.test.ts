@@ -55,6 +55,22 @@ afterEach(() => {
 });
 
 describe("sendMessageStream user-message secret scrubbing", () => {
+  test("preserves the agent vault link while scrubbing credentials", async () => {
+    __testSeedSecretsCache(AGENT_ID, {
+      LETTA_AGENT_ID: AGENT_ID,
+      [SECRET_KEY]: SECRET_VALUE,
+    });
+    const bodies: unknown[] = [];
+    const route = `/chat/${AGENT_ID}/vault`;
+    await sendUserMessage(
+      makeRecordingBackend(bodies),
+      `${route} ${SECRET_VALUE}`,
+    );
+
+    const { messages } = bodies[0] as { messages: Array<{ content: string }> };
+    expect(messages[0]?.content).toBe(`${route} ${SECRET_KEY}=<REDACTED>`);
+  });
+
   test("string content containing a vault secret is scrubbed before send", async () => {
     __testSeedSecretsCache(AGENT_ID, { [SECRET_KEY]: SECRET_VALUE });
     const bodies: unknown[] = [];
