@@ -4,6 +4,7 @@ import { EXTERNAL_TOOL_FOREGROUND_INTERRUPTED } from "@/tools/external-tool-type
 import { clampForegroundYieldMs } from "@/tools/foreground-yield";
 import {
   type ExternalToolDefinition,
+  getExecutionContextById,
   registerExternalTools,
   setExternalToolExecutor,
   unregisterExternalTools,
@@ -366,6 +367,17 @@ export function installExternalToolBridge(
       if (onAbort) context?.signal?.removeEventListener("abort", onAbort);
     }
   });
+}
+
+export function isRemoteExternalTool(
+  toolName: string,
+  contextId: string | null,
+): boolean {
+  const context = contextId ? getExecutionContextById(contextId) : undefined;
+  const external = context?.externalTools.get(toolName);
+  return Boolean(
+    external && !external.executor && !context?.modTools.has(toolName),
+  );
 }
 
 export function registerRuntimeExternalTools(

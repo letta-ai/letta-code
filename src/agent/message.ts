@@ -340,7 +340,10 @@ export async function sendMessageStreamWithBackend(
     maxRetries: 0,
   },
 ): Promise<Stream<LettaStreamingResponse>> {
-  const requestStartTime = isTimingsEnabled() ? performance.now() : undefined;
+  const preparationStartedAt = performance.now();
+  const requestStartTime = isTimingsEnabled()
+    ? preparationStartedAt
+    : undefined;
   const requestStartedAtMs = Date.now();
   const canonicalMessages = normalizeOutgoingApprovalMessages(
     messages,
@@ -385,6 +388,7 @@ export async function sendMessageStreamWithBackend(
   const executionRuntimeContext = getExecutionContextById(
     preparedToolContext.contextId,
   )?.runtimeContext;
+  const skillsStartedAt = performance.now();
   const {
     clientSkills: discoveredClientSkills,
     errors: clientSkillDiscoveryErrors,
@@ -401,6 +405,7 @@ export async function sendMessageStreamWithBackend(
       executionRuntimeContext?.executionSettings?.cloud_skill_repositories,
   });
 
+  const skillsDurationMs = Math.round(performance.now() - skillsStartedAt);
   const resolvedConversationId = conversationId;
   const responseStateScope = buildResponseStateScope(
     resolvedConversationId,
@@ -530,9 +535,10 @@ export async function sendMessageStreamWithBackend(
 
   const firstOtid = (normalizedMessages[0] as unknown as { otid?: string })
     ?.otid;
+  const dispatchStartedAt = performance.now();
   debugLog(
     "send-message-stream",
-    "request_start conversation_id=%s agent_id=%s messages=%s otid=%s stream_tokens=%s background=%s max_retries=%s",
+    "request_start conversation_id=%s agent_id=%s messages=%s otid=%s stream_tokens=%s background=%s max_retries=%s preparation_ms=%d client_skills_ms=%d",
     resolvedConversationId,
     opts.agentId ?? "none",
     messageSummary || "(empty)",
@@ -540,12 +546,15 @@ export async function sendMessageStreamWithBackend(
     opts.streamTokens ?? true,
     opts.background ?? true,
     requestOptions.maxRetries ?? "default",
+    Math.round(dispatchStartedAt - preparationStartedAt),
+    skillsDurationMs,
   );
 
   let stream: Stream<LettaStreamingResponse>;
   const abortRelay = createStreamAbortRelay(requestOptions.signal);
   let cloudApiShutdownRetries = 0;
   while (true) {
+    const attemptStartedAt = performance.now();
     try {
       stream = await backend.createConversationMessageStream(
         resolvedConversationId,
@@ -576,11 +585,12 @@ export async function sendMessageStreamWithBackend(
         const delayMs = getCloudApiShutdownRetryDelayMs(error);
         debugWarn(
           "send-message-stream",
-          "request_retry conversation_id=%s otid=%s reason=cloud_api_shutting_down attempt=%d delay_ms=%d",
+          "request_retry conversation_id=%s otid=%s reason=cloud_api_shutting_down attempt=%d delay_ms=%d attempt_ms=%d",
           resolvedConversationId,
           firstOtid ?? "none",
           cloudApiShutdownRetries,
           delayMs,
+          Math.round(performance.now() - attemptStartedAt),
         );
         try {
           await waitForRetryDelay(
@@ -609,10 +619,11 @@ export async function sendMessageStreamWithBackend(
       }
       debugWarn(
         "send-message-stream",
-        "request_error conversation_id=%s otid=%s status=%s error=%s",
+        "request_error conversation_id=%s otid=%s status=%s request_ms=%d error=%s",
         resolvedConversationId,
         firstOtid ?? "none",
         (error as { status?: number })?.status ?? "none",
+        Math.round(performance.now() - dispatchStartedAt),
         error instanceof Error ? error.message : String(error),
       );
       throw error;
@@ -621,9 +632,10 @@ export async function sendMessageStreamWithBackend(
 
   debugLog(
     "send-message-stream",
-    "request_ok conversation_id=%s otid=%s",
+    "request_ok conversation_id=%s otid=%s request_ms=%d",
     resolvedConversationId,
     firstOtid ?? "none",
+    Math.round(performance.now() - dispatchStartedAt),
   );
 
   stream = traceBusyRecoveryStream(

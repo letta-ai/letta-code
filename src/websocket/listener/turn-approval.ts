@@ -13,6 +13,7 @@ import type {
   ApprovalResponseDecision,
   ControlRequest,
 } from "@/types/protocol_v2";
+import { debugLog } from "@/utils/debug";
 import { mergeImageFailureModesByMessageOtid } from "@/utils/message-image-normalization";
 import {
   clearPendingApprovalBatchIds,
@@ -33,6 +34,7 @@ import {
 } from "./approval-transport-wait";
 import { getSubscribedListenerConnections, TO_SUBSCRIBERS } from "./connection";
 import { appendQueuedTurnToInput } from "./continuation-input";
+import { isRemoteExternalTool } from "./external-tools";
 import { readInterruptedTurn } from "./interrupted-turn-read";
 import {
   type recordListenerWork,
@@ -603,9 +605,6 @@ export async function handleApprovalStop(params: {
   if (shouldInterrupt()) {
     return interruptTermination();
   }
-  lastExecutingToolCallIds = approvedDecisions.map(
-    (decision) => decision.approval.toolCallId,
-  );
   const effectBoundary = createRecoveredApprovalEffectBoundary({
     decisions,
     ownsClaim: () => !shouldInterrupt(),
@@ -628,28 +627,6 @@ export async function handleApprovalStop(params: {
     () => !shouldInterrupt(),
   );
   if (shouldInterrupt()) return interruptTermination();
-  runtime.turnLifecycle.setExecutingToolCallIds(
-    turnLease,
-    lastExecutingToolCallIds,
-  );
-  setTurnLoopStatus(runtime, turnLease, "EXECUTING_CLIENT_SIDE_TOOL", {
-    agent_id: agentId,
-    conversation_id: conversationId,
-  });
-  emitRuntimeStateUpdates(runtime, {
-    agent_id: agentId,
-    conversation_id: conversationId,
-  });
-  emitToolExecutionStartedEvents(socket, runtime, {
-    toolCalls: approvedDecisions.map((decision) => ({
-      toolCallId: decision.approval.toolCallId,
-      toolName: decision.approval.toolName,
-      toolArgs: decision.approval.toolArgs,
-    })),
-    runId: executionRunId,
-    agentId,
-    conversationId,
-  });
   const emitToolExecutionOutput = createToolExecutionOutputEmitter(
     socket,
     runtime,
@@ -690,12 +667,43 @@ export async function handleApprovalStop(params: {
 
   let executionResults: Awaited<ReturnType<typeof executeApprovalBatch>>;
   try {
-    if (agentId) {
+    if (
+      agentId &&
+      approvedDecisions.some(
+        ({ approval }) =>
+          !isRemoteExternalTool(approval.toolName, turnToolContextId),
+      )
+    ) {
       await ensureSecretsHydrated(runtime.listener, agentId);
     }
     if (shouldInterrupt()) {
       return interruptTermination();
     }
+    lastExecutingToolCallIds = approvedDecisions.map(
+      (decision) => decision.approval.toolCallId,
+    );
+    runtime.turnLifecycle.setExecutingToolCallIds(
+      turnLease,
+      lastExecutingToolCallIds,
+    );
+    setTurnLoopStatus(runtime, turnLease, "EXECUTING_CLIENT_SIDE_TOOL", {
+      agent_id: agentId,
+      conversation_id: conversationId,
+    });
+    emitRuntimeStateUpdates(runtime, {
+      agent_id: agentId,
+      conversation_id: conversationId,
+    });
+    emitToolExecutionStartedEvents(socket, runtime, {
+      toolCalls: approvedDecisions.map((decision) => ({
+        toolCallId: decision.approval.toolCallId,
+        toolName: decision.approval.toolName,
+        toolArgs: decision.approval.toolArgs,
+      })),
+      runId: executionRunId,
+      agentId,
+      conversationId,
+    });
     executionResults = await executeApprovals(decisions, params.onChunk, {
       toolContextId: turnToolContextId ?? undefined,
       abortSignal,
@@ -888,6 +896,11 @@ export async function handleApprovalStop(params: {
     agent_id: agentId,
     conversation_id: conversationId,
   });
+  debugLog(
+    "Listen",
+    "approval_continuation_send conversation_id=%s",
+    conversationId,
+  );
   let sendResult: ApprovalContinuationSendResult;
   try {
     const imageFailureModesByMessageOtid = mergeImageFailureModesByMessageOtid(
