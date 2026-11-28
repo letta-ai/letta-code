@@ -204,6 +204,7 @@ export type StaticItem =
       kind: "welcome";
       id: string;
       snapshot: {
+        session?: { model?: string; location?: string; connection: string };
         continueSession: boolean;
         agentState?: AgentState | null;
         startupHasAvailableLocalModels?: boolean;

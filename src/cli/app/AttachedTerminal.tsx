@@ -1,7 +1,7 @@
 import { render } from "ink";
 import { useEffect } from "react";
 import { createAttachedClient } from "@/cli/app/attached-client";
-import { TerminalApp } from "./TerminalApp";
+import { SessionViewHost } from "./SessionViewHost";
 import { terminalSocket } from "./terminal-runtime-events";
 import { TerminalSession } from "./terminal-session";
 
@@ -16,7 +16,7 @@ function AttachedTerminal({
     void store.connect();
     return () => store.close();
   }, [store]);
-  return <TerminalApp store={store} connectionMode={mode} />;
+  return <SessionViewHost store={store} connectionMode={mode} />;
 }
 
 export async function runAttachedTerminal(values: {

@@ -463,6 +463,18 @@ export const ToolCallMessage = memo(
           );
         }
 
+        if (remote && line.resultOk !== false && line.toolCallId) {
+          const diff = precomputedDiffs?.get(line.toolCallId);
+          if (diff)
+            return (
+              <AdvancedDiffRenderer
+                precomputed={diff}
+                kind="write"
+                filePath={diff.fileName}
+                content=""
+              />
+            );
+        }
         if (
           !remote &&
           isFileEditTool(rawName) &&

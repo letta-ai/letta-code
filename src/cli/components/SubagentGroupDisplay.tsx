@@ -1,11 +1,8 @@
 import { Box, useInput } from "ink";
-import { memo, useSyncExternalStore } from "react";
+import { memo, useState } from "react";
 import {
-  getSnapshot,
   getSubagentToolCount,
   type SubagentState,
-  subscribe,
-  toggleExpanded,
 } from "@/agent/subagent-state.js";
 import { useAnimation } from "@/cli/contexts/AnimationContext.js";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
@@ -309,48 +306,50 @@ const GroupHeader = memo(
 
 GroupHeader.displayName = "GroupHeader";
 
-export const SubagentGroupDisplay = memo(() => {
-  const { agents, expanded } = useSyncExternalStore(subscribe, getSnapshot);
-  const { shouldAnimate } = useAnimation();
+export const SubagentGroupDisplay = memo(
+  ({ agents }: { agents: SubagentState[] }) => {
+    const [expanded, setExpanded] = useState(false);
+    const { shouldAnimate } = useAnimation();
 
-  useInput((input, key) => {
-    if (key.ctrl && input === "o") {
-      toggleExpanded();
+    useInput((input, key) => {
+      if (key.ctrl && input === "o") {
+        setExpanded((value) => !value);
+      }
+    });
+
+    const visible = agents.filter((a) => !a.silent);
+
+    if (visible.length === 0) {
+      return null;
     }
-  });
 
-  const visible = agents.filter((a) => !a.silent);
+    const condensed = !shouldAnimate;
 
-  if (visible.length === 0) {
-    return null;
-  }
+    const allCompleted = visible.every(
+      (a) => a.status === "completed" || a.status === "error",
+    );
+    const hasErrors = visible.some((a) => a.status === "error");
 
-  const condensed = !shouldAnimate;
-
-  const allCompleted = visible.every(
-    (a) => a.status === "completed" || a.status === "error",
-  );
-  const hasErrors = visible.some((a) => a.status === "error");
-
-  return (
-    <Box flexDirection="column" marginTop={1}>
-      <GroupHeader
-        count={visible.length}
-        allCompleted={allCompleted}
-        hasErrors={hasErrors}
-        expanded={expanded}
-      />
-      {visible.map((agent, index) => (
-        <AgentRow
-          key={agent.id}
-          agent={agent}
-          isLast={index === visible.length - 1}
+    return (
+      <Box flexDirection="column" marginTop={1}>
+        <GroupHeader
+          count={visible.length}
+          allCompleted={allCompleted}
+          hasErrors={hasErrors}
           expanded={expanded}
-          condensed={condensed}
         />
-      ))}
-    </Box>
-  );
-});
+        {visible.map((agent, index) => (
+          <AgentRow
+            key={agent.id}
+            agent={agent}
+            isLast={index === visible.length - 1}
+            expanded={expanded}
+            condensed={condensed}
+          />
+        ))}
+      </Box>
+    );
+  },
+);
 
 SubagentGroupDisplay.displayName = "SubagentGroupDisplay";

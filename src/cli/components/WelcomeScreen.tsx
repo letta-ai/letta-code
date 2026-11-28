@@ -53,7 +53,7 @@ type LoadingState =
   | "selecting_global"
   | "ready";
 
-export function WelcomeScreen({
+function StartupWelcome({
   loadingState,
   continueSession,
   agentState,
@@ -66,7 +66,6 @@ export function WelcomeScreen({
 }) {
   useTerminalWidth();
   const cwd = process.cwd();
-  const version = getVersion();
 
   const tildePath = toTildePath(cwd);
 
@@ -107,6 +106,55 @@ export function WelcomeScreen({
     : true;
 
   return (
+    <SessionWelcome
+      loadingState={loadingState}
+      model={model}
+      location={tildePath}
+      connection={authDisplay}
+      continueSession={continueSession}
+      warning={
+        loadingState === "ready" &&
+        !memfsEnabled &&
+        authMethod !== "url" && (
+          <Text color="yellow">
+            Warning: Context repositories are not enabled for this agent. Run
+            /memfs enable to enable.
+          </Text>
+        )
+      }
+    />
+  );
+}
+
+export function WelcomeScreen(
+  props: Parameters<typeof StartupWelcome>[0] & {
+    session?: { model?: string; location?: string; connection: string };
+  },
+) {
+  return props.session ? (
+    <SessionWelcome loadingState={props.loadingState} {...props.session} />
+  ) : (
+    <StartupWelcome {...props} />
+  );
+}
+
+function SessionWelcome({
+  loadingState,
+  model,
+  location,
+  connection,
+  continueSession,
+  warning,
+}: {
+  loadingState: LoadingState;
+  model?: string;
+  location?: string;
+  connection: string;
+  continueSession?: boolean;
+  warning?: React.ReactNode;
+}) {
+  const version = getVersion();
+  return (
     <Box flexDirection="row" marginTop={1}>
       <Box flexDirection="column" paddingLeft={1} paddingRight={2}>
         <AnimatedLogo
@@ -122,21 +170,16 @@ export function WelcomeScreen({
         </Box>
 
         <Text color="gray">
-          {model ? `${model} · ${authDisplay}` : authDisplay}
+          {model ? `${model} · ${connection}` : connection}
         </Text>
 
         <Text color="gray">
           {loadingState === "ready"
-            ? tildePath
+            ? location
             : getLoadingMessage(loadingState, !!continueSession)}
         </Text>
 
-        {loadingState === "ready" && !memfsEnabled && authMethod !== "url" && (
-          <Text color="yellow">
-            Warning: Context repositories are not enabled for this agent. Run
-            /memfs enable to enable.
-          </Text>
-        )}
+        {warning}
       </Box>
     </Box>
   );

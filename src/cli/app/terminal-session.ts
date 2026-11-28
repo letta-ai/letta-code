@@ -25,8 +25,6 @@ import type { MemoryFileEntry } from "@/types/protocol_v2";
 
 import { isRecord } from "@/utils/type-guards";
 
-import { terminalCommands } from "./terminal-commands";
-
 type Approval = {
   name: string;
   input: Record<string, unknown>;
@@ -55,6 +53,7 @@ type Snapshot = {
   device?: SessionDeviceStatus;
   question?: AskUserQuestionReceipt;
   login?: boolean;
+  help?: boolean;
   model?: string;
   agentId?: string;
   agentName?: string;
@@ -373,6 +372,10 @@ export class TerminalSession {
         this.fail(error);
       }
     }
+  }
+
+  closeHelp() {
+    this.update({ help: undefined });
   }
 
   closeLogin() {
@@ -744,11 +747,7 @@ export class TerminalSession {
         return;
       }
       if (text === "/help") {
-        this.update({
-          commandOutput: terminalCommands
-            .map(({ cmd, desc }) => cmd.padEnd(16) + desc)
-            .join("\n"),
-        });
+        this.update({ help: true });
         return;
       }
       if (text.startsWith("/queue remove ")) {

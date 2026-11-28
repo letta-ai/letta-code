@@ -52,7 +52,8 @@ type Props = {
   approveAlwaysText?: string;
   allowPersistence?: boolean;
   showPreview?: boolean;
-  fileHeader?: string;
+  sessionPreview?: React.ReactNode;
+  workingDirectory?: string;
   defaultScope?: "project" | "session";
 
   precomputedDiff?: AdvancedDiffSuccess;
@@ -173,7 +174,8 @@ export const ApprovalSwitch = memo(
     precomputedDiff,
     allDiffs,
     showPreview = true,
-    fileHeader,
+    sessionPreview,
+    workingDirectory,
     defaultScope = "project",
   }: Props) => {
     const toolName = approval.toolName;
@@ -188,7 +190,8 @@ export const ApprovalSwitch = memo(
         return (
           <InlineFileEditApproval
             fileEdit={fileEditInfo}
-            headerOverride={fileHeader}
+            sessionPreview={sessionPreview}
+            workingDirectory={workingDirectory}
             precomputedDiff={precomputedDiff}
             allDiffs={allDiffs}
             onApprove={(diffs) => onApprove(diffs)}

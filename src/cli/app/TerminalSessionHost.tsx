@@ -1,7 +1,7 @@
 import { Box, Text, useApp, useInput } from "ink";
 import { useEffect, useState } from "react";
 import { openEmbeddedTerminal } from "./embedded-terminal";
-import { TerminalApp } from "./TerminalApp";
+import { SessionViewHost } from "./SessionViewHost";
 
 export function TerminalSessionHost({
   agentId,
@@ -60,7 +60,11 @@ export function TerminalSessionHost({
         <Text>Update available: {updateNotification}</Text>
       )}
       {cloudError && <Text>Cloud registration unavailable: {cloudError}</Text>}
-      <TerminalApp store={session.store} initialName={name} />
+      <SessionViewHost
+        store={session.store}
+        initialName={name}
+        embeddedCloud={cloud}
+      />
     </Box>
   );
 }
