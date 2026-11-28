@@ -434,6 +434,19 @@ export function getModelUpdateArgs(
   return modelInfo?.updateArgs;
 }
 
+/**
+ * updateArgs for the model of an agent headless is about to create, plus the
+ * reasoning effort `letta dream --reasoning-effort` asked for. That flag is for
+ * handles whose catalog ID carries no effort tier (e.g. BYOK OpenRouter models).
+ */
+export function getNewAgentUpdateArgs(
+  modelIdentifier?: string,
+): Record<string, unknown> | undefined {
+  const updateArgs = getModelUpdateArgs(modelIdentifier);
+  const effort = process.env.LETTA_DREAM_REASONING_EFFORT;
+  return effort ? { ...updateArgs, reasoning_effort: effort } : updateArgs;
+}
+
 type AgentModelSnapshot = {
   model?: string | null;
   llm_config?: {

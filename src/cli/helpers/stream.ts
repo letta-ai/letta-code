@@ -137,6 +137,13 @@ export async function drainStream(
 
   let abortedViaListener = false;
 
+  let abandonTimer: ReturnType<typeof setTimeout> | undefined;
+  const abandoned = Promise.withResolvers<{ done: true; value?: undefined }>();
+  const abortHttpRead = (reason: string) => {
+    abortStreamController(stream, reason);
+    abandonTimer ??= setTimeout(() => abandoned.resolve({ done: true }), 5_000);
+  };
+
   const terminalEofGuard = createTerminalEofGuard({
     getStopReason: () => streamProcessor.stopReason,
     getRunId: () => streamProcessor.lastRunId,
@@ -156,23 +163,24 @@ export async function drainStream(
           signal,
         } as RunRetrieveOptions)
       ).status,
-    abortHttpRead: () => abortStreamController(stream, "stall_reconciler"),
+    abortHttpRead: () => abortHttpRead("stall_reconciler"),
   });
 
   const startAbortGen = buffers.abortGeneration || 0;
 
   const abortHandler = () => {
     abortedViaListener = true;
-    abortStreamController(stream, "abort_signal");
+    abortHttpRead("abort_signal");
   };
 
   if (abortSignal && !abortSignal.aborted) {
     abortSignal.addEventListener("abort", abortHandler, { once: true });
   } else if (abortSignal?.aborted) {
     abortedViaListener = true;
-    abortStreamController(stream, "pre_aborted_signal");
+    abortHttpRead("pre_aborted_signal");
   }
 
+  let iterator: AsyncIterator<LettaStreamingResponse> | undefined;
   try {
     const asyncIterator = (stream as unknown as Record<PropertyKey, unknown>)[
       Symbol.asyncIterator
@@ -184,7 +192,11 @@ export async function drainStream(
     }
 
     stallReconciler.arm();
-    for await (const chunk of terminalEofGuard.untilEof(stream)) {
+    iterator = terminalEofGuard.untilEof(stream)[Symbol.asyncIterator]();
+    while (true) {
+      const next = await Promise.race([iterator.next(), abandoned.promise]);
+      if (next.done) break;
+      const chunk = next.value;
       stallReconciler.arm();
       lastChunkDebugSummary = summarizeChunkForDebug(chunk);
       recordTuiJsonPayload(
@@ -342,6 +354,10 @@ export async function drainStream(
   } finally {
     terminalEofGuard.clear();
     stallReconciler.clear();
+    clearTimeout(abandonTimer);
+    if (!terminalEofGuard.fired()) {
+      void iterator?.return?.()?.catch(() => {});
+    }
 
     try {
       chunkLog.flush();

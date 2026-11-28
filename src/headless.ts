@@ -21,6 +21,7 @@ import {
 } from "@/headless-interrupt";
 import { buildHeadlessSenderReminder } from "@/headless-message-sender";
 import { createHeadlessResponseState } from "@/headless-response-state";
+import { createHeadlessRunLimits } from "@/headless-run-limits";
 import { createStartupBackend } from "@/headless-startup-backend";
 import { serializeQueuedMessageAsUserLine } from "@/queue/queued-message-line";
 import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
@@ -73,7 +74,7 @@ import { setAgentContext, setConversationId } from "./agent/context";
 import { createAgent } from "./agent/create";
 import { handleListMessages } from "./agent/list-messages-handler";
 import { getStreamToolContextId, sendMessageStream } from "./agent/message";
-import { getModelUpdateArgs, resolveModel } from "./agent/model";
+import { getNewAgentUpdateArgs, resolveModel } from "./agent/model";
 import { updateAgentSystemPrompt } from "./agent/modify";
 import { buildCreateAgentOptionsForPersonality } from "./agent/personality";
 import { resolvePersonalityId } from "./agent/personality-presets";
@@ -1084,7 +1085,7 @@ export async function handleHeadlessCommand(
         })
       : undefined;
     const modelForUpdateArgs = personalityOptions?.model ?? model;
-    const updateArgs = getModelUpdateArgs(modelForUpdateArgs);
+    const updateArgs = getNewAgentUpdateArgs(modelForUpdateArgs);
     const createOptions = {
       ...(personalityOptions ?? {}),
       model: modelForUpdateArgs,
@@ -1968,25 +1969,14 @@ export async function handleHeadlessCommand(
   const chatgptExhaustedProviders = new Set<string>();
   markMilestone("HEADLESS_FIRST_STREAM_START");
   measureSinceMilestone("headless-setup-total", "HEADLESS_CLIENT_READY");
-  const checkMaxTurns = async (): Promise<void> => {
-    if (maxTurns !== undefined && buffers.usage.stepCount >= maxTurns) {
-      if (outputFormat === "stream-json") {
-        const errorMsg: ErrorMessage = {
-          type: "error",
-          message: `Maximum turns limit reached (${buffers.usage.stepCount}/${maxTurns} steps)`,
-          stop_reason: "max_steps",
-          session_id: sessionId,
-          uuid: `error-max-turns-${randomUUID()}`,
-        };
-        await writeWireMessageAsync(errorMsg);
-      } else {
-        console.error(
-          `Maximum turns limit reached (${buffers.usage.stepCount}/${maxTurns} steps)`,
-        );
-      }
-      await exitHeadless(1, "headless_max_steps_reached");
-    }
-  };
+  const runLimits = createHeadlessRunLimits({
+    maxTurns,
+    buffers,
+    outputFormat,
+    sessionId,
+    model: agent.llm_config?.handle ?? agent.model ?? undefined,
+    exit: exitHeadless,
+  });
 
   const {
     signal: interruptSignal,
@@ -2005,7 +1995,7 @@ export async function handleHeadlessCommand(
       );
 
       if (!hasApprovalContinuation) {
-        await checkMaxTurns();
+        await runLimits.checkMaxTurns();
       }
 
       {
@@ -2286,7 +2276,7 @@ export async function handleHeadlessCommand(
         () => {},
         interruptSignal,
         undefined,
-        streamJsonHook,
+        runLimits.withUsageMeter(streamJsonHook),
         reminderContextTracker,
         undefined,
         HEADLESS_STREAM_RESUME_POLICY,
@@ -2303,12 +2293,13 @@ export async function handleHeadlessCommand(
         await exitInterrupted();
       }
 
+      await runLimits.checkRunBudget();
       if (
         stopReason !== "requires_approval" &&
         !approvalPendingRecovery &&
         !(stopReason === "error" && fallbackError)
       ) {
-        await checkMaxTurns();
+        await runLimits.checkMaxTurns();
       }
 
       if (approvalPendingRecovery) {

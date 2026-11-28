@@ -212,3 +212,26 @@ describe("drainStream terminal-EOF guard", () => {
     expect(result.stopReason).toBe("end_turn");
   });
 });
+
+test("abandons a read that stays pending after the caller aborts", async () => {
+  const controller = new AbortController();
+  const caller = new AbortController();
+  const stream = {
+    controller,
+    async *[Symbol.asyncIterator]() {
+      caller.abort();
+      await new Promise<void>(() => {});
+    },
+  } as unknown as Stream<LettaStreamingResponse>;
+
+  const result = await drainStream(
+    stream,
+    createBuffers("agent-test"),
+    () => {},
+    caller.signal,
+  );
+
+  expect(controller.signal.aborted).toBe(true);
+  expect(result.stopReason).toBe("cancelled");
+  expect(result.terminalEofGuardFired).toBe(false);
+}, 10_000);
