@@ -9,7 +9,7 @@
   "src/cli/reflection-transcript.test.ts": 1081,
   "src/cli/subcommands/mcp.ts": 1018,
   "src/cli/subcommands/skills.ts": 1239,
-  "src/headless.ts": 4448,
+  "src/headless.ts": 4447,
   "src/hooks/integration.test.ts": 1069,
   "src/index.ts": 2210,
   "src/mods/learning-harness.ts": 2432,
@@ -24,7 +24,7 @@
   "src/tools/manager.ts": 2351,
   "src/tools/tool-execution-context.test.ts": 1025,
   "src/types/protocol_v2.ts": 2129,
-  "src/websocket/listen-client-concurrency.test.ts": 2493,
+  "src/websocket/listen-client-concurrency.test.ts": 2471,
   "src/websocket/listener/commands/memory.ts": 1058,
   "src/websocket/listener/protocol-inbound.ts": 2030
 }

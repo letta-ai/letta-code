@@ -1765,23 +1765,22 @@ export async function handleHeadlessCommand(
   }
 
   if (preLoadSkillsRaw && !usesRemoteEnvironment) {
-    pushPart(
-      await loadPreloadedSkills(
-        preLoadSkillsRaw
-          .split(",")
-          .map((id) => id.trim())
-          .filter(Boolean),
-        {
-          agentId: agent.id,
-          skillSources: resolvedSkillSources,
-          logger: (message) => {
-            if (isDebugEnabled()) {
-              console.warn(`[DEBUG] ${message}`);
-            }
-          },
+    const { content } = await loadPreloadedSkills(
+      preLoadSkillsRaw
+        .split(",")
+        .map((id) => id.trim())
+        .filter(Boolean),
+      {
+        agentId: agent.id,
+        skillSources: resolvedSkillSources,
+        logger: (message) => {
+          if (isDebugEnabled()) {
+            console.warn(`[DEBUG] ${message}`);
+          }
         },
-      ),
+      },
     );
+    pushPart(content);
   }
   pushPart(prompt);
 

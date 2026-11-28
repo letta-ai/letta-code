@@ -5,6 +5,7 @@ import {
   describe,
   expect,
   mock,
+  spyOn,
   test,
 } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -12,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { APIError } from "@letta-ai/letta-client/error";
 import WebSocket from "ws";
+import * as repositorySync from "@/agent/attached-repository-git-sync";
 import type { ResumeData } from "@/agent/check-approval";
 import { STALE_APPROVAL_RECOVERY_DENIAL_REASON } from "@/agent/turn-recovery-policy";
 import { getChannelRegistry } from "@/channels/registry";
@@ -176,8 +178,9 @@ const conversationMessagesStreamMock = mock(
     _options?: {
       signal?: AbortSignal;
     },
-  ): Promise<MockStream> => ({
+  ): Promise<MockStream & AsyncIterable<never>> => ({
     conversationId,
+    [Symbol.asyncIterator]: async function* () {},
   }),
 );
 const getClientMock = mock(async () => ({
@@ -309,6 +312,20 @@ class MockSocket {
   }
 }
 
+function makeConversationBusyError(): APIError {
+  return new APIError(
+    409,
+    {
+      error: {
+        detail:
+          "Cannot send a new message: Another request is currently being processed for this conversation.",
+      },
+    },
+    undefined,
+    new Headers(),
+  );
+}
+
 function createDeferredDrain() {
   let resolve!: (value: DrainResult) => void;
   let reject!: (error: Error) => void;
@@ -389,7 +406,12 @@ const originalTranscriptRoot = process.env.LETTA_TRANSCRIPT_ROOT;
 let testTranscriptRoot: string | null = null;
 
 describe("listen-client multi-worker concurrency", () => {
+  let repositorySyncSpy: ReturnType<typeof spyOn>;
   beforeEach(async () => {
+    repositorySyncSpy = spyOn(
+      repositorySync,
+      "syncPendingAttachedRepositoryCommitsAfterTurn",
+    ).mockResolvedValue({ results: [] });
     testTranscriptRoot = await mkdtemp(
       join(tmpdir(), "letta-listen-transcript-"),
     );
@@ -434,6 +456,7 @@ describe("listen-client multi-worker concurrency", () => {
   });
 
   afterEach(() => {
+    repositorySyncSpy.mockRestore();
     sharedReminderProviders["session-context"] = origSessionContext;
     sharedReminderProviders["agent-info"] = origAgentInfo;
     (settingsManager as typeof settingsManager).getSettings =
@@ -1915,19 +1938,7 @@ describe("listen-client multi-worker concurrency", () => {
   test("pre-stream 409 resumes via conversations stream with message otid", async () => {
     const { runtime } = createRuntime("agent-409-otid", "conv-409-otid");
     const socket = new MockSocket();
-    sendMessageStreamMock.mockRejectedValueOnce(
-      new APIError(
-        409,
-        {
-          error: {
-            detail:
-              "Cannot send a new message: Another request is currently being processed for this conversation.",
-          },
-        },
-        undefined,
-        new Headers(),
-      ),
-    );
+    sendMessageStreamMock.mockRejectedValueOnce(makeConversationBusyError());
     const turnPromise = __listenClientTestUtils.handleIncomingMessage(
       {
         type: "message",
@@ -1956,6 +1967,7 @@ describe("listen-client multi-worker concurrency", () => {
     });
 
     await turnPromise;
+    expect(sendMessageStreamMock).toHaveBeenCalledTimes(1);
   });
 
   test("handleIncomingMessage reuses client_message_id as the message otid", async () => {
@@ -2102,19 +2114,7 @@ describe("listen-client multi-worker concurrency", () => {
     const { runtime } = createRuntime("agent-409-default", "default");
     const socket = new MockSocket();
 
-    sendMessageStreamMock.mockRejectedValueOnce(
-      new APIError(
-        409,
-        {
-          error: {
-            detail:
-              "Cannot send a new message: Another request is currently being processed for this conversation.",
-          },
-        },
-        undefined,
-        new Headers(),
-      ),
-    );
+    sendMessageStreamMock.mockRejectedValueOnce(makeConversationBusyError());
 
     const turnPromise = __listenClientTestUtils.handleIncomingMessage(
       {
@@ -2146,6 +2146,7 @@ describe("listen-client multi-worker concurrency", () => {
     });
 
     await turnPromise;
+    expect(sendMessageStreamMock).toHaveBeenCalledTimes(1);
   });
 
   test("approval continuation 409 resumes via conversations stream with approval otid", async () => {
@@ -2186,19 +2187,7 @@ describe("listen-client multi-worker concurrency", () => {
       },
     ] as never);
 
-    sendMessageStreamMock.mockRejectedValueOnce(
-      new APIError(
-        409,
-        {
-          error: {
-            detail:
-              "Cannot send a new message: Another request is currently being processed for this conversation.",
-          },
-        },
-        undefined,
-        new Headers(),
-      ),
-    );
+    sendMessageStreamMock.mockRejectedValueOnce(makeConversationBusyError());
 
     const pending = { toolCallId: "tool-1", toolName: "Read", toolArgs: "{}" };
     const r = {
@@ -2225,6 +2214,7 @@ describe("listen-client multi-worker concurrency", () => {
     );
 
     expect(result?.stopReason).toBe("end_turn");
+    expect(sendMessageStreamMock).toHaveBeenCalledTimes(1);
     await waitFor(() => conversationMessagesStreamMock.mock.calls.length >= 1);
 
     const firstCall = conversationMessagesStreamMock.mock.calls[0];
@@ -2250,19 +2240,7 @@ describe("listen-client multi-worker concurrency", () => {
     const socket = new MockSocket();
     const turnLease = beginTestTurn(runtime);
 
-    sendMessageStreamMock.mockRejectedValueOnce(
-      new APIError(
-        409,
-        {
-          error: {
-            detail:
-              "Cannot send a new message: Another request is currently being processed for this conversation.",
-          },
-        },
-        undefined,
-        new Headers(),
-      ),
-    );
+    sendMessageStreamMock.mockRejectedValueOnce(makeConversationBusyError());
     conversationMessagesStreamMock.mockRejectedValueOnce(
       new Error("resume unavailable"),
     );

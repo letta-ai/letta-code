@@ -5,6 +5,7 @@ import {
   registerSubagent,
   updateSubagent,
 } from "@/agent/subagent-state";
+import { formatScheduledTaskPrompt } from "@/cron/scheduled-task-prompt";
 import type { DequeuedBatch } from "@/queue/queue-runtime";
 import {
   backgroundProcesses,
@@ -726,6 +727,55 @@ describe("emitDequeuedUserMessage", () => {
     );
     expect(JSON.stringify(userDelta.content)).not.toContain("Description:");
   });
+
+  test.each(["string", "parts"])(
+    "keeps a scheduled fire visible in %s content without queue metadata",
+    (shape) => {
+      const { runtime, socket } = createRuntime();
+      const time = new Date("2026-01-01T00:00:00Z");
+      const scheduled = formatScheduledTaskPrompt({
+        name: "Daily status",
+        timezone: "UTC",
+        scheduledFor: time,
+        currentTime: time,
+        recurrence: { type: "one-off" },
+        prompt: "Summarize open items.",
+      });
+      const reminder = "<system-reminder>Private context</system-reminder>";
+      const incoming = {
+        type: "message",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        messages: [
+          {
+            role: "user",
+            content:
+              shape === "string"
+                ? `${reminder}\n${scheduled}`
+                : [
+                    { type: "text", text: reminder },
+                    { type: "text", text: scheduled },
+                  ],
+          },
+        ],
+      } as IncomingMessage;
+      const batch = {
+        batchId: "batch-replay",
+        items: [],
+        mergedCount: 0,
+        queueLenAfter: 0,
+      } satisfies DequeuedBatch;
+
+      emitDequeuedUserMessage(socket as never, runtime, incoming, batch);
+
+      const unwrapped = scheduled.split("\n").slice(1, -1).join("\n");
+      expect(parseOnlyStreamDelta(socket).delta).toMatchObject({
+        message_type: "user_message",
+        content:
+          shape === "string" ? unwrapped : [{ type: "text", text: unwrapped }],
+      });
+    },
+  );
 
   test("keeps ordinary pure system reminders hidden", () => {
     const { runtime, socket } = createRuntime();

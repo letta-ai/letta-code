@@ -1,9 +1,9 @@
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Backend } from "@/backend";
+import { SKILL_CONTENT_BLOCK_REGEX } from "@/constants";
+import { stripNonScheduledSystemReminders } from "@/cron/scheduled-task-prompt";
 
 const PAGE_SIZE = 100;
-const SYSTEM_REMINDER_PATTERN =
-  /<system-reminder>[\s\S]*?<\/system-reminder>\s*/g;
 
 export interface ParentTranscript {
   messages: string[];
@@ -143,15 +143,13 @@ function userEvents(text: string, speaker?: string): HistoryEvent[] {
       });
   };
   let end = 0;
-  for (const match of text.matchAll(
-    /<skill_content\b([^>]*)>([\s\S]*?)<\/skill_content>/g,
-  )) {
+  for (const match of text.matchAll(SKILL_CONTENT_BLOCK_REGEX)) {
     human(text.slice(end, match.index));
     events.push({
       type: "injected",
       kind: "skill",
-      name: match[1]?.match(/\bname="([^"]*)"/)?.[1],
-      text: match[2],
+      name: match[2]?.match(/\bname="([^"]*)"/)?.[1],
+      text: match[3],
     });
     end = match.index + match[0].length;
   }
@@ -162,9 +160,9 @@ function userEvents(text: string, speaker?: string): HistoryEvent[] {
 function renderMessage(message: Message): HistoryEvent[] {
   switch (message.message_type) {
     case "user_message": {
-      const text = contentText(message.content)
-        .replace(SYSTEM_REMINDER_PATTERN, "")
-        .trim();
+      const text = stripNonScheduledSystemReminders(
+        contentText(message.content),
+      ).trim();
       return userEvents(text, message.name ?? undefined);
     }
     case "assistant_message": {

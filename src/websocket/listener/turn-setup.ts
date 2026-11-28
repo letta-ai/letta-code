@@ -453,7 +453,7 @@ export async function prepareListenerTurn(params: {
   runtime.currentLoadedTools =
     preparedToolContext.preparedToolContext.loadedToolNames;
   runtime.currentAvailableSkills = availableSkills;
-  const preloaded = await loadPreloadedSkills(
+  const { content: preloaded } = await loadPreloadedSkills(
     runtime.executionSettings?.preload_skills ?? [],
     {
       ...(agentId ? { agentId } : {}),
