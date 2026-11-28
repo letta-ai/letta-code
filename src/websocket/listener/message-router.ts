@@ -543,6 +543,7 @@ export function createListenerMessageHandler(
           socket,
           safeSocketSend,
           runDetachedListenerTask,
+          listener: runtime,
         })
       ) {
         return;

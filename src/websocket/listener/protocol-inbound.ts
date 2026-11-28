@@ -141,10 +141,7 @@ import {
   isExternalToolCallResponseCommand,
   isRuntimeExternalToolsUpdateCommand,
 } from "./external-tool-protocol";
-import {
-  isAppServerInfoCommand,
-  isConversationForkCommand,
-} from "./management-protocol-inbound";
+import { isManagementProtocolCommand } from "./management-protocol-inbound";
 import {
   isAgentRuntimeScope,
   isObjectRecord,
@@ -1975,7 +1972,7 @@ export function parseServerMessage(
       isCronDeleteAllCommand(parsed) ||
       isSkillEnableCommand(parsed) ||
       isSkillDisableCommand(parsed) ||
-      isAppServerInfoCommand(parsed) ||
+      isManagementProtocolCommand(parsed) ||
       isCreateAgentCommand(parsed) ||
       isAgentListCommand(parsed) ||
       isAgentRetrieveCommand(parsed) ||
@@ -1987,7 +1984,6 @@ export function parseServerMessage(
       isConversationCreateCommand(parsed) ||
       isConversationUpdateCommand(parsed) ||
       isConversationRecompileCommand(parsed) ||
-      isConversationForkCommand(parsed) ||
       isConversationMessagesListCommand(parsed) ||
       isConversationCompactCommand(parsed) ||
       isSetBootWorkingDirectoryCommand(parsed) ||

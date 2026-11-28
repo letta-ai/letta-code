@@ -44,6 +44,7 @@ import type {
 } from "./chatgpt-usage-protocol";
 import type { ConversationForkBody } from "./conversation-fork-protocol";
 import type * as CwdProtocol from "./cwd-protocol";
+import type * as DeleteProtocol from "./delete-protocol";
 import type {
   ExternalToolCallMessage,
   ExternalToolCallResponseCommand,
@@ -90,6 +91,7 @@ export type * from "./approval-classification-protocol";
 export type * from "./background-process-protocol";
 export type * from "./chatgpt-usage-protocol";
 export type * from "./cwd-protocol";
+export type * from "./delete-protocol";
 export type * from "./external-tool-protocol";
 export type * from "./file-write-protocol";
 export type * from "./loop-status-protocol";
@@ -1224,12 +1226,6 @@ export interface AgentUpdateCommand {
   body: AgentUpdateParams;
 }
 
-export interface AgentDeleteCommand {
-  type: "agent_delete";
-  request_id: string;
-  agent_id: string;
-}
-
 export interface ConversationListCommand {
   type: "conversation_list";
   request_id: string;
@@ -1523,14 +1519,6 @@ export interface AgentUpdateResponseMessage {
   request_id: string;
   success: boolean;
   agent: AgentState | null;
-  error?: string;
-}
-
-export interface AgentDeleteResponseMessage {
-  type: "agent_delete_response";
-  request_id: string;
-  success: boolean;
-  agent_id: string;
   error?: string;
 }
 
@@ -1969,7 +1957,8 @@ export type WsProtocolCommand =
   | AgentRetrieveCommand
   | AgentCreateCommand
   | AgentUpdateCommand
-  | AgentDeleteCommand
+  | DeleteProtocol.AgentDeleteCommand
+  | DeleteProtocol.ConversationDeleteCommand
   | ConversationListCommand
   | ConversationRetrieveCommand
   | ConversationCreateCommand
@@ -2075,7 +2064,8 @@ export type WsProtocolMessage =
   | AgentRetrieveResponseMessage
   | AgentCreateResponseMessage
   | AgentUpdateResponseMessage
-  | AgentDeleteResponseMessage
+  | DeleteProtocol.AgentDeleteResponseMessage
+  | DeleteProtocol.ConversationDeleteResponseMessage
   | ConversationListResponseMessage
   | ConversationRetrieveResponseMessage
   | ConversationCreateResponseMessage

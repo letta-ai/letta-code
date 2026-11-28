@@ -6,6 +6,7 @@ import {
   DEFAULT_CONVERSATION_MESSAGE_ORDER,
   getBackend,
 } from "@/backend";
+import type { ConversationDeleteCommand } from "@/types/delete-protocol";
 import type {
   AgentCreateCommand,
   AgentDeleteCommand,
@@ -21,7 +22,11 @@ import type {
   ConversationRetrieveCommand,
   ConversationUpdateCommand,
 } from "@/types/protocol_v2";
-import { isConversationForkCommand } from "@/websocket/listener/management-protocol-inbound";
+import { deleteConversationFromListener } from "@/websocket/listener/conversation-delete";
+import {
+  isConversationDeleteCommand,
+  isConversationForkCommand,
+} from "@/websocket/listener/management-protocol-inbound";
 import {
   isAgentCreateCommand,
   isAgentDeleteCommand,
@@ -36,6 +41,7 @@ import {
   isConversationRetrieveCommand,
   isConversationUpdateCommand,
 } from "@/websocket/listener/protocol-inbound";
+import type { ListenerRuntime } from "@/websocket/listener/types";
 import type { RunDetachedListenerTask, SafeSocketSend } from "./types";
 
 export type AgentConversationManagementCommand =
@@ -50,6 +56,7 @@ export type AgentConversationManagementCommand =
   | ConversationUpdateCommand
   | ConversationRecompileCommand
   | ConversationForkCommand
+  | ConversationDeleteCommand
   | ConversationMessagesListCommand
   | ConversationCompactCommand;
 
@@ -57,6 +64,7 @@ type AgentConversationManagementCommandContext = {
   socket: WebSocket;
   safeSocketSend: SafeSocketSend;
   runDetachedListenerTask: RunDetachedListenerTask;
+  listener?: ListenerRuntime | null;
 };
 
 function getErrorMessage(error: unknown, fallback: string): string {
@@ -135,6 +143,7 @@ export async function handleAgentConversationManagementCommand(
   parsed: AgentConversationManagementCommand,
   socket: WebSocket,
   safeSocketSend: SafeSocketSend,
+  listener?: ListenerRuntime | null,
 ): Promise<boolean> {
   const backend = getBackend();
 
@@ -508,6 +517,39 @@ export async function handleAgentConversationManagementCommand(
     return true;
   }
 
+  if (parsed.type === "conversation_delete") {
+    try {
+      await deleteConversationFromListener(backend, parsed.conversation_id, {
+        listener,
+      });
+      safeSocketSend(
+        socket,
+        {
+          type: "conversation_delete_response",
+          request_id: parsed.request_id,
+          success: true,
+          conversation_id: parsed.conversation_id,
+        },
+        "listener_conversation_management_send_failed",
+        "listener_conversation_management",
+      );
+    } catch (error) {
+      safeSocketSend(
+        socket,
+        {
+          type: "conversation_delete_response",
+          request_id: parsed.request_id,
+          success: false,
+          conversation_id: parsed.conversation_id,
+          error: getErrorMessage(error, "Failed to delete conversation"),
+        },
+        "listener_conversation_management_send_failed",
+        "listener_conversation_management",
+      );
+    }
+    return true;
+  }
+
   if (parsed.type === "conversation_messages_list") {
     try {
       const page = await listConversationMessagePage(
@@ -588,7 +630,7 @@ export function handleAgentConversationManagementProtocolCommand(
   parsed: unknown,
   context: AgentConversationManagementCommandContext,
 ): boolean {
-  const { socket, safeSocketSend, runDetachedListenerTask } = context;
+  const { socket, safeSocketSend, runDetachedListenerTask, listener } = context;
 
   if (
     isAgentListCommand(parsed) ||
@@ -602,6 +644,7 @@ export function handleAgentConversationManagementProtocolCommand(
     isConversationUpdateCommand(parsed) ||
     isConversationRecompileCommand(parsed) ||
     isConversationForkCommand(parsed) ||
+    isConversationDeleteCommand(parsed) ||
     isConversationMessagesListCommand(parsed) ||
     isConversationCompactCommand(parsed)
   ) {
@@ -612,6 +655,7 @@ export function handleAgentConversationManagementProtocolCommand(
           parsed,
           socket,
           safeSocketSend,
+          listener,
         );
       },
     );

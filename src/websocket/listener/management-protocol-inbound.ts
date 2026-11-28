@@ -1,5 +1,6 @@
 import type { AppServerInfoCommand } from "@/types/app-server-info";
 import type { ConversationForkBody } from "@/types/conversation-fork-protocol";
+import type { ConversationDeleteCommand } from "@/types/delete-protocol";
 import type { ConversationForkCommand } from "@/types/protocol_v2";
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -38,5 +39,31 @@ export function isConversationForkCommand(
     typeof value.request_id === "string" &&
     typeof value.conversation_id === "string" &&
     (value.body === undefined || isConversationForkBody(value.body))
+  );
+}
+
+export function isConversationDeleteCommand(
+  value: unknown,
+): value is ConversationDeleteCommand {
+  if (!isObjectRecord(value)) return false;
+  return (
+    value.type === "conversation_delete" &&
+    typeof value.request_id === "string" &&
+    value.request_id.length > 0 &&
+    typeof value.conversation_id === "string" &&
+    value.conversation_id.length > 0
+  );
+}
+
+export function isManagementProtocolCommand(
+  value: unknown,
+): value is
+  | AppServerInfoCommand
+  | ConversationForkCommand
+  | ConversationDeleteCommand {
+  return (
+    isAppServerInfoCommand(value) ||
+    isConversationForkCommand(value) ||
+    isConversationDeleteCommand(value)
   );
 }

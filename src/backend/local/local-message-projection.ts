@@ -538,3 +538,32 @@ export function findToolResultForCall(
       message.role === "toolResult" && message.toolCallId === toolCallId,
   );
 }
+
+export function projectLocalMessageAtSourceIndex(
+  localMessage: LocalMessage,
+  agentId: string,
+  conversationId: string,
+  sourceIndex: number,
+): StoredMessage[] {
+  return withProjectedMessageDates(
+    projectLocalMessageToStoredMessages(
+      localMessage,
+      agentId,
+      conversationId,
+      new Date(Date.UTC(2026, 0, 1, 0, 0, sourceIndex + 1)).toISOString(),
+    ),
+    sourceIndex,
+  );
+}
+
+export function storedMessagesBelongTo(
+  messages: readonly StoredMessage[],
+  conversation: { id: string; agent_id: string },
+): boolean {
+  return messages.some(
+    (message) =>
+      message.conversation_id === conversation.id &&
+      (conversation.id !== "default" ||
+        message.agent_id === conversation.agent_id),
+  );
+}

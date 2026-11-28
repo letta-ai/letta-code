@@ -18,6 +18,7 @@ import type {
   ConversationResumeTailOptions,
   RunMessageStreamBody,
 } from "@/backend/backend";
+import { ConversationBusyError } from "@/backend/conversation-busy-error";
 import { localConversationKey } from "@/backend/local/local-conversation-key";
 import {
   LocalBackendNotFoundError,
@@ -202,6 +203,7 @@ export class HeadlessBackend implements Backend {
   private readonly executor: HeadlessTurnExecutor;
   private readonly runs = new Map<string, Run>();
   private readonly activeRunByConversation = new Map<string, string>();
+  private readonly persistingStreamsByConversation = new Map<string, number>();
   private readonly runControllerByRunId = new Map<string, AbortController>();
   private readonly runStartupPreemptByRunId = new Map<string, () => void>();
   private readonly runChunksByRunId = new Map<
@@ -271,6 +273,27 @@ export class HeadlessBackend implements Backend {
     body: ConversationCreateBody,
   ): Promise<Conversation> {
     return this.store.createConversation(body);
+  }
+
+  async deleteConversation(conversationId: string) {
+    const key = localConversationKey(
+      conversationId,
+      this.store.resolveAgentIdForConversation(conversationId),
+    );
+    const activeRunId = this.activeRunByConversation.get(key);
+    const activeRun = activeRunId ? this.runs.get(activeRunId) : undefined;
+    if (activeRun && !isTerminalRun(activeRun)) {
+      throw new ConversationBusyError(
+        `Conversation ${conversationId} has an active run (${activeRun.id})`,
+      );
+    }
+    if ((this.persistingStreamsByConversation.get(key) ?? 0) > 0) {
+      throw new ConversationBusyError(
+        `Conversation ${conversationId} is still saving a response stream`,
+      );
+    }
+    this.store.deleteConversation(conversationId);
+    return undefined as never;
   }
 
   updateConversation(...args: Parameters<Backend["updateConversation"]>) {
@@ -804,85 +827,105 @@ export class HeadlessBackend implements Backend {
     stream: Stream<LettaStreamingResponse>,
     runId: string,
   ): Stream<LettaStreamingResponse> {
-    const store = this.store;
     const backend = this;
+    const persistingKey = localConversationKey(conversationId, agentId);
     return {
       controller: stream.controller,
       async *[Symbol.asyncIterator]() {
-        let sawStopReason = false;
-        let sawApprovalRequest = false;
-        let pendingErrorInfo: RunErrorMetadata | undefined;
+        backend.trackStreamPersistence(persistingKey, 1);
         try {
-          for await (const rawChunk of stream) {
-            const chunk = attachRunId(rawChunk, runId);
-            if (chunk.message_type === "approval_request_message") {
-              sawApprovalRequest = true;
-            }
-            const errorInfo = runErrorInfo(chunk);
-            if (errorInfo) {
-              pendingErrorInfo = errorInfo;
-            }
-            const stopReason = runStopReason(chunk);
-            if (stopReason) {
-              sawStopReason = true;
-              backend.completeRun(runId, stopReason, pendingErrorInfo);
-            }
+          yield* backend.persistExecutorChunks(
+            conversationId,
+            agentId,
+            stream,
+            runId,
+          );
+        } finally {
+          backend.trackStreamPersistence(persistingKey, -1);
+        }
+      },
+    } as unknown as Stream<LettaStreamingResponse>;
+  }
 
+  private trackStreamPersistence(key: string, delta: 1 | -1): void {
+    const count = (this.persistingStreamsByConversation.get(key) ?? 0) + delta;
+    if (count > 0) this.persistingStreamsByConversation.set(key, count);
+    else this.persistingStreamsByConversation.delete(key);
+  }
+
+  private async *persistExecutorChunks(
+    conversationId: string,
+    agentId: string,
+    stream: Stream<LettaStreamingResponse>,
+    runId: string,
+  ): AsyncGenerator<LettaStreamingResponse> {
+    const store = this.store;
+    let sawStopReason = false;
+    let sawApprovalRequest = false;
+    let pendingErrorInfo: RunErrorMetadata | undefined;
+    try {
+      for await (const rawChunk of stream) {
+        const chunk = attachRunId(rawChunk, runId);
+        if (chunk.message_type === "approval_request_message") {
+          sawApprovalRequest = true;
+        }
+        const errorInfo = runErrorInfo(chunk);
+        if (errorInfo) {
+          pendingErrorInfo = errorInfo;
+        }
+        const stopReason = runStopReason(chunk);
+        if (stopReason) {
+          sawStopReason = true;
+          this.completeRun(runId, stopReason, pendingErrorInfo);
+        }
+
+        const persisted = store.appendStreamChunk(
+          conversationId,
+          agentId,
+          chunk,
+        );
+        if (!isLocalStateChunkOnly(persisted)) {
+          yield this.recordRunChunk(runId, attachRunId(persisted, runId));
+        }
+      }
+      if (!sawStopReason) {
+        if (pendingErrorInfo) {
+          this.completeRun(runId, "error", pendingErrorInfo);
+          yield this.recordRunChunk(
+            runId,
+            attachRunId(localStopReasonChunk("error"), runId),
+          );
+        } else if (sawApprovalRequest) {
+          this.completeRun(runId, "requires_approval");
+          yield this.recordRunChunk(
+            runId,
+            attachRunId(localStopReasonChunk("requires_approval"), runId),
+          );
+        } else {
+          const info = localStreamProtocolError(
+            "Local provider stream ended without a stop reason.",
+          );
+          this.completeRun(runId, "error", info);
+          for (const terminalChunk of [
+            localErrorChunk(info),
+            localStopReasonChunk("error"),
+          ]) {
+            const chunk = attachRunId(terminalChunk, runId);
             const persisted = store.appendStreamChunk(
               conversationId,
               agentId,
               chunk,
             );
             if (!isLocalStateChunkOnly(persisted)) {
-              yield backend.recordRunChunk(
-                runId,
-                attachRunId(persisted, runId),
-              );
+              yield this.recordRunChunk(runId, attachRunId(persisted, runId));
             }
           }
-          if (!sawStopReason) {
-            if (pendingErrorInfo) {
-              backend.completeRun(runId, "error", pendingErrorInfo);
-              yield backend.recordRunChunk(
-                runId,
-                attachRunId(localStopReasonChunk("error"), runId),
-              );
-            } else if (sawApprovalRequest) {
-              backend.completeRun(runId, "requires_approval");
-              yield backend.recordRunChunk(
-                runId,
-                attachRunId(localStopReasonChunk("requires_approval"), runId),
-              );
-            } else {
-              const info = localStreamProtocolError(
-                "Local provider stream ended without a stop reason.",
-              );
-              backend.completeRun(runId, "error", info);
-              for (const terminalChunk of [
-                localErrorChunk(info),
-                localStopReasonChunk("error"),
-              ]) {
-                const chunk = attachRunId(terminalChunk, runId);
-                const persisted = store.appendStreamChunk(
-                  conversationId,
-                  agentId,
-                  chunk,
-                );
-                if (!isLocalStateChunkOnly(persisted)) {
-                  yield backend.recordRunChunk(
-                    runId,
-                    attachRunId(persisted, runId),
-                  );
-                }
-              }
-            }
-          }
-        } catch (error) {
-          backend.failRun(runId, error);
-          throw error;
         }
-      },
-    } as unknown as Stream<LettaStreamingResponse>;
+      }
+    } catch (error) {
+      this.failRun(runId, error);
+      throw error;
+    }
   }
 }
 
