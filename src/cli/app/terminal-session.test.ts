@@ -451,3 +451,37 @@ test("skills picker enables and disables the selected server path", async () => 
   store.close();
   await reading;
 });
+
+test("creates the first local agent through the connected app server", async () => {
+  const first = connection();
+  const next = connection();
+  const sendCommand = mock(async () => ({
+    success: true,
+    agent: { id: "local-agent-example" },
+  }));
+  const session = Object.assign(first.session, { sendCommand });
+  const open = mock((_approve: CanUseToolCallback, target?: string) =>
+    target ? next.session : session,
+  );
+  const store = new TerminalSession(open, {
+    agents: {} as never,
+    conversations: {} as never,
+  });
+  const reading = store.connect();
+  await Bun.sleep(0);
+  expect(session.agentId).toBeUndefined();
+  await store.createPickerAgent("First", "local");
+  expect(sendCommand).toHaveBeenCalledWith(
+    {
+      type: "agent_create",
+      body: {
+        name: "First",
+        tags: ["origin:letta-code", "git-memory-enabled"],
+      },
+    },
+    { responseType: "agent_create_response" },
+  );
+  expect(open.mock.calls.at(-1)?.[1]).toBe("local-agent-example");
+  store.close();
+  await reading;
+});

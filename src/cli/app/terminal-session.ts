@@ -472,8 +472,8 @@ export class TerminalSession {
     if (!session || !this.management) return;
     try {
       if (
-        (mode === "local") !==
-        (!!session.agentId && isLocalAgentId(session.agentId))
+        session.agentId &&
+        (mode === "local") !== isLocalAgentId(session.agentId)
       )
         throw new Error("Select the backend connected to this app server.");
       const result = await session.sendCommand(
