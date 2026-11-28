@@ -27,6 +27,24 @@ describe("directory usability", () => {
     }
   });
 
+  test("classifies traverse permission failures after stat finds a directory", () => {
+    const statDirectory = () => ({ isDirectory: () => true });
+    for (const [code, expected] of [
+      ["EACCES", "inaccessible"],
+      ["EPERM", "inaccessible"],
+      ["EIO", "unknown"],
+    ] as const) {
+      const checkTraversal = (dirPath: string) => {
+        expect(dirPath).toBe("/restricted");
+        throw Object.assign(new Error("access failed"), { code });
+      };
+
+      expect(
+        getDirectoryUsability("/restricted", statDirectory, checkTraversal),
+      ).toBe(expected);
+    }
+  });
+
   test("treats thrown missing-path errors as confirmed unusable", () => {
     for (const code of ["ENOENT", "ENOTDIR"]) {
       const statDirectory = () => {
