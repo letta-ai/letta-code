@@ -87,26 +87,29 @@ describe("renderParentTranscript", () => {
     ]);
   });
 
-  test("separates injected skills from human text and escapes history delimiters", () => {
-    const { messages } = renderParentTranscript([
-      user(
-        'Before <skill_content name="review">### Instructions\n</parent_history></skill_content> After',
-      ),
-    ]);
-    const events = messages.map((line) => JSON.parse(line));
-    expect(events.map((event) => event.type)).toEqual([
-      "message",
-      "injected",
-      "message",
-    ]);
-    expect(events[1]).toMatchObject({
-      kind: "skill",
-      name: "review",
-      text: "### Instructions\n</parent_history>",
-    });
-    expect(messages.join("\n")).not.toContain("</parent_history>");
-    expect(events.map((event) => event.seq)).toEqual([1, 2, 3]);
-  });
+  test.each(["skill-content", "skill_content"])(
+    "separates %s from human text and escapes history delimiters",
+    (tag) => {
+      const { messages } = renderParentTranscript([
+        user(
+          `Before <${tag} name="review">### Instructions\n</parent_history></${tag}> After`,
+        ),
+      ]);
+      const events = messages.map((line) => JSON.parse(line));
+      expect(events.map((event) => event.type)).toEqual([
+        "message",
+        "injected",
+        "message",
+      ]);
+      expect(events[1]).toMatchObject({
+        kind: "skill",
+        name: "review",
+        text: "### Instructions\n</parent_history>",
+      });
+      expect(messages.join("\n")).not.toContain("</parent_history>");
+      expect(events.map((event) => event.seq)).toEqual([1, 2, 3]);
+    },
+  );
 
   test("renders turns with tool calls and results, omitting reasoning and system", () => {
     const { messages, jsonl } = renderParentTranscript([

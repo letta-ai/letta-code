@@ -107,3 +107,29 @@ test("shows a scheduled fire in previews and history with ordinary reminders hid
   expect(live[0]?.isSystemReminder).toBe(true);
   expect(live[1]).toEqual({ text: line.text, isSystemReminder: false });
 });
+
+test("hides current and legacy skill blocks from saved user lines", () => {
+  const buffers = createBuffers();
+  backfillBuffers(buffers, [
+    {
+      id: "skill-history",
+      date: "2026-01-01T00:00:00Z",
+      message_type: "user_message",
+      content: [
+        {
+          type: "text",
+          text: '<skill-content name="current">New instructions</skill-content>',
+        },
+        {
+          type: "text",
+          text: '<skill_content name="legacy">Old instructions</skill_content>',
+        },
+        { type: "text", text: "Review the plan." },
+      ],
+    },
+  ]);
+  expect(buffers.byId.get("skill-history")).toMatchObject({
+    kind: "user",
+    text: "Review the plan.",
+  });
+});

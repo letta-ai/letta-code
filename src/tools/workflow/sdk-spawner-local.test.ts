@@ -167,9 +167,9 @@ describe("createSdkSpawner skills", () => {
       new AbortController().signal,
     );
     expect(prompts[0]).toStartWith(
-      '<skill_content name="creating-skills">\n---\n',
+      '<skill-content name="creating-skills">\n---\n',
     );
-    expect(prompts[0]).toEndWith("</skill_content>\n\ninspect");
+    expect(prompts[0]).toEndWith("</skill-content>\n\ninspect");
 
     const outcome = await spawner(
       request({ skills: ["creating-skills", "no-such-skill"] }),
