@@ -485,3 +485,53 @@ test("creates the first local agent through the connected app server", async () 
   store.close();
   await reading;
 });
+
+test("finishes reasoning and commits a Write result before the turn ends", async () => {
+  const transport = connection();
+  const store = new TerminalSession(() => transport.session);
+  const reading = store.connect();
+  await Bun.sleep(0);
+  await store.send("Write the file");
+  transport.push({ type: "reasoning", content: "Inspecting", uuid: "r" });
+  await Bun.sleep(0);
+  expect(store.snapshot().turnBytes).toBe(10);
+  expect(store.snapshot().committed).toBe(1);
+  transport.push({
+    type: "tool_call",
+    toolCallId: "write",
+    toolName: "Write",
+    toolInput: { file_path: "sample.txt" },
+    uuid: "c",
+  });
+  await Bun.sleep(0);
+  const reasoning = store.snapshot().rows[1];
+  expect(store.snapshot().committed).toBe(2);
+  expect(
+    store.rowLifecycle.durations.get(reasoning!.key),
+  ).toBeGreaterThanOrEqual(0);
+  transport.push({
+    type: "tool_result",
+    toolCallId: "write",
+    content: "Written",
+    isError: false,
+    uuid: "result",
+  });
+  transport.push({ type: "assistant", content: "Unfinished", uuid: "a" });
+  await Bun.sleep(0);
+  await store.send("Queue another");
+  expect(store.snapshot().committed).toBe(3);
+  expect(store.snapshot().turnActive).toBe(true);
+  transport.push({
+    type: "result",
+    stopReason: "interrupted",
+    success: false,
+    durationMs: 1,
+    conversationId: "conv",
+  });
+  transport.push({ type: "loop_status", status: "idle", activeRunIds: [] });
+  await Bun.sleep(0);
+  expect(store.snapshot().turnActive).toBe(false);
+  expect(store.snapshot().notices[0]?.text).toContain("Interrupted");
+  store.close();
+  await reading;
+});

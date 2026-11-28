@@ -49,7 +49,9 @@ export function isPickerPageRequest(
     isObjectRecord(value) &&
     value.type === "agent_picker_page" &&
     typeof value.request_id === "string" &&
-    (value.collection === "pinned" || value.collection === "shared") &&
+    (value.collection === "pinned" ||
+      value.collection === "shared" ||
+      value.collection === "local") &&
     (value.after === undefined || typeof value.after === "string") &&
     (value.query === undefined || typeof value.query === "string")
   );

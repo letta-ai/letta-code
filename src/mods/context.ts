@@ -20,6 +20,7 @@ function resolveModelContext(options: {
   agent?: AgentContextSource | null;
   base?: ModContext | null;
   modelIdentifier?: string | null;
+  modelDisplayName?: string | null;
 }): ModModelContext {
   const modelHandle =
     options.modelIdentifier ??
@@ -32,7 +33,7 @@ function resolveModelContext(options: {
     modelInfo?.handle.split("/")[0] ?? modelHandle?.split("/")[0] ?? null;
   return {
     id: modelHandle,
-    displayName: modelInfo?.label ?? modelHandle,
+    displayName: options.modelDisplayName ?? modelInfo?.label ?? modelHandle,
     provider,
     reasoningEffort:
       typeof options.agent?.llm_config?.reasoning_effort === "string"
@@ -47,6 +48,7 @@ export function buildModInvocationContext(
     base?: ModContext | null;
     conversationId?: string | null;
     modelIdentifier?: string | null;
+    modelDisplayName?: string | null;
     permissionMode?: string | null;
     toolset?: string | null;
     workingDirectory?: string | null;

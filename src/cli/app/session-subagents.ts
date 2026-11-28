@@ -35,6 +35,8 @@ export function sessionSubagents(items: unknown[]): SubagentState[] {
       id: item.subagent_id,
       description: item.description,
       status,
+      toolCallId:
+        typeof item.tool_call_id === "string" ? item.tool_call_id : undefined,
       type:
         typeof item.subagent_type === "string"
           ? item.subagent_type

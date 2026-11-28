@@ -22,6 +22,7 @@ import type {
 } from "@letta-ai/letta-client/resources/conversations/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import type { ExperimentId } from "@/experiments/types";
+import type { ListMemoryCommand } from "@/types/list-memory-command";
 import type { ConnectProviderOAuthConfig } from "@/types/provider-oauth-config";
 import type { TurnFinishedAckCommand } from "@/types/turn-finished-protocol";
 import type {
@@ -815,12 +816,7 @@ export interface FileChangedMessage {
   lastModified: number;
 }
 
-export interface ListMemoryCommand {
-  type: "list_memory";
-  request_id: string;
-  agent_id: string;
-  include_references?: boolean;
-}
+export type { ListMemoryCommand } from "@/types/list-memory-command";
 
 export interface MemoryHistoryCommand {
   type: "memory_history";

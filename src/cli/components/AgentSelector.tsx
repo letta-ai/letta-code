@@ -7,7 +7,6 @@ import {
   FETCH_PAGE_SIZE,
   fetchCloudAgentPage,
 } from "@/cli/helpers/cloud-agent-page";
-import { listLocalAgentsFromDisk } from "@/cli/helpers/local-agent-listing";
 import {
   hasCloudCredentials,
   listPinnedAgentsForCurrentUser,
@@ -34,7 +33,8 @@ import {
   formatAgentModel,
   formatRelativeTime,
   getVisibleAgentSelectorTabs,
-  listSessionLocalAgents,
+  initialLocalTab,
+  localPickerAgents,
   truncateAgentId,
 } from "./agent-selector-utils";
 import { colors } from "./colors";
@@ -65,14 +65,9 @@ export function AgentSelector({
 }: AgentSelectorProps) {
   const terminalWidth = useTerminalWidth();
 
-  const [hasLocalAgents, setHasLocalAgents] = useState(() => {
-    if (sessionList) return isLocalAgentId(currentAgentId);
-    try {
-      return listLocalAgentsFromDisk().length > 0;
-    } catch {
-      return false;
-    }
-  });
+  const [hasLocalAgents, setHasLocalAgents] = useState(() =>
+    initialLocalTab(currentAgentId, !!sessionList),
+  );
   const [hasCloudAuth, setHasCloudAuth] = useState<boolean | null>(null);
 
   const visibleTabs = useMemo(
@@ -174,9 +169,7 @@ export function AgentSelector({
   const loadLocalAgents = useCallback(async () => {
     setLocalLoading(true);
     try {
-      const agents = sessionList
-        ? await listSessionLocalAgents(sessionList)
-        : listLocalAgentsFromDisk();
+      const agents = await localPickerAgents(sessionCollection, sessionList);
       setLocalAgents(agents);
       setHasLocalAgents(agents.length > 0);
       setLocalPage(0);
@@ -188,7 +181,10 @@ export function AgentSelector({
     } finally {
       setLocalLoading(false);
     }
-  }, [sessionList]);
+  }, [sessionList, sessionCollection]);
+  useEffect(() => {
+    if (sessionCollection) void loadLocalAgents();
+  }, [sessionCollection, loadLocalAgents]);
 
   const fetchCloudAgents = sessionList ?? fetchCloudAgentPage;
 

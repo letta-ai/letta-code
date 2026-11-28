@@ -4,7 +4,6 @@ import { isAskUserQuestions } from "@/ask-user-question";
 import { LettaLoginView } from "@/auth/LettaLoginView";
 import { SessionModelPicker } from "@/cli/app/SessionModelPicker";
 import { StaticTranscript } from "@/cli/app/StaticTranscript";
-import { terminalCommands } from "@/cli/app/terminal-commands";
 import type { useSessionView } from "@/cli/app/use-session-view";
 import { AgentSelector } from "@/cli/components/AgentSelector";
 import { ApprovalSwitch } from "@/cli/components/ApprovalSwitch";
@@ -45,6 +44,7 @@ export function AppView({
   columns,
   loadingState,
   sessionWelcome,
+  shouldAnimate,
   staticItems,
   liveItems,
   precomputedDiffs,
@@ -55,6 +55,15 @@ export function AppView({
   input,
   active,
 }: ReturnType<typeof useSessionView>) {
+  if (state.memory)
+    return (
+      <MemfsTreeViewer
+        agentId={state.memory.agentId}
+        conversationId={state.memory.conversationId}
+        entries={state.memory.entries}
+        onClose={() => store.closeMemory()}
+      />
+    );
   const approvalView =
     approval &&
     (approval.name === "AskUserQuestion" &&
@@ -119,6 +128,11 @@ export function AppView({
   return (
     <Box key={state.epoch} flexDirection="column">
       <StaticTranscript
+        groupedTaskIds={
+          new Set(
+            state.subagents?.map((agent) => agent.toolCallId).filter(Boolean),
+          )
+        }
         renderEpoch={state.epoch}
         items={staticItems}
         columns={columns}
@@ -134,7 +148,7 @@ export function AppView({
 
         {loadingState === "ready" && (
           <>
-            <AnimationProvider shouldAnimate={true}>
+            <AnimationProvider shouldAnimate={shouldAnimate}>
               {liveItems.length > 0 && (
                 <Box flexDirection="column">
                   {liveItems.map((ln) => {
@@ -227,11 +241,16 @@ export function AppView({
             </AnimationProvider>
 
             <Box marginTop={1}>
-              <Input {...input} collapseInputWhenDisabled={!active} />
+              <Input
+                shouldAnimate={shouldAnimate}
+                statusLinePrompt={statusLinePrompt}
+                {...input}
+                collapseInputWhenDisabled={!active}
+              />
             </Box>
             {state.help ? (
               <HelpDialog
-                sessionCommands={terminalCommands}
+                sessionCommands={input.sessionCompletions.commands}
                 onClose={() => store.closeHelp()}
               />
             ) : state.login ? (
@@ -304,13 +323,6 @@ export function AppView({
                 }))}
                 onSelect={(path) => void store.toggleSkill(path)}
                 onCancel={() => store.closeSkills()}
-              />
-            ) : state.memory ? (
-              <MemfsTreeViewer
-                agentId={state.memory.agentId}
-                conversationId={state.memory.conversationId}
-                entries={state.memory.entries}
-                onClose={() => store.closeMemory()}
               />
             ) : null}
           </>

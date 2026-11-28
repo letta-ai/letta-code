@@ -94,6 +94,7 @@ export const ToolCallMessage = memo(
   ({
     line,
     remote = false,
+    groupedTask = false,
     precomputedDiffs,
     isStreaming,
     expandedToolCallId,
@@ -101,6 +102,7 @@ export const ToolCallMessage = memo(
   }: {
     line: ToolCallLine;
     remote?: boolean;
+    groupedTask?: boolean;
     precomputedDiffs?: Map<string, AdvancedDiffSuccess>;
     isStreaming?: boolean;
     expandedToolCallId?: string | null;
@@ -116,12 +118,13 @@ export const ToolCallMessage = memo(
             ? ""
             : JSON.stringify(line.argsText);
 
-      if (!remote && isTaskTool(rawName)) {
+      if (isTaskTool(rawName)) {
         const isFinished = line.phase === "finished";
-        const subagent = line.toolCallId
-          ? getSubagentByToolCallId(line.toolCallId)
-          : undefined;
-        if (subagent) {
+        const subagent =
+          !remote && line.toolCallId
+            ? getSubagentByToolCallId(line.toolCallId)
+            : undefined;
+        if (subagent || groupedTask) {
           return null;
         }
         if (!isFinished) {

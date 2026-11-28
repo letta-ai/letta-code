@@ -9,6 +9,7 @@ import {
   hasValidChannelPolicyFields,
   isChannelId,
 } from "@/types/channel-service-validation";
+import { isListMemoryCommand } from "@/types/list-memory-command";
 import type {
   AbortMessageCommand,
   AgentCreateCommand,
@@ -65,7 +66,6 @@ import type {
   InputCreateMessagePayload,
   ListConnectProvidersCommand,
   ListInDirectoryCommand,
-  ListMemoryCommand,
   ListModelsCommand,
   MemoryCommitDiffCommand,
   MemoryFileAtRefCommand,
@@ -622,24 +622,7 @@ export function isFileOpsCommand(value: unknown): value is FileOpsCommand {
   );
 }
 
-export function isListMemoryCommand(
-  value: unknown,
-): value is ListMemoryCommand {
-  if (!value || typeof value !== "object") return false;
-  const c = value as {
-    type?: unknown;
-    request_id?: unknown;
-    agent_id?: unknown;
-    include_references?: unknown;
-  };
-  return (
-    c.type === "list_memory" &&
-    typeof c.request_id === "string" &&
-    typeof c.agent_id === "string" &&
-    (c.include_references === undefined ||
-      typeof c.include_references === "boolean")
-  );
-}
+export { isListMemoryCommand };
 
 export function isMemoryHistoryCommand(
   value: unknown,

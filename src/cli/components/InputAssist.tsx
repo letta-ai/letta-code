@@ -88,16 +88,15 @@ export function InputAssist({
           workingDirectory={workingDirectory}
           modCommands={modCommands}
         />
-        {!session && (
-          <AgentInfoBar
-            agentId={agentId}
-            agentName={agentName}
-            currentModel={currentModel}
-            currentReasoningEffort={currentReasoningEffort}
-            serverUrl={serverUrl}
-            conversationId={conversationId}
-          />
-        )}
+        <AgentInfoBar
+          session={!!session}
+          agentId={agentId}
+          agentName={agentName}
+          currentModel={currentModel}
+          currentReasoningEffort={currentReasoningEffort}
+          serverUrl={serverUrl}
+          conversationId={conversationId}
+        />
       </Box>
     );
   }

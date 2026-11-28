@@ -329,7 +329,7 @@ export async function handleListMemoryCommand(
           relative_path: node.relativePath,
           is_system: isSystem,
           description: typeof desc === "string" ? desc : null,
-          content: body,
+          content: parsed.include_frontmatter ? raw : body,
           size: body.length,
           ...(includeReferences
             ? {

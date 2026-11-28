@@ -1,6 +1,7 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
-import type { AgentBackendMode } from "@/agent/agent-id";
+import { type AgentBackendMode, isLocalAgentId } from "@/agent/agent-id";
 import { getModelDisplayName } from "@/agent/model";
+import { listLocalAgentsFromDisk } from "@/cli/helpers/local-agent-listing";
 import type { PinnedAgentData } from "@/cli/helpers/pinned-agent-listing";
 
 export interface AgentSelectorListAgent {
@@ -184,4 +185,22 @@ export async function listSessionLocalAgents(
     if (cursor) seen.add(cursor);
   } while (cursor);
   return agents;
+}
+
+export function initialLocalTab(agentId: string, session: boolean) {
+  if (session) return isLocalAgentId(agentId);
+  try {
+    return listLocalAgentsFromDisk().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+export async function localPickerAgents(
+  sessionCollection: AgentSelectorProps["sessionCollection"],
+  sessionList: AgentSelectorProps["sessionList"],
+) {
+  if (sessionCollection) return (await sessionCollection("local")).agents;
+  if (sessionList) return listSessionLocalAgents(sessionList);
+  return listLocalAgentsFromDisk();
 }

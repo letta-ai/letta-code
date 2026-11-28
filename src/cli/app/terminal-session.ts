@@ -1,6 +1,5 @@
 import {
   type CanUseToolCallback,
-  type CanUseToolContext,
   type CanUseToolResponse,
   createTranscriptAccumulator,
   type LettaAgentClient,
@@ -8,82 +7,33 @@ import {
   type LettaCodeSession,
   type ListMessagesResult,
   type MessageContentItem,
-  type SDKQueueItem,
   type SessionDeviceStatus,
   type TranscriptRow,
 } from "@letta-ai/letta-agent-sdk";
 import { isLocalAgentId } from "@/agent/agent-id";
+import { getModelDisplayName } from "@/agent/model";
 import {
   type AskUserQuestionReceipt,
-  parseAskUserQuestionNotif,
-  parseAskUserQuestionReceipt,
   prepareAskUserQuestionNotif,
 } from "@/ask-user-question";
+import { INTERRUPT_MESSAGE } from "@/cli/app/constants";
 import { queuedDraft } from "@/cli/app/queued-draft";
 import { sessionConversations } from "@/cli/app/session-conversations";
 import { sessionSubagents } from "@/cli/app/session-subagents";
+import { isSessionSkillCommand } from "@/cli/app/terminal-commands";
+import {
+  projectTranscript,
+  streamBytes,
+  TerminalRowLifecycle,
+} from "@/cli/app/terminal-row-lifecycle";
+import type { Approval, Skill, Snapshot } from "@/cli/app/terminal-snapshot";
 import type { PermissionMode } from "@/permissions/mode";
 import type {
   PickerCollection,
   PickerPageResponse,
 } from "@/types/agent-picker";
-
 import type { MemoryFileEntry } from "@/types/protocol_v2";
-
 import { isRecord } from "@/utils/type-guards";
-
-type Approval = {
-  name: string;
-  input: Record<string, unknown>;
-  context?: CanUseToolContext;
-  resolve: (answer: CanUseToolResponse) => void;
-};
-
-type Skill = {
-  name: string;
-  path: string;
-  label: string;
-  description: string;
-  enabled: boolean;
-  fixed?: boolean;
-};
-
-type Snapshot = {
-  rows: readonly TranscriptRow[];
-  committed: number;
-  epoch: number;
-  queue: readonly SDKQueueItem[];
-  pausedQueueIds?: readonly string[];
-  resumedHistory?: boolean;
-  approvals: readonly Approval[];
-  status: "connecting" | "online" | "offline";
-  error?: string;
-  commandOutput?: string;
-  device?: SessionDeviceStatus;
-  question?: AskUserQuestionReceipt;
-  login?: boolean;
-  help?: boolean;
-  model?: string;
-  agentId?: string;
-  agentName?: string;
-  subagents?: ReturnType<typeof sessionSubagents>;
-  tokens?: number;
-  picker?: {
-    kind: "agents" | "resume" | "model";
-    items: { key: string; label: string; description?: string }[];
-    after?: string;
-    models?: LettaCodeModelEntry[];
-    handles?: string[] | null;
-    aliases?: Record<string, string>;
-  };
-  skills?: Skill[];
-  memory?: {
-    agentId: string;
-    conversationId?: string;
-    entries: MemoryFileEntry[];
-  };
-  activity?: string;
-};
 
 export class TerminalSession {
   private pendingAnswers = new Set<string>();
@@ -92,6 +42,8 @@ export class TerminalSession {
     string,
     ListMessagesResult["messages"][number]
   >();
+  readonly approvedArguments = new Map<string, Record<string, unknown>>();
+  rowLifecycle = new TerminalRowLifecycle();
   private transcript = createTranscriptAccumulator();
   private listeners = new Set<() => void>();
   private unsubscribeDevice?: () => void;
@@ -100,6 +52,9 @@ export class TerminalSession {
   private session?: LettaCodeSession;
   private state: Snapshot = {
     rows: [],
+    notices: [],
+    turnActive: false,
+    turnBytes: 0,
     committed: 0,
     epoch: 0,
     queue: [],
@@ -117,7 +72,20 @@ export class TerminalSession {
       "agents" | "conversations"
     >,
     private readonly logout?: () => Promise<string>,
+    private readonly catalog?: LettaCodeModelEntry[],
   ) {}
+
+  get modelDisplayName() {
+    const model = this.state.model;
+    if (!model) return undefined;
+    return (
+      getModelDisplayName(model) ??
+      this.catalog?.find(
+        (entry) => entry.handle === model || entry.id === model,
+      )?.label ??
+      model
+    );
+  }
 
   readonly conversations = sessionConversations(() => {
     if (!this.session) throw new Error("Session disconnected");
@@ -140,56 +108,16 @@ export class TerminalSession {
   }
 
   private project(rows: readonly TranscriptRow[], settled = false) {
-    for (const row of rows) {
-      if (row.kind === "user" && row.otid) this.echoes.delete(row.otid);
-    }
-
-    const projected = [...rows];
-    for (const [otid, { anchor, text }] of this.echoes) {
-      const index = projected.findIndex(
-        (row) =>
-          row.key === anchor || (anchor !== undefined && row.otid === anchor),
-      );
-      projected.splice(index + 1, 0, { key: otid, otid, kind: "user", text });
-    }
-    const answered = new Set(this.pendingAnswers);
-    const questions: AskUserQuestionReceipt[] = [];
-    for (const row of projected) {
-      if (
-        row.kind === "user" &&
-        row.text.includes("<ask-user-question-response>")
-      ) {
-        for (const answer of parseAskUserQuestionNotif(row.text))
-          answered.add(answer.toolCallId);
-      }
-      if (
-        row.kind === "tool_call" &&
-        row.toolName === "AskUserQuestion" &&
-        row.result
-      ) {
-        const receipt = parseAskUserQuestionReceipt(row.result.content);
-        if (receipt) questions.push(receipt);
-      }
-    }
-    const previous = this.state;
-    const reset = previous.rows
-      .slice(0, previous.committed)
-      .some(
-        (row, index) =>
-          row !== projected[index] &&
-          JSON.stringify(row) !== JSON.stringify(projected[index]),
-      );
-    this.update({
-      rows: projected,
-      question: questions.find((q) => !answered.has(q.toolCallId)),
-      committed:
-        settled && !this.echoes.size
-          ? projected.length
-          : reset
-            ? 0
-            : previous.committed,
-      epoch: previous.epoch + Number(reset),
-    });
+    this.update(
+      projectTranscript(
+        rows,
+        settled,
+        this.state,
+        this.rowLifecycle,
+        this.echoes,
+        this.pendingAnswers,
+      ),
+    );
   }
 
   private fail(error: unknown) {
@@ -256,6 +184,8 @@ export class TerminalSession {
         new Promise((resolve) => {
           if (session !== this.session)
             return resolve({ behavior: "deny", message: "Disconnected" });
+          if (context?.toolCallId)
+            this.approvedArguments.set(context.toolCallId, input);
           this.update({
             approvals: [
               ...this.state.approvals,
@@ -278,7 +208,13 @@ export class TerminalSession {
           })
           .catch(() => {});
       const receiveDevice = (device: SessionDeviceStatus) => {
-        if (session === this.session) this.update({ device });
+        if (session === this.session)
+          this.update({
+            device,
+            ...(device.isProcessing && !this.state.turnActive
+              ? { turnActive: true, turnBytes: 0 }
+              : {}),
+          });
       };
       this.unsubscribeDevice = session.onDeviceStatus(receiveDevice);
       void session
@@ -307,16 +243,20 @@ export class TerminalSession {
           if (message.type === "queue_update")
             this.update({ queue: message.queue });
           else if (message.type === "loop_status")
-            this.update({
-              activity: message.activeRunIds.length
-                ? "Working · Esc to interrupt"
-                : undefined,
-            });
+            this.update(
+              message.activeRunIds.length ? { turnActive: true } : {},
+            );
           else if (message.type === "error") this.fail(message.message);
           else if (message.type === "result") {
+            this.project(this.transcript.rows(), true);
+            const interrupted =
+              message.stopReason === "interrupted" ||
+              message.stopReason === "cancelled";
+            if (interrupted) this.notice(INTERRUPT_MESSAGE);
             this.update({
-              activity:
-                message.stopReason === "cancelled" ? "Interrupted" : undefined,
+              activity: undefined,
+              turnActive: false,
+              turnBytes: 0,
             });
             try {
               const page = await this.history(session);
@@ -325,7 +265,17 @@ export class TerminalSession {
             } catch (error) {
               if (session === this.session) this.fail(error);
             }
-          } else this.project(this.transcript.apply(message));
+          } else {
+            const previous = this.transcript.rows();
+            const after = this.transcript.apply(message);
+            const bytes = previous === after ? undefined : streamBytes(message);
+            if (bytes !== undefined)
+              this.update({
+                turnActive: true,
+                turnBytes: this.state.turnBytes + bytes,
+              });
+            this.project(after);
+          }
         }
         if (!received) throw new Error("Connection closed");
       }
@@ -344,7 +294,18 @@ export class TerminalSession {
     first.resolve(response);
   }
 
+  private notice(text: string, input?: string) {
+    this.update({
+      notices: [
+        ...this.state.notices,
+        { id: crypto.randomUUID(), index: this.state.committed, input, text },
+      ],
+    });
+  }
+
   private switchTarget(target: string) {
+    this.approvedArguments.clear();
+    this.rowLifecycle = new TerminalRowLifecycle();
     this.eventSeq.clear();
     this.target = target;
     this.pendingAnswers.clear();
@@ -355,6 +316,7 @@ export class TerminalSession {
       rows: [],
       committed: 0,
       epoch: this.state.epoch + 1,
+      notices: [],
       picker: undefined,
       skills: undefined,
       commandOutput: undefined,
@@ -856,10 +818,12 @@ export class TerminalSession {
       }
       if (text === "/memory") {
         if (!session.agentId) throw new Error("Memory requires an agent");
+        this.update({ commandOutput: "Opening memory viewer..." });
         const entries: MemoryFileEntry[] = [];
         const result = await session.sendCommand(
           {
             type: "list_memory",
+            include_frontmatter: true,
             agent_id: session.agentId,
           },
           {
@@ -875,6 +839,7 @@ export class TerminalSession {
         if (result.success === false) throw new Error(String(result.error));
 
         this.update({
+          epoch: this.state.epoch + 1,
           memory: {
             agentId: session.agentId,
             conversationId: session.conversationId ?? undefined,
@@ -885,7 +850,10 @@ export class TerminalSession {
         return;
       }
       const command = /^\/([a-z][\w-]*)(?:\s+([\s\S]*))?$/i.exec(text);
-      if (command) {
+      if (
+        command &&
+        !isSessionSkillCommand(command[1] ?? "", this.state.device?.raw)
+      ) {
         if (
           ["reflection", "clear-messages", "set-max-context"].includes(
             command[1] ?? "",
@@ -909,10 +877,12 @@ export class TerminalSession {
         this.update({ commandOutput: String(result.output), error: undefined });
         return;
       }
-      this.echoes.set(otid, { text, anchor: this.state.rows.at(-1)?.key });
+      if (!this.state.turnActive)
+        this.echoes.set(otid, { text, anchor: this.state.rows.at(-1)?.key });
       this.update({
         commandOutput: undefined,
         error: undefined,
+        turnActive: true,
         activity: "Working · Esc to interrupt",
       });
       this.project(this.transcript.rows());
@@ -921,12 +891,20 @@ export class TerminalSession {
       if (session !== this.session) return;
       this.echoes.delete(otid);
       this.project(this.transcript.rows());
+      this.update({
+        commandOutput: undefined,
+        ...(this.state.activity?.startsWith("Working") &&
+        !this.state.device?.isProcessing
+          ? { turnActive: false, activity: undefined }
+          : {}),
+      });
       this.fail(error);
     }
   }
 
   closeMemory() {
-    this.update({ memory: undefined });
+    this.notice("Memory viewer dismissed", "/memory");
+    this.update({ memory: undefined, epoch: this.state.epoch + 1 });
   }
 
   async setPermissionMode(permissionMode: PermissionMode) {
@@ -962,6 +940,8 @@ export class TerminalSession {
     session?.close();
     this.update({
       status: "offline",
+      turnActive: false,
+      turnBytes: 0,
       picker: undefined,
       skills: undefined,
       question: undefined,

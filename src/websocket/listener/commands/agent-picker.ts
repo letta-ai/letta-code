@@ -1,6 +1,7 @@
 import { isLocalAgentId } from "@/agent/agent-id";
 import { unpinAgentForCurrentUser } from "@/agent/favorites";
 import { isLocalBackendEnabled } from "@/backend";
+import { listLocalAgentsFromDisk } from "@/cli/helpers/local-agent-listing";
 import { listPinnedAgentsForCurrentUser } from "@/cli/helpers/pinned-agent-listing";
 import { listSharedAgentsForCurrentUser } from "@/cli/helpers/shared-agent-listing";
 import type {
@@ -17,6 +18,21 @@ export async function readPickerPage(
   };
   try {
     const local = isLocalBackendEnabled();
+    if (request.collection === "local") {
+      return {
+        ...base,
+        success: true,
+        agents: listLocalAgentsFromDisk().map(
+          ({ id, name, description, model, last_run_completion }) => ({
+            id,
+            name,
+            description,
+            model,
+            last_run_completion,
+          }),
+        ),
+      };
+    }
     if (request.collection === "pinned") {
       const pins = await listPinnedAgentsForCurrentUser([
         local ? "local" : "api",

@@ -1,5 +1,6 @@
 import { render } from "ink";
 import { useEffect } from "react";
+import { refreshModelCatalog } from "@/agent/remote-model-catalog";
 import { createAttachedClient } from "@/cli/app/attached-client";
 import { SessionViewHost } from "./SessionViewHost";
 import { terminalSocket } from "./terminal-runtime-events";
@@ -40,10 +41,17 @@ export async function runAttachedTerminal(values: {
   try {
     const id = target ?? (await client.agents.list({ limit: 1 }))[0]?.id;
     if (!id) throw new Error("No agents available on this app server");
+    if (address === "cloud") await refreshModelCatalog().catch(() => false);
+    const catalog =
+      address === "cloud"
+        ? await client.models.list().catch(() => undefined)
+        : undefined;
     const store = new TerminalSession(
       (canUseTool, target) =>
         client.resumeSession(target ?? id, { canUseTool }),
       client,
+      undefined,
+      catalog?.entries,
     );
     activeStore = store;
     const app = render(

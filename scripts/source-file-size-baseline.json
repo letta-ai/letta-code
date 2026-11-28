@@ -1,8 +1,8 @@
 {
   "src/agent/memory-git.ts": 1819,
   "src/backend/local/local-store.ts": 3179,
-  "src/cli/components/AgentSelector.tsx": 1030,
-  "src/cli/components/InputRich.tsx": 1932,
+  "src/cli/components/AgentSelector.tsx": 1026,
+  "src/cli/components/InputRich.tsx": 1930,
   "src/cli/components/ProviderSelector.tsx": 1483,
   "src/cli/helpers/accumulator.ts": 1384,
   "src/cli/helpers/reflection-transcript.ts": 1554,
@@ -23,8 +23,8 @@
   "src/settings-manager.ts": 1711,
   "src/tools/manager.ts": 2351,
   "src/tools/tool-execution-context.test.ts": 1025,
-  "src/types/protocol_v2.ts": 2121,
+  "src/types/protocol_v2.ts": 2117,
   "src/websocket/listen-client-concurrency.test.ts": 2471,
   "src/websocket/listener/commands/memory.ts": 1058,
-  "src/websocket/listener/protocol-inbound.ts": 2022
+  "src/websocket/listener/protocol-inbound.ts": 2005
 }

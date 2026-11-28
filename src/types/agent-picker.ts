@@ -13,7 +13,7 @@ export interface PickerAgent {
   creator?: { id: string; name?: string | null } | null;
 }
 
-export type PickerCollection = "pinned" | "shared";
+export type PickerCollection = "pinned" | "shared" | "local";
 export type PickerPageRequest = {
   type: "agent_picker_page";
   request_id: string;

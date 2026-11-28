@@ -9,7 +9,7 @@ import {
 import { getRandomThinkingVerb } from "@/cli/helpers/thinking-messages";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { buildModInvocationContext } from "@/mods/context";
-import { terminalCommands } from "./terminal-commands";
+import { sessionCommands } from "./terminal-commands";
 import type { TerminalSession } from "./terminal-session";
 
 const adapter = {
@@ -31,9 +31,7 @@ export function useTerminalInput({
   const stopping =
     state.activity === "Interrupted" ||
     state.activity === "Interrupt requested";
-  const streaming =
-    !stopping &&
-    (!!state.device?.isProcessing || !!state.activity?.startsWith("Working"));
+  const streaming = !stopping && state.turnActive;
   const thinkingMessage = useMemo(
     () => (streaming ? getRandomThinkingVerb() : ""),
     [streaming],
@@ -62,20 +60,28 @@ export function useTerminalInput({
   const width = useTerminalWidth();
   const completions = useMemo(
     () => ({
-      commands: terminalCommands,
+      commands: sessionCommands(state.device?.raw),
       searchFiles: (query: string) => store.searchFiles(query),
     }),
-    [store],
+    [store, state.device],
   );
+  const modelDisplayName = store.modelDisplayName;
   const context = useMemo(
     () =>
       buildModInvocationContext({
         workingDirectory: state.device?.workingDirectory ?? "",
         agent: { id: state.agentId, name: state.agentName },
         modelIdentifier: state.model,
+        modelDisplayName,
         permissionMode: state.device?.permissionMode,
       }),
-    [state.device, state.model, state.agentId, state.agentName],
+    [
+      state.device,
+      state.model,
+      state.agentId,
+      state.agentName,
+      modelDisplayName,
+    ],
   );
   return {
     recallQueued: store.queuedInput ? () => store.recallQueued() : undefined,
@@ -88,10 +94,11 @@ export function useTerminalInput({
     agentName: state.agentName ?? initialName,
     agentId: state.agentId,
     messageQueue,
-    tokenCount: state.tokens ?? 0,
+    tokenCount: state.turnBytes,
+    networkPhase: streaming ? (state.turnBytes ? "download" : "upload") : null,
     thinkingMessage,
     terminalWidth: width,
-    currentModel: state.model,
+    currentModel: modelDisplayName,
     includeSystemPromptUpgradeTip: false,
     modContext: context,
     modAdapter: adapter,

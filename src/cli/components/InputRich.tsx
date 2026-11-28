@@ -500,7 +500,7 @@ const StreamingStatus = memo(function StreamingStatus({
   contextWindowSize,
   elapsedBaseMs,
   thinkingMessage,
-  includeSystemPromptUpgradeTip,
+  tipMessage,
   agentName,
   interruptRequested,
   networkPhase,
@@ -515,7 +515,7 @@ const StreamingStatus = memo(function StreamingStatus({
   contextWindowSize: number | null | undefined;
   elapsedBaseMs: number;
   thinkingMessage: string;
-  includeSystemPromptUpgradeTip: boolean;
+  tipMessage: string;
   agentName: string | null | undefined;
   interruptRequested: boolean;
   networkPhase: "upload" | "download" | "error" | null;
@@ -582,7 +582,6 @@ const StreamingStatus = memo(function StreamingStatus({
   const displayedTokenBytes = useTokenSmoothing(tokenCount, isLive);
 
   const [elapsedMs, setElapsedMs] = useState(0);
-  const [tipMessage, setTipMessage] = useState("");
   const streamStartRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -610,12 +609,6 @@ const StreamingStatus = memo(function StreamingStatus({
     streamStartRef.current = null;
     setElapsedMs(0);
   }, [streaming, visible]);
-
-  useEffect(() => {
-    if (streaming && visible) {
-      setTipMessage(getRandomThinkingTip({ includeSystemPromptUpgradeTip }));
-    }
-  }, [streaming, visible, includeSystemPromptUpgradeTip]);
 
   const actualEstimatedTokens = bytesToTokens(tokenCount);
   const estimatedTokens = bytesToTokens(displayedTokenBytes);
@@ -1904,6 +1897,11 @@ export function Input({
     statuslineTransientHint,
   ]);
 
+  const tipMessage = useMemo(
+    () =>
+      streaming ? getRandomThinkingTip({ includeSystemPromptUpgradeTip }) : "",
+    [streaming, includeSystemPromptUpgradeTip],
+  );
   if (!visible) {
     return null;
   }
@@ -1918,7 +1916,7 @@ export function Input({
         contextWindowSize={contextWindowSize}
         elapsedBaseMs={elapsedBaseMs}
         thinkingMessage={thinkingMessage}
-        includeSystemPromptUpgradeTip={includeSystemPromptUpgradeTip}
+        tipMessage={tipMessage}
         agentName={agentName}
         interruptRequested={interruptRequested}
         networkPhase={networkPhase}
