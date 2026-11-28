@@ -641,8 +641,8 @@ async function main(): Promise<void> {
     await printInfo();
     process.exit(0);
   }
-
   if (values.cloud || values.connect) {
+    await initTerminalTheme().catch(() => undefined);
     const { runAttachedTerminal } = await import("@/cli/app/AttachedTerminal");
     return runAttachedTerminal(values).catch((error: Error) => {
       console.error(error.message);

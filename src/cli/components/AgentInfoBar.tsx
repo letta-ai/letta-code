@@ -137,11 +137,13 @@ export const AgentInfoBar = memo(function AgentInfoBar({
   const contentWidth = Math.max(1, columns - 2);
 
   const agentNameLabel = agentName || "Unnamed";
-  const agentHint = isPinned
-    ? " (pinned)"
-    : agentName === DEFAULT_AGENT_NAME || !agentName
-      ? " (type /pin to give your agent a real name!)"
-      : " (type /pin to pin agent)";
+  const agentHint = session
+    ? ""
+    : isPinned
+      ? " (pinned)"
+      : agentName === DEFAULT_AGENT_NAME || !agentName
+        ? " (type /pin to give your agent a real name!)"
+        : " (type /pin to pin agent)";
   const agentNameLine = `${agentNameLabel}${agentHint}`;
   const conversationLabel =
     conversationId && conversationId !== "default"

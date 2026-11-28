@@ -42,6 +42,27 @@ export class TerminalRowLifecycle {
   }
 }
 
+function sameRenderedRow(previous: TranscriptRow, next?: TranscriptRow) {
+  if (!next || previous.key !== next.key || previous.kind !== next.kind)
+    return false;
+  if (previous.kind === "tool_call" && next.kind === "tool_call") {
+    return (
+      previous.toolName === next.toolName &&
+      previous.status === next.status &&
+      previous.result?.content === next.result?.content &&
+      previous.result?.isError === next.result?.isError &&
+      (previous.argumentsComplete && next.argumentsComplete
+        ? JSON.stringify(previous.toolInput) === JSON.stringify(next.toolInput)
+        : previous.rawArguments === next.rawArguments)
+    );
+  }
+  return (
+    previous.kind !== "tool_call" &&
+    next.kind !== "tool_call" &&
+    previous.text === next.text
+  );
+}
+
 export function projectTranscript(
   rows: readonly TranscriptRow[],
   settled: boolean,
@@ -60,7 +81,12 @@ export function projectTranscript(
       (row) =>
         row.key === anchor || (anchor !== undefined && row.otid === anchor),
     );
-    projected.splice(index + 1, 0, { key: otid, otid, kind: "user", text });
+    projected.splice(index + 1, 0, {
+      key: `user:otid:${otid}`,
+      otid,
+      kind: "user",
+      text,
+    });
   }
   const answered = new Set(pendingAnswers);
   const questions: AskUserQuestionReceipt[] = [];
@@ -86,8 +112,7 @@ export function projectTranscript(
     .slice(0, previous.committed)
     .some(
       (row, index) =>
-        row !== projected[index] &&
-        JSON.stringify(row) !== JSON.stringify(projected[index]),
+        row !== projected[index] && !sameRenderedRow(row, projected[index]),
     );
   const committed = lifecycle.project(projected, echoes, settled);
   const notices = reset

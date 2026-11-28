@@ -3,16 +3,16 @@ import Link from "ink-link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { TreeNode } from "@/agent/memory-scanner";
 import { buildChatUrl, isLocalAgentId } from "@/cli/helpers/app-urls";
-import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
+import {
+  useTerminalRows,
+  useTerminalWidth,
+} from "@/cli/hooks/use-terminal-width";
 import type { MemoryFileEntry } from "@/types/protocol_v2";
 import { colors } from "./colors";
 import { Text } from "./Text";
 
 const SOLID_LINE = "─";
 const DOTTED_LINE = "╌";
-
-const TREE_VISIBLE_LINES = 15;
-const FULL_VIEW_VISIBLE_LINES = 16;
 
 interface MemfsTreeViewerProps {
   agentId: string;
@@ -71,6 +71,9 @@ export function MemfsTreeViewer({
   conversationId,
 }: MemfsTreeViewerProps) {
   const terminalWidth = useTerminalWidth();
+  const rows = useTerminalRows();
+  const treeLines = Math.max(2, Math.min(15, rows - 13));
+  const fullLines = Math.max(1, Math.min(16, rows - 10));
   const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
   const isTmux = Boolean(process.env.TMUX);
   const isLocalAgent = isLocalAgentId(agentId);
@@ -108,10 +111,7 @@ export function MemfsTreeViewer({
     entries.find((entry) => entry.relative_path === selectedFile?.relativePath)
       ?.content ?? "";
   const contentLines = selectedContent.split("\n");
-  const maxFullViewScroll = Math.max(
-    0,
-    contentLines.length - FULL_VIEW_VISIBLE_LINES,
-  );
+  const maxFullViewScroll = Math.max(0, contentLines.length - fullLines);
 
   useInput((input, key) => {
     if (key.ctrl && input === "c") {
@@ -175,11 +175,8 @@ export function MemfsTreeViewer({
           const nodeIndex = treeNodes.findIndex(
             (n) => n.relativePath === newFile.relativePath,
           );
-          if (
-            nodeIndex >= 0 &&
-            nodeIndex >= treeScrollOffset + TREE_VISIBLE_LINES
-          ) {
-            setTreeScrollOffset(nodeIndex - TREE_VISIBLE_LINES + 1);
+          if (nodeIndex >= 0 && nodeIndex >= treeScrollOffset + treeLines) {
+            setTreeScrollOffset(nodeIndex - treeLines + 1);
           }
         }
       } else if (key.return) {
@@ -221,7 +218,7 @@ export function MemfsTreeViewer({
   if (viewMode === "full" && selectedFile) {
     const visibleLines = contentLines.slice(
       fullViewScrollOffset,
-      fullViewScrollOffset + FULL_VIEW_VISIBLE_LINES,
+      fullViewScrollOffset + fullLines,
     );
     const canScrollDown = fullViewScrollOffset < maxFullViewScroll;
     const charCount = selectedContent.length;
@@ -283,10 +280,10 @@ export function MemfsTreeViewer({
 
   const visibleTreeNodes = treeNodes.slice(
     treeScrollOffset,
-    treeScrollOffset + TREE_VISIBLE_LINES,
+    treeScrollOffset + treeLines,
   );
 
-  const previewContentLines = TREE_VISIBLE_LINES - 1;
+  const previewContentLines = treeLines - 1;
   const previewLines = contentLines.slice(0, previewContentLines);
   const hasMorePreviewLines = contentLines.length > previewContentLines;
 
@@ -342,17 +339,17 @@ export function MemfsTreeViewer({
             );
           })}
 
-          {visibleTreeNodes.length < TREE_VISIBLE_LINES &&
+          {visibleTreeNodes.length < treeLines &&
             Array.from({
-              length: TREE_VISIBLE_LINES - visibleTreeNodes.length,
+              length: treeLines - visibleTreeNodes.length,
             }).map((_, i) => (
               // biome-ignore lint/suspicious/noArrayIndexKey: static padding elements
               <Text key={`pad-${i}`}> </Text>
             ))}
 
-          {treeScrollOffset + TREE_VISIBLE_LINES < treeNodes.length ? (
+          {treeScrollOffset + treeLines < treeNodes.length ? (
             <Text dimColor>
-              ...{treeNodes.length - treeScrollOffset - TREE_VISIBLE_LINES} more
+              ...{treeNodes.length - treeScrollOffset - treeLines} more
             </Text>
           ) : (
             <Text> </Text>
@@ -360,7 +357,7 @@ export function MemfsTreeViewer({
         </Box>
 
         <Box flexDirection="column" marginLeft={1} marginRight={1}>
-          {Array.from({ length: TREE_VISIBLE_LINES + 1 }).map((_, i) => (
+          {Array.from({ length: treeLines + 1 }).map((_, i) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: static separator elements
             <Text key={i} dimColor>
               │
@@ -403,7 +400,7 @@ export function MemfsTreeViewer({
             <>
               <Text dimColor>No file selected</Text>
 
-              {Array.from({ length: TREE_VISIBLE_LINES }).map((_, i) => (
+              {Array.from({ length: treeLines }).map((_, i) => (
                 // biome-ignore lint/suspicious/noArrayIndexKey: static padding elements
                 <Text key={`pad-${i}`}> </Text>
               ))}

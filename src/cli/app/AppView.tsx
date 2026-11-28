@@ -55,7 +55,7 @@ export function AppView({
   input,
   active,
 }: ReturnType<typeof useSessionView>) {
-  if (state.memory)
+  if (state.memory && !approval && !state.question)
     return (
       <MemfsTreeViewer
         agentId={state.memory.agentId}
@@ -129,9 +129,12 @@ export function AppView({
     <Box key={state.epoch} flexDirection="column">
       <StaticTranscript
         groupedTaskIds={
-          new Set(
-            state.subagents?.map((agent) => agent.toolCallId).filter(Boolean),
-          )
+          new Set([
+            ...state.notices.flatMap((notice) => notice.toolCallIds ?? []),
+            ...(state.subagents ?? [])
+              .map((agent) => agent.toolCallId)
+              .filter(Boolean),
+          ])
         }
         renderEpoch={state.epoch}
         items={staticItems}

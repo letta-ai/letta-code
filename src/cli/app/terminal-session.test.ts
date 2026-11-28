@@ -324,6 +324,20 @@ test("turn and subagent frames from another runtime or an older snapshot cannot 
   });
   expect(store.snapshot().pausedQueueIds).toEqual(["waiting"]);
   expect(store.snapshot().tokens).toBe(77);
+  const complete = {
+    ...event,
+    subagents: event.subagents.map((agent) => ({
+      ...agent,
+      status: "completed",
+    })),
+  };
+  store.receiveRuntimeEvent({ ...complete, event_seq: 14 });
+  store.receiveRuntimeEvent({ ...complete, event_seq: 15 });
+  store.receiveRuntimeEvent({ ...event, event_seq: 16, subagents: [] });
+  expect(store.snapshot().subagents).toEqual([]);
+  expect(
+    store.snapshot().notices.map((notice) => notice.group?.agents),
+  ).toMatchObject([[{ id: "child", status: "completed", totalTokens: 42 }]]);
   store.close();
   await reading;
 });
@@ -532,6 +546,83 @@ test("finishes reasoning and commits a Write result before the turn ends", async
   await Bun.sleep(0);
   expect(store.snapshot().turnActive).toBe(false);
   expect(store.snapshot().notices[0]?.text).toContain("Interrupted");
+  store.close();
+  await reading;
+});
+
+test("a full turn preserves the Static epoch when history confirms the echo and streamed rows", async () => {
+  const transport = connection();
+  const store = new TerminalSession(() => transport.session);
+  const epochs = new Set<number>();
+  const unsubscribe = store.subscribe(() => epochs.add(store.snapshot().epoch));
+  const reading = store.connect();
+  await Bun.sleep(0);
+  await store.send("Write the file");
+  const otid = transport.send.mock.calls[0]?.[1].otid;
+  expect(store.snapshot().rows[0]?.key).toBe(`user:otid:${otid}`);
+  transport.push({ type: "reasoning", uuid: "r", content: "Inspecting" });
+  transport.push({
+    type: "tool_call",
+    uuid: "c",
+    toolCallId: "write",
+    toolName: "Write",
+    toolInput: { file_path: "sample.txt" },
+  });
+  transport.push({
+    type: "tool_result",
+    uuid: "tr",
+    toolCallId: "write",
+    content: "Written",
+    isError: false,
+  });
+  await Bun.sleep(0);
+  expect(store.snapshot().turnBytes).toBe(0);
+  transport.push({ type: "assistant", uuid: "a", content: "Done." });
+  transport.session.listMessages = async () => ({
+    messages: [
+      { id: "a", message_type: "assistant_message", content: "Done." },
+      {
+        id: "tr",
+        message_type: "tool_return_message",
+        tool_call_id: "write",
+        tool_return: "Written",
+        status: "success",
+      },
+      {
+        id: "c",
+        message_type: "tool_call_message",
+        tool_call: {
+          tool_call_id: "write",
+          name: "Write",
+          arguments: '{"file_path":"sample.txt"}',
+        },
+      },
+      { id: "r", message_type: "reasoning_message", reasoning: "Inspecting" },
+      {
+        id: "persisted",
+        otid,
+        message_type: "user_message",
+        content: "Write the file",
+      },
+    ] as never,
+  });
+  transport.push({
+    type: "result",
+    success: true,
+    durationMs: 1,
+    conversationId: "conv",
+  });
+  await Bun.sleep(0);
+  expect(store.snapshot().rows.map((row) => row.kind)).toEqual([
+    "user",
+    "reasoning",
+    "tool_call",
+    "assistant",
+  ]);
+  expect(store.snapshot().rows[0]?.uuid).toBe("persisted");
+  expect(store.snapshot().committed).toBe(4);
+  expect([...epochs]).toEqual([0]);
+  unsubscribe();
   store.close();
   await reading;
 });

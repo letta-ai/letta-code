@@ -179,15 +179,16 @@ export function useSessionView({
       staticItems.splice(
         2 + Math.min(state.committed, notice.index) + offset,
         0,
-        notice.input
-          ? {
-              kind: "command",
-              id: notice.id,
-              input: notice.input,
-              output: notice.text,
-              phase: "finished",
-            }
-          : { kind: "error", id: notice.id, text: notice.text },
+        notice.group ??
+          (notice.input
+            ? {
+                kind: "command",
+                id: notice.id,
+                input: notice.input,
+                output: notice.text,
+                phase: "finished",
+              }
+            : { kind: "error", id: notice.id, text: notice.text }),
       );
     }
   }

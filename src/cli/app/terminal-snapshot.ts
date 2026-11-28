@@ -31,6 +31,8 @@ export type Snapshot = {
   notices: readonly {
     id: string;
     index: number;
+    group?: import("@/cli/helpers/subagent-aggregation").SubagentGroupItem;
+    toolCallIds?: string[];
     input?: string;
     text: string;
   }[];

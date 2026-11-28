@@ -27,6 +27,7 @@ import {
   TerminalRowLifecycle,
 } from "@/cli/app/terminal-row-lifecycle";
 import type { Approval, Skill, Snapshot } from "@/cli/app/terminal-snapshot";
+import { createSubagentGroupItem } from "@/cli/helpers/subagent-aggregation";
 import type { PermissionMode } from "@/permissions/mode";
 import type {
   PickerCollection,
@@ -268,6 +269,17 @@ export class TerminalSession {
           } else {
             const previous = this.transcript.rows();
             const after = this.transcript.apply(message);
+            if (
+              message.type === "tool_result" &&
+              previous !== after &&
+              !previous.some(
+                (row) =>
+                  row.kind === "tool_call" &&
+                  row.toolCallId === message.toolCallId &&
+                  row.status === "complete",
+              )
+            )
+              this.update({ turnBytes: 0 });
             const bytes = previous === after ? undefined : streamBytes(message);
             if (bytes !== undefined)
               this.update({
@@ -534,9 +546,37 @@ export class TerminalSession {
         ),
       });
     if (type === "update_subagent_state" && Array.isArray(event.subagents)) {
-      this.update({
-        subagents: sessionSubagents(event.subagents),
-      });
+      const completedIds = new Set(
+        this.state.notices.flatMap(
+          (notice) => notice.group?.agents.map((agent) => agent.id) ?? [],
+        ),
+      );
+      const agents = sessionSubagents(event.subagents).filter(
+        (agent) => !completedIds.has(agent.id),
+      );
+      if (
+        agents.length &&
+        agents.every(
+          (agent) => agent.status === "completed" || agent.status === "error",
+        )
+      ) {
+        const group = createSubagentGroupItem(agents);
+        this.update({
+          subagents: [],
+          notices: [
+            ...this.state.notices,
+            {
+              id: group.id,
+              group,
+              toolCallIds: agents.flatMap((agent) =>
+                agent.toolCallId ? [agent.toolCallId] : [],
+              ),
+              text: "",
+              index: this.state.committed,
+            },
+          ],
+        });
+      } else this.update({ subagents: agents });
     }
     if (
       type === "turn_finished" &&

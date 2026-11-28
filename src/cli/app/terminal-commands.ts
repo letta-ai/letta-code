@@ -1,31 +1,44 @@
+import { commands as registry } from "@/cli/commands/registry";
 import { isRecord } from "@/utils/type-guards";
-export const terminalCommands = Object.entries({
-  agents: "Browse agents (pinned, Letta Code, all)",
-  clear: "Clear in-context messages",
-  compact: "Summarize conversation history (compaction) with optional mode",
-  connect: "Connect your LLM API keys (OpenAI, Anthropic, etc.)",
-  context: "Show context window usage",
-  "context-limit": "Set or reset the max context window",
-  dream:
-    "Reflect on memory (alias for /reflect; Cloud reflects this conversation)",
-  exit: "Exit this session",
-  help: "Show available commands",
-  history: "Load older messages",
-  init: "Initialize (or re-init) your agent's memory",
-  login: "Sign in with Letta",
-  logout: "Clear saved credentials and exit",
-  mcp: "Manage MCP servers (add, connect with OAuth)",
-  memory: "View your agent's memory",
-  model: "Switch model",
-  new: "Start a new conversation (keep agent memory)",
-  queue: "Use /queue remove <number> or /queue resume",
-  reflect:
-    "Launch reflection (/reflect [--recent N | --conversation ID ... | --auto] [--instruction TEXT])",
-  rename: "Rename agent or conversation (/rename agent [name]|convo [name])",
-  resume: "Resume a previous conversation",
-  skills: "Browse available skills",
-  usage: "Show session usage statistics and balance",
-}).map(([name, desc], order) => ({ cmd: `/${name}`, desc, order }));
+
+const sessionBuiltins = new Set([
+  "/agents",
+  "/clear",
+  "/compact",
+  "/connect",
+  "/context",
+  "/context-limit",
+  "/dream",
+  "/exit",
+  "/help",
+  "/init",
+  "/login",
+  "/logout",
+  "/mcp",
+  "/memory",
+  "/model",
+  "/new",
+  "/reflect",
+  "/rename",
+  "/resume",
+  "/skills",
+  "/usage",
+]);
+export const terminalCommands = [
+  ...Object.entries(registry)
+    .filter(([cmd]) => sessionBuiltins.has(cmd))
+    .map(([cmd, entry]) => ({
+      cmd,
+      desc: entry.desc,
+      order: entry.order ?? 100,
+    })),
+  { cmd: "/history", desc: "Load older messages", order: 100 },
+  {
+    cmd: "/queue",
+    desc: "Use /queue remove <number> or /queue resume",
+    order: 100,
+  },
+];
 
 function serverCommands(entries: unknown) {
   if (!Array.isArray(entries)) return [];
@@ -47,7 +60,7 @@ export function sessionCommands(raw?: Record<string, unknown>) {
   for (const command of serverCommands(raw?.current_available_skills)) {
     if (!commands.has(command.cmd)) commands.set(command.cmd, command);
   }
-  return [...commands.values()];
+  return [...commands.values()].sort((a, b) => a.order - b.order);
 }
 
 export function isSessionSkillCommand(
