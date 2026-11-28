@@ -759,7 +759,6 @@ async function main(): Promise<void> {
       })()
     : Promise.resolve(undefined);
   const ensureTerminalPreflightComplete = async () => {
-    markMilestone("REACT_IMPORT_DONE");
     await terminalPreflightPromise;
   };
 
@@ -1208,6 +1207,7 @@ async function main(): Promise<void> {
       import("@/cli/components/WelcomeScreen"),
       import("@/cli/app/TerminalSessionHost"),
     ]);
+  markMilestone("REACT_IMPORT_DONE");
   await terminalPreflightPromise;
   markMilestone("TERMINAL_PREFLIGHT_DONE");
   const { useState, useEffect, useRef } = React;

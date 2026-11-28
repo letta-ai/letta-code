@@ -375,14 +375,13 @@ export function MemfsTreeViewer({
 
       <Box flexDirection="column" marginTop={1}>
         <Box>
-          <Text dimColor>{"  "}↑↓ navigate · Enter view · </Text>
+          <Text dimColor>{"  "}↑↓ navigate · Enter view</Text>
           {adeUrl && !isTmux && (
             <Link url={adeUrl}>
-              <Text dimColor>Edit in ADE</Text>
+              <Text dimColor> · Open memory in browser</Text>
             </Link>
           )}
           {adeUrl && isTmux && <Text dimColor>Edit in ADE: {adeUrl}</Text>}
-          {!adeUrl && <Text dimColor>Local agent: {agentId}</Text>}
           <Text dimColor> · Esc close</Text>
         </Box>
       </Box>

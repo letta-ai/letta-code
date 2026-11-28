@@ -326,6 +326,8 @@ export class TerminalSession {
       picker: undefined,
       commandOutput: undefined,
       model: undefined,
+      agentName: undefined,
+      agentId: undefined,
       tokens: undefined,
       subagents: undefined,
     });
@@ -780,6 +782,10 @@ export class TerminalSession {
     session?.close();
     this.update({
       status: "offline",
+      picker: undefined,
+      question: undefined,
+      login: false,
+      subagents: undefined,
       device: undefined,
       memory: undefined,
       approvals: [],

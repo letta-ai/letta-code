@@ -14,6 +14,11 @@ import { SearchablePicker } from "@/cli/components/SearchablePicker";
 import { SessionDiff } from "@/cli/components/SessionDiff";
 import { ToolCallMessage } from "@/cli/components/ToolCallMessageRich";
 import { UserMessage } from "@/cli/components/UserMessageRich";
+import {
+  isFileEditTool,
+  isFileWriteTool,
+  isPatchTool,
+} from "@/cli/helpers/tool-name-mapping";
 import type { DiffPreview } from "@/types/protocol_v2";
 import { CLEAR_SCREEN_AND_HOME } from "./constants";
 import { TerminalComposer } from "./TerminalComposer";
@@ -63,7 +68,13 @@ function TerminalRow({ row, live }: { row: TranscriptRow; live: boolean }) {
   );
 }
 
-export function TerminalApp({ store }: { store: TerminalSession }) {
+export function TerminalApp({
+  store,
+  initialName,
+}: {
+  store: TerminalSession;
+  initialName?: string;
+}) {
   const { stdout } = useStdout();
   const subscribe = useCallback(
     (notify: () => void) => {
@@ -80,6 +91,11 @@ export function TerminalApp({ store }: { store: TerminalSession }) {
   const state = useSyncExternalStore(subscribe, store.snapshot);
 
   const approval = state.approvals[0];
+  const fileApproval =
+    approval &&
+    (isFileEditTool(approval.name) ||
+      isFileWriteTool(approval.name) ||
+      isPatchTool(approval.name));
   const suggestion = approval?.context?.permissionSuggestions?.[0];
   const { exit } = useApp();
   useInput((input, key) => {
@@ -105,6 +121,9 @@ export function TerminalApp({ store }: { store: TerminalSession }) {
       {state.rows.slice(state.committed).map((row) => (
         <TerminalRow key={row.key} row={row} live />
       ))}
+      {(state.agentName || initialName) && (
+        <Text bold>{state.agentName ?? initialName}</Text>
+      )}
       {state.activity && <Text dimColor>{state.activity}</Text>}
       {state.queue.map((item, index) => (
         <Text key={item.id} dimColor>
@@ -120,6 +139,8 @@ export function TerminalApp({ store }: { store: TerminalSession }) {
       {state.device && (
         <Text dimColor>
           {state.status} · {state.model} · {state.device.permissionMode} ·{" "}
+          {typeof state.device.raw?.connection_name === "string" &&
+            `${state.device.raw.connection_name} · `}
           {state.device.workingDirectory}{" "}
           {state.tokens !== undefined && `· ${state.tokens} tokens`}
         </Text>
@@ -142,9 +163,14 @@ export function TerminalApp({ store }: { store: TerminalSession }) {
           key={approval.context?.requestId ?? approval.context?.toolCallId}
           flexDirection="column"
         >
-          <Text>
-            {approval.name} {JSON.stringify(approval.input)}
-          </Text>
+          {fileApproval && (
+            <Text bold>
+              {approval.name}{" "}
+              {typeof approval.input.file_path === "string"
+                ? approval.input.file_path
+                : ""}
+            </Text>
+          )}
           {(approval.context?.diffs as DiffPreview[] | undefined)?.map(
             (preview, index) => (
               <SessionDiff
@@ -177,7 +203,7 @@ export function TerminalApp({ store }: { store: TerminalSession }) {
                 toolName: approval.name,
                 toolArgs: JSON.stringify(approval.input),
               }}
-              showPreview={false}
+              showPreview={!fileApproval}
               fileHeader={approval.name}
               allowPersistence={!!suggestion}
               approveAlwaysText={suggestion?.text}

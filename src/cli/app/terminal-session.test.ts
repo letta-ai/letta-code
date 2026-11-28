@@ -258,3 +258,99 @@ test("a failed interrupt can be retried without dropping queued messages", async
   store.close();
   await reading;
 });
+
+test("turn and subagent frames from another runtime or an older snapshot cannot replace device state", async () => {
+  const transport = connection();
+  Object.assign(transport.session, {
+    agentId: "agent-a",
+    conversationId: "conv-a",
+  });
+  const store = new TerminalSession(() => transport.session);
+  const reading = store.connect();
+  await Bun.sleep(0);
+  const event = {
+    runtime: { agent_id: "agent-a", conversation_id: "conv-a" },
+    type: "update_subagent_state",
+    event_seq: 12,
+    subagents: [
+      {
+        subagent_id: "child",
+        description: "Checking files",
+        status: "running",
+      },
+    ],
+  };
+  store.receiveRuntimeEvent(event);
+  store.receiveRuntimeEvent({ ...event, event_seq: 11, subagents: [] });
+  store.receiveRuntimeEvent({
+    ...event,
+    event_seq: 22,
+    runtime: { agent_id: "agent-b", conversation_id: "conv-a" },
+    subagents: [],
+  });
+  expect(store.snapshot().subagents).toEqual([
+    { id: "child", description: "Checking files", status: "running" },
+  ]);
+  store.receiveRuntimeEvent({
+    ...event,
+    type: "turn_finished",
+    event_seq: 13,
+    usage: { total_tokens: 77 },
+  });
+  expect(store.snapshot().tokens).toBe(77);
+  store.close();
+  await reading;
+});
+
+test("replayed nonblocking questions send only one answer while the turn continues", async () => {
+  const transport = connection();
+  const store = new TerminalSession(() => transport.session);
+  const reading = store.connect();
+  await Bun.sleep(0);
+  const questions = [
+    {
+      question: "Proceed?",
+      header: "Plan",
+      options: [
+        { label: "Yes", description: "Run" },
+        { label: "No", description: "Revise" },
+      ],
+    },
+  ];
+  transport.push({
+    type: "tool_call",
+    uuid: "call",
+    toolName: "AskUserQuestion",
+    toolCallId: "q",
+    toolInput: { questions },
+  });
+  const result = {
+    type: "tool_result" as const,
+    uuid: "result",
+    toolCallId: "q",
+    isError: false,
+    content: JSON.stringify({
+      type: "ask_user_question",
+      version: 2,
+      toolCallId: "q",
+      questions,
+    }),
+  };
+  transport.push(result);
+  await Bun.sleep(0);
+  const question = store.snapshot().question;
+  if (!question) throw new Error("Missing question");
+  await Promise.all([
+    store.answer(question, { "Proceed?": "Yes" }),
+    store.answer(question),
+  ]);
+  transport.push(result);
+  await Bun.sleep(0);
+  expect(store.snapshot().question).toBeUndefined();
+  expect(transport.send).toHaveBeenCalledTimes(1);
+  expect(transport.send.mock.calls[0]?.[0]).toContain(
+    "ask-user-question-response",
+  );
+  store.close();
+  await reading;
+});

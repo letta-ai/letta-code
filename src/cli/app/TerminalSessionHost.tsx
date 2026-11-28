@@ -56,12 +56,11 @@ export function TerminalSessionHost({
   if (!session) return <Text>{error ?? "Connecting to app server…"}</Text>;
   return (
     <Box flexDirection="column">
-      <Text bold>{name}</Text>
       {updateNotification && (
         <Text>Update available: {updateNotification}</Text>
       )}
       {cloudError && <Text>Cloud registration unavailable: {cloudError}</Text>}
-      <TerminalApp store={session.store} />
+      <TerminalApp store={session.store} initialName={name} />
     </Box>
   );
 }
