@@ -39,6 +39,12 @@ const EXPERIMENT_DEFINITIONS: readonly ExperimentDefinition[] = [
     description: "Generate AI conversation titles automatically when possible.",
   },
   {
+    id: "desktop_conversation_bootstrap",
+    label: "conversation bootstrap",
+    description:
+      "Inject lightweight prior-conversation context into the first turn of brand-new Letta Code conversations.",
+  },
+  {
     id: "diffs",
     label: "diffs",
     description:

@@ -642,14 +642,12 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  if (values.connect) {
+  if (values.cloud || values.connect) {
     const { runAttachedTerminal } = await import("@/cli/app/AttachedTerminal");
-    return runAttachedTerminal(
-      values.connect,
-      values.conversation === "default"
-        ? values.agent
-        : (values.conversation ?? values.agent),
-    );
+    return runAttachedTerminal(values).catch((error: Error) => {
+      console.error(error.message);
+      process.exitCode = 1;
+    });
   }
   const shouldResume = values.resume ?? false;
   let specifiedConversationId = values.conversation ?? null;

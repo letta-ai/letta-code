@@ -2,7 +2,7 @@
   "src/agent/memory-git.ts": 1819,
   "src/backend/local/local-store.ts": 3179,
   "src/cli/components/AgentSelector.tsx": 1030,
-  "src/cli/components/InputRich.tsx": 1939,
+  "src/cli/components/InputRich.tsx": 1932,
   "src/cli/components/ProviderSelector.tsx": 1483,
   "src/cli/helpers/accumulator.ts": 1384,
   "src/cli/helpers/reflection-transcript.ts": 1554,
@@ -11,7 +11,7 @@
   "src/cli/subcommands/skills.ts": 1239,
   "src/headless.ts": 4448,
   "src/hooks/integration.test.ts": 1069,
-  "src/index.ts": 2212,
+  "src/index.ts": 2210,
   "src/mods/learning-harness.ts": 2432,
   "src/mods/mod-engine.test.ts": 2153,
   "src/mods/mod-engine.ts": 1833,
@@ -26,5 +26,5 @@
   "src/types/protocol_v2.ts": 2129,
   "src/websocket/listen-client-concurrency.test.ts": 2493,
   "src/websocket/listener/commands/memory.ts": 1058,
-  "src/websocket/listener/protocol-inbound.ts": 2036
+  "src/websocket/listener/protocol-inbound.ts": 2030
 }

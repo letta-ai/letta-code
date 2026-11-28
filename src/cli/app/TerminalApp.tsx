@@ -71,9 +71,11 @@ function TerminalRow({ row, live }: { row: TranscriptRow; live: boolean }) {
 export function TerminalApp({
   store,
   initialName,
+  connectionMode = "embedded",
 }: {
   store: TerminalSession;
   initialName?: string;
+  connectionMode?: "embedded" | "remote" | "cloud";
 }) {
   const { stdout } = useStdout();
   const subscribe = useCallback(
@@ -107,6 +109,7 @@ export function TerminalApp({
       approval ||
       state.login ||
       state.question ||
+      state.skills ||
       state.memory ||
       state.picker
     )
@@ -138,7 +141,8 @@ export function TerminalApp({
       )}
       {state.device && (
         <Text dimColor>
-          {state.status} · {state.model} · {state.device.permissionMode} ·{" "}
+          {connectionMode} · {state.status} · {state.model} ·{" "}
+          {state.device.permissionMode} ·{" "}
           {typeof state.device.raw?.connection_name === "string" &&
             `${state.device.raw.connection_name} · `}
           {state.device.workingDirectory}{" "}
@@ -269,6 +273,23 @@ export function TerminalApp({
             onCancel={() => store.closePicker()}
           />
         )
+      ) : state.skills ? (
+        <SearchablePicker
+          title="Skills · Enter to toggle"
+          items={state.skills.map((skill) => ({
+            key: skill.path,
+            label:
+              skill.label +
+              (skill.fixed
+                ? " · installed"
+                : skill.enabled
+                  ? " · enabled"
+                  : " · enable"),
+            description: skill.description,
+          }))}
+          onSelect={(path) => void store.toggleSkill(path)}
+          onCancel={() => store.closeSkills()}
+        />
       ) : state.memory ? (
         <MemfsTreeViewer
           agentId={state.memory.agentId}
@@ -289,6 +310,7 @@ export function TerminalApp({
           !approval &&
           !state.question &&
           !state.login &&
+          !state.skills &&
           !state.memory &&
           !state.picker
         }

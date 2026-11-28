@@ -20,6 +20,6 @@ export const terminalCommands = Object.entries({
   reflect: "Reflect on the conversation",
   rename: "Rename the current agent or conversation",
   resume: "Switch conversations",
-  skills: "List available skills",
+  skills: "Browse skills and toggle global links",
   usage: "Show last reported token usage",
 }).map(([name, desc], order) => ({ cmd: `/${name}`, desc, order }));

@@ -66,9 +66,9 @@ export async function drainTurnStreamWithEmission(
     turnAbortSignal,
     undefined,
     async ({ chunk, shouldOutput, errorInfo }) => {
-      if (turnAbortSignal.aborted) {
-        return undefined;
-      }
+      const ownsTurn = () =>
+        !turnAbortSignal.aborted && runtime.turnLifecycle.isCurrent(turnLease);
+      if (!ownsTurn()) return { shouldOutput: false, shouldAccumulate: false };
       const maybeRunId = (chunk as { run_id?: unknown }).run_id;
       const hasAuthority = () => params.authorityGuard?.() !== false;
       if (typeof maybeRunId === "string") {
@@ -129,9 +129,7 @@ export async function drainTurnStreamWithEmission(
                 expectedRevision,
                 params.recoveryLineageId,
                 {
-                  shouldContinue: () =>
-                    runtime.turnLifecycle.isCurrent(turnLease) &&
-                    hasAuthority(),
+                  shouldContinue: () => ownsTurn() && hasAuthority(),
                 },
               );
               if (revision && params.interruptedRevisionRef) {
@@ -139,6 +137,8 @@ export async function drainTurnStreamWithEmission(
               }
             }
           }
+          if (!ownsTurn())
+            return { shouldOutput: false, shouldAccumulate: false };
           runIdSent = true;
           msgRunIds.push(maybeRunId);
           if (hasAuthority()) {

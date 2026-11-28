@@ -11,7 +11,8 @@ export function terminalSocket(
         const text = data.toString();
         if (
           !text.includes('"update_subagent_state"') &&
-          !text.includes('"turn_finished"')
+          !text.includes('"turn_finished"') &&
+          !text.includes('"skills_updated"')
         )
           return;
         let event: unknown;

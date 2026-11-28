@@ -1,4 +1,5 @@
 import type WebSocket from "ws";
+import { invalidateClientSkillsPayloadCache } from "@/agent/client-skills";
 import { resolveModel } from "@/agent/model";
 import { getGlobalSkillsDir } from "@/agent/skills";
 import { settingsManager } from "@/settings-manager";
@@ -26,6 +27,7 @@ function emitSkillsUpdated(
   socket: WebSocket,
   safeSocketSend: SafeSocketSend,
 ): void {
+  invalidateClientSkillsPayloadCache();
   safeSocketSend(
     socket,
     {

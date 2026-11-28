@@ -43,6 +43,11 @@ export const CLI_FLAG_CATALOG = {
     mode: "interactive",
     help: { description: "Open agent selector UI after loading" },
   },
+  cloud: {
+    parser: { type: "boolean" },
+    mode: "interactive",
+    help: { description: "Run the terminal directly on a Letta Cloud sandbox" },
+  },
   connect: {
     parser: { type: "string" },
     mode: "interactive",

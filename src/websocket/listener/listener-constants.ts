@@ -4,6 +4,7 @@ export const SUPPORTED_REMOTE_COMMANDS: readonly string[] = [
   "dream",
   "reflect",
   "context",
+  "skills",
   "init",
   "compact",
   "reload",

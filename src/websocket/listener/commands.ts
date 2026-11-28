@@ -32,6 +32,10 @@ import type {
   StreamDelta,
 } from "@/types/protocol_v2";
 import { debugLog } from "@/utils/debug";
+import {
+  terminalContext,
+  terminalSkills,
+} from "@/websocket/listener/commands/terminal-inspection";
 import { markSecretsReminderRefreshPending } from "./commands/secrets";
 import { getConversationWorkingDirectory } from "./cwd";
 import {
@@ -145,13 +149,12 @@ export async function handleExecuteCommand(
         break;
       }
 
-      case "context": {
-        const tracker = conversationRuntime.contextTracker;
-        output = tracker.lastContextTokens
-          ? "Current context: " + tracker.lastContextTokens + " tokens"
-          : "Context usage will appear after the first turn.";
+      case "context":
+        output = await terminalContext(conversationRuntime);
         break;
-      }
+      case "skills":
+        output = JSON.stringify(await terminalSkills(conversationRuntime));
+        break;
       case "init":
         output = await handleInitCommand(socket, conversationRuntime, opts);
         break;

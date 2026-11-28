@@ -899,6 +899,10 @@ async function connectWithRetry(
       terminalClose &&
       !runtime.intentionallyClosed;
     if (keepRuntime) {
+      for (const scoped of runtime.conversationRuntimes.values()) {
+        if (scoped.activeConnectionId === opts.connectionId)
+          scoped.turnLifecycle.requestCancellation({ cause: "transport" });
+      }
       cleanupListenerConnection(runtime, opts.connectionId);
       killListenerConnectionTerminals(opts.connectionId);
     } else {

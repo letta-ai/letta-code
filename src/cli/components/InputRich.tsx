@@ -782,7 +782,7 @@ export function Input({
   sessionCompletions,
   fileAutocompleteFdPath,
   messageQueue,
-  onQueueEdit,
+  recallQueued,
   onEscapeCancel,
   onEscapeCommandCancel,
   inputDisabled = false,
@@ -834,7 +834,7 @@ export function Input({
   fileAutocompleteFdPath?: string | null;
   sessionCompletions?: SessionCompletions;
   messageQueue?: QueuedMessage[];
-  onQueueEdit?: () => string;
+  recallQueued?: () => Promise<string>;
   onEscapeCancel?: () => void;
   onEscapeCommandCancel?: () => boolean;
   inputDisabled?: boolean;
@@ -1342,6 +1342,15 @@ export function Input({
       const targetColumn = preferredColumn ?? column;
 
       if (key.upArrow) {
+        if (!value && recallQueued) {
+          void recallQueued().then((text) => {
+            if (text) {
+              setValue((current) => text + current);
+              setCursorPos(text.length);
+            }
+          });
+          return;
+        }
         const targetLine = visualLines[lineIndex - 1];
         if (lineIndex > 0 && targetLine) {
           if (preferredColumn === null) {
@@ -1361,22 +1370,6 @@ export function Input({
         ) {
           setCursorPos(0);
           setAtStartBoundary(true);
-          return;
-        }
-
-        if (
-          messageQueue &&
-          messageQueue.filter((m) => m.kind === "user").length > 0 &&
-          onQueueEdit &&
-          (atStartBoundary || currentCursorPosition === 0)
-        ) {
-          setAtStartBoundary(false);
-          const combined = onQueueEdit();
-          if (combined) {
-            releaseDiscardedDraftPlaceholders(value, combined);
-            setValue(combined);
-            setCursorPos(combined.length);
-          }
           return;
         }
 

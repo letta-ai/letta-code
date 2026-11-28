@@ -45,6 +45,7 @@ export function TerminalComposer({
   );
   return (
     <Input
+      recallQueued={store.queuedInput ? () => store.recallQueued() : undefined}
       visible={active}
       inputEnabled={active}
       streaming={state.activity?.startsWith("Working") ?? false}

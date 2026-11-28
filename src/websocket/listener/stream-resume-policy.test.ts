@@ -172,6 +172,45 @@ describe("listener stream resume policy", () => {
     }
   });
 
+  test("a superseded turn cannot publish after its pending evidence write completes", async () => {
+    const transport = new MockTransport();
+    const runtime = createTestRuntime(transport);
+    const options = {
+      origin: "message" as const,
+      workingDirectory: process.cwd(),
+    };
+    const turnLease = runtime.turnLifecycle.begin(options);
+    const msgRunIds: string[] = [];
+    await drainTurnStreamWithEmission(
+      stream([ping("old-run", 1), stop("old-run", 2, "end_turn")]),
+      createBuffers("agent-1"),
+      transport,
+      runtime,
+      {
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        turnLease,
+        msgRunIds,
+        runId: undefined,
+        turnCorrelation: {
+          clientMessageIds: [],
+          appendDequeuedBatch: () => {},
+          observeRun: () => {},
+        },
+        recoveryEvidenceWriter: async () => {
+          runtime.turnLifecycle.requestCancellation({ cause: "transport" });
+          runtime.turnLifecycle.finish(turnLease, "cancelled");
+          const replacement = runtime.turnLifecycle.begin(options);
+          runtime.turnLifecycle.setRunId(replacement, "new-run");
+          return undefined;
+        },
+      },
+    );
+    expect(transport.sent).toEqual([]);
+    expect(msgRunIds).toEqual([]);
+    expect(runtime.activeRunId).toBe("new-run");
+  });
+
   test("waits about five minutes across resume attempts", () => {
     const waitMs = totalWaitMs(LISTENER_STREAM_RESUME_POLICY);
     expect(LISTENER_STREAM_RESUME_POLICY.maxAttempts).toBeGreaterThan(1);

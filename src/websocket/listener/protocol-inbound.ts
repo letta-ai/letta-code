@@ -1,5 +1,5 @@
 import type WebSocket from "ws";
-import type { ExperimentId } from "@/experiments/types";
+import { isRemoteExperimentId } from "@/experiments/types";
 import { isToolsetPreference } from "@/tools/toolset-catalog";
 import {
   CHANNEL_ACCOUNT_CREATE_FIELDS,
@@ -105,12 +105,6 @@ export {
   isChatGPTRateLimitResetCreditsListCommand,
   isChatGPTUsageReadCommand,
 } from "@/websocket/listener/chatgpt-usage-protocol-inbound";
-
-const EXPERIMENT_IDS = new Set<ExperimentId>(["conversation_titles"]);
-
-function isExperimentId(value: unknown): value is ExperimentId {
-  return typeof value === "string" && EXPERIMENT_IDS.has(value as ExperimentId);
-}
 
 import { isValidApprovalResponseBody } from "./approval";
 import {
@@ -1384,7 +1378,7 @@ export function isSetExperimentCommand(
   return (
     c.type === "set_experiment" &&
     typeof c.request_id === "string" &&
-    isExperimentId(c.experiment_id) &&
+    isRemoteExperimentId(c.experiment_id) &&
     typeof c.enabled === "boolean"
   );
 }

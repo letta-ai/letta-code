@@ -354,3 +354,74 @@ test("replayed nonblocking questions send only one answer while the turn continu
   store.close();
   await reading;
 });
+
+test("recall removes the newest queued user draft once before restoring it", async () => {
+  const transport = connection();
+  const remove = mock(async (id: string) => ({
+    removed: id === "newest",
+    itemId: id,
+  }));
+  Object.assign(transport.session, { removeQueuedMessage: remove });
+  const store = new TerminalSession(() => transport.session);
+  const reading = store.connect();
+  await Bun.sleep(0);
+  transport.push({
+    type: "queue_update",
+    queue: ["first", "newest"].map((id) => ({
+      id,
+      clientMessageId: id,
+      source: "user",
+      kind: "message",
+      content: id,
+      enqueuedAt: "now",
+    })),
+  });
+  await Bun.sleep(0);
+  expect(
+    await Promise.all([store.recallQueued(), store.recallQueued()]),
+  ).toEqual(["newest", ""]);
+  expect(await store.recallQueued()).toBe("");
+  expect(store.snapshot().queue.map((item) => item.id)).toEqual(["first"]);
+  store.close();
+  await reading;
+});
+
+test("skills picker enables and disables the selected server path", async () => {
+  const transport = connection();
+  let enabled = false;
+  const sendCommand = mock(async (command: Record<string, unknown>) => {
+    if (command.type === "skill_enable") enabled = true;
+    if (command.type === "skill_disable") enabled = false;
+    return {
+      success: true,
+      output: JSON.stringify([
+        {
+          name: "build",
+          label: "Build",
+          path: "/skills/build",
+          description: "Build",
+          enabled,
+        },
+      ]),
+    };
+  });
+  Object.assign(transport.session, { sendCommand });
+  const store = new TerminalSession(() => transport.session);
+  const reading = store.connect();
+  await Bun.sleep(0);
+  await store.send("/skills");
+  await store.toggleSkill("/skills/build");
+  expect(store.snapshot().skills?.[0]?.enabled).toBe(true);
+  await store.toggleSkill("/skills/build");
+  expect(store.snapshot().skills?.[0]?.enabled).toBe(false);
+  expect(sendCommand.mock.calls.map(([cmd]) => cmd)).toContainEqual({
+    type: "skill_enable",
+    skill_path: "/skills/build",
+  });
+  expect(sendCommand.mock.calls.map(([cmd]) => cmd)).toContainEqual({
+    type: "skill_disable",
+    name: "build",
+  });
+  store.close();
+  await reading;
+});

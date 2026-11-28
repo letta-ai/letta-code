@@ -432,6 +432,20 @@ async function resolveCloudCredentials(
   return apiKey;
 }
 
+export async function resolveTerminalCloudCredentials() {
+  const settings = await settingsManager.getSettingsWithSecureTokens();
+  const apiKey =
+    getDesktopAccessToken() ||
+    process.env.LETTA_API_KEY ||
+    (await resolveCloudCredentials(
+      globalCredentialSlot(settings),
+      settingsManager.getOrCreateDeviceId(),
+      "terminal",
+      false,
+    ));
+  return { apiKey, apiBaseUrl: getListenerOAuthDeps().LETTA_CLOUD_API_URL };
+}
+
 export async function resolveListenerRegistrationOptions(
   deviceId: string,
   connectionName: string,

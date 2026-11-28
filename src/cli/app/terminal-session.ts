@@ -12,13 +12,13 @@ import {
   type SessionDeviceStatus,
   type TranscriptRow,
 } from "@letta-ai/letta-agent-sdk";
-
 import {
   type AskUserQuestionReceipt,
   parseAskUserQuestionNotif,
   parseAskUserQuestionReceipt,
   prepareAskUserQuestionNotif,
 } from "@/ask-user-question";
+import { queuedDraft } from "@/cli/app/queued-draft";
 import type { PermissionMode } from "@/permissions/mode";
 
 import type { MemoryFileEntry } from "@/types/protocol_v2";
@@ -32,6 +32,15 @@ type Approval = {
   input: Record<string, unknown>;
   context?: CanUseToolContext;
   resolve: (answer: CanUseToolResponse) => void;
+};
+
+type Skill = {
+  name: string;
+  path: string;
+  label: string;
+  description: string;
+  enabled: boolean;
+  fixed?: boolean;
 };
 
 type Snapshot = {
@@ -57,6 +66,7 @@ type Snapshot = {
     after?: string;
     models?: LettaCodeModelEntry[];
   };
+  skills?: Skill[];
   memory?: { agentId: string; entries: MemoryFileEntry[] };
   activity?: string;
 };
@@ -324,6 +334,7 @@ export class TerminalSession {
       committed: 0,
       epoch: this.state.epoch + 1,
       picker: undefined,
+      skills: undefined,
       commandOutput: undefined,
       model: undefined,
       agentName: undefined,
@@ -465,6 +476,8 @@ export class TerminalSession {
 
   receiveRuntimeEvent(event: Record<string, unknown>) {
     const session = this.session;
+    if (event.type === "skills_updated" && this.state.skills)
+      void this.send("/skills");
     const scope = event.runtime;
     if (
       !session ||
@@ -505,6 +518,63 @@ export class TerminalSession {
       this.update({ tokens: event.usage.total_tokens });
   }
 
+  closeSkills() {
+    this.update({ skills: undefined });
+  }
+
+  async toggleSkill(path: string) {
+    const session = this.session;
+    const skill = this.state.skills?.find((item) => item.path === path);
+    if (!session || !skill || skill.fixed) return;
+    try {
+      const command = skill.enabled
+        ? { type: "skill_disable", name: skill.name }
+        : { type: "skill_enable", skill_path: skill.path };
+      const result = await session.sendCommand(command, {
+        responseType: command.type + "_response",
+      });
+      if (session !== this.session || !this.state.skills) return;
+      if (!result.success) throw new Error(String(result.error));
+      this.update({
+        skills: [
+          ...this.state.skills.filter((item) => item.path !== path),
+          { ...skill, enabled: !skill.enabled },
+        ],
+      });
+      await this.send("/skills");
+    } catch (error) {
+      if (session === this.session) this.fail(error);
+    }
+  }
+
+  get queuedInput() {
+    const item = this.state.queue.findLast((entry) => entry.source === "user");
+    if (!item) return undefined;
+    const restore = queuedDraft(item.content);
+    return restore ? { item, restore } : undefined;
+  }
+  private recalling?: string;
+  async recallQueued() {
+    const session = this.session;
+    const queued = this.queuedInput;
+    if (!session || !queued || this.recalling) return "";
+    const { item, restore } = queued;
+    this.recalling = item.id;
+    try {
+      const result = await session.removeQueuedMessage(item.id);
+      if (!result.removed || session !== this.session) return "";
+      this.update({
+        queue: this.state.queue.filter((entry) => entry.id !== item.id),
+      });
+      return restore();
+    } catch (error) {
+      if (session === this.session) this.fail(error);
+      return "";
+    } finally {
+      this.recalling = undefined;
+    }
+  }
+
   async searchFiles(query: string) {
     const session = this.session;
     if (!session) return [];
@@ -543,15 +613,59 @@ export class TerminalSession {
       if (text === "/skills") {
         const status = await session.getDeviceStatus();
         if (session !== this.session) return;
-        const skills = status.raw.current_available_skills;
-        this.update({
-          commandOutput:
-            Array.isArray(skills) && skills.length
-              ? skills
-                  .map((skill) => skill.name + " · " + skill.description)
-                  .join("\n")
-              : "No skills available",
-        });
+        if (
+          Array.isArray(status.raw?.supported_commands) &&
+          !status.raw.supported_commands.includes("skills")
+        ) {
+          const available = status.raw.current_available_skills;
+          const skills = (Array.isArray(available) ? available : []).flatMap(
+            (skill: unknown) => {
+              if (
+                !isRecord(skill) ||
+                typeof skill.name !== "string" ||
+                typeof skill.path !== "string"
+              )
+                return [];
+              const path = skill.path.replace(/[\\/]SKILL\.md$/i, "");
+              const name = path.split(/[\\/]/).at(-1) || skill.name;
+              const known = this.state.skills?.find(
+                (entry) => entry.path === path,
+              );
+              return {
+                path,
+                name,
+                description:
+                  typeof skill.description === "string"
+                    ? skill.description
+                    : "",
+                label: skill.name,
+                enabled: known?.enabled ?? skill.source === "global",
+              };
+            },
+          );
+          this.update({ skills });
+          return;
+        }
+        const result = await session.sendCommand(
+          {
+            type: "execute_command",
+            command_id: "skills",
+            runtime: {
+              agent_id: session.agentId,
+              conversation_id: session.conversationId,
+            },
+          },
+          { responseType: "execute_command_response" },
+        );
+        if (session !== this.session) return;
+        if (!result.success) throw new Error(String(result.output));
+        const entries: Skill[] = JSON.parse(String(result.output));
+        const retained =
+          this.state.skills?.filter(
+            (old) =>
+              !old.enabled && !entries.some((skill) => skill.path === old.path),
+          ) ?? [];
+        this.update({ skills: [...entries, ...retained], error: undefined });
         return;
       }
       if (text.startsWith("/rename ")) {
@@ -783,6 +897,7 @@ export class TerminalSession {
     this.update({
       status: "offline",
       picker: undefined,
+      skills: undefined,
       question: undefined,
       login: false,
       subagents: undefined,

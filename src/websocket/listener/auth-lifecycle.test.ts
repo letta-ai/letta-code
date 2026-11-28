@@ -6,8 +6,11 @@ import { join } from "node:path";
 import { WebSocket, WebSocketServer } from "ws";
 import { OAuthRefreshError, type TokenResponse } from "@/auth/oauth";
 import { settingsManager } from "@/settings-manager";
+import {
+  makeControlRequest,
+  waitFor,
+} from "@/test-utils/listener-auth-fixture";
 import { removeTestDir } from "@/test-utils/test-fs";
-import type { ControlRequest } from "@/types/protocol_v2";
 import {
   startListenerClient,
   stopListenerClient,
@@ -29,19 +32,6 @@ import { getActiveRuntime } from "@/websocket/listener/runtime";
 type ListenerSettings = Awaited<
   ReturnType<typeof settingsManager.getSettingsWithSecureTokens>
 >;
-
-async function waitFor(
-  predicate: () => boolean,
-  message: string,
-): Promise<void> {
-  for (let attempt = 0; attempt < 300; attempt++) {
-    if (predicate()) {
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error(message);
-}
 
 describe("listener auth lifecycle", () => {
   const originalHome = process.env.HOME;
@@ -206,21 +196,6 @@ describe("listener auth lifecycle", () => {
       onRetrying: overrides.onRetrying,
       onConnectionReady: overrides.onConnectionReady,
     });
-  }
-
-  function makeControlRequest(requestId: string): ControlRequest {
-    return {
-      type: "control_request",
-      request_id: requestId,
-      request: {
-        subtype: "can_use_tool",
-        tool_name: "Bash",
-        input: {},
-        tool_call_id: requestId.replace("perm-", "call-"),
-        permission_suggestions: [],
-        blocked_path: null,
-      },
-    };
   }
 
   function countConnectionsForChannel(channel: string): number {
@@ -660,6 +635,17 @@ describe("listener auth lifecycle", () => {
     await startClient({ onDisconnected, keepRuntimeOnDisconnect: true });
     await waitFor(isClientInitialized, "socket did not open");
     const runtime = getActiveRuntime();
+    if (!runtime) throw new Error("Missing listener");
+    const scoped = getOrCreateScopedRuntime(
+      runtime,
+      "agent-owner",
+      "conv-owner",
+    );
+    scoped.activeConnectionId = "connection-id";
+    const old = scoped.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+    });
     connections[0]?.close(1000, "Replaced by new connection");
     await waitFor(
       () => onDisconnected.mock.calls.length === 1,
@@ -667,6 +653,15 @@ describe("listener auth lifecycle", () => {
     );
     expect(getActiveRuntime()).toBe(runtime);
     expect(runtime?.intentionallyClosed).toBe(false);
+    expect(old.signal.aborted).toBe(true);
+    scoped.turnLifecycle.finish(old, "cancelled");
+    const next = scoped.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+    });
+    expect(scoped.turnLifecycle.setRunId(old, "stale")).toBe(false);
+    expect(scoped.turnLifecycle.finish(old, "end_turn").finished).toBe(false);
+    expect(scoped.turnLifecycle.isCurrent(next)).toBe(true);
   });
 
   test("explicit relay supersession tears down old runtime without reconnecting", async () => {
