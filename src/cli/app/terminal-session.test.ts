@@ -566,7 +566,7 @@ test("a full turn preserves the Static epoch when history confirms the echo and 
     uuid: "c",
     toolCallId: "write",
     toolName: "Write",
-    toolInput: { file_path: "sample.txt" },
+    toolInput: { file_path: "sample.txt", content: "Hello" },
   });
   transport.push({
     type: "tool_result",
@@ -594,7 +594,7 @@ test("a full turn preserves the Static epoch when history confirms the echo and 
         tool_call: {
           tool_call_id: "write",
           name: "Write",
-          arguments: '{"file_path":"sample.txt"}',
+          arguments: '{"content":"Hello","file_path":"sample.txt"}',
         },
       },
       { id: "r", message_type: "reasoning_message", reasoning: "Inspecting" },
@@ -602,7 +602,13 @@ test("a full turn preserves the Static epoch when history confirms the echo and 
         id: "persisted",
         otid,
         message_type: "user_message",
-        content: "Write the file",
+        content: [
+          {
+            type: "text",
+            text: "<system-reminder>Runtime metadata</system-reminder>",
+          },
+          { type: "text", text: "Write the file" },
+        ],
       },
     ] as never,
   });

@@ -1,9 +1,11 @@
+import { isDeepStrictEqual } from "node:util";
 import type { SDKMessage, TranscriptRow } from "@letta-ai/letta-agent-sdk";
 import {
   type AskUserQuestionReceipt,
   parseAskUserQuestionNotif,
   parseAskUserQuestionReceipt,
 } from "@/ask-user-question";
+import { stripSystemReminders } from "@/cli/app/system-reminders";
 import type { Snapshot } from "@/cli/app/terminal-snapshot";
 
 export class TerminalRowLifecycle {
@@ -45,6 +47,10 @@ export class TerminalRowLifecycle {
 function sameRenderedRow(previous: TranscriptRow, next?: TranscriptRow) {
   if (!next || previous.key !== next.key || previous.kind !== next.kind)
     return false;
+  if (previous.kind === "user" && next.kind === "user")
+    return (
+      stripSystemReminders(previous.text) === stripSystemReminders(next.text)
+    );
   if (previous.kind === "tool_call" && next.kind === "tool_call") {
     return (
       previous.toolName === next.toolName &&
@@ -52,7 +58,7 @@ function sameRenderedRow(previous: TranscriptRow, next?: TranscriptRow) {
       previous.result?.content === next.result?.content &&
       previous.result?.isError === next.result?.isError &&
       (previous.argumentsComplete && next.argumentsComplete
-        ? JSON.stringify(previous.toolInput) === JSON.stringify(next.toolInput)
+        ? isDeepStrictEqual(previous.toolInput, next.toolInput)
         : previous.rawArguments === next.rawArguments)
     );
   }
