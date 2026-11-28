@@ -4,6 +4,7 @@ import {
   parseAskUserQuestionNotif,
   parseAskUserQuestionReceipt,
 } from "@/ask-user-question";
+import type { Snapshot } from "@/cli/app/terminal-snapshot";
 
 export class TerminalRowLifecycle {
   private reasoningStart = new Map<string, number>();
@@ -23,7 +24,7 @@ export class TerminalRowLifecycle {
           ? row.status === "complete" || settled
           : row.kind === "user"
             ? !row.otid || !echoes.has(row.otid) || index < rows.length - 1
-            : settled || index < rows.length - 1;
+            : settled || index < rows.length - 1 || this.finished.has(row.key);
       if (row.kind === "reasoning" && !this.durations.has(row.key)) {
         const start = this.reasoningStart.get(row.key);
         if (finished && start !== undefined) {
@@ -44,11 +45,7 @@ export class TerminalRowLifecycle {
 export function projectTranscript(
   rows: readonly TranscriptRow[],
   settled: boolean,
-  previous: {
-    rows: readonly TranscriptRow[];
-    committed: number;
-    epoch: number;
-  },
+  previous: Pick<Snapshot, "rows" | "committed" | "epoch" | "notices">,
   lifecycle: TerminalRowLifecycle,
   echoes: Map<string, { anchor?: string; text: string }>,
   pendingAnswers: Set<string>,
@@ -92,10 +89,30 @@ export function projectTranscript(
         row !== projected[index] &&
         JSON.stringify(row) !== JSON.stringify(projected[index]),
     );
+  const committed = lifecycle.project(projected, echoes, settled);
+  const notices = reset
+    ? previous.notices.map((notice) => {
+        const anchor = previous.rows[notice.index - 1];
+        const index = anchor
+          ? projected.findIndex(
+              (row) =>
+                row.key === anchor.key ||
+                (row.kind === anchor.kind &&
+                  !!anchor.otid &&
+                  row.otid === anchor.otid),
+            )
+          : -1;
+        return {
+          ...notice,
+          index: index < 0 ? Math.min(notice.index, committed) : index + 1,
+        };
+      })
+    : previous.notices;
   return {
+    notices,
     rows: projected,
     question: questions.find((q) => !answered.has(q.toolCallId)),
-    committed: lifecycle.project(projected, echoes, settled),
+    committed,
     epoch: previous.epoch + Number(reset),
   };
 }

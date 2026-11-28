@@ -172,13 +172,18 @@ export function AppView({
                     ) {
                       return null;
                     }
-                    if (isFileTool && !isApprovalTracked) {
+                    if (
+                      isFileTool &&
+                      !isApprovalTracked &&
+                      ln.phase !== "finished"
+                    ) {
                       return null;
                     }
                     if (
                       ln.kind === "tool_call" &&
                       ln.name &&
                       isTaskTool(ln.name) &&
+                      ln.phase !== "finished" &&
                       ln.toolCallId &&
                       !pendingIds.has(ln.toolCallId) &&
                       ln.toolCallId !== currentApproval?.toolCallId
@@ -212,6 +217,12 @@ export function AppView({
                             line={ln}
                             precomputedDiffs={precomputedDiffs}
                             isStreaming={streaming}
+                            groupedTask={
+                              !!ln.toolCallId &&
+                              state.subagents?.some(
+                                (agent) => agent.toolCallId === ln.toolCallId,
+                              )
+                            }
                             remote
                           />
                         ) : ln.kind === "error" ? (
